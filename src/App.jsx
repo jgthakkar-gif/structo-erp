@@ -5646,10 +5646,12 @@ const SUPERVISOR_STAGES = {
   dispatch_admin:      ["dispatch"],
 };
 
-const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
-  const [selGroup, setSelGroup]   = useState(null); // "markNo/drawingId/orderId"
-  const [checks, setChecks]       = useState({});   // { item: true/false }
-  const [dft, setDft]             = useState("");    // DFT reading for painting
+const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, onBack }) => {
+  const [selGroup, setSelGroup]   = useState(null);
+  const [checks, setChecks]       = useState({});
+  const [dft, setDft]             = useState("");
+  const [docRefs, setDocRefs]     = useState({});   // { [item]: "ref text" } for MDCC
+  const [tpiForm, setTpiForm]     = useState({ agency:"", reportNo:"", reportDate:"", outcome:"pass" });
   const [rejectMode, setRejectMode] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
 
@@ -5687,10 +5689,11 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
     return (a.markedDoneDate||"") < (b.markedDoneDate||"") ? -1 : 1;
   });
 
-  const resetApproval = () => { setChecks({}); setDft(""); setRejectMode(false); setRejectReason(""); };
+  const resetApproval = () => { setChecks({}); setDft(""); setDocRefs({}); setTpiForm({agency:"",reportNo:"",reportDate:"",outcome:"pass"}); setRejectMode(false); setRejectReason(""); };
 
   const doApprove = (group, remarks) => {
     const stage = group.stage;
+    const isTpi = stage==="tpi_weld"||stage==="tpi_paint";
     const nextStage = STAGE_NEXT[stage];
     const ids = group.insts.map(i=>i.instanceId);
     const checkedItems = Object.keys(checks).filter(k=>checks[k]);
@@ -5699,7 +5702,9 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
       const hist = [...(i.stageHistory||[])];
       const idx = hist.findIndex(h=>h.stage===stage);
       const entry = { stage, signedOffBy:user.username, signedOffName:user.name, signedOffDate:today(),
-        checklistItems:checkedItems, dftReading:dft||null, remarks:remarks||"" };
+        checklistItems:checkedItems, dftReading:dft||null, docRefs:docRefs||{}, remarks:remarks||"",
+        ...(isTpi ? { tpiAgency:tpiForm.agency, tpiReportNo:tpiForm.reportNo, tpiReportDate:tpiForm.reportDate, tpiOutcome:tpiForm.outcome } : {})
+      };
       if (idx>=0) hist[idx]={...hist[idx],...entry}; else hist.push(entry);
       return {
         ...i,
@@ -5707,6 +5712,25 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
         currentStatus: nextStage ? "in_progress" : "completed",
         stageHistory: hist,
       };
+    }));
+    resetApproval();
+    setSelGroup(null);
+  };
+
+  const doTpiFail = (group) => {
+    // TPI hard gate fail — treated as rejection with auto-reason
+    const stage = group.stage;
+    const ids = group.insts.map(i=>i.instanceId);
+    const failReason = `TPI Inspection FAILED — Agency: ${tpiForm.agency}, Report No: ${tpiForm.reportNo}, Date: ${tpiForm.reportDate}. Rework required before re-inspection.`;
+    setInstances(prev => prev.map(i => {
+      if (!ids.includes(i.instanceId)) return i;
+      const hist = [...(i.stageHistory||[])];
+      const idx = hist.findIndex(h=>h.stage===stage);
+      const rejEntry = { rejectedBy:user.username, rejectedName:user.name, date:today(), reason:failReason, isTpiFail:true };
+      const tpiEntry = { stage, tpiAgency:tpiForm.agency, tpiReportNo:tpiForm.reportNo, tpiReportDate:tpiForm.reportDate, tpiOutcome:"fail" };
+      if (idx>=0) { const prevRejs=hist[idx].rejections||[]; hist[idx]={...hist[idx],...tpiEntry,rejections:[...prevRejs,rejEntry]}; }
+      else hist.push({ ...tpiEntry, rejections:[rejEntry] });
+      return { ...i, currentStatus:"in_progress", stageHistory:hist, rejectionCount:(i.rejectionCount||0)+1, qualityConcernFlag:true };
     }));
     resetApproval();
     setSelGroup(null);
@@ -5747,8 +5771,13 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
   if (selGD) {
     const stage = selGD.stage;
     const checklist = STAGE_CHECKLISTS[stage] || [];
-    const allChecked = checklist.every(item => checks[item]) && (stage!=="painting" || (dft&&!isNaN(dft)&&parseFloat(dft)>0));
-    const isPainting = stage === "painting";
+    const isTpi  = stage==="tpi_weld"||stage==="tpi_paint";
+    const isMdcc = stage==="mdcc";
+    const isPainting = stage==="painting";
+    const tpiDetailsOk = !isTpi || (tpiForm.agency&&tpiForm.reportNo&&tpiForm.reportDate);
+    const allChecked = checklist.every(item=>checks[item]) &&
+      (isPainting ? (dft&&!isNaN(dft)&&parseFloat(dft)>0) : true) &&
+      tpiDetailsOk;
 
     return (
       <div>
@@ -5773,16 +5802,61 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
             <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>BATCH NO</div><div style={{color:T.text,fontFamily:T.fontMono}}>{selGD.batchNo||"—"}</div></div>
           </div>
         </div>
+        {/* TPI hard gate panel */}
+        {isTpi && (
+          <div style={{ ...css.card,marginBottom:14,border:`1px solid ${T.red}55` }}>
+            <div style={{ display:"flex",gap:10,alignItems:"center",marginBottom:14 }}>
+              <div style={{ background:T.red,color:"#fff",fontSize:10,fontWeight:800,borderRadius:4,padding:"2px 8px",letterSpacing:"0.05em" }}>HARD GATE</div>
+              <div style={{ fontSize:13,fontWeight:700,color:T.text }}>TPI INSPECTION DETAILS — {STAGE_SEQ_LABELS[stage]}</div>
+            </div>
+            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
+              <div>
+                <label style={css.label}>TPI AGENCY *</label>
+                <select value={tpiForm.agency} onChange={e=>setTpiForm(p=>({...p,agency:e.target.value}))} style={css.input}>
+                  <option value="">Select agency...</option>
+                  {(tpiAgencies||[]).map(a=><option key={a.id} value={a.name}>{a.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={css.label}>REPORT NO *</label>
+                <input value={tpiForm.reportNo} onChange={e=>setTpiForm(p=>({...p,reportNo:e.target.value}))} style={css.input} placeholder="e.g. TPI-2026-001" />
+              </div>
+              <div>
+                <label style={css.label}>INSPECTION DATE *</label>
+                <input type="date" value={tpiForm.reportDate} onChange={e=>setTpiForm(p=>({...p,reportDate:e.target.value}))} style={css.input} />
+              </div>
+              <div>
+                <label style={css.label}>OUTCOME *</label>
+                <select value={tpiForm.outcome} onChange={e=>setTpiForm(p=>({...p,outcome:e.target.value}))} style={css.input}>
+                  <option value="pass">PASS — Proceed to {STAGE_SEQ_LABELS[STAGE_NEXT[stage]]}</option>
+                  <option value="fail">FAIL — Rework required</option>
+                </select>
+              </div>
+            </div>
+            {tpiForm.outcome==="fail"&&(
+              <div style={{ marginTop:12,background:T.redBg,border:`1px solid ${T.red}44`,borderRadius:6,padding:"8px 12px",fontSize:12,color:T.red }}>
+                ⚠ Selecting FAIL will send all pieces back for rework. This is a hard gate — no override.
+              </div>
+            )}
+          </div>
+        )}
         {/* Stage checklist */}
         <div style={{ ...css.card,marginBottom:14 }}>
           <div style={{ fontSize:13,fontWeight:700,color:T.text,marginBottom:12 }}>INSPECTION CHECKLIST — {STAGE_SEQ_LABELS[stage]}</div>
           {checklist.length > 0 && (
             <div style={{ display:"flex",flexDirection:"column",gap:8,marginBottom:isPainting?12:0 }}>
               {checklist.map(item=>(
-                <label key={item} style={{ display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"10px 12px",background:checks[item]?T.greenBg:T.bgInput,border:`1px solid ${checks[item]?T.green:T.border}`,borderRadius:6,userSelect:"none" }}>
-                  <input type="checkbox" checked={!!checks[item]} onChange={e=>setChecks(prev=>({...prev,[item]:e.target.checked}))} style={{ width:16,height:16 }} />
-                  <span style={{ fontSize:13,color:checks[item]?T.green:T.text }}>{item}</span>
-                </label>
+                <div key={item} style={{ padding:"10px 12px",background:checks[item]?T.greenBg:T.bgInput,border:`1px solid ${checks[item]?T.green:T.border}`,borderRadius:6 }}>
+                  <label style={{ display:"flex",alignItems:"center",gap:10,cursor:"pointer",userSelect:"none" }}>
+                    <input type="checkbox" checked={!!checks[item]} onChange={e=>setChecks(prev=>({...prev,[item]:e.target.checked}))} style={{ width:16,height:16 }} />
+                    <span style={{ fontSize:13,color:checks[item]?T.green:T.text,flex:1 }}>{item}</span>
+                  </label>
+                  {isMdcc && (
+                    <input value={docRefs[item]||""} onChange={e=>setDocRefs(p=>({...p,[item]:e.target.value}))}
+                      placeholder="Document ref / report no (optional)..."
+                      style={{ ...css.input,marginTop:8,fontSize:11,padding:"5px 10px" }} />
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -5797,7 +5871,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
             </div>
           )}
           {checklist.length===0&&!isPainting&&(
-            <div style={{ fontSize:13,color:T.textMid }}>No standard checklist for this stage. Add remarks below before approving.</div>
+            <div style={{ fontSize:13,color:T.textMid }}>No standard checklist for this stage. Add remarks before approving.</div>
           )}
         </div>
         {/* Rejection history */}
@@ -5816,7 +5890,21 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
           </div>
         )}
         {/* Actions */}
-        {rejectMode ? (
+        {isTpi && tpiDetailsOk && tpiForm.outcome==="fail" ? (
+          // TPI hard gate fail path
+          <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+            <div style={{ background:T.redBg,border:`1px solid ${T.red}`,borderRadius:8,padding:"10px 14px",fontSize:12,color:T.red }}>
+              <b>HARD GATE FAIL</b> — TPI report {tpiForm.reportNo} records a FAIL outcome. All pieces will be returned for rework. This action cannot be undone.
+            </div>
+            <div style={{ display:"flex",gap:10 }}>
+              <button onClick={()=>doTpiFail(selGD)}
+                style={{ ...css.btn.danger,flex:1,padding:"13px 0",fontSize:15,fontWeight:800 }}>
+                ✕ RECORD TPI FAIL — Return for Rework
+              </button>
+              <button onClick={()=>setTpiForm(p=>({...p,outcome:"pass"}))} style={{ ...css.btn.ghost,flex:1 }}>Cancel</button>
+            </div>
+          </div>
+        ) : rejectMode ? (
           <div style={{ ...css.card,border:`1px solid ${T.red}` }}>
             <div style={{ fontSize:13,fontWeight:700,color:T.red,marginBottom:10 }}>REJECTION REASON (mandatory)</div>
             <textarea value={rejectReason} onChange={e=>setRejectReason(e.target.value)}
@@ -5832,11 +5920,13 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
           <div style={{ display:"flex",gap:10 }}>
             <button onClick={()=>doApprove(selGD,"")} disabled={!allChecked}
               style={{ ...css.btn.green,flex:1,padding:"13px 0",fontSize:15,fontWeight:800,opacity:allChecked?1:0.35 }}>
-              ✓ APPROVE — Move to {STAGE_SEQ_LABELS[STAGE_NEXT[stage]]||"Completed"}
+              ✓ {isTpi?"RECORD TPI PASS":"APPROVE"} — Move to {STAGE_SEQ_LABELS[STAGE_NEXT[stage]]||"Completed"}
             </button>
-            <button onClick={()=>setRejectMode(true)} style={{ ...css.btn.danger,flex:1,padding:"13px 0",fontSize:15,fontWeight:800 }}>
-              ✕ REJECT
-            </button>
+            {!isTpi && (
+              <button onClick={()=>setRejectMode(true)} style={{ ...css.btn.danger,flex:1,padding:"13px 0",fontSize:15,fontWeight:800 }}>
+                ✕ REJECT
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -6179,7 +6269,7 @@ const OutboundProcessing = ({ user, instances, setInstances, orders, vendors, on
 // PRODUCTION MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
 const ProductionModule = ({ user, instances, setInstances, orders, stock, setStock,
-                            nestingRuns, setNestingRuns, machines, contractors, materials, vendors }) => {
+                            nestingRuns, setNestingRuns, machines, contractors, materials, vendors, tpiAgencies }) => {
   const [view, setView]           = useState("dashboard");
   const [selOrderId, setSelOrderId]   = useState("");
   const [selDrawingId, setSelDrawingId] = useState("");
@@ -6194,11 +6284,12 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
   const inProgress        = instances.filter(i=>i.currentStatus==="in_progress").length;
   const pendingSupervisor = instances.filter(i=>i.currentStatus==="pending_supervisor").length;
   const defective         = instances.filter(i=>i.currentStatus==="defective").length;
+  const qualityConcerns   = instances.filter(i=>i.qualityConcernFlag).length;
 
   // ── Supervisor queue view ──
   if (view==="approvals") return (
     <SupervisorQueue user={user} instances={instances} setInstances={setInstances}
-      orders={orders} onBack={()=>setView("dashboard")} />
+      orders={orders} tpiAgencies={tpiAgencies||[]} onBack={()=>setView("dashboard")} />
   );
 
   // ── Outbound processing view ──
@@ -6336,6 +6427,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
         <StatCard label="In Progress"        value={inProgress}        color={T.accent} />
         <StatCard label="Pending Supervisor" value={pendingSupervisor} color={T.amber} />
         <StatCard label="Defective"          value={defective}         color={T.red} />
+        {qualityConcerns>0&&<StatCard label="Quality Concerns" value={qualityConcerns} color={T.red} />}
       </div>
 
       <div style={{ display:"flex",gap:12,marginBottom:24,flexWrap:"wrap" }}>
@@ -6350,6 +6442,62 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
           </button>
         )}
       </div>
+
+      {/* ── Step 11: Collection Notifications ── */}
+      {canAssign && readyToCollect>0 && (()=>{
+        const byContractor = {};
+        instances.filter(i=>i.currentStatus==="pending_collection").forEach(i=>{
+          const k = i.assignedContractorId||"Unassigned";
+          if (!byContractor[k]) byContractor[k]={name:i.assignedContractorName||"Unassigned",count:0,parts:{}};
+          byContractor[k].count++;
+          if (!byContractor[k].parts[i.markNo]) byContractor[k].parts[i.markNo]=0;
+          byContractor[k].parts[i.markNo]++;
+        });
+        return (
+          <div style={{ ...css.card,border:`1px solid ${T.green}44`,marginBottom:20 }}>
+            <div style={{ fontSize:12,fontWeight:800,color:T.green,marginBottom:10 }}>📦 READY FOR COLLECTION — {readyToCollect} PIECES</div>
+            <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+              {Object.values(byContractor).map((c,i)=>(
+                <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",background:T.bgInput,borderRadius:6 }}>
+                  <div>
+                    <span style={{ fontWeight:700,color:T.text,fontSize:13 }}>{c.name}</span>
+                    <span style={{ color:T.textMid,fontSize:11,marginLeft:10 }}>{Object.entries(c.parts).map(([mk,n])=>`${mk}×${n}`).join(", ")}</span>
+                  </div>
+                  <Badge color="green">{c.count} pcs pending collection</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Step 12: Quality Concern Flags ── */}
+      {(user.role==="qc_admin"||user.role==="super_admin"||canAssign) && (()=>{
+        const flags = instances.filter(i=>i.qualityConcernFlag);
+        if (!flags.length) return null;
+        return (
+          <div style={{ ...css.card,border:`1px solid ${T.red}55`,marginBottom:20 }}>
+            <div style={{ fontSize:12,fontWeight:800,color:T.red,marginBottom:10 }}>⚠ QUALITY CONCERNS — {flags.length} INSTANCE{flags.length>1?"S":""} FLAGGED</div>
+            <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+              {flags.map(i=>{
+                const rejCount = i.rejectionCount||0;
+                return (
+                  <div key={i.instanceId} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",background:T.redBg,borderRadius:6 }}>
+                    <div>
+                      <span style={{ fontWeight:700,color:T.text,fontFamily:T.fontMono,fontSize:12 }}>{i.instanceId}</span>
+                      <span style={{ color:T.textMid,fontSize:11,marginLeft:10 }}>{i.drawingNo} / {i.orderId}</span>
+                    </div>
+                    <div style={{ display:"flex",gap:6,alignItems:"center" }}>
+                      <Badge color="red">{rejCount} rejection{rejCount>1?"s":""}</Badge>
+                      <Badge color="blue">{STAGE_SEQ_LABELS[i.currentStage]||i.currentStage}</Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {totalInstances===0 ? (
         <div style={{ textAlign:"center",padding:64,color:T.textLow }}>
@@ -6371,12 +6519,14 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
                   <TD bold>{inst.markNo}</TD>
                   <TD mono>{inst.drawingNo||"—"}</TD>
                   <TD>{inst.orderId}</TD>
-                  <TD><Badge color="blue">{inst.currentStage}</Badge></TD>
+                  <TD><Badge color="blue">{STAGE_SEQ_LABELS[inst.currentStage]||inst.currentStage}</Badge></TD>
                   <TD><Badge color={
                     inst.currentStatus==="pending_collection"?"green":
                     inst.currentStatus==="in_progress"?"blue":
                     inst.currentStatus==="pending_supervisor"?"amber":
-                    inst.currentStatus==="defective"?"red":"gray"
+                    inst.currentStatus==="defective"?"red":
+                    inst.currentStatus==="completed"?"teal":
+                    inst.currentStatus==="outbound"?"gold":"gray"
                   }>{inst.currentStatus?.replace(/_/g," ")}</Badge></TD>
                   <TD mono>{inst.cuttingBayUsed||"—"}</TD>
                   <TD>{inst.assignedContractorName||<span style={{color:T.textLow,fontSize:11}}>Unassigned</span>}</TD>
@@ -6432,7 +6582,7 @@ export default function App() {
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
