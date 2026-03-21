@@ -189,6 +189,16 @@ const VENDORS = [
 
 const BAYS = Array.from({length:25},(_,i)=>({ id:`BAY-${String(i+1).padStart(2,"0")}`, number:i+1 }));
 
+// ─── SEED: MACHINES ───────────────────────────────────────────────────────────
+const MACHINES_SEED = [
+  { id:"MCH-001", name:"Plasma Cutter 1",  type:"Cutting", bayLocation:"Bay 3", active:true },
+  { id:"MCH-002", name:"Flame Cutter 1",   type:"Cutting", bayLocation:"Bay 3", active:true },
+  { id:"MCH-003", name:"Band Saw 1",       type:"Cutting", bayLocation:"Bay 5", active:true },
+  { id:"MCH-004", name:"MIG Welder 1",     type:"Welding", bayLocation:"Bay 7", active:true },
+  { id:"MCH-005", name:"MIG Welder 2",     type:"Welding", bayLocation:"Bay 7", active:true },
+  { id:"MCH-006", name:"SAW Machine 1",    type:"Welding", bayLocation:"Bay 8", active:true },
+];
+
 // ─── SEED: ORDERS (summary only - parts & drawings needed for MRP) ───────────
 const ORDERS = [
   {
@@ -357,6 +367,13 @@ const INIT_NESTING_RUNS = [
   { id:"NEST-2026-001", runDate:"2026-03-18", runBy:"Vikram Singh", materialCode:"ISMB/MS/E250/300", orders:["SF-2025-0001","SF-2025-0002"], drawings:["D002","D101"], lotsUsed:["STK-005"], sheetsOrBarsUsed:12, utilisationPct:91.5, wasteKg:88, offcutsCreated:[], dxfLink:"", status:"draft", parts:[] },
 ];
 
+// ─── PRODUCTION INSTANCES ──────────────────────────────────────────────────────
+// Each record = one physical cut piece.
+// instanceId: "{markNo}/{drawingId}/{orderId}/{instanceNo padded 3}"
+// currentStage: cutting | fitup | welding | tpi_weld | blasting | painting | tpi_paint | mdcc | dispatch
+// currentStatus: pending_collection | in_progress | pending_supervisor | completed | defective | outbound
+const INIT_INSTANCES = [];
+
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 const fmt = {
   num:      (n) => new Intl.NumberFormat("en-IN").format(n||0),
@@ -410,6 +427,76 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       allocations:[], qcHoldReason:(l.inspStatus||"")==="hold"?(grnForm.holdReason||""):"",
     };
   });
+
+// ─── PRODUCTION: INSTANCE CREATION ───────────────────────────────────────────
+// Called by cutting confirmation screen when a bar is confirmed cut.
+// confirmedParts: [{ markNo, drawingId, drawingNo, orderId, desc,
+//                    actualQty, totalInstances, subOpsRequired:[],
+//                    isDefective, defectType, defectReason }]
+const createInstances = ({ nestingRunId, lotId, barRef, batchNo, cuttingBayUsed,
+                           confirmedParts, confirmedBy, confirmDate, existingInstances }) => {
+  const newInstances = [];
+  const existing = existingInstances || [];
+  confirmedParts.forEach(part => {
+    // Count already-created instances for this markNo/drawing/order to continue the sequence
+    const priorCount = existing.filter(
+      i => i.markNo === part.markNo && i.drawingId === part.drawingId && i.orderId === part.orderId
+    ).length;
+    for (let n = 0; n < (part.actualQty || 0); n++) {
+      const instanceNo  = priorCount + n + 1;
+      const instanceId  = `${part.markNo}/${part.drawingId}/${part.orderId}/${String(instanceNo).padStart(3,"0")}`;
+      const isDefective = !!part.isDefective;
+      newInstances.push({
+        instanceId,
+        markNo:       part.markNo,
+        desc:         part.desc || "",
+        drawingId:    part.drawingId,
+        drawingNo:    part.drawingNo || "",
+        orderId:      part.orderId,
+        instanceNo,
+        totalInstances: part.totalInstances || part.actualQty,
+        // Defective pieces stay at cutting stage; good pieces ready for collection
+        currentStage:  "cutting",
+        currentStatus: isDefective ? "defective" : "pending_collection",
+        // Traceability
+        lotId, batchNo, nestingRunId, barRef, cuttingBayUsed,
+        // Assignment (filled at Step 4 — production manager assignment screen)
+        assignedContractorId:   "",
+        assignedContractorName: "",
+        pinnedEngineerId:       "",
+        pinnedEngineerName:     "",
+        // Sub-operations
+        subOpsRequired:  part.subOpsRequired || ["cut"],
+        subOpsCompleted: isDefective ? [] : (part.subOpsRequired || ["cut"]),
+        // Outbound processing
+        outboundCount:   0,
+        outboundHistory: [],
+        // Stage history — first entry is cutting
+        stageHistory: [{
+          stage:          "cutting",
+          subOps:         part.subOpsRequired || ["cut"],
+          markedDoneBy:   confirmedBy,
+          markedDoneDate: confirmDate,
+          markedDoneTime: "",
+          signedOffBy:    confirmedBy,  // cutting confirmation is single-action sign-off
+          signedOffDate:  confirmDate,
+          checklistItems: { dimensionsOk: !isDefective, countMatches: true },
+          remarks:        isDefective ? (part.defectReason || "") : "",
+          rejections:     [],
+          cuttingBayUsed,
+        }],
+        // Defects
+        defects: isDefective
+          ? [{ type: part.defectType || "dimensional", reason: part.defectReason || "",
+               reportedBy: confirmedBy, date: confirmDate }]
+          : [],
+        qualityConcernFlag: false,
+        rejectionCount:     0,
+      });
+    }
+  });
+  return newInstances;
+};
 
 // ─── STYLE HELPERS ────────────────────────────────────────────────────────────
 const css = {
@@ -1008,8 +1095,72 @@ const CompanyMaster = ({ company, setCompany }) => {
   );
 };
 
+// ─── MASTERS: MACHINES ────────────────────────────────────────────────────────
+const MachinesMaster = ({ user, machines, setMachines }) => {
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState({});
+  const canEdit = user.role === "super_admin";
+  const typeColor = { Cutting:"blue", Welding:"amber", Other:"gray" };
+
+  const openAdd  = () => { setForm({ type:"Cutting", active:true }); setModal("add"); };
+  const openEdit = r  => { setForm({...r}); setModal("edit"); };
+
+  const save = () => {
+    if (!form.name?.trim()) return;
+    if (modal === "add") {
+      const next = { ...form, id:`MCH-${String(machines.length+1).padStart(3,"0")}` };
+      setMachines(prev => [...prev, next]);
+    } else {
+      setMachines(prev => prev.map(m => m.id === form.id ? form : m));
+    }
+    setModal(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
+        <div style={{ fontSize:15, fontWeight:700, color:T.text }}>Machines & Equipment ({machines.length})</div>
+        {canEdit && <button onClick={openAdd} style={css.btn.primary}>+ Add Machine</button>}
+      </div>
+      <MTable cols={[
+        { key:"id",          label:"ID",           render:r=><span style={{fontFamily:T.fontMono,fontSize:11,color:T.textMid}}>{r.id}</span> },
+        { key:"name",        label:"Machine Name", render:r=><span style={{fontWeight:700}}>{r.name}</span> },
+        { key:"type",        label:"Type",         render:r=><Badge color={typeColor[r.type]||"gray"}>{r.type}</Badge> },
+        { key:"bayLocation", label:"Bay Location"  },
+        { key:"active",      label:"Status",       render:r=><Badge color={r.active?"green":"gray"}>{r.active?"Active":"Inactive"}</Badge> },
+        { key:"actions",     label:"",             render:r=>canEdit?<button onClick={()=>openEdit(r)} style={css.btn.ghost}>Edit</button>:null },
+      ]} rows={machines} />
+
+      {modal && (
+        <Modal title={modal==="add"?"Add Machine":"Edit Machine"} onClose={()=>setModal(null)} width={440}>
+          <MField label="Machine Name *">
+            <input value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} style={css.input} placeholder="e.g. Plasma Cutter 2" />
+          </MField>
+          <MField label="Type">
+            <select value={form.type||"Cutting"} onChange={e=>setForm(f=>({...f,type:e.target.value}))} style={css.input}>
+              <option>Cutting</option><option>Welding</option><option>Other</option>
+            </select>
+          </MField>
+          <MField label="Bay Location">
+            <input value={form.bayLocation||""} onChange={e=>setForm(f=>({...f,bayLocation:e.target.value}))} style={css.input} placeholder="e.g. Bay 3" />
+          </MField>
+          <MField label="Active">
+            <select value={form.active?"yes":"no"} onChange={e=>setForm(f=>({...f,active:e.target.value==="yes"}))} style={css.input}>
+              <option value="yes">Active</option><option value="no">Inactive</option>
+            </select>
+          </MField>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
+            <button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={save} style={css.btn.primary} disabled={!form.name?.trim()}>✓ Save Machine</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 // ─── MASTERS MODULE ───────────────────────────────────────────────────────────
-const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany }) => {
+const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines }) => {
   const tabs = [
     { id:"company",     label:"Company Details",  show: user.role==="super_admin" },
     { id:"clients",     label:"Clients"           },
@@ -1020,7 +1171,8 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
     { id:"paint",       label:"Paint Library"     },
     { id:"tpi",         label:"TPI Agencies"      },
     { id:"makes",       label:"Approved Makes"    },
-    { id:"users",       label:"Users",            show: user.role==="super_admin" },
+    { id:"machines",    label:"Machines",          show: user.role==="super_admin" },
+    { id:"users",       label:"Users",             show: user.role==="super_admin" },
   ].filter(t=>t.show!==false);
   const [activeTab, setActiveTab] = useState("clients");
   return (
@@ -1041,6 +1193,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       {activeTab==="paint"       && <PaintMaster       user={user} paint={paint} />}
       {activeTab==="tpi"         && <TPIMaster         user={user} tpiAgencies={tpiAgencies} />}
       {activeTab==="makes"       && <ApprovedMakesMaster user={user} approvedMakes={approvedMakes} />}
+      {activeTab==="machines"    && <MachinesMaster    user={user} machines={machines} setMachines={setMachines} />}
       {activeTab==="users"       && <UsersMaster       user={user} />}
     </div>
   );
@@ -4445,6 +4598,1799 @@ const Login = ({ onLogin }) => {
   );
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRODUCTION: CUTTING CONFIRMATION
+// ═══════════════════════════════════════════════════════════════════════════════
+const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStock,
+                               instances, setInstances, orders, materials, machines, onBack }) => {
+  const [step, setStep]         = useState("runs"); // "runs" | "bars" | "barForm"
+  const [selRunId, setSelRunId] = useState(null);
+  const [selBarRef, setSelBarRef] = useState(null);
+  const [barForm, setBarForm]   = useState({});
+  const [toast, setToast]       = useState(null);
+
+  const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3500); };
+  const selRun = nestingRuns.find(r => r.id === selRunId);
+  const cuttingMachines = machines.filter(m => m.type === "Cutting" && m.active);
+
+  // Derive parts for a run from linked order parts (fallback when run.parts[] is empty)
+  const getRunParts = (run) => {
+    if ((run.parts||[]).length > 0) {
+      return run.parts.map(p => ({
+        markNo:p.markNo, desc:"", drawingId:"", drawingNo:p.drawingNo||"",
+        orderId:p.orderId, plannedQty:p.qty||0, length:0,
+      }));
+    }
+    const result = []; const seen = new Set();
+    (run.orders||[]).forEach(ordId => {
+      const order = orders.find(o => o.id === ordId);
+      if (!order) return;
+      const runDrgSet = new Set(run.drawings||[]);
+      (order.parts||[]).filter(p =>
+        p.fabType==="Fabricate" && p.source==="Procure" &&
+        (runDrgSet.size===0 || runDrgSet.has(p.drawingId)) &&
+        (!run.materialCode || p.matCode===run.materialCode)
+      ).forEach(p => {
+        const key = `${p.markNo}__${p.drawingId}__${ordId}`;
+        if (seen.has(key)) return; seen.add(key);
+        const drg = (order.drawings||[]).find(d=>d.id===p.drawingId);
+        result.push({ markNo:p.markNo, desc:p.desc||"", drawingId:p.drawingId,
+          drawingNo:drg?.drawingNo||"", orderId:ordId,
+          plannedQty:p.qtyPerDrg||0, length:p.length||0 });
+      });
+    });
+    return result;
+  };
+
+  // Generate bar list for a run
+  const getBars = (run) => {
+    const n = Math.max(1, run.sheetsOrBarsUsed||1);
+    const prefix = (run.materialCode||"").startsWith("PLATE") ? "SHEET" : "BAR";
+    return Array.from({length:n}, (_,i) => {
+      const barRef = `${prefix}-${String(i+1).padStart(2,"0")}`;
+      const data = (run.confirmedBars||[]).find(b=>b.barRef===barRef);
+      return { barRef, confirmed:!!data, data };
+    });
+  };
+
+  // Open bar confirmation form
+  const openBarForm = (run, barRef) => {
+    const matLib = materials.find(m=>m.matCode===run.materialCode);
+    const lots   = (run.lotsUsed||[]).map(id=>stock.find(s=>s.id===id)).filter(Boolean);
+    const defLot = lots[0]||{};
+    setSelBarRef(barRef);
+    setBarForm({
+      lotId: defLot.id||"", batchNo: defLot.batchNo||"",
+      cuttingBayUsed: "",
+      isPlate: matLib?.isPlate||false,
+      wtPerMetre: matLib?.wtPerMetre||0, wtPerM2: matLib?.wtPerM2||0,
+      parts: getRunParts(run).map(p=>({
+        ...p, included:true, actualQty:p.plannedQty,
+        shortReason:"", isDefective:false, defectType:"dimensional", defectReason:"",
+      })),
+      hasOffcut:false, offcutLength:"", offcutWidth:"",
+    });
+    setStep("barForm");
+  };
+
+  const updatePart = (i,k,v) =>
+    setBarForm(f=>{ const p=[...f.parts]; p[i]={...p[i],[k]:v}; return {...f,parts:p}; });
+
+  const ocWt = () => {
+    if (!barForm.hasOffcut) return 0;
+    if (barForm.isPlate) return ((+barForm.offcutLength||0)/1000)*((+barForm.offcutWidth||0)/1000)*(barForm.wtPerM2||0);
+    return ((+barForm.offcutLength||0)/1000)*(barForm.wtPerMetre||0);
+  };
+
+  // Find a replacement off-cut for a defective part
+  const findReplacement = (part) => !part.length ? null :
+    stock.find(s=>s.isOffcut && s.matCode===selRun?.materialCode &&
+      s.status==="available" && (s.offcutLength||0)>=part.length)||null;
+
+  const confirmBar = () => {
+    if (!barForm.cuttingBayUsed) return showToast("Select a cutting bay","amber");
+    const included = barForm.parts.filter(p=>p.included);
+    if (!included.length) return showToast("Check at least one part","amber");
+    const needsReason = included.filter(p=>!p.isDefective&&(+p.actualQty||0)<p.plannedQty&&!p.shortReason.trim());
+    if (needsReason.length) return showToast("Enter reason for short quantities on highlighted parts","amber");
+
+    const confirmDate = today();
+    // Create instances
+    const newInst = createInstances({
+      nestingRunId:selRunId, lotId:barForm.lotId, barRef:selBarRef,
+      batchNo:barForm.batchNo, cuttingBayUsed:barForm.cuttingBayUsed,
+      confirmedParts: included.map(p=>({
+        markNo:p.markNo, drawingId:p.drawingId, drawingNo:p.drawingNo,
+        orderId:p.orderId, desc:p.desc,
+        actualQty:Math.max(1, +p.actualQty||0), totalInstances:p.plannedQty,
+        subOpsRequired:["cut"],
+        isDefective:p.isDefective, defectType:p.defectType, defectReason:p.defectReason,
+      })),
+      confirmedBy:user.name, confirmDate, existingInstances:instances,
+    });
+    setInstances(prev=>[...prev,...newInst]);
+
+    // Update stock lot wtConsumed (sections only; plates calculated from dims)
+    const wtConsumed = barForm.isPlate ? 0 :
+      included.filter(p=>!p.isDefective).reduce((s,p)=>
+        s+((p.length||0)/1000)*(barForm.wtPerMetre||0)*(+p.actualQty||0), 0);
+    if (barForm.lotId && wtConsumed>0) {
+      setStock(prev=>prev.map(s=>s.id!==barForm.lotId?s:{...s,
+        wtConsumed:(s.wtConsumed||0)+wtConsumed,
+        wtAvailable:Math.max(0,(s.wtAvailable||0)-wtConsumed),
+        status:Math.max(0,(s.wtAvailable||0)-wtConsumed)===0?"consumed":s.status,
+        auditLog:[...(s.auditLog||[]),{action:"consumed",orderId:included[0]?.orderId||"",
+          wt:wtConsumed,by:user.name,date:confirmDate,reason:`Cut: ${selRunId}/${selBarRef}`}],
+      }));
+    }
+
+    // Create off-cut lot if applicable
+    const oc = ocWt(); let newOcId = null;
+    if (barForm.hasOffcut && oc>=(barForm.isPlate?0.1:5)) {
+      const yr = new Date().getFullYear();
+      let maxLot=0;
+      stock.forEach(s=>{const m=(s.lotNo||"").match(/^LOT-(\d{4})-(\d+)$/);if(m&&+m[1]===yr)maxLot=Math.max(maxLot,+m[2]);});
+      const parentLot = stock.find(s=>s.id===barForm.lotId)||{};
+      newOcId = `STK-OC-${Date.now()}`;
+      const ocItemCode = barForm.isPlate
+        ? `${selRun.materialCode}/${barForm.offcutLength}X${barForm.offcutWidth}`
+        : `${selRun.materialCode}/${barForm.offcutLength}`;
+      setStock(prev=>[...prev,{
+        id:newOcId, lotNo:`LOT-${yr}-${String(maxLot+1).padStart(3,"0")}`,
+        batchNo:barForm.batchNo, itemCode:ocItemCode,
+        matCode:selRun.materialCode, matLibId:parentLot.matLibId||"",
+        section:parentLot.section||"", size:parentLot.size||"",
+        grade:parentLot.grade||"", matType:parentLot.matType||"",
+        vendorId:parentLot.vendorId||"", vendorCode:parentLot.vendorCode||"",
+        vendorName:parentLot.vendorName||"",
+        wtReceived:oc, wtAvailable:oc, wtAllocated:0, wtIssued:0, wtConsumed:0,
+        status:"available", bayId:parentLot.bayId||"",
+        poId:parentLot.poId||"", grnId:parentLot.grnId||"",
+        receivedDate:confirmDate,
+        mtcUploaded:parentLot.mtcUploaded||false, mtcDoc:parentLot.mtcDoc||"",
+        heatNo:parentLot.heatNo||"",
+        rmQcStatus:"approved", clientInspStatus:"approved", qcHoldReason:"",
+        isOffcut:true, parentLotId:barForm.lotId, parentBatchNo:barForm.batchNo,
+        offcutLength:barForm.isPlate?null:+(barForm.offcutLength||0),
+        offcutDimensions:barForm.isPlate?`${barForm.offcutLength}X${barForm.offcutWidth}`:"",
+        nestingRunId:selRunId, allocations:[], issues:[],
+        auditLog:[{action:"offcut-created",orderId:"",wt:oc,by:user.name,
+          date:confirmDate,reason:`Cut: ${selRunId}/${selBarRef}`}],
+      }]);
+    }
+
+    // Update nesting run with confirmed bar record
+    const barEntry = {
+      barRef:selBarRef, status:"confirmed",
+      confirmedBy:user.name, confirmedDate:confirmDate,
+      cuttingBayUsed:barForm.cuttingBayUsed, lotId:barForm.lotId,
+      batchNo:barForm.batchNo, parts:included,
+      hasOffcut:barForm.hasOffcut, offcutWt:oc, offcutLotId:newOcId,
+    };
+    setNestingRuns(prev=>prev.map(r=>r.id!==selRunId?r:{
+      ...r,
+      confirmedBars:[...(r.confirmedBars||[]),barEntry],
+      ...(newOcId?{offcutsCreated:[...(r.offcutsCreated||[]),newOcId]}:{}),
+    }));
+
+    const goodCount = newInst.filter(i=>!i.defects?.length).length;
+    const badCount  = newInst.filter(i=>i.defects?.length).length;
+    showToast(`${selBarRef} confirmed — ${goodCount} instance${goodCount!==1?"s":""} created${badCount?`, ${badCount} defective`:""}`);
+    setStep("bars");
+  };
+
+  // ── TOAST helper ──
+  const toastEl = toast && (
+    <div style={{ position:"fixed",top:20,right:20,zIndex:2000,
+      background:toast.color==="green"?T.greenBg:toast.color==="amber"?T.amberBg:T.redBg,
+      border:`1px solid ${toast.color==="green"?T.green:toast.color==="amber"?T.amber:T.red}`,
+      borderRadius:8,padding:"12px 20px",
+      color:toast.color==="green"?T.green:toast.color==="amber"?T.amber:T.red,
+      fontSize:13,fontWeight:600 }}>{toast.msg}</div>
+  );
+
+  // ── STEP: RUNS LIST ──
+  if (step==="runs") {
+    const confirmedRuns = nestingRuns.filter(r=>r.status==="confirmed");
+    return (
+      <div>
+        {toastEl}
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+          <button onClick={onBack} style={css.btn.ghost}>← Back</button>
+          <div style={{ fontSize:18,fontWeight:800,color:T.text }}>Cutting Confirmation</div>
+        </div>
+        {confirmedRuns.length===0
+          ? <InfoBanner color="amber">No confirmed nesting runs. Go to MRP → Nesting Runs and set a run to Confirmed before cutting.</InfoBanner>
+          : confirmedRuns.map(run => {
+              const bars = getBars(run);
+              const doneCount = bars.filter(b=>b.confirmed).length;
+              return (
+                <div key={run.id} onClick={()=>{setSelRunId(run.id);setStep("bars");}}
+                  style={{...css.card,marginBottom:12,cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor=T.borderHi}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor=T.border}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+                    <div>
+                      <div style={{ fontFamily:T.fontMono,fontSize:14,fontWeight:800,color:T.accentHi }}>{run.id}</div>
+                      <div style={{ fontSize:12,color:T.textMid,marginTop:3 }}>
+                        {run.materialCode} · {run.runDate} · Run by {run.runBy}
+                      </div>
+                      <div style={{ fontSize:12,color:T.textMid,marginTop:2 }}>
+                        Orders: {(run.orders||[]).join(", ")} · Lots: {(run.lotsUsed||[]).join(", ")}
+                      </div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <Badge color={doneCount===bars.length?"green":doneCount>0?"amber":"gray"}>
+                        {doneCount}/{bars.length} bars confirmed
+                      </Badge>
+                      <div style={{ fontSize:12,color:T.textMid,marginTop:6 }}>
+                        {run.sheetsOrBarsUsed} bars/sheets · {run.utilisationPct}% util
+                      </div>
+                      {run.dxfLink&&<a href={run.dxfLink} target="_blank" rel="noreferrer"
+                        style={{ fontSize:11,color:T.accent }}>DXF ↗</a>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+        }
+      </div>
+    );
+  }
+
+  // ── STEP: BARS GRID ──
+  if (step==="bars" && selRun) {
+    const bars = getBars(selRun);
+    const doneCount = bars.filter(b=>b.confirmed).length;
+    return (
+      <div>
+        {toastEl}
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:16 }}>
+          <button onClick={()=>setStep("runs")} style={css.btn.ghost}>← Nesting Runs</button>
+          <div style={{ fontSize:16,fontWeight:800,color:T.text }}>{selRun.id}</div>
+          <Badge color={doneCount===bars.length?"green":doneCount>0?"amber":"gray"}>
+            {doneCount}/{bars.length} confirmed
+          </Badge>
+        </div>
+        <div style={{ ...css.card,marginBottom:16 }}>
+          <div style={{ display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,fontSize:12 }}>
+            <div><span style={{color:T.textMid}}>Material: </span>
+              <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi}}>{selRun.materialCode}</span></div>
+            <div><span style={{color:T.textMid}}>Orders: </span>{(selRun.orders||[]).join(", ")}</div>
+            <div><span style={{color:T.textMid}}>Utilisation: </span>
+              <span style={{fontFamily:T.fontMono}}>{selRun.utilisationPct}%</span></div>
+            <div><span style={{color:T.textMid}}>Waste: </span>
+              <span style={{fontFamily:T.fontMono}}>{selRun.wasteKg} kg</span></div>
+            <div><span style={{color:T.textMid}}>Lots used: </span>{(selRun.lotsUsed||[]).join(", ")}</div>
+            {selRun.dxfLink&&<div><a href={selRun.dxfLink} target="_blank" rel="noreferrer"
+              style={{color:T.accent,fontSize:11}}>DXF Layout ↗</a></div>}
+          </div>
+        </div>
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12 }}>
+          {bars.map(bar=>(
+            <div key={bar.barRef} style={{ ...css.card,
+              borderColor:bar.confirmed?T.green:T.border,
+              borderLeftWidth:3 }}>
+              <div style={{ fontFamily:T.fontMono,fontSize:15,fontWeight:800,
+                color:bar.confirmed?T.green:T.text,marginBottom:8 }}>{bar.barRef}</div>
+              {bar.confirmed ? (
+                <div>
+                  <Badge color="green">Confirmed ✓</Badge>
+                  <div style={{ fontSize:11,color:T.textMid,marginTop:6 }}>
+                    {bar.data.cuttingBayUsed}
+                  </div>
+                  <div style={{ fontSize:11,color:T.textMid }}>
+                    {bar.data.confirmedBy} · {bar.data.confirmedDate}
+                  </div>
+                  {(bar.data.offcutWt||0)>0&&(
+                    <div style={{ fontSize:11,color:T.amber,marginTop:4 }}>
+                      Off-cut: {bar.data.offcutWt.toFixed(1)} kg
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button onClick={()=>openBarForm(selRun,bar.barRef)}
+                  style={{ ...css.btn.primary,width:"100%",marginTop:4 }}>
+                  Confirm Bar
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── STEP: BAR CONFIRMATION FORM ──
+  if (step==="barForm" && selRun) {
+    const lots    = (selRun.lotsUsed||[]).map(id=>stock.find(s=>s.id===id)).filter(Boolean);
+    const selLot  = stock.find(s=>s.id===barForm.lotId);
+    const oc      = ocWt();
+    const ocTooLight = barForm.hasOffcut && !barForm.isPlate && oc>0 && oc<5;
+    return (
+      <div>
+        {toastEl}
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:16 }}>
+          <button onClick={()=>setStep("bars")} style={css.btn.ghost}>← {selRun.id}</button>
+          <div style={{ fontSize:16,fontWeight:800,color:T.text }}>Confirm {selBarRef}</div>
+        </div>
+
+        {/* Bar header card */}
+        <div style={{ ...css.card,marginBottom:16 }}>
+          <G3>
+            <div>
+              <div style={{ fontSize:11,color:T.textMid,marginBottom:4 }}>STOCK LOT</div>
+              <select value={barForm.lotId}
+                onChange={e=>{const l=stock.find(s=>s.id===e.target.value);
+                  setBarForm(f=>({...f,lotId:e.target.value,batchNo:l?.batchNo||""}));}}
+                style={css.input}>
+                <option value="">Select lot...</option>
+                {lots.map(l=><option key={l.id} value={l.id}>{l.lotNo} — {l.batchNo||"No batch"}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11,color:T.textMid,marginBottom:4 }}>CUTTING BAY *</div>
+              <select value={barForm.cuttingBayUsed}
+                onChange={e=>setBarForm(f=>({...f,cuttingBayUsed:e.target.value}))}
+                style={{ ...css.input,borderColor:!barForm.cuttingBayUsed?T.red:T.border }}>
+                <option value="">Select bay...</option>
+                {cuttingMachines.map(m=><option key={m.id} value={m.name}>{m.name} ({m.bayLocation})</option>)}
+                <option value="Manual">Manual / Hand Tools</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11,color:T.textMid,marginBottom:4 }}>BATCH NO</div>
+              <div style={{ fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi,paddingTop:6 }}>
+                {barForm.batchNo||"—"}
+              </div>
+              {selLot&&<div style={{ fontSize:11,color:T.textMid,marginTop:4 }}>
+                Available: <strong style={{color:T.green}}>{fmt.num(selLot.wtAvailable)} kg</strong>
+                {selLot.heatNo&&<> · Heat: <span style={{fontFamily:T.fontMono}}>{selLot.heatNo}</span></>}
+              </div>}
+            </div>
+          </G3>
+        </div>
+
+        {/* Parts checklist */}
+        <SectionHd title={`Parts on ${selBarRef}`} sub={`${barForm.parts.length} parts found for this material`} />
+        {barForm.parts.length===0&&(
+          <InfoBanner color="amber">No parts found matching material code <strong>{selRun.materialCode}</strong> in the linked orders. Check that Drawing Part List entries have matching material codes and are linked to the drawings in this nesting run.</InfoBanner>
+        )}
+        {barForm.parts.map((p,i)=>{
+          const short = p.included && !p.isDefective && (+p.actualQty||0)<p.plannedQty;
+          const over  = p.included && !p.isDefective && (+p.actualQty||0)>p.plannedQty;
+          const repl  = p.isDefective ? findReplacement(p) : null;
+          return (
+            <div key={i} style={{ ...css.card,marginBottom:10,
+              borderLeft:`3px solid ${p.isDefective?T.red:p.included?T.green:T.border}` }}>
+              {/* Part header row */}
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+                <label style={{ display:"flex",alignItems:"center",gap:8,cursor:"pointer" }}>
+                  <input type="checkbox" checked={p.included}
+                    onChange={e=>updatePart(i,"included",e.target.checked)} />
+                  <span style={{ fontWeight:800,fontSize:14 }}>{p.markNo}</span>
+                  {p.desc&&<span style={{ fontSize:12,color:T.textMid }}>— {p.desc}</span>}
+                </label>
+                {p.included&&(
+                  <label style={{ display:"flex",alignItems:"center",gap:6,cursor:"pointer",
+                    fontSize:12,color:T.red }}>
+                    <input type="checkbox" checked={p.isDefective}
+                      onChange={e=>updatePart(i,"isDefective",e.target.checked)} />
+                    Defective
+                  </label>
+                )}
+              </div>
+              <div style={{ fontSize:11,color:T.textMid,paddingLeft:24,marginTop:2,marginBottom:p.included?10:0 }}>
+                {p.drawingNo&&<span>Drawing: {p.drawingNo} · </span>}
+                Planned: <strong>{p.plannedQty}</strong> pcs
+                {p.length>0&&<span> · Length: <span style={{fontFamily:T.fontMono}}>{p.length}mm</span></span>}
+              </div>
+
+              {/* Good piece — actual qty */}
+              {p.included&&!p.isDefective&&(
+                <div style={{ display:"flex",gap:12,alignItems:"flex-end",paddingLeft:24,flexWrap:"wrap" }}>
+                  <Field label="Actual Qty">
+                    <Input type="number" min={0} value={p.actualQty}
+                      onChange={e=>updatePart(i,"actualQty",+e.target.value)}
+                      style={{ width:80 }} />
+                  </Field>
+                  {short&&(
+                    <Field label="Reason for short qty *" required>
+                      <Input value={p.shortReason} onChange={e=>updatePart(i,"shortReason",e.target.value)}
+                        placeholder="e.g. Material insufficient on this bar"
+                        style={{ minWidth:240,borderColor:!p.shortReason?T.red:T.border }} />
+                    </Field>
+                  )}
+                  {over&&<div style={{ fontSize:12,color:T.amber,fontWeight:700,paddingBottom:6 }}>
+                    ⚠ Actual exceeds planned qty
+                  </div>}
+                </div>
+              )}
+
+              {/* Defective piece */}
+              {p.included&&p.isDefective&&(
+                <div style={{ paddingLeft:24 }}>
+                  <div style={{ display:"flex",gap:12,marginBottom:8,flexWrap:"wrap" }}>
+                    <Field label="Defect Type">
+                      <Sel value={p.defectType} onChange={e=>updatePart(i,"defectType",e.target.value)}
+                        style={{width:160}}>
+                        <option value="dimensional">Dimensional</option>
+                        <option value="surface">Surface</option>
+                        <option value="other">Other</option>
+                      </Sel>
+                    </Field>
+                    <Field label="Defect Reason *" required>
+                      <Input value={p.defectReason} onChange={e=>updatePart(i,"defectReason",e.target.value)}
+                        placeholder="Describe the defect" style={{ minWidth:240 }} />
+                    </Field>
+                  </div>
+                  {repl
+                    ? <div style={{ padding:"8px 12px",background:T.greenBg,border:`1px solid ${T.green}`,
+                        borderRadius:6,fontSize:12,color:T.green }}>
+                        ✓ Replacement available: Off-cut <strong style={{fontFamily:T.fontMono}}>{repl.lotNo}</strong> ({repl.offcutLength}mm) can yield a replacement piece of <strong>{p.markNo}</strong> ({p.length}mm required).
+                      </div>
+                    : <div style={{ padding:"8px 12px",background:T.amberBg,border:`1px solid ${T.amber}`,
+                        borderRadius:6,fontSize:12,color:T.amber }}>
+                        ⚠ No matching off-cut found for <strong>{p.markNo}</strong>. A new nesting run will be required to replace this piece.
+                      </div>
+                  }
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Off-cut */}
+        <div style={{ ...css.card,marginBottom:20 }}>
+          <label style={{ display:"flex",alignItems:"center",gap:8,cursor:"pointer",
+            fontWeight:700,marginBottom:barForm.hasOffcut?14:0 }}>
+            <input type="checkbox" checked={barForm.hasOffcut}
+              onChange={e=>setBarForm(f=>({...f,hasOffcut:e.target.checked}))} />
+            Record Off-cut to Stores
+          </label>
+          {barForm.hasOffcut&&(
+            <div style={{ paddingLeft:24 }}>
+              <div style={{ display:"flex",gap:12,alignItems:"flex-end",flexWrap:"wrap" }}>
+                {barForm.isPlate ? <>
+                  <Field label="Off-cut Length (mm)">
+                    <Input type="number" value={barForm.offcutLength}
+                      onChange={e=>setBarForm(f=>({...f,offcutLength:e.target.value}))} style={{width:120}} />
+                  </Field>
+                  <Field label="Off-cut Width (mm)">
+                    <Input type="number" value={barForm.offcutWidth}
+                      onChange={e=>setBarForm(f=>({...f,offcutWidth:e.target.value}))} style={{width:120}} />
+                  </Field>
+                </> : (
+                  <Field label="Remaining Length (mm)">
+                    <Input type="number" value={barForm.offcutLength}
+                      onChange={e=>setBarForm(f=>({...f,offcutLength:e.target.value}))} style={{width:140}} />
+                  </Field>
+                )}
+                <div style={{ paddingBottom:12,fontSize:13,fontWeight:700,
+                  color:oc>0?T.green:T.textLow }}>
+                  {oc>0 ? `≈ ${oc.toFixed(1)} kg` : "Enter dimensions"}
+                </div>
+              </div>
+              {ocTooLight&&<InfoBanner color="amber">Off-cut is below 5 kg minimum for sections — it will not be recorded as a stock lot.</InfoBanner>}
+              {oc>=5&&<InfoBanner color="green">Off-cut lot will be created in Stock with status Available, inheriting QC approval from parent lot.</InfoBanner>}
+            </div>
+          )}
+        </div>
+
+        <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
+          <button onClick={()=>setStep("bars")} style={css.btn.secondary}>Cancel</button>
+          <button onClick={confirmBar} style={css.btn.primary}>✓ Confirm {selBarRef}</button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRODUCTION: DRAWING ASSIGNMENT (Production Manager View)
+// ═══════════════════════════════════════════════════════════════════════════════
+const STAGE_OPTS    = [{v:"fitup",l:"Fit-Up"},{v:"welding",l:"Welding"},{v:"blasting",l:"Blasting"},{v:"painting",l:"Painting"}];
+const STAGE_SEQ_LABELS = { cutting:"Cutting", fitup:"Fit-Up", welding:"Welding", tpi_weld:"TPI Weld", blasting:"Blasting", painting:"Painting", tpi_paint:"TPI Paint", mdcc:"MDCC", dispatch:"Dispatch" };
+const SUBOPS_CUT    = ["Cut","Grind","Bevel","Drill"];
+const SUBOPS_WELD   = ["SMAW","GMAW","FCAW"];
+
+const DrawingAssignment = ({ user, drawing, order, instances, setInstances,
+                              nestingRuns, stock, contractors, onBack }) => {
+  const [selMarkNos, setSelMarkNos] = useState(new Set());
+  const [modal, setModal]           = useState(false);
+  const [assignForm, setAssignForm] = useState({ contractorId:"", stage:"fitup", subOps:[], pinnedEngineerId:"", notes:"" });
+  const [toast, setToast]           = useState(null);
+
+  const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3500); };
+  const prodEngineers = USERS.filter(u=>u.role==="production_engineer"&&u.active);
+  const parts = (order.parts||[]).filter(p=>p.drawingId===drawing.id);
+
+  // ── Panel 1: Ready to Process ──
+  const readyInst = instances.filter(i=>i.orderId===order.id&&i.drawingId===drawing.id&&i.currentStatus==="pending_collection");
+  const byMarkNo  = {};
+  readyInst.forEach(i=>{ if(!byMarkNo[i.markNo])byMarkNo[i.markNo]=[]; byMarkNo[i.markNo].push(i); });
+  const readyGroups = Object.entries(byMarkNo).map(([markNo,insts])=>({
+    markNo, count:insts.length, cuttingBayUsed:insts[0]?.cuttingBayUsed,
+    batchNo:insts[0]?.batchNo, readySince:insts[0]?.stageHistory?.[0]?.signedOffDate||"",
+    assigned:!!insts[0]?.assignedContractorId,
+    contractorName:insts[0]?.assignedContractorName||"",
+    pinnedName:insts[0]?.pinnedEngineerName||"",
+  }));
+
+  // ── Panel 2: In Cutting ──
+  const confirmedRuns = nestingRuns.filter(r=>r.status==="confirmed"&&
+    (r.drawings?.includes(drawing.id)||r.orders?.includes(order.id)));
+  const inCuttingSet = new Set();
+  confirmedRuns.forEach(run=>{
+    const total = run.sheetsOrBarsUsed||0;
+    const done  = (run.confirmedBars||[]).length;
+    if (done < total) parts.filter(p=>p.fabType==="Fabricate"&&p.source==="Procure").forEach(p=>inCuttingSet.add(p.markNo));
+  });
+  const instMarkNos = new Set(instances.filter(i=>i.drawingId===drawing.id&&i.orderId===order.id).map(i=>i.markNo));
+  const inCuttingParts = parts.filter(p=>p.fabType==="Fabricate"&&p.source==="Procure"&&inCuttingSet.has(p.markNo)&&!readyGroups.find(g=>g.markNo===p.markNo));
+
+  // ── Panel 3: Not Yet Planned ──
+  const notYetPlanned = parts.filter(p=>p.fabType==="Fabricate"&&p.source==="Procure"&&!instMarkNos.has(p.markNo)&&!inCuttingSet.has(p.markNo));
+  const getRMStatus = (p) => {
+    if (stock.some(s=>(s.allocations||[]).some(a=>a.drawingId===drawing.id&&a.markNo===p.markNo)))
+      return {color:"blue",label:"Allocated"};
+    if (stock.some(s=>s.status==="available"&&s.matCode===p.matCode&&(s.wtAvailable||0)>0))
+      return {color:"amber",label:"In Stock"};
+    return {color:"red",label:"No Stock"};
+  };
+
+  // ── Bought Out ──
+  const boughtOut = parts.filter(p=>p.fabType==="Bought Out");
+
+  const toggleMark = (m) => setSelMarkNos(prev=>{ const n=new Set(prev); n.has(m)?n.delete(m):n.add(m); return n; });
+
+  const saveAssign = () => {
+    if (!assignForm.contractorId) return showToast("Select a contractor","amber");
+    const con = contractors.find(c=>c.id===assignForm.contractorId);
+    const eng = prodEngineers.find(u=>u.id===assignForm.pinnedEngineerId);
+    const marks = [...selMarkNos];
+    setInstances(prev=>prev.map(inst=>{
+      if (!marks.includes(inst.markNo)||inst.drawingId!==drawing.id||
+          inst.orderId!==order.id||inst.currentStatus!=="pending_collection") return inst;
+      return { ...inst,
+        assignedContractorId:   assignForm.contractorId,
+        assignedContractorName: con?.name||"",
+        pinnedEngineerId:       assignForm.pinnedEngineerId,
+        pinnedEngineerName:     eng?.name||"",
+        subOpsRequired:         assignForm.subOps.length?assignForm.subOps:inst.subOpsRequired,
+        assignedStage:          assignForm.stage,
+        assignmentNotes:        assignForm.notes,
+      };
+    }));
+    showToast(`${marks.length} mark number(s) assigned to ${con?.name}`);
+    setSelMarkNos(new Set()); setModal(false);
+  };
+
+  const toggleSubOp = op => setAssignForm(f=>({...f, subOps:f.subOps.includes(op)?f.subOps.filter(o=>o!==op):[...f.subOps,op]}));
+
+  const toastEl = toast && <div style={{ position:"fixed",top:20,right:20,zIndex:2000,
+    background:toast.color==="green"?T.greenBg:toast.color==="amber"?T.amberBg:T.redBg,
+    border:`1px solid ${toast.color==="green"?T.green:toast.color==="amber"?T.amber:T.red}`,
+    borderRadius:8,padding:"12px 20px",
+    color:toast.color==="green"?T.green:toast.color==="amber"?T.amber:T.red,
+    fontSize:13,fontWeight:600 }}>{toast.msg}</div>;
+
+  return (
+    <div>
+      {toastEl}
+      <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← All Drawings</button>
+        <div>
+          <div style={{ fontSize:16,fontWeight:800,color:T.text }}>{drawing.drawingNo}</div>
+          <div style={{ fontSize:12,color:T.textMid }}>{order.id} · Qty: {drawing.qty||1}</div>
+        </div>
+        {selMarkNos.size>0&&(
+          <button onClick={()=>{setAssignForm({contractorId:"",stage:"fitup",subOps:[],pinnedEngineerId:"",notes:""});setModal(true);}}
+            style={{ ...css.btn.primary,marginLeft:"auto" }}>
+            Assign {selMarkNos.size} selected →
+          </button>
+        )}
+      </div>
+
+      {/* Panel 1 */}
+      <div style={{ ...css.card,marginBottom:16,borderLeft:`3px solid ${T.green}` }}>
+        <SectionHd title="Panel 1 — Ready to Process"
+          sub={`${readyGroups.length} mark number${readyGroups.length!==1?"s":""} — cutting confirmed, awaiting contractor assignment`} />
+        {readyGroups.length===0
+          ? <div style={{ color:T.textLow,fontSize:12,padding:"4px 0" }}>No instances ready yet. Confirm a nesting run bar to create instances.</div>
+          : readyGroups.map(g=>(
+              <div key={g.markNo} onClick={()=>!g.assigned&&toggleMark(g.markNo)}
+                style={{ display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderRadius:6,
+                  marginBottom:4,cursor:g.assigned?"default":"pointer",
+                  background:selMarkNos.has(g.markNo)?T.accentLo:"transparent",
+                  border:`1px solid ${selMarkNos.has(g.markNo)?T.accent:T.border}` }}>
+                {!g.assigned&&<input type="checkbox" checked={selMarkNos.has(g.markNo)}
+                  onChange={()=>toggleMark(g.markNo)} onClick={e=>e.stopPropagation()} />}
+                <div style={{ flex:1 }}>
+                  <div style={{ display:"flex",gap:8,alignItems:"center",flexWrap:"wrap" }}>
+                    <span style={{ fontWeight:800,fontSize:14 }}>{g.markNo}</span>
+                    <Badge color="green">{g.count} pcs</Badge>
+                    {g.assigned&&<Badge color="blue">{g.contractorName}</Badge>}
+                    {g.pinnedName&&<Badge color="amber">📌 {g.pinnedName}</Badge>}
+                  </div>
+                  <div style={{ fontSize:11,color:T.textMid,marginTop:2 }}>
+                    Bay: {g.cuttingBayUsed||"—"} · Batch: <span style={{fontFamily:T.fontMono}}>{g.batchNo||"—"}</span>
+                    {g.readySince&&` · Cut: ${g.readySince}`}
+                  </div>
+                </div>
+              </div>
+            ))
+        }
+        {readyGroups.length>0&&selMarkNos.size===0&&readyGroups.some(g=>!g.assigned)&&(
+          <div style={{ fontSize:11,color:T.textMid,marginTop:8 }}>Tap mark numbers to select for assignment.</div>
+        )}
+      </div>
+
+      {/* Panel 2 */}
+      <div style={{ ...css.card,marginBottom:16,borderLeft:`3px solid ${T.amber}` }}>
+        <SectionHd title="Panel 2 — In Cutting"
+          sub="Parts on a confirmed nesting run — bars not yet fully confirmed" />
+        {inCuttingParts.length===0
+          ? <div style={{ color:T.textLow,fontSize:12,padding:"4px 0" }}>No parts currently in cutting.</div>
+          : inCuttingParts.map(p=>{
+              const run = confirmedRuns.find(r=>r.drawings?.includes(drawing.id)||r.orders?.includes(order.id));
+              return (
+                <div key={p.id} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"8px 12px",border:`1px solid ${T.border}`,borderRadius:6,marginBottom:4 }}>
+                  <div>
+                    <span style={{ fontWeight:700 }}>{p.markNo}</span>
+                    {p.desc&&<span style={{ fontSize:12,color:T.textMid,marginLeft:8 }}>{p.desc}</span>}
+                    <div style={{ fontSize:11,color:T.textMid,marginTop:2 }}>{p.qtyPerDrg} pcs · {p.matCode||`${p.section} ${p.size}`}</div>
+                  </div>
+                  <div style={{ fontSize:12,textAlign:"right" }}>
+                    {run&&<div style={{ fontFamily:T.fontMono,color:T.accent,fontSize:11 }}>{run.id}</div>}
+                    <div style={{ color:T.textMid }}>
+                      {run&&`${(run.confirmedBars||[]).length}/${run.sheetsOrBarsUsed} bars cut`}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+        }
+      </div>
+
+      {/* Panel 3 */}
+      <div style={{ ...css.card,marginBottom:16,borderLeft:`3px solid ${T.border}` }}>
+        <SectionHd title="Panel 3 — Not Yet Planned"
+          sub="Parts with no nesting run — these are blocking production" />
+        {notYetPlanned.length===0
+          ? <div style={{ color:T.textLow,fontSize:12,padding:"4px 0" }}>All fabrication parts are planned or in cutting.</div>
+          : notYetPlanned.map(p=>{
+              const rm = getRMStatus(p);
+              return (
+                <div key={p.id} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",
+                  padding:"8px 12px",border:`1px solid ${T.border}`,borderRadius:6,marginBottom:4 }}>
+                  <div>
+                    <span style={{ fontWeight:700 }}>{p.markNo}</span>
+                    {p.desc&&<span style={{ fontSize:12,color:T.textMid,marginLeft:8 }}>{p.desc}</span>}
+                    <div style={{ fontSize:11,color:T.textMid,marginTop:2 }}>
+                      {p.qtyPerDrg} pcs · {p.matCode||`${p.section} ${p.size}`}
+                      {p.length>0&&` · ${p.length}mm`}
+                    </div>
+                  </div>
+                  <Badge color={rm.color}>{rm.label}</Badge>
+                </div>
+              );
+            })
+        }
+      </div>
+
+      {/* Bought Out Items */}
+      {boughtOut.length>0&&(
+        <div style={{ ...css.card,marginBottom:16 }}>
+          <SectionHd title="Bought Out Items"
+            sub={`${boughtOut.length} item${boughtOut.length!==1?"s":""} — visibility only, no production tracking`} />
+          <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
+            <thead><tr><TH>Mark No</TH><TH>Description</TH><TH>Size</TH><TH right>Qty</TH><TH>Issue Status</TH></tr></thead>
+            <tbody>
+              {boughtOut.map(p=>{
+                const issued = stock.some(s=>(s.issues||[]).some(iss=>iss.drawingId===drawing.id));
+                return (
+                  <tr key={p.id}>
+                    <TD bold>{p.markNo}</TD><TD>{p.desc}</TD>
+                    <TD mono>{p.size||"—"}</TD><TD right>{p.qtyPerDrg}</TD>
+                    <TD><Badge color={issued?"green":"gray"}>{issued?"Issued from Stores":"Not Issued"}</Badge></TD>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Assignment Modal */}
+      {modal&&(
+        <Modal title={`Assign ${selMarkNos.size} Mark Number${selMarkNos.size!==1?"s":""}`} onClose={()=>setModal(false)} width={540}>
+          <InfoBanner color="blue">Assigning: <strong>{[...selMarkNos].join(", ")}</strong></InfoBanner>
+          <MField label="Contractor / Team *">
+            <select value={assignForm.contractorId}
+              onChange={e=>setAssignForm(f=>({...f,contractorId:e.target.value}))}
+              style={{ ...css.input,borderColor:!assignForm.contractorId?T.red:T.border }}>
+              <option value="">Select contractor...</option>
+              {contractors.filter(c=>c.active).map(c=>(
+                <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
+              ))}
+            </select>
+          </MField>
+          <MField label="Stage Starting From">
+            <select value={assignForm.stage} onChange={e=>setAssignForm(f=>({...f,stage:e.target.value}))} style={css.input}>
+              {STAGE_OPTS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+            </select>
+          </MField>
+          <MField label="Sub-Operations Required">
+            <div style={{ fontSize:11,color:T.textMid,marginBottom:6,fontWeight:700 }}>CUTTING</div>
+            <div style={{ display:"flex",gap:20,marginBottom:12 }}>
+              {SUBOPS_CUT.map(op=>(
+                <label key={op} style={{ display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13 }}>
+                  <input type="checkbox" checked={assignForm.subOps.includes(op)} onChange={()=>toggleSubOp(op)} />{op}
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize:11,color:T.textMid,marginBottom:6,fontWeight:700 }}>WELDING PROCESS</div>
+            <div style={{ display:"flex",gap:20 }}>
+              {SUBOPS_WELD.map(op=>(
+                <label key={op} style={{ display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13 }}>
+                  <input type="checkbox" checked={assignForm.subOps.includes(op)} onChange={()=>toggleSubOp(op)} />{op}
+                </label>
+              ))}
+            </div>
+          </MField>
+          <MField label="Pin to Production Engineer (optional)">
+            <select value={assignForm.pinnedEngineerId}
+              onChange={e=>setAssignForm(f=>({...f,pinnedEngineerId:e.target.value}))} style={css.input}>
+              <option value="">None — shared queue only</option>
+              {prodEngineers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </MField>
+          <MField label="Working Notes">
+            <Textarea value={assignForm.notes} onChange={e=>setAssignForm(f=>({...f,notes:e.target.value}))}
+              placeholder="Instructions or notes for the contractor..." rows={2} />
+          </MField>
+          <div style={{ display:"flex",gap:8,justifyContent:"flex-end",marginTop:8 }}>
+            <button onClick={()=>setModal(false)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={saveAssign} style={css.btn.primary} disabled={!assignForm.contractorId}>
+              ✓ Assign {selMarkNos.size} Mark Number{selMarkNos.size!==1?"s":""}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRODUCTION STEP 5: CONTRACTOR WORK QUEUE
+// ═══════════════════════════════════════════════════════════════════════════════
+const ContractorWorkQueue = ({ user, instances, setInstances }) => {
+  const [selGroup, setSelGroup]       = useState(null);
+  const [subOpChecks, setSubOpChecks] = useState({});
+
+  const cid = user.contractorId;
+  const my      = instances.filter(i => i.assignedContractorId === cid);
+  const pending = my.filter(i => i.currentStatus === "pending_collection");
+  const inProg  = my.filter(i => i.currentStatus === "in_progress");
+  const pendSup = my.filter(i => i.currentStatus === "pending_supervisor");
+  const done    = my.filter(i => i.currentStatus === "completed").slice(-10);
+
+  // Group pending_collection by nestingRunId+barRef
+  const collGroups = {};
+  pending.forEach(i => {
+    const k = `${i.nestingRunId||""}/${i.barRef||""}`;
+    if (!collGroups[k]) collGroups[k] = { key:k, nestingRunId:i.nestingRunId, barRef:i.barRef, cuttingBayUsed:i.cuttingBayUsed, drawingNo:i.drawingNo, orderId:i.orderId, parts:{} };
+    if (!collGroups[k].parts[i.markNo]) collGroups[k].parts[i.markNo] = { markNo:i.markNo, desc:i.desc, insts:[] };
+    collGroups[k].parts[i.markNo].insts.push(i);
+  });
+
+  // Group in_progress by markNo+drawingId+orderId
+  const inProgGroups = {};
+  inProg.forEach(i => {
+    const k = `${i.markNo}/${i.drawingId}/${i.orderId}`;
+    if (!inProgGroups[k]) inProgGroups[k] = { key:k, markNo:i.markNo, desc:i.desc, drawingId:i.drawingId, drawingNo:i.drawingNo, orderId:i.orderId, assignedStage:i.assignedStage||i.currentStage, subOpsRequired:i.subOpsRequired||[], insts:[], lastRejection:null };
+    inProgGroups[k].insts.push(i);
+    // Capture latest rejection reason for current stage
+    const rejStageHist = (i.stageHistory||[]).filter(h => h.stage === (i.assignedStage||i.currentStage) && (h.rejections||[]).length > 0);
+    if (rejStageHist.length > 0) {
+      const latestRej = rejStageHist[rejStageHist.length-1].rejections.slice(-1)[0];
+      if (latestRej) inProgGroups[k].lastRejection = latestRej;
+    }
+  });
+
+  const doCollect = (group) => {
+    const ids = Object.values(group.parts).flatMap(p => p.insts.map(i => i.instanceId));
+    setInstances(prev => prev.map(i => ids.includes(i.instanceId) ? { ...i, currentStatus:"in_progress", collectedDate:today(), collectedBy:user.username } : i));
+  };
+
+  const doMarkComplete = (group) => {
+    const ids = group.insts.map(i => i.instanceId);
+    const checks = subOpChecks[group.key] || {};
+    const completedOps = group.subOpsRequired.filter(op => checks[op]);
+    setInstances(prev => prev.map(i => {
+      if (!ids.includes(i.instanceId)) return i;
+      const hist = [...(i.stageHistory||[])];
+      const entry = { stage:i.currentStage, markedDoneBy:user.username, markedDoneName:user.name, markedDoneDate:today(), subOpsCompleted:completedOps };
+      const existIdx = hist.findIndex(h => h.stage === i.currentStage);
+      if (existIdx >= 0) hist[existIdx] = { ...hist[existIdx], ...entry };
+      else hist.push(entry);
+      return { ...i, currentStatus:"pending_supervisor", subOpsCompleted:completedOps, stageHistory:hist };
+    }));
+    setSelGroup(null);
+    setSubOpChecks(prev => { const n={...prev}; delete n[group.key]; return n; });
+  };
+
+  const SectionLabel = ({ title, count, color }) => (
+    <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:10,marginTop:24 }}>
+      <div style={{ fontSize:11,fontWeight:800,color:color||T.textMid,letterSpacing:"0.08em" }}>{title}</div>
+      {count > 0 && <div style={{ background:color||T.textMid,color:"#000",fontSize:10,fontWeight:800,borderRadius:8,padding:"1px 6px" }}>{count}</div>}
+    </div>
+  );
+
+  // ── Completion / detail view ──
+  const selGD = selGroup ? inProgGroups[selGroup] : null;
+  if (selGD) {
+    const checks = subOpChecks[selGD.key] || {};
+    const allChecked = selGD.subOpsRequired.length === 0 || selGD.subOpsRequired.every(op => checks[op]);
+    const stageLabel = STAGE_SEQ_LABELS[selGD.assignedStage] || selGD.assignedStage || "Fit-Up";
+    return (
+      <div>
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+          <button onClick={() => setSelGroup(null)} style={css.btn.ghost}>← Back to My Work</button>
+        </div>
+        {selGD.lastRejection && (
+          <div style={{ background:T.redBg,border:`1px solid ${T.red}`,borderRadius:8,padding:"12px 16px",marginBottom:16 }}>
+            <div style={{ fontSize:11,fontWeight:800,color:T.red,marginBottom:4 }}>⚠ REJECTION — REWORK REQUIRED</div>
+            <div style={{ fontSize:13,color:T.text }}>{selGD.lastRejection.reason}</div>
+            {selGD.lastRejection.rejectedBy && <div style={{ fontSize:11,color:T.textMid,marginTop:4 }}>Rejected by {selGD.lastRejection.rejectedBy} on {selGD.lastRejection.date}</div>}
+          </div>
+        )}
+        <div style={{ ...css.card,marginBottom:16 }}>
+          <div style={{ fontSize:18,fontWeight:800,color:T.text,marginBottom:2,fontFamily:T.fontMono }}>{selGD.markNo}</div>
+          <div style={{ fontSize:13,color:T.textMid,marginBottom:10 }}>{selGD.desc}</div>
+          <div style={{ display:"flex",gap:16,flexWrap:"wrap",fontSize:12,color:T.textMid }}>
+            <span>Drawing: <span style={{color:T.text,fontFamily:T.fontMono}}>{selGD.drawingNo||selGD.drawingId}</span></span>
+            <span>Order: <span style={{color:T.text,fontFamily:T.fontMono}}>{selGD.orderId}</span></span>
+            <span>Qty: <span style={{color:T.text,fontWeight:700}}>{selGD.insts.length} pcs</span></span>
+          </div>
+        </div>
+        <div style={{ ...css.card,marginBottom:16 }}>
+          <div style={{ fontSize:13,fontWeight:700,color:T.text,marginBottom:14 }}>STAGE: {stageLabel}</div>
+          {selGD.subOpsRequired.length > 0 ? (
+            <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+              {selGD.subOpsRequired.map(op => (
+                <label key={op} style={{ display:"flex",alignItems:"center",gap:12,cursor:"pointer",padding:"12px 14px",background:checks[op]?T.greenBg:T.bgInput,border:`1px solid ${checks[op]?T.green:T.border}`,borderRadius:6,userSelect:"none" }}>
+                  <input type="checkbox" checked={!!checks[op]}
+                    onChange={e => setSubOpChecks(prev => ({...prev,[selGD.key]:{...(prev[selGD.key]||{}),[op]:e.target.checked}}))}
+                    style={{ width:18,height:18,cursor:"pointer" }} />
+                  <span style={{ fontSize:15,fontWeight:600,color:checks[op]?T.green:T.text }}>{op}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize:13,color:T.textMid }}>No specific sub-operations required for this stage.</div>
+          )}
+        </div>
+        <button onClick={() => doMarkComplete(selGD)} disabled={!allChecked}
+          style={{ ...css.btn.primary,width:"100%",padding:"16px 0",fontSize:16,fontWeight:800,opacity:allChecked?1:0.35 }}>
+          ✓ MARK COMPLETE
+        </button>
+      </div>
+    );
+  }
+
+  // ── Main queue view ──
+  const groupAndRender = (arr, opacity=1, showRej=false) => {
+    const grps = {};
+    arr.forEach(i => {
+      const k = `${i.markNo}/${i.drawingId}/${i.orderId}`;
+      if (!grps[k]) grps[k] = { key:k, markNo:i.markNo, desc:i.desc, drawingNo:i.drawingNo, orderId:i.orderId, insts:[], lastRejection:null };
+      grps[k].insts.push(i);
+      if (showRej) {
+        const rh = (i.stageHistory||[]).filter(h => h.stage===(i.assignedStage||i.currentStage) && (h.rejections||[]).length>0);
+        if (rh.length>0) { const lr=rh[rh.length-1].rejections.slice(-1)[0]; if (lr) grps[k].lastRejection=lr; }
+      }
+    });
+    return Object.values(grps);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:22,fontWeight:800,color:T.text }}>My Work</div>
+        <div style={{ fontSize:13,color:T.textMid }}>{user.name}</div>
+      </div>
+
+      {my.length === 0 && (
+        <div style={{ textAlign:"center",padding:64,color:T.textLow }}>
+          <div style={{ fontSize:40,marginBottom:12 }}>📋</div>
+          <div style={{ fontSize:15,fontWeight:700,color:T.textMid,marginBottom:6 }}>No work assigned yet</div>
+          <div style={{ fontSize:13 }}>Parts will appear here when the production manager assigns them to you.</div>
+        </div>
+      )}
+
+      {/* ── READY TO COLLECT ── */}
+      {Object.keys(collGroups).length > 0 && (
+        <>
+          <SectionLabel title="READY TO COLLECT" count={pending.length} color={T.green} />
+          {Object.values(collGroups).map(g => (
+            <div key={g.key} style={{ ...css.card,border:`1px solid ${T.green}44`,marginBottom:10 }}>
+              <div style={{ fontSize:11,fontWeight:800,color:T.green,marginBottom:8 }}>READY TO COLLECT</div>
+              <div style={{ fontFamily:T.fontMono,fontSize:12,color:T.textMid,marginBottom:2 }}>
+                {g.nestingRunId} / {g.barRef} &nbsp;·&nbsp; Bay: <span style={{color:T.text}}>{g.cuttingBayUsed||"—"}</span>
+              </div>
+              <div style={{ fontSize:11,color:T.textMid,marginBottom:12 }}>
+                Drawing: {g.drawingNo||"—"} / Order: {g.orderId}
+              </div>
+              <div style={{ display:"flex",flexDirection:"column",gap:6,marginBottom:14 }}>
+                {Object.values(g.parts).map(p => (
+                  <div key={p.markNo} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 10px",background:T.bgInput,borderRadius:5 }}>
+                    <div>
+                      <span style={{ fontWeight:700,color:T.text,fontFamily:T.fontMono }}>{p.markNo}</span>
+                      <span style={{ color:T.textMid,marginLeft:10,fontSize:12 }}>{p.desc}</span>
+                    </div>
+                    <span style={{ fontSize:12,fontWeight:700,color:T.accentHi }}>{p.insts.length} pcs</span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => doCollect(g)} style={{ ...css.btn.primary,width:"100%",padding:"12px 0",fontSize:15,fontWeight:700 }}>
+                ✓ Collected
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* ── IN PROGRESS ── */}
+      {inProg.length > 0 && (
+        <>
+          <SectionLabel title="IN PROGRESS" count={inProg.length} color={T.accent} />
+          <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+            {groupAndRender(inProg, 1, true).map(g => {
+              const hasRej = !!g.lastRejection;
+              return (
+                <div key={g.key} onClick={() => setSelGroup(g.key)}
+                  style={{ ...css.card,cursor:"pointer",border:`1px solid ${hasRej?T.red:T.border}` }}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor=hasRej?T.red:T.borderHi}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor=hasRej?T.red:T.border}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                    <div>
+                      {hasRej && <div style={{ fontSize:11,fontWeight:800,color:T.red,marginBottom:4 }}>⚠ REWORK REQUIRED</div>}
+                      <div style={{ fontWeight:800,fontSize:14,color:T.text,fontFamily:T.fontMono }}>{g.markNo}</div>
+                      <div style={{ fontSize:12,color:T.textMid,marginTop:2 }}>{g.desc} · {g.insts.length} pcs · {g.drawingNo||g.drawingId}</div>
+                      <div style={{ display:"flex",gap:6,marginTop:6 }}>
+                        {inProgGroups[g.key] && <Badge color="blue">{STAGE_SEQ_LABELS[inProgGroups[g.key].assignedStage]||inProgGroups[g.key].assignedStage||"Fit-Up"}</Badge>}
+                        {inProgGroups[g.key]?.subOpsRequired?.length > 0 && <Badge color="gray">{inProgGroups[g.key].subOpsRequired.join(", ")}</Badge>}
+                      </div>
+                    </div>
+                    <div style={{ fontSize:22,color:T.textLow }}>›</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* ── PENDING SUPERVISOR ── */}
+      {pendSup.length > 0 && (
+        <>
+          <SectionLabel title="PENDING SUPERVISOR" count={pendSup.length} color={T.amber} />
+          <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+            {groupAndRender(pendSup).map(g => (
+              <div key={g.key} style={{ ...css.card,opacity:0.7 }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontWeight:700,fontSize:13,color:T.text,fontFamily:T.fontMono }}>{g.markNo}</div>
+                    <div style={{ fontSize:12,color:T.textMid }}>{g.desc} · {g.insts.length} pcs · {g.drawingNo||g.drawingId}</div>
+                  </div>
+                  <Badge color="amber">Awaiting sign-off</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── COMPLETED (recent) ── */}
+      {done.length > 0 && (
+        <>
+          <SectionLabel title="COMPLETED" count={done.length} color={T.green} />
+          <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+            {groupAndRender(done).map(g => (
+              <div key={g.key} style={{ ...css.card,opacity:0.5 }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontWeight:700,fontSize:13,color:T.text,fontFamily:T.fontMono }}>{g.markNo}</div>
+                    <div style={{ fontSize:12,color:T.textMid }}>{g.desc} · {g.insts.length} pcs</div>
+                  </div>
+                  <Badge color="green">Done</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRODUCTION STEP 6: SUPERVISOR SOFT GATE
+// ═══════════════════════════════════════════════════════════════════════════════
+const STAGE_NEXT = {
+  cutting:"fitup", fitup:"welding", welding:"tpi_weld", tpi_weld:"blasting",
+  blasting:"painting", painting:"tpi_paint", tpi_paint:"mdcc", mdcc:"dispatch", dispatch:null,
+};
+
+const STAGE_CHECKLISTS = {
+  fitup:    ["All parts present per drawing","Dimensions within tolerance","Alignment acceptable","Tack welds correctly placed"],
+  welding:  ["All joints welded","Visual weld quality acceptable","No undercutting or porosity visible","Spatter cleaned"],
+  blasting: ["Surface grade achieved (Sa 2.5 / Sa 3)","No missed areas","Completed within time limit before painting"],
+  tpi_weld: ["Weld inspection report reviewed","All joints acceptable per report","NDE records complete (if required)"],
+  tpi_paint:["Paint inspection report reviewed","DFT readings within specification","Holiday test passed"],
+  mdcc:     ["MTC copies attached","TPI Weld report attached","TPI Paint report attached","Dimensional report attached","Packing list attached","Test certificates attached"],
+  dispatch: ["Material loaded onto vehicle","Dispatch challan prepared","Gate pass issued"],
+};
+
+const SUPERVISOR_STAGES = {
+  super_admin:         ["fitup","welding","tpi_weld","blasting","painting","tpi_paint","mdcc","dispatch"],
+  production_engineer: ["fitup","welding","blasting"],
+  blasting_engineer:   ["blasting"],
+  painting_engineer:   ["painting"],
+  qc_admin:            ["tpi_weld","painting","tpi_paint","mdcc"],
+  dispatch_admin:      ["dispatch"],
+};
+
+const SupervisorQueue = ({ user, instances, setInstances, orders, onBack }) => {
+  const [selGroup, setSelGroup]   = useState(null); // "markNo/drawingId/orderId"
+  const [checks, setChecks]       = useState({});   // { item: true/false }
+  const [dft, setDft]             = useState("");    // DFT reading for painting
+  const [rejectMode, setRejectMode] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+
+  const myStages = SUPERVISOR_STAGES[user.role] || [];
+
+  // All instances pending supervisor approval at my stages
+  const myQueue = instances.filter(i =>
+    i.currentStatus === "pending_supervisor" && myStages.includes(i.currentStage)
+  );
+
+  // Group by markNo+drawingId+orderId
+  const groups = {};
+  myQueue.forEach(i => {
+    const k = `${i.markNo}/${i.drawingId}/${i.orderId}`;
+    if (!groups[k]) {
+      const ord = orders.find(o => o.id === i.orderId);
+      groups[k] = { key:k, markNo:i.markNo, desc:i.desc, drawingId:i.drawingId, drawingNo:i.drawingNo,
+        orderId:i.orderId, clientId:ord?.clientId||"", stage:i.currentStage,
+        contractorName:i.assignedContractorName||"Unknown",
+        pinnedEngineerId:i.pinnedEngineerId||null, isPinned:!!i.pinnedEngineerId,
+        markedDoneDate: (i.stageHistory||[]).slice(-1)[0]?.markedDoneDate||"",
+        batchNo:i.batchNo||"", insts:[], rejCount:0
+      };
+    }
+    groups[k].insts.push(i);
+    // Count rejections on current stage
+    const rh = (i.stageHistory||[]).filter(h=>h.stage===i.currentStage);
+    if (rh.length>0) groups[k].rejCount = Math.max(groups[k].rejCount, (rh[rh.length-1].rejections||[]).length);
+  });
+
+  // Sort: pinned first, then by rejection count desc, then by date asc
+  const sortedGroups = Object.values(groups).sort((a,b)=>{
+    if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+    if (b.rejCount !== a.rejCount) return b.rejCount - a.rejCount;
+    return (a.markedDoneDate||"") < (b.markedDoneDate||"") ? -1 : 1;
+  });
+
+  const resetApproval = () => { setChecks({}); setDft(""); setRejectMode(false); setRejectReason(""); };
+
+  const doApprove = (group, remarks) => {
+    const stage = group.stage;
+    const nextStage = STAGE_NEXT[stage];
+    const ids = group.insts.map(i=>i.instanceId);
+    const checkedItems = Object.keys(checks).filter(k=>checks[k]);
+    setInstances(prev => prev.map(i => {
+      if (!ids.includes(i.instanceId)) return i;
+      const hist = [...(i.stageHistory||[])];
+      const idx = hist.findIndex(h=>h.stage===stage);
+      const entry = { stage, signedOffBy:user.username, signedOffName:user.name, signedOffDate:today(),
+        checklistItems:checkedItems, dftReading:dft||null, remarks:remarks||"" };
+      if (idx>=0) hist[idx]={...hist[idx],...entry}; else hist.push(entry);
+      return {
+        ...i,
+        currentStage: nextStage || stage,
+        currentStatus: nextStage ? "in_progress" : "completed",
+        stageHistory: hist,
+      };
+    }));
+    resetApproval();
+    setSelGroup(null);
+  };
+
+  const doReject = (group) => {
+    if (!rejectReason.trim()) return;
+    const stage = group.stage;
+    const ids = group.insts.map(i=>i.instanceId);
+    setInstances(prev => prev.map(i => {
+      if (!ids.includes(i.instanceId)) return i;
+      const hist = [...(i.stageHistory||[])];
+      const idx = hist.findIndex(h=>h.stage===stage);
+      const rejEntry = { rejectedBy:user.username, rejectedName:user.name, date:today(), reason:rejectReason.trim() };
+      let newRejCount = 1;
+      if (idx>=0) {
+        const prevRejs = hist[idx].rejections||[];
+        newRejCount = prevRejs.length + 1;
+        hist[idx] = { ...hist[idx], rejections:[...prevRejs, rejEntry] };
+      } else {
+        hist.push({ stage, rejections:[rejEntry] });
+      }
+      const qualityFlag = newRejCount >= 2;
+      return {
+        ...i,
+        currentStatus: "in_progress",
+        stageHistory: hist,
+        rejectionCount: (i.rejectionCount||0)+1,
+        qualityConcernFlag: qualityFlag,
+      };
+    }));
+    resetApproval();
+    setSelGroup(null);
+  };
+
+  // ── Detail / checklist view ──
+  const selGD = selGroup ? groups[selGroup] : null;
+  if (selGD) {
+    const stage = selGD.stage;
+    const checklist = STAGE_CHECKLISTS[stage] || [];
+    const allChecked = checklist.every(item => checks[item]) && (stage!=="painting" || (dft&&!isNaN(dft)&&parseFloat(dft)>0));
+    const isPainting = stage === "painting";
+
+    return (
+      <div>
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+          <button onClick={()=>{resetApproval();setSelGroup(null);}} style={css.btn.ghost}>← Approval Queue</button>
+        </div>
+        {selGD.rejCount>=2&&(
+          <div style={{ background:T.redBg,border:`1px solid ${T.red}`,borderRadius:8,padding:"10px 14px",marginBottom:14 }}>
+            <div style={{ fontSize:11,fontWeight:800,color:T.red }}>⚠ QUALITY CONCERN — {selGD.rejCount} REJECTIONS ON THIS STAGE</div>
+          </div>
+        )}
+        {/* Instance info */}
+        <div style={{ ...css.card,marginBottom:14 }}>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,fontSize:12 }}>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>MARK NO</div><div style={{color:T.text,fontFamily:T.fontMono,fontWeight:800,fontSize:15}}>{selGD.markNo}</div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>STAGE</div><div><Badge color="blue">{STAGE_SEQ_LABELS[stage]}</Badge></div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>DESCRIPTION</div><div style={{color:T.text}}>{selGD.desc}</div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>QTY</div><div style={{color:T.text,fontWeight:700}}>{selGD.insts.length} pcs</div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>DRAWING</div><div style={{color:T.text,fontFamily:T.fontMono}}>{selGD.drawingNo}</div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>ORDER</div><div style={{color:T.text,fontFamily:T.fontMono}}>{selGD.orderId}</div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>CONTRACTOR</div><div style={{color:T.text}}>{selGD.contractorName}</div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>BATCH NO</div><div style={{color:T.text,fontFamily:T.fontMono}}>{selGD.batchNo||"—"}</div></div>
+          </div>
+        </div>
+        {/* Stage checklist */}
+        <div style={{ ...css.card,marginBottom:14 }}>
+          <div style={{ fontSize:13,fontWeight:700,color:T.text,marginBottom:12 }}>INSPECTION CHECKLIST — {STAGE_SEQ_LABELS[stage]}</div>
+          {checklist.length > 0 && (
+            <div style={{ display:"flex",flexDirection:"column",gap:8,marginBottom:isPainting?12:0 }}>
+              {checklist.map(item=>(
+                <label key={item} style={{ display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"10px 12px",background:checks[item]?T.greenBg:T.bgInput,border:`1px solid ${checks[item]?T.green:T.border}`,borderRadius:6,userSelect:"none" }}>
+                  <input type="checkbox" checked={!!checks[item]} onChange={e=>setChecks(prev=>({...prev,[item]:e.target.checked}))} style={{ width:16,height:16 }} />
+                  <span style={{ fontSize:13,color:checks[item]?T.green:T.text }}>{item}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          {isPainting && (
+            <div style={{ marginTop:checklist.length>0?12:0 }}>
+              <label style={{ fontSize:11,fontWeight:700,color:T.textMid,display:"block",marginBottom:4 }}>DFT READING (μm) — REQUIRED</label>
+              <div style={{ display:"flex",alignItems:"center",gap:8 }}>
+                <input type="number" min="0" step="0.1" value={dft} onChange={e=>setDft(e.target.value)}
+                  placeholder="e.g. 75" style={{ ...css.input,width:120 }} />
+                <span style={{ fontSize:12,color:T.textMid }}>μm</span>
+              </div>
+            </div>
+          )}
+          {checklist.length===0&&!isPainting&&(
+            <div style={{ fontSize:13,color:T.textMid }}>No standard checklist for this stage. Add remarks below before approving.</div>
+          )}
+        </div>
+        {/* Rejection history */}
+        {selGD.insts.some(i=>(i.stageHistory||[]).some(h=>h.stage===stage&&(h.rejections||[]).length>0)) && (
+          <div style={{ ...css.card,marginBottom:14,border:`1px solid ${T.red}44` }}>
+            <div style={{ fontSize:12,fontWeight:700,color:T.red,marginBottom:8 }}>REJECTION HISTORY</div>
+            {selGD.insts[0] && (i=>{
+              return (i.stageHistory||[]).filter(h=>h.stage===stage&&(h.rejections||[]).length>0).flatMap(h=>h.rejections||[]).map((r,idx)=>(
+                <div key={idx} style={{ padding:"6px 8px",background:T.redBg,borderRadius:5,marginBottom:6,fontSize:12 }}>
+                  <span style={{color:T.red,fontWeight:700}}>{r.rejectedName||r.rejectedBy}</span>
+                  <span style={{color:T.textMid}}> on {r.date}: </span>
+                  <span style={{color:T.text}}>{r.reason}</span>
+                </div>
+              ));
+            })(selGD.insts[0])}
+          </div>
+        )}
+        {/* Actions */}
+        {rejectMode ? (
+          <div style={{ ...css.card,border:`1px solid ${T.red}` }}>
+            <div style={{ fontSize:13,fontWeight:700,color:T.red,marginBottom:10 }}>REJECTION REASON (mandatory)</div>
+            <textarea value={rejectReason} onChange={e=>setRejectReason(e.target.value)}
+              placeholder="Describe what must be corrected..." rows={3}
+              style={{ ...css.input,width:"100%",resize:"vertical",fontFamily:T.font }} />
+            <div style={{ display:"flex",gap:8,marginTop:10 }}>
+              <button onClick={()=>doReject(selGD)} disabled={!rejectReason.trim()}
+                style={{ ...css.btn.danger,opacity:rejectReason.trim()?1:0.4 }}>Confirm Rejection</button>
+              <button onClick={()=>{setRejectMode(false);setRejectReason("");}} style={css.btn.ghost}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display:"flex",gap:10 }}>
+            <button onClick={()=>doApprove(selGD,"")} disabled={!allChecked}
+              style={{ ...css.btn.green,flex:1,padding:"13px 0",fontSize:15,fontWeight:800,opacity:allChecked?1:0.35 }}>
+              ✓ APPROVE — Move to {STAGE_SEQ_LABELS[STAGE_NEXT[stage]]||"Completed"}
+            </button>
+            <button onClick={()=>setRejectMode(true)} style={{ ...css.btn.danger,flex:1,padding:"13px 0",fontSize:15,fontWeight:800 }}>
+              ✕ REJECT
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Queue list view ──
+  return (
+    <div>
+      <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+        {onBack && <button onClick={onBack} style={css.btn.ghost}>← Dashboard</button>}
+        <div style={{ fontSize:18,fontWeight:800,color:T.text }}>My Approval Queue</div>
+        {sortedGroups.length>0&&<div style={{ background:T.amber,color:"#000",fontSize:11,fontWeight:800,borderRadius:10,padding:"2px 8px" }}>{sortedGroups.length}</div>}
+      </div>
+      {sortedGroups.length===0&&(
+        <div style={{ textAlign:"center",padding:48,color:T.textLow }}>
+          <div style={{ fontSize:32,marginBottom:10 }}>✓</div>
+          <div style={{ fontSize:14,fontWeight:700,color:T.textMid }}>No pending approvals</div>
+          <div style={{ fontSize:12,marginTop:4 }}>Items will appear here when contractors mark work as done at {myStages.map(s=>STAGE_SEQ_LABELS[s]).join(", ")} stage{myStages.length>1?"s":""}.</div>
+        </div>
+      )}
+      <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+        {sortedGroups.map(g=>(
+          <div key={g.key} onClick={()=>{resetApproval();setSelGroup(g.key);}}
+            style={{ ...css.card,cursor:"pointer",border:`1px solid ${g.rejCount>=2?T.red:g.isPinned?T.gold:T.border}` }}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=g.rejCount>=2?T.red:g.isPinned?T.gold:T.borderHi}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=g.rejCount>=2?T.red:g.isPinned?T.gold:T.border}>
+            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+              <div style={{ flex:1 }}>
+                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4 }}>
+                  {g.isPinned&&<span style={{ fontSize:11,color:T.gold }}>📌</span>}
+                  <span style={{ fontWeight:800,fontSize:14,color:T.text,fontFamily:T.fontMono }}>{g.markNo}</span>
+                  {g.rejCount>=2&&<Badge color="red">Quality Concern</Badge>}
+                </div>
+                <div style={{ fontSize:12,color:T.textMid }}>{g.desc} · {g.insts.length} pcs · {g.drawingNo} / {g.orderId}</div>
+                <div style={{ display:"flex",gap:8,marginTop:6 }}>
+                  <Badge color="amber">{STAGE_SEQ_LABELS[g.stage]} — Awaiting Approval</Badge>
+                  <span style={{ fontSize:11,color:T.textLow }}>by {g.contractorName}</span>
+                </div>
+                {g.markedDoneDate&&<div style={{ fontSize:11,color:T.textLow,marginTop:4 }}>Marked done: {g.markedDoneDate}</div>}
+              </div>
+              <div style={{ fontSize:22,color:T.textLow,alignSelf:"center" }}>›</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRODUCTION STEP 7: FULL DRAWING PROGRESS GRID
+// ═══════════════════════════════════════════════════════════════════════════════
+const STAGE_COLS = ["cutting","fitup","welding","tpi_weld","blasting","painting","tpi_paint","mdcc","dispatch"];
+
+const DrawingProgressGrid = ({ drawing, order, instances, onBack }) => {
+  const dInst = instances.filter(i => i.drawingId===drawing.id && i.orderId===order.id);
+  const parts = drawing.parts || [];
+  const fabParts = parts.filter(p => p.fabType!=="Bought Out");
+
+  // Stage counts per markNo
+  const stageCountFor = (markNo, stage) => {
+    return dInst.filter(i => i.markNo===markNo && (
+      STAGE_COLS.indexOf(i.currentStage) >= STAGE_COLS.indexOf(stage) ||
+      (i.currentStage===stage && i.currentStatus!=="defective")
+    ) && i.currentStatus!=="defective").length;
+  };
+
+  const cellColor = (count, total) => {
+    if (!total) return T.textLow;
+    if (count === 0) return null;
+    if (count === total) return T.green;
+    return T.amber;
+  };
+
+  const cellBg = (count, total) => {
+    if (!total || count === 0) return "transparent";
+    if (count === total) return T.greenBg;
+    return T.amberBg;
+  };
+
+  const rejectedAt = (markNo, stage) =>
+    dInst.filter(i => i.markNo===markNo && (i.stageHistory||[]).some(h=>h.stage===stage&&(h.rejections||[]).length>0)).length;
+
+  return (
+    <div>
+      <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Back</button>
+        <div>
+          <div style={{ fontSize:16,fontWeight:800,color:T.text,fontFamily:T.fontMono }}>{drawing.drawingNo}</div>
+          <div style={{ fontSize:12,color:T.textMid }}>Order: {order.id} — {order.clientId}</div>
+        </div>
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign:"left",padding:"6px 10px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap" }}>Mark No</th>
+              <th style={{ textAlign:"left",padding:"6px 10px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Description</th>
+              <th style={{ textAlign:"center",padding:"6px 8px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Total</th>
+              {STAGE_COLS.map(s=>(
+                <th key={s} style={{ textAlign:"center",padding:"6px 8px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap",minWidth:48 }}>
+                  {STAGE_SEQ_LABELS[s]?.slice(0,4)||s.slice(0,4)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {fabParts.length===0&&(
+              <tr><td colSpan={STAGE_COLS.length+3} style={{ textAlign:"center",padding:32,color:T.textLow }}>No fabricated parts in this drawing.</td></tr>
+            )}
+            {fabParts.map((p,i)=>{
+              const total = p.qtyPerDrg||0;
+              const markInst = dInst.filter(inst=>inst.markNo===p.markNo&&inst.currentStatus!=="defective");
+              const defCount = dInst.filter(inst=>inst.markNo===p.markNo&&inst.currentStatus==="defective").length;
+              return (
+                <tr key={p.id||i} style={{ background:i%2===0?"transparent":T.bg }}>
+                  <td style={{ padding:"7px 10px",color:T.text,fontFamily:T.fontMono,fontWeight:700,borderBottom:`1px solid ${T.border}22` }}>{p.markNo}</td>
+                  <td style={{ padding:"7px 10px",color:T.textMid,borderBottom:`1px solid ${T.border}22` }}>{p.desc||p.partDesc||"—"}</td>
+                  <td style={{ textAlign:"center",padding:"7px 8px",color:T.text,fontWeight:700,borderBottom:`1px solid ${T.border}22` }}>
+                    {total}
+                    {defCount>0&&<span style={{ marginLeft:4,color:T.red,fontSize:10 }}>(−{defCount})</span>}
+                  </td>
+                  {STAGE_COLS.map(stage=>{
+                    const cnt = stageCountFor(p.markNo, stage);
+                    const rej = rejectedAt(p.markNo, stage);
+                    const bg  = cellBg(cnt, markInst.length);
+                    const clr = cellColor(cnt, markInst.length);
+                    return (
+                      <td key={stage} style={{ textAlign:"center",padding:"7px 4px",background:bg,borderBottom:`1px solid ${T.border}22` }}>
+                        {markInst.length>0 ? (
+                          <span style={{ fontSize:11,fontWeight:700,color:clr||T.textLow }}>
+                            {cnt===markInst.length?"✓":cnt>0?cnt:"—"}
+                            {rej>0&&<span style={{ color:T.red,marginLeft:2 }}>!</span>}
+                          </span>
+                        ) : <span style={{ color:T.textLow }}>—</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display:"flex",gap:16,marginTop:16,fontSize:11,color:T.textMid }}>
+        <span><span style={{color:T.green,fontWeight:700}}>✓</span> All pieces at/past stage</span>
+        <span><span style={{color:T.amber,fontWeight:700}}>n</span> Partial</span>
+        <span style={{color:T.textLow}}>— Not started</span>
+        <span><span style={{color:T.red,fontWeight:700}}>!</span> Has rejection</span>
+        <span style={{color:T.red}}>(−n) Defective</span>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRODUCTION STEP 8: OUTBOUND PROCESSING
+// ═══════════════════════════════════════════════════════════════════════════════
+const OUTBOUND_TYPES = ["Bending","Rolling","Galvanising","Hot Dip Galvanising","Powder Coating","Other"];
+
+const OutboundProcessing = ({ user, instances, setInstances, orders, vendors, onBack }) => {
+  const [selInsts, setSelInsts]   = useState(new Set());
+  const [form, setForm]           = useState({ type:"Bending", vendorId:"", expectedReturn:"", notes:"" });
+  const [viewRet, setViewRet]     = useState(false); // show returns panel
+  const [modal, setModal]         = useState(false);
+
+  const canManage = ["super_admin","planning_admin","floor_planner"].includes(user.role);
+
+  // Eligible: not already outbound, not completed/defective, max 2 outbound rounds
+  const eligible = instances.filter(i =>
+    i.currentStatus !== "outbound" &&
+    i.currentStatus !== "completed" &&
+    i.currentStatus !== "defective" &&
+    (i.outboundCount||0) < 2
+  );
+
+  // Currently outbound
+  const outbound = instances.filter(i => i.currentStatus === "outbound");
+
+  // Outbound vendors
+  const opVendors = vendors.filter(v => v.active);
+
+  const toggleSel = (id) => setSelInsts(prev => { const n=new Set(prev); n.has(id)?n.delete(id):n.add(id); return n; });
+
+  const doCreate = () => {
+    if (!selInsts.size || !form.vendorId || !form.type) return;
+    const vend = opVendors.find(v=>v.id===form.vendorId);
+    setInstances(prev => prev.map(i => {
+      if (!selInsts.has(i.instanceId)) return i;
+      return {
+        ...i,
+        currentStatus: "outbound",
+        outboundCount: (i.outboundCount||0)+1,
+        outboundHistory: [...(i.outboundHistory||[]), {
+          type: form.type,
+          vendorId: form.vendorId,
+          vendorName: vend?.name||"",
+          sentDate: today(),
+          sentBy: user.username,
+          expectedReturn: form.expectedReturn,
+          notes: form.notes,
+          returnDate: null,
+          stageAtDispatch: i.currentStage,
+          statusAtDispatch: i.currentStatus,
+        }],
+      };
+    }));
+    setSelInsts(new Set());
+    setForm({ type:"Bending", vendorId:"", expectedReturn:"", notes:"" });
+    setModal(false);
+  };
+
+  const doReturn = (instId) => {
+    setInstances(prev => prev.map(i => {
+      if (i.instanceId !== instId) return i;
+      const hist = [...(i.outboundHistory||[])];
+      const lastIdx = hist.length-1;
+      if (lastIdx>=0) hist[lastIdx] = { ...hist[lastIdx], returnDate:today() };
+      const ob = hist[lastIdx];
+      return {
+        ...i,
+        currentStatus: ob?.statusAtDispatch || "in_progress",
+        currentStage: ob?.stageAtDispatch || i.currentStage,
+        outboundHistory: hist,
+      };
+    }));
+  };
+
+  const groupEligible = {};
+  eligible.forEach(i => {
+    const k = `${i.markNo}/${i.drawingId}/${i.orderId}`;
+    if (!groupEligible[k]) {
+      const ord = orders.find(o=>o.id===i.orderId);
+      groupEligible[k] = { key:k, markNo:i.markNo, desc:i.desc, drawingNo:i.drawingNo, orderId:i.orderId, clientId:ord?.clientId||"", insts:[] };
+    }
+    groupEligible[k].insts.push(i);
+  });
+
+  return (
+    <div>
+      <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Dashboard</button>
+        <div style={{ fontSize:18,fontWeight:800,color:T.text }}>Outbound Processing</div>
+      </div>
+
+      {/* Currently Outbound */}
+      {outbound.length > 0 && (
+        <div style={{ marginBottom:24 }}>
+          <div style={{ fontSize:12,fontWeight:800,color:T.amber,marginBottom:10 }}>CURRENTLY AT OUTBOUND VENDOR ({outbound.length})</div>
+          <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
+            {outbound.map(i => {
+              const ob = (i.outboundHistory||[]).slice(-1)[0];
+              return (
+                <div key={i.instanceId} style={{ ...css.card,border:`1px solid ${T.amber}44` }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+                    <div>
+                      <div style={{ fontWeight:800,fontFamily:T.fontMono,color:T.text }}>{i.markNo} <span style={{fontWeight:400,color:T.textMid,fontFamily:T.font,fontSize:12}}>— {i.instanceId}</span></div>
+                      <div style={{ fontSize:12,color:T.textMid,marginTop:2 }}>{i.drawingNo} / {i.orderId}</div>
+                      {ob&&<div style={{ fontSize:12,color:T.amber,marginTop:4 }}>{ob.type} @ {ob.vendorName} · Sent {ob.sentDate}{ob.expectedReturn?` · Due ${ob.expectedReturn}`:""}</div>}
+                    </div>
+                    {canManage&&<button onClick={()=>doReturn(i.instanceId)} style={css.btn.green}>Record Return</button>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Create outbound request */}
+      {canManage && (
+        <div style={{ marginBottom:24 }}>
+          <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10 }}>
+            <div style={{ fontSize:12,fontWeight:800,color:T.textMid }}>ELIGIBLE INSTANCES ({eligible.length})</div>
+            {selInsts.size>0&&<button onClick={()=>setModal(true)} style={css.btn.amber}>Send {selInsts.size} piece{selInsts.size>1?"s":""} for Outbound Processing</button>}
+          </div>
+          {eligible.length===0&&<InfoBanner color="blue">No eligible instances. Instances at completed/defective/outbound status or with 2 prior outbound rounds are excluded.</InfoBanner>}
+          <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+            {Object.values(groupEligible).map(g=>(
+              <div key={g.key} style={{ ...css.card }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
+                  <div>
+                    <span style={{ fontWeight:800,fontSize:13,color:T.text,fontFamily:T.fontMono }}>{g.markNo}</span>
+                    <span style={{ fontSize:12,color:T.textMid,marginLeft:10 }}>{g.desc} · {g.drawingNo} / {g.orderId}</span>
+                  </div>
+                  <span style={{ fontSize:11,color:T.textMid }}>{g.insts.length} pcs</span>
+                </div>
+                <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>
+                  {g.insts.map(i=>(
+                    <label key={i.instanceId} style={{ display:"flex",alignItems:"center",gap:6,cursor:"pointer",padding:"5px 8px",background:selInsts.has(i.instanceId)?T.accentLo+"66":T.bgInput,border:`1px solid ${selInsts.has(i.instanceId)?T.accent:T.border}`,borderRadius:5 }}>
+                      <input type="checkbox" checked={selInsts.has(i.instanceId)} onChange={()=>toggleSel(i.instanceId)} style={{ cursor:"pointer" }} />
+                      <span style={{ fontSize:11,fontFamily:T.fontMono,color:T.text }}>{i.instanceId.split("/").slice(-1)[0]}</span>
+                      <Badge color={i.currentStatus==="pending_supervisor"?"amber":"blue"}>{STAGE_SEQ_LABELS[i.currentStage]}</Badge>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Modal */}
+      {modal&&(
+        <Modal title="Create Outbound Request" onClose={()=>setModal(false)} width={480}>
+          <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+            <div><label style={css.label}>OUTBOUND TYPE</label>
+              <select value={form.type} onChange={e=>setForm(p=>({...p,type:e.target.value}))} style={css.input}>
+                {OUTBOUND_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div><label style={css.label}>OUTBOUND VENDOR</label>
+              <select value={form.vendorId} onChange={e=>setForm(p=>({...p,vendorId:e.target.value}))} style={css.input}>
+                <option value="">Select vendor...</option>
+                {opVendors.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+            <div><label style={css.label}>EXPECTED RETURN DATE</label>
+              <input type="date" value={form.expectedReturn} onChange={e=>setForm(p=>({...p,expectedReturn:e.target.value}))} style={css.input} />
+            </div>
+            <div><label style={css.label}>NOTES (OPTIONAL)</label>
+              <textarea value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} rows={2} style={{ ...css.input,resize:"vertical" }} />
+            </div>
+            <InfoBanner color="blue">{selInsts.size} instance{selInsts.size>1?"s":""} will be marked as OUTBOUND until return is recorded.</InfoBanner>
+            <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
+              <button onClick={()=>setModal(false)} style={css.btn.secondary}>Cancel</button>
+              <button onClick={doCreate} disabled={!form.vendorId||!form.type} style={{ ...css.btn.amber,opacity:form.vendorId&&form.type?1:0.4 }}>
+                Confirm — Send for {form.type}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PRODUCTION MODULE
+// ═══════════════════════════════════════════════════════════════════════════════
+const ProductionModule = ({ user, instances, setInstances, orders, stock, setStock,
+                            nestingRuns, setNestingRuns, machines, contractors, materials, vendors }) => {
+  const [view, setView]           = useState("dashboard");
+  const [selOrderId, setSelOrderId]   = useState("");
+  const [selDrawingId, setSelDrawingId] = useState("");
+
+  // Contractor → own work queue only (after hooks)
+  if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} />;
+
+  const canAssign = ["super_admin","planning_admin","floor_planner"].includes(user.role);
+
+  const totalInstances    = instances.length;
+  const readyToCollect    = instances.filter(i=>i.currentStatus==="pending_collection").length;
+  const inProgress        = instances.filter(i=>i.currentStatus==="in_progress").length;
+  const pendingSupervisor = instances.filter(i=>i.currentStatus==="pending_supervisor").length;
+  const defective         = instances.filter(i=>i.currentStatus==="defective").length;
+
+  // ── Supervisor queue view ──
+  if (view==="approvals") return (
+    <SupervisorQueue user={user} instances={instances} setInstances={setInstances}
+      orders={orders} onBack={()=>setView("dashboard")} />
+  );
+
+  // ── Outbound processing view ──
+  if (view==="outbound") return (
+    <OutboundProcessing user={user} instances={instances} setInstances={setInstances}
+      orders={orders} vendors={vendors||[]} onBack={()=>setView("dashboard")} />
+  );
+
+  // ── Progress grid view ──
+  if (view==="progress") {
+    const activeOrders = orders.filter(o=>o.status==="active");
+    const selOrder  = orders.find(o=>o.id===selOrderId);
+    const recvDrawings = (selOrder?.drawings||[]).filter(d=>d.receivedDate);
+    const selDrawing = recvDrawings.find(d=>d.id===selDrawingId);
+    if (selOrderId&&selDrawingId&&selDrawing&&selOrder) return (
+      <DrawingProgressGrid drawing={selDrawing} order={selOrder} instances={instances}
+        onBack={()=>setSelDrawingId("")} />
+    );
+    return (
+      <div>
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+          <button onClick={()=>{setView("dashboard");setSelOrderId("");setSelDrawingId("");}} style={css.btn.ghost}>← Dashboard</button>
+          <div style={{ fontSize:18,fontWeight:800,color:T.text }}>Drawing Progress</div>
+        </div>
+        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20 }}>
+          <div>
+            <label style={css.label}>ORDER</label>
+            <select value={selOrderId} onChange={e=>{setSelOrderId(e.target.value);setSelDrawingId("");}} style={css.input}>
+              <option value="">Select order...</option>
+              {activeOrders.map(o=><option key={o.id} value={o.id}>{o.id} — {o.clientId}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={css.label}>DRAWING</label>
+            <select value={selDrawingId} onChange={e=>setSelDrawingId(e.target.value)} style={css.input} disabled={!selOrderId}>
+              <option value="">Select drawing...</option>
+              {recvDrawings.map(d=><option key={d.id} value={d.id}>{d.drawingNo}</option>)}
+            </select>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Cutting Confirmation view ──
+  if (view==="cutting") return (
+    <CuttingConfirmation user={user} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns}
+      stock={stock} setStock={setStock} instances={instances} setInstances={setInstances}
+      orders={orders} materials={materials} machines={machines}
+      onBack={()=>setView("dashboard")} />
+  );
+
+  // ── Assignment view ──
+  if (view==="assignments") {
+    const activeOrders = orders.filter(o=>o.status==="active");
+    const selOrder     = orders.find(o=>o.id===selOrderId);
+    const recvDrawings = (selOrder?.drawings||[]).filter(d=>d.receivedDate);
+    const selDrawing   = recvDrawings.find(d=>d.id===selDrawingId);
+
+    if (selOrderId&&selDrawingId&&selDrawing&&selOrder) return (
+      <DrawingAssignment user={user} drawing={selDrawing} order={selOrder}
+        instances={instances} setInstances={setInstances}
+        nestingRuns={nestingRuns} stock={stock} contractors={contractors}
+        onBack={()=>setSelDrawingId("")} />
+    );
+
+    return (
+      <div>
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
+          <button onClick={()=>{setView("dashboard");setSelOrderId("");setSelDrawingId("");}} style={css.btn.ghost}>← Dashboard</button>
+          <div style={{ fontSize:18,fontWeight:800,color:T.text }}>Assignment</div>
+        </div>
+        <InfoBanner color="blue">Select an order and drawing to view the three-panel assignment screen.</InfoBanner>
+        <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginTop:16 }}>
+          <div>
+            <div style={{ fontSize:11,color:T.textMid,fontWeight:700,marginBottom:6 }}>ORDER</div>
+            <select value={selOrderId} onChange={e=>{setSelOrderId(e.target.value);setSelDrawingId("");}} style={css.input}>
+              <option value="">Select order...</option>
+              {activeOrders.map(o=><option key={o.id} value={o.id}>{o.id} — {o.clientId}</option>)}
+            </select>
+          </div>
+          <div>
+            <div style={{ fontSize:11,color:T.textMid,fontWeight:700,marginBottom:6 }}>DRAWING</div>
+            <select value={selDrawingId} onChange={e=>setSelDrawingId(e.target.value)} style={css.input}
+              disabled={!selOrderId}>
+              <option value="">Select drawing...</option>
+              {recvDrawings.map(d=><option key={d.id} value={d.id}>{d.drawingNo}{d.revNo?` Rev ${d.revNo}`:""}</option>)}
+            </select>
+          </div>
+        </div>
+        {selOrderId&&recvDrawings.length===0&&(
+          <InfoBanner color="amber">No drawings with received date found for this order. Mark drawings as received in Orders → Drawing Register first.</InfoBanner>
+        )}
+        {/* Drawing summary cards for selected order */}
+        {selOrderId&&recvDrawings.length>0&&(
+          <div style={{ marginTop:20 }}>
+            <div style={{ fontSize:13,fontWeight:700,color:T.text,marginBottom:12 }}>Drawings in {selOrderId}</div>
+            <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:10 }}>
+              {recvDrawings.map(d=>{
+                const dInst = instances.filter(i=>i.drawingId===d.id&&i.orderId===selOrderId);
+                const ready = dInst.filter(i=>i.currentStatus==="pending_collection").length;
+                const inProg = dInst.filter(i=>i.currentStatus==="in_progress").length;
+                return (
+                  <div key={d.id} onClick={()=>setSelDrawingId(d.id)}
+                    style={{ ...css.card,cursor:"pointer",borderColor:selDrawingId===d.id?T.accent:T.border }}
+                    onMouseEnter={e=>e.currentTarget.style.borderColor=T.borderHi}
+                    onMouseLeave={e=>e.currentTarget.style.borderColor=selDrawingId===d.id?T.accent:T.border}>
+                    <div style={{ fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi,marginBottom:4 }}>{d.drawingNo}</div>
+                    <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>
+                      {ready>0&&<Badge color="green">{ready} ready</Badge>}
+                      {inProg>0&&<Badge color="blue">{inProg} in progress</Badge>}
+                      {ready===0&&inProg===0&&<Badge color="gray">No instances</Badge>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Dashboard ──
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:22,fontWeight:800,color:T.text }}>Production</div>
+        <div style={{ fontSize:13,color:T.textMid }}>Instance-level tracking — cutting through dispatch</div>
+      </div>
+
+      <div style={{ display:"flex",gap:12,marginBottom:24,flexWrap:"wrap" }}>
+        <StatCard label="Total Instances"    value={totalInstances}    color={T.text} />
+        <StatCard label="Ready to Collect"   value={readyToCollect}    color={T.green} />
+        <StatCard label="In Progress"        value={inProgress}        color={T.accent} />
+        <StatCard label="Pending Supervisor" value={pendingSupervisor} color={T.amber} />
+        <StatCard label="Defective"          value={defective}         color={T.red} />
+      </div>
+
+      <div style={{ display:"flex",gap:12,marginBottom:24,flexWrap:"wrap" }}>
+        <button onClick={()=>setView("cutting")} style={css.btn.primary}>✂ Cutting Confirmation</button>
+        {canAssign&&<button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("assignments");}} style={css.btn.secondary}>📋 Assignment</button>}
+        <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={css.btn.secondary}>📊 Progress Grid</button>
+        {canAssign&&<button onClick={()=>setView("outbound")} style={css.btn.secondary}>🔄 Outbound</button>}
+        {(SUPERVISOR_STAGES[user.role]||[]).length>0&&(
+          <button onClick={()=>setView("approvals")} style={{ ...css.btn.amber,position:"relative" }}>
+            🔍 Approval Queue
+            {pendingSupervisor>0&&<span style={{ position:"absolute",top:-6,right:-6,background:T.red,color:"#fff",fontSize:10,fontWeight:800,borderRadius:10,padding:"1px 5px",minWidth:16,textAlign:"center" }}>{pendingSupervisor}</span>}
+          </button>
+        )}
+      </div>
+
+      {totalInstances===0 ? (
+        <div style={{ textAlign:"center",padding:64,color:T.textLow }}>
+          <div style={{ fontSize:40,marginBottom:12 }}>⚙️</div>
+          <div style={{ fontSize:15,fontWeight:700,color:T.textMid,marginBottom:6 }}>No production instances yet</div>
+          <div style={{ fontSize:13 }}>Instances are created when a nesting run bar is confirmed cut.</div>
+          <button onClick={()=>setView("cutting")} style={{ ...css.btn.primary,marginTop:16 }}>Go to Cutting Confirmation →</button>
+        </div>
+      ) : (
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
+            <thead><tr>
+              {["Instance ID","Mark No","Drawing","Order","Stage","Status","Bay","Contractor","Pinned Eng."].map(h=><TH key={h}>{h}</TH>)}
+            </tr></thead>
+            <tbody>
+              {instances.slice().reverse().map((inst,i)=>(
+                <tr key={inst.instanceId} style={{ background:i%2===0?"transparent":T.bg }}>
+                  <TD mono>{inst.instanceId}</TD>
+                  <TD bold>{inst.markNo}</TD>
+                  <TD mono>{inst.drawingNo||"—"}</TD>
+                  <TD>{inst.orderId}</TD>
+                  <TD><Badge color="blue">{inst.currentStage}</Badge></TD>
+                  <TD><Badge color={
+                    inst.currentStatus==="pending_collection"?"green":
+                    inst.currentStatus==="in_progress"?"blue":
+                    inst.currentStatus==="pending_supervisor"?"amber":
+                    inst.currentStatus==="defective"?"red":"gray"
+                  }>{inst.currentStatus?.replace(/_/g," ")}</Badge></TD>
+                  <TD mono>{inst.cuttingBayUsed||"—"}</TD>
+                  <TD>{inst.assignedContractorName||<span style={{color:T.textLow,fontSize:11}}>Unassigned</span>}</TD>
+                  <TD>{inst.pinnedEngineerName||<span style={{color:T.textLow,fontSize:11}}>—</span>}</TD>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
@@ -4454,6 +6400,7 @@ export default function App() {
   const [pos, setPos] = useState(INIT_POS);
   const [stock, setStock] = useState(INIT_STOCK);
   const [nestingRuns, setNestingRuns] = useState(INIT_NESTING_RUNS);
+  const [instances, setInstances] = useState(INIT_INSTANCES);
   const [orders, setOrders] = useState(SEED_ORDERS);
   const [clients, setClients] = useState(CLIENTS_FULL);
   const [vendors, setVendors] = useState(VENDORS);
@@ -4463,6 +6410,7 @@ export default function App() {
   const [paint, setPaint] = useState(PAINT_LIBRARY);
   const [tpiAgencies, setTpiAgencies] = useState(TPI_AGENCIES);
   const [approvedMakes, setApprovedMakes] = useState(APPROVED_MAKES_LIBRARY);
+  const [machines, setMachines] = useState(MACHINES_SEED);
   const [company, setCompany] = useState({
     name:"Structo Fabricators", tradingName:"STRUCTO",
     gstin:"", pan:"", state:"Maharashtra", stateCode:"27",
@@ -4484,11 +6432,11 @@ export default function App() {
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} />;
-      case "production":return <Placeholder title="Production" session="Session 4" icon="⚙️" desc="Instance-level tracking, cutting, fit-up, welding, blasting, painting, outbound processing." />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
-      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} />;
+      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} />;
       default:          return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
     }
   };
