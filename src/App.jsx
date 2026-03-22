@@ -10,6 +10,7 @@ const T = {
   red:"#EF4444", redLo:"#991B1B", redBg:"#1F0707",
   amber:"#F59E0B", amberBg:"#1C1107",
   text:"#F1F5F9", textMid:"#94A3B8", textLow:"#475569",
+  surface2:"#161E2E",
   font:"'IBM Plex Sans', sans-serif", fontMono:"'IBM Plex Mono', monospace",
 };
 
@@ -271,18 +272,19 @@ const INIT_POS = [
     id:"PO-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", poDate:"2025-01-25", expectedDelivery:"2025-02-05",
     servedOrders:["SF-2025-0001"], status:"partially_received", remarks:"First batch for Phase 1",
     lines:[
-      { id:"POL-001", matType:"MS", grade:"E250", section:"ISA",    size:"75x75x8",    qty:2,   unit:"MT", unitPrice:65000, totalPrice:130000, wtOrdered:2000, wtReceived:2000, status:"fully_received"    },
-      { id:"POL-002", matType:"MS", grade:"E250", section:"ISA",    size:"150x150x16", qty:1,   unit:"MT", unitPrice:67000, totalPrice:67000,  wtOrdered:1000, wtReceived:500,  status:"partially_received"},
-      { id:"POL-003", matType:"MS", grade:"E250", section:"ISMB",   size:"300",        qty:5,   unit:"MT", unitPrice:66000, totalPrice:330000, wtOrdered:5000, wtReceived:0,    status:"pending"           },
-      { id:"POL-004", matType:"MS", grade:"E250", section:"PLATE",  size:"10mm",       qty:1.5, unit:"MT", unitPrice:64000, totalPrice:96000,  wtOrdered:1500, wtReceived:1500, status:"fully_received"    },
+      { id:"POL-001", matType:"MS", grade:"E250", sectionType:"ISA",    size:"75x75x8",    qty:2,   unit:"MT", unitPrice:65000, totalPrice:130000, wtOrdered:2000, wtReceived:2000, status:"fully_received",     qtyOrdered:2,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:65,    effectiveRateUnit:65000, qtyReceived:0 },
+      { id:"POL-002", matType:"MS", grade:"E250", sectionType:"ISA",    size:"150x150x16", qty:1,   unit:"MT", unitPrice:67000, totalPrice:67000,  wtOrdered:1000, wtReceived:500,  status:"partially_received", qtyOrdered:1,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:67,    effectiveRateUnit:67000, qtyReceived:0 },
+      { id:"POL-003", matType:"MS", grade:"E250", sectionType:"ISMB",   size:"300",        qty:5,   unit:"MT", unitPrice:66000, totalPrice:330000, wtOrdered:5000, wtReceived:0,    status:"pending",            qtyOrdered:5,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:66,    effectiveRateUnit:66000, qtyReceived:0 },
+      { id:"POL-004", matType:"MS", grade:"E250", sectionType:"PLATE",  size:"10mm",       qty:1.5, unit:"MT", unitPrice:64000, totalPrice:96000,  wtOrdered:1500, wtReceived:1500, status:"fully_received",     qtyOrdered:1.5, pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:64,    effectiveRateUnit:64000, qtyReceived:0 },
     ],
     grns:[
       {
         id:"GRN-2025-001", batchNo:"JSW001-2025-001", date:"2025-02-04", vehicleNo:"MH-31-AB-1234", challanNo:"JSW/CH/2025/4521",
+        supplierInvoiceNo:"", supplierInvoiceWt:0, supplierInvoiceAmt:0, reconciliationStatus:"pending",
         lines:[
-          { poLineId:"POL-001", materialDesc:"ISA 75x75x8 E250", qty:2,   unit:"MT", wtReceived:2000, condition:"good", inspStatus:"approved" },
-          { poLineId:"POL-002", materialDesc:"ISA 150x150x16 E250", qty:0.5, unit:"MT", wtReceived:500,  condition:"good", inspStatus:"approved" },
-          { poLineId:"POL-004", materialDesc:"MS PLATE 10mm E250", qty:1.5, unit:"MT", wtReceived:1500, condition:"good", inspStatus:"approved" },
+          { poLineId:"POL-001", materialDesc:"ISA 75x75x8 E250",      qty:2,   unit:"MT", qtyReceived:0, calculatedWt:2000, actualWt:2000, variance:0, wtReceived:2000, condition:"good", inspStatus:"approved" },
+          { poLineId:"POL-002", materialDesc:"ISA 150x150x16 E250",   qty:0.5, unit:"MT", qtyReceived:0, calculatedWt:500,  actualWt:500,  variance:0, wtReceived:500,  condition:"good", inspStatus:"approved" },
+          { poLineId:"POL-004", materialDesc:"MS PLATE 10mm E250",    qty:1.5, unit:"MT", qtyReceived:0, calculatedWt:1500, actualWt:1500, variance:0, wtReceived:1500, condition:"good", inspStatus:"approved" },
         ],
         remarks:"All materials in good condition. MTC attached.",
         createdBy:"Mohan Das",
@@ -293,9 +295,9 @@ const INIT_POS = [
     id:"PO-2025-002", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", poDate:"2025-01-28", expectedDelivery:"2025-02-10",
     servedOrders:["SF-2025-0001","SF-2025-0002"], status:"pending", remarks:"Combined PO for ISMB and PLATE",
     lines:[
-      { id:"POL-005", matType:"MS", grade:"E250", section:"PLATE", size:"12mm",  qty:2,   unit:"MT", unitPrice:64500, totalPrice:129000, wtOrdered:2000, wtReceived:0, status:"pending" },
-      { id:"POL-006", matType:"MS", grade:"E250", section:"ISMB",  size:"200",   qty:1,   unit:"MT", unitPrice:66000, totalPrice:66000,  wtOrdered:1000, wtReceived:0, status:"pending" },
-      { id:"POL-007", matType:"MS", grade:"E350", section:"PLATE", size:"16mm",  qty:0.5, unit:"MT", unitPrice:68000, totalPrice:34000,  wtOrdered:500,  wtReceived:0, status:"pending" },
+      { id:"POL-005", matType:"MS", grade:"E250", sectionType:"PLATE", size:"12mm",  qty:2,   unit:"MT", unitPrice:64500, totalPrice:129000, wtOrdered:2000, wtReceived:0, status:"pending", qtyOrdered:2,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:64.5, effectiveRateUnit:64500, qtyReceived:0 },
+      { id:"POL-006", matType:"MS", grade:"E250", sectionType:"ISMB",  size:"200",   qty:1,   unit:"MT", unitPrice:66000, totalPrice:66000,  wtOrdered:1000, wtReceived:0, status:"pending", qtyOrdered:1,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:66,   effectiveRateUnit:66000, qtyReceived:0 },
+      { id:"POL-007", matType:"MS", grade:"E350", sectionType:"PLATE", size:"16mm",  qty:0.5, unit:"MT", unitPrice:68000, totalPrice:34000,  wtOrdered:500,  wtReceived:0, status:"pending", qtyOrdered:0.5, pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:68,   effectiveRateUnit:68000, qtyReceived:0 },
     ],
     grns:[],
   },
@@ -303,7 +305,7 @@ const INIT_POS = [
     id:"PO-2025-003", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes", poDate:"2025-02-02", expectedDelivery:"2025-02-12",
     servedOrders:["SF-2025-0002"], status:"pending", remarks:"RHS for BHEL ESS frame",
     lines:[
-      { id:"POL-008", matType:"MS", grade:"E250", section:"RHS", size:"100x50x4", qty:0.5, unit:"MT", unitPrice:72000, totalPrice:36000, wtOrdered:500, wtReceived:0, status:"pending" },
+      { id:"POL-008", matType:"MS", grade:"E250", sectionType:"RHS", size:"100x50x4", qty:0.5, unit:"MT", unitPrice:72000, totalPrice:36000, wtOrdered:500, wtReceived:0, status:"pending", qtyOrdered:0.5, pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:72, effectiveRateUnit:72000, qtyReceived:0 },
     ],
     grns:[],
   },
@@ -311,17 +313,18 @@ const INIT_POS = [
     id:"PO-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes", poDate:"2026-03-12", expectedDelivery:"2026-03-22",
     servedOrders:["SF-2025-0002"], status:"partially_received", remarks:"RHS and SHS for BHEL frame — second order",
     lines:[
-      { id:"POL-013", matType:"MS", grade:"E250", section:"RHS", size:"100x50x4", qty:1,   unit:"MT", unitPrice:72000, totalPrice:72000,  wtOrdered:1000, wtReceived:1000, status:"fully_received"     },
-      { id:"POL-014", matType:"MS", grade:"E250", section:"SHS", size:"75x75x5",  qty:0.5, unit:"MT", unitPrice:74000, totalPrice:37000,  wtOrdered:500,  wtReceived:250,  status:"partially_received" },
-      { id:"POL-015", matType:"MS", grade:"E250", section:"RHS", size:"50x50x4",  qty:0.5, unit:"MT", unitPrice:71000, totalPrice:35500,  wtOrdered:500,  wtReceived:0,    status:"pending"            },
+      { id:"POL-013", matType:"MS", grade:"E250", sectionType:"RHS", size:"100x50x4", qty:1,   unit:"MT", unitPrice:72000, totalPrice:72000,  wtOrdered:1000, wtReceived:1000, status:"fully_received",     qtyOrdered:1,    pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:72,   effectiveRateUnit:72000, qtyReceived:0 },
+      { id:"POL-014", matType:"MS", grade:"E250", sectionType:"SHS", size:"75x75x5",  qty:0.5, unit:"MT", unitPrice:74000, totalPrice:37000,  wtOrdered:500,  wtReceived:250,  status:"partially_received", qtyOrdered:0.5,  pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:74,   effectiveRateUnit:74000, qtyReceived:0 },
+      { id:"POL-015", matType:"MS", grade:"E250", sectionType:"RHS", size:"50x50x4",  qty:0.5, unit:"MT", unitPrice:71000, totalPrice:35500,  wtOrdered:500,  wtReceived:0,    status:"pending",            qtyOrdered:0.5,  pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:71,   effectiveRateUnit:71000, qtyReceived:0 },
     ],
     grns:[
       {
         id:"GRN-2026-002", batchNo:"APL003-2026-001", date:"2026-03-15", vehicleNo:"MH-31-EF-9012", challanNo:"APL/CH/2026/0098",
         bayId:"BAY-09",
+        supplierInvoiceNo:"", supplierInvoiceWt:0, supplierInvoiceAmt:0, reconciliationStatus:"pending",
         lines:[
-          { poLineId:"POL-013", materialDesc:"RHS 100x50x4 E250", qty:1,   unit:"MT", wtReceived:1000, condition:"good", inspStatus:"approved" },
-          { poLineId:"POL-014", materialDesc:"SHS 75x75x5 E250",  qty:0.25,unit:"MT", wtReceived:250,  condition:"good", inspStatus:"approved" },
+          { poLineId:"POL-013", materialDesc:"RHS 100x50x4 E250", qty:1,    unit:"MT", qtyReceived:0, calculatedWt:1000, actualWt:1000, variance:0, wtReceived:1000, condition:"good", inspStatus:"approved" },
+          { poLineId:"POL-014", materialDesc:"SHS 75x75x5 E250",  qty:0.25, unit:"MT", qtyReceived:0, calculatedWt:250,  actualWt:250,  variance:0, wtReceived:250,  condition:"good", inspStatus:"approved" },
         ],
         remarks:"Both lots received in good condition. MTC pending from supplier.",
         createdBy:"Mohan Das",
@@ -332,18 +335,19 @@ const INIT_POS = [
     id:"PO-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", poDate:"2026-03-10", expectedDelivery:"2026-03-20",
     servedOrders:["SF-2025-0001","SF-2025-0002"], status:"partially_received", remarks:"Phase 2 bulk order — ISMB, plates and angles",
     lines:[
-      { id:"POL-009", matType:"MS", grade:"E250", section:"ISMB",    size:"300",       qty:3,   unit:"MT", unitPrice:66500, totalPrice:199500, wtOrdered:3000, wtReceived:3000, status:"fully_received"     },
-      { id:"POL-010", matType:"MS", grade:"E250", section:"PLATE",   size:"12mm",      qty:2,   unit:"MT", unitPrice:64000, totalPrice:128000, wtOrdered:2000, wtReceived:800,  status:"partially_received" },
-      { id:"POL-011", matType:"MS", grade:"E250", section:"ISA",     size:"100x100x10",qty:1.5, unit:"MT", unitPrice:65500, totalPrice:98250,  wtOrdered:1500, wtReceived:0,    status:"pending"            },
-      { id:"POL-012", matType:"MS", grade:"E350", section:"PLATE",   size:"20mm",      qty:1,   unit:"MT", unitPrice:70000, totalPrice:70000,  wtOrdered:1000, wtReceived:0,    status:"pending"            },
+      { id:"POL-009", matType:"MS", grade:"E250", sectionType:"ISMB",    size:"300",       qty:3,   unit:"MT", unitPrice:66500, totalPrice:199500, wtOrdered:3000, wtReceived:3000, status:"fully_received",     qtyOrdered:3,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:66.5, effectiveRateUnit:66500, qtyReceived:0 },
+      { id:"POL-010", matType:"MS", grade:"E250", sectionType:"PLATE",   size:"12mm",      qty:2,   unit:"MT", unitPrice:64000, totalPrice:128000, wtOrdered:2000, wtReceived:800,  status:"partially_received", qtyOrdered:2,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:64,   effectiveRateUnit:64000, qtyReceived:0 },
+      { id:"POL-011", matType:"MS", grade:"E250", sectionType:"ISA",     size:"100x100x10",qty:1.5, unit:"MT", unitPrice:65500, totalPrice:98250,  wtOrdered:1500, wtReceived:0,    status:"pending",            qtyOrdered:1.5, pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:65.5, effectiveRateUnit:65500, qtyReceived:0 },
+      { id:"POL-012", matType:"MS", grade:"E350", sectionType:"PLATE",   size:"20mm",      qty:1,   unit:"MT", unitPrice:70000, totalPrice:70000,  wtOrdered:1000, wtReceived:0,    status:"pending",            qtyOrdered:1,   pricingMethod:"PerUnit", length:null, width:null, effectiveRateKg:70,   effectiveRateUnit:70000, qtyReceived:0 },
     ],
     grns:[
       {
         id:"GRN-2026-001", batchNo:"STE002-2026-001", date:"2026-03-14", vehicleNo:"MH-40-CD-5678", challanNo:"SAIL/CH/2026/0312",
         bayId:"BAY-07",
+        supplierInvoiceNo:"", supplierInvoiceWt:0, supplierInvoiceAmt:0, reconciliationStatus:"pending",
         lines:[
-          { poLineId:"POL-009", materialDesc:"ISMB 300 E250", qty:3,   unit:"MT", wtReceived:3000, condition:"good",    inspStatus:"approved" },
-          { poLineId:"POL-010", materialDesc:"MS PLATE 12mm E250", qty:0.8, unit:"MT", wtReceived:800,  condition:"damaged", inspStatus:"hold"     },
+          { poLineId:"POL-009", materialDesc:"ISMB 300 E250",        qty:3,   unit:"MT", qtyReceived:0, calculatedWt:3000, actualWt:3000, variance:0, wtReceived:3000, condition:"good",    inspStatus:"approved" },
+          { poLineId:"POL-010", materialDesc:"MS PLATE 12mm E250",   qty:0.8, unit:"MT", qtyReceived:0, calculatedWt:800,  actualWt:800,  variance:0, wtReceived:800,  condition:"damaged", inspStatus:"hold"     },
         ],
         holdReason:"Surface rust and minor edge damage on plates — awaiting QC decision",
         remarks:"ISMB cleared. Plate lot held pending QC re-inspection.",
@@ -355,14 +359,14 @@ const INIT_POS = [
 
 // ─── SEED: STOCK ──────────────────────────────────────────────────────────────
 const INIT_STOCK = [
-  { id:"STK-001", lotNo:"LOT-2025-001", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", section:"ISA",   size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:2000, wtAvailable:1800, wtAllocated:200, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc001/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:200}] },
-  { id:"STK-002", lotNo:"LOT-2025-002", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-002", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", section:"ISA",   size:"150x150x16", itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:500,  wtAvailable:500,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc002/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[] },
-  { id:"STK-003", lotNo:"LOT-2025-003", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-004", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", section:"PLATE", size:"10mm",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1500, wtAvailable:1200, wtAllocated:300, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-05", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc003/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:300}] },
-  { id:"STK-004", lotNo:"LOT-2025-004", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", section:"ISA",   size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"qc_hold",  bayId:"BAY-04", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending",  receivedDate:"2025-02-06", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"MTC not received from supplier" },
-  { id:"STK-005", lotNo:"LOT-2026-001", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-009", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", section:"ISMB",  size:"300",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:3000, wtAvailable:3000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
-  { id:"STK-006", lotNo:"LOT-2026-002", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-010", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", section:"PLATE", size:"12mm",      itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold",   bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"Surface rust and minor edge damage on plates — awaiting QC decision" },
-  { id:"STK-007", lotNo:"LOT-2026-003", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-013", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", section:"RHS",   size:"100x50x4",  itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1000, wtAvailable:1000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
-  { id:"STK-008", lotNo:"LOT-2026-004", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-014", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", section:"SHS",   size:"75x75x5",   itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:250,  wtAvailable:250,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
+  { id:"STK-001", lotNo:"LOT-2025-001", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:2000, variance:0, size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:2000, wtAvailable:1800, wtAllocated:200, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc001/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:200}] },
+  { id:"STK-002", lotNo:"LOT-2025-002", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-002", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:500,  variance:0, size:"150x150x16", itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:500,  wtAvailable:500,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc002/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[] },
+  { id:"STK-003", lotNo:"LOT-2025-003", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-004", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"PLATE", qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:1500, variance:0, size:"10mm",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1500, wtAvailable:1200, wtAllocated:300, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-05", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc003/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:300}] },
+  { id:"STK-004", lotNo:"LOT-2025-004", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:800,  variance:0, size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"qc_hold",  bayId:"BAY-04", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending",  receivedDate:"2025-02-06", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"MTC not received from supplier" },
+  { id:"STK-005", lotNo:"LOT-2026-001", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-009", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", sectionType:"ISMB",  qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:3000, variance:0, size:"300",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:3000, wtAvailable:3000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
+  { id:"STK-006", lotNo:"LOT-2026-002", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-010", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", sectionType:"PLATE", qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:800,  variance:0, size:"12mm",      itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold",   bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"Surface rust and minor edge damage on plates — awaiting QC decision" },
+  { id:"STK-007", lotNo:"LOT-2026-003", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-013", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", sectionType:"RHS",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:1000, variance:0, size:"100x50x4",  itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1000, wtAvailable:1000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
+  { id:"STK-008", lotNo:"LOT-2026-004", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-014", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", sectionType:"SHS",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:250,  variance:0, size:"75x75x5",   itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:250,  wtAvailable:250,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
 ];
 
 // ─── NESTING RUNS ─────────────────────────────────────────────────────────────
@@ -392,15 +396,30 @@ const calcWtOrdered = (qty, unit) => (unit||"MT")==="MT" ? (qty||0)*1000 : (qty|
 const buildMatCode = (sectionType, matType, grade, size) =>
   [sectionType, matType, grade, size].map(s=>(s||"").toUpperCase()).join("/");
 const buildItemCode = (l) => {
-  if (!l.matCode) return l.section ? buildMatCode(l.section, l.matType, l.grade, l.size) : "";
+  if (!l.matCode) return l.sectionType ? buildMatCode(l.sectionType, l.matType, l.grade, l.size) : "";
   if (l.isPlate) return (l.sheetLength&&l.sheetWidth) ? `${l.matCode}/${l.sheetLength}X${l.sheetWidth}` : l.matCode;
   return l.stdLength ? `${l.matCode}/${l.stdLength}` : l.matCode;
 };
 const calcPoLineWt = (l) => {
+  const unit = (l.unit||"MT").toUpperCase();
+  if (unit==="MT"||unit==="T") return (l.qty||0)*1000;
+  if (unit==="KG") return (l.qty||0);
+  // Count-based (Sheets/Pcs/NOS): use library data or dimensions
   if (l.matLibId) {
-    if (l.isPlate) return (l.qty||0)*((l.sheetLength||0)/1000)*((l.sheetWidth||0)/1000)*(l.wtPerM2||0);
-    return (l.qty||0)*((l.stdLength||0)/1000)*(l.wtPerMetre||0);
+    const len = l.length||l.sheetLength||l.stdLength||0;
+    const wid = l.width||l.sheetWidth||0;
+    if (l.isPlate && len>0 && wid>0) return (l.qty||0)*((len)/1000)*((wid)/1000)*(l.wtPerM2||0);
+    if (!l.isPlate && len>0) return (l.qty||0)*((len)/1000)*(l.wtPerMetre||0);
   }
+  // No library: if plate with dimensions, use density formula
+  const st = (l.sectionType||l.section||"").toUpperCase();
+  const len = l.length||l.sheetLength||l.stdLength||0;
+  const wid = l.width||l.sheetWidth||0;
+  if (st==="PLATE" && len>0 && wid>0) {
+    const thk = parseFloat((l.size||"0").replace(/[^\d.]/g,""))||0;
+    return (l.qty||0)*((len)/1000)*((wid)/1000)*7.85*thk;
+  }
+  if (len>0 && l.wtPerMetre) return (l.qty||0)*((len)/1000)*(l.wtPerMetre||0);
   return calcWtOrdered(l.qty, l.unit);
 };
 const genBatchNo = (vendorCode, allPos, year) => {
@@ -422,13 +441,20 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
       batchNo:grnForm.batchNo||"",
       itemCode:poLine.itemCode||"", matCode:poLine.matCode||"", matLibId:poLine.matLibId||"",
-      matType:poLine.matType||"", grade:poLine.grade||"", section:poLine.section||"", size:poLine.size||"",
+      matType:poLine.matType||"", grade:poLine.grade||"", sectionType:poLine.sectionType||"", size:poLine.size||"",
       heatNo:l.heatNo||"",
       wtReceived:l.wtReceived, wtAvailable:l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
       status:"qc_hold", bayId:grnForm.bayId||"", mtcUploaded:false, mtcDoc:"",
       rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:today(),
       isOffcut:false, parentLotId:"",
       allocations:[], qcHoldReason:(l.inspStatus||"")==="hold"?(grnForm.holdReason||""):"",
+      qtyReceived: l.qtyReceived||0,
+      unit: poLine.unit||"MT",
+      length: poLine.length||null,
+      width: poLine.width||null,
+      calculatedWt: l.calculatedWt||l.wtReceived||0,
+      actualWt: l.actualWt||l.wtReceived||0,
+      variance: l.variance||0,
     };
   });
 
@@ -443,6 +469,9 @@ const PO_LINE_COLS = [
   { key:"unitPrice",        variants:["unit price","unit price (₹)","rate","rate per unit","price"] },
   { key:"expectedDelivery", variants:["expected delivery","delivery date","exp delivery","delivery"] },
   { key:"remarks",          variants:["remarks","notes","remark"] },
+  { key:"length",           variants:["length","length (mm)","bar length","std length"] },
+  { key:"width",            variants:["width","width (mm)","sheet width"] },
+  { key:"pricingMethod",    variants:["pricing method","pricing","price basis","pricingmethod"] },
 ];
 
 const parsePOLineCSV = (text, materials) => {
@@ -480,26 +509,34 @@ const parsePOLineCSV = (text, materials) => {
     const rawDel      = get("expectedDelivery");
     let expectedDelivery = "";
     if (rawDel) { const m = rawDel.match(/^(\d{2})-(\d{2})-(\d{4})$/); expectedDelivery = m ? `${m[3]}-${m[2]}-${m[1]}` : rawDel; }
-    const unitU  = unit.toUpperCase();
-    const wtOrdered  = (unitU==="MT"||unitU==="T") ? qty*1000 : qty;
-    const totalPrice = qty * unitPrice;
+    const length        = parseFloat(get("length")) || null;
+    const width         = parseFloat(get("width")) || null;
+    const pricingMethod = get("pricingMethod") || "PerUnit";
     const libMatch   = (materials||[]).find(m =>
       (m.sectionType||"").toLowerCase() === sectionType.toLowerCase() &&
       (m.size||"").toLowerCase() === size.toLowerCase() &&
       (m.grade||"").toLowerCase() === grade.toLowerCase()
     );
+    const wtOrdered = calcPoLineWt({ qty, unit, sectionType, length, width,
+      matLibId: libMatch?.id||"", isPlate: libMatch?.isPlate||false,
+      wtPerM2: libMatch?.wtPerM2||null, wtPerMetre: libMatch?.wtPerMetre||null });
+    const totalPrice = qty * unitPrice;
     return {
       id: `POL-${ts}-${i}`,
-      section: sectionType, size, grade, matType, qty, unit, unitPrice,
+      sectionType, size, grade, matType, qty, unit, unitPrice,
       totalPrice, wtOrdered, wtReceived:0, status:"pending",
       expectedDelivery, remarks,
       matLibId: libMatch?.id || "",
       matCode:  libMatch?.matCode || buildMatCode(sectionType, matType, grade, size),
       itemCode: "",
+      qtyOrdered: qty, pricingMethod, length, width,
+      effectiveRateKg: wtOrdered>0 ? Math.round((qty*unitPrice)/wtOrdered*100)/100 : 0,
+      effectiveRateUnit: unitPrice,
+      qtyReceived: 0,
       _libMatched: !!libMatch,
     };
   });
-  const blocking = rows.filter(r => !r.section || !r.size || !r.qty || !r.unitPrice);
+  const blocking = rows.filter(r => !r.sectionType || !r.size || !r.qty || !r.unitPrice);
   if (blocking.length) return {
     rows:[], errors:[`${blocking.length} row(s) are missing required fields (Section, Size, Qty, or Unit Price). Fix the file and re-upload.`], warnings:[]
   };
@@ -1521,7 +1558,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
     });
   });
   const fabList = Object.values(fabAgg).map(row => {
-    const stockAvail = stock.filter(s=>(s.matCode&&s.matCode===row.matCode)||(s.section===row.section&&s.size===row.size&&s.grade===row.grade)).reduce((a,s)=>a+(s.wtAvailable||0),0);
+    const stockAvail = stock.filter(s=>(s.matCode&&s.matCode===row.matCode)||((s.sectionType||s.section)===row.section&&s.size===row.size&&s.grade===row.grade)).reduce((a,s)=>a+(s.wtAvailable||0),0);
     const netToProcure = Math.max(0, row.wtRequired - stockAvail);
     return { ...row, stockAvail, netToProcure };
   });
@@ -2023,7 +2060,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders }) => {
             <thead><tr><TH>Lot No</TH><TH>Material</TH><TH>Grade</TH><TH>Section</TH><TH>Size</TH><TH right>Wt Available (kg)</TH><TH right>Wt Allocated (kg)</TH><TH>Bay</TH><TH>Joints</TH><TH>Allocated To</TH></tr></thead>
             <tbody>{stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="approved").map((s,i)=>(
               <tr key={s.id} style={{ background:i%2===0?"transparent":T.bg }}>
-                <TD mono>{s.lotNo}</TD><TD>{s.matType}</TD><TD mono>{s.grade}</TD><TD>{s.section}</TD><TD mono>{s.size}</TD>
+                <TD mono>{s.lotNo}</TD><TD>{s.matType}</TD><TD mono>{s.grade}</TD><TD>{s.sectionType||s.section}</TD><TD mono>{s.size}</TD>
                 <TD right mono bold color={T.green}>{fmt.num(s.wtAvailable)}</TD>
                 <TD right mono color={T.accent}>{fmt.num(s.wtAllocated)}</TD>
                 <TD><Badge color="teal">{s.bayId}</Badge></TD>
@@ -2116,18 +2153,21 @@ const POLineImportModal = ({ rows, err, mode, setMode, fileRef, onFile, onDownlo
         <div style={{ overflowX:"auto", maxHeight:240, overflowY:"auto" }}>
           <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
             <thead><tr>
-              {["Section","Size","Grade","Qty","Unit","Unit Price","Total Price","Wt Ordered (kg)","Library Match"].map(h=>(
+              {["Section","Size","Grade","Length","Width","Qty","Unit","Pricing","Unit Price","Total Price","Wt Ordered (kg)","Library Match"].map(h=>(
                 <TH key={h}>{h}</TH>
               ))}
             </tr></thead>
             <tbody>
               {rows.map((r,i)=>(
                 <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
-                  <TD mono>{r.section}</TD>
+                  <TD mono>{r.sectionType||r.section}</TD>
                   <TD mono>{r.size}</TD>
                   <TD>{r.grade}</TD>
+                  <TD mono>{r.length||"—"}</TD>
+                  <TD mono>{r.width||"—"}</TD>
                   <TD right mono>{r.qty}</TD>
                   <TD>{r.unit}</TD>
+                  <TD>{r.pricingMethod||"PerUnit"}</TD>
                   <TD right mono>{fmt.currency(r.unitPrice)}</TD>
                   <TD right mono bold color={T.green}>{fmt.currency(r.totalPrice)}</TD>
                   <TD right mono>{fmt.num(r.wtOrdered)}</TD>
@@ -2167,9 +2207,9 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
   const downloadPOTemplate = () => {
-    const hdr    = ["Section Type","Size","Grade","Material Type","Qty","Unit","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
-    const hints  = ["e.g. RHS","e.g. 100x50x4","e.g. E250","MS / SS","0.6","MT / T / KG / NOS / PCS","72000","20-03-2026","Any notes"];
-    const sample = ["RHS","100x50x4","E250","MS","0.6","MT","72000","20-03-2026","Main columns"];
+    const hdr    = ["Section Type","Size","Grade","Material Type","Length (mm)","Width (mm)","Qty","Unit","Pricing Method (PerUnit/PerKg)","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
+    const hints  = ["e.g. PLATE","12mm","E250","MS","6000","1250","5","Sheets","PerUnit","65000","20-03-2026","Any notes"];
+    const sample = ["ISA","75x75x8","E250","MS","12000","","40","Pcs","PerUnit","780","20-03-2026","Main columns"];
     const csv = [hdr,hints,sample].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const a = Object.assign(document.createElement("a"),{ href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:"po_lines_template.csv" });
     a.click(); URL.revokeObjectURL(a.href);
@@ -2234,8 +2274,9 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
       const updatedLines = p.lines.map(pl => {
         const grnLine = newGrn.lines.find(gl=>gl.poLineId===pl.id);
         if (!grnLine) return pl;
-        const newReceived = (pl.wtReceived||0)+(grnLine.wtReceived||0);
-        return { ...pl, wtReceived:newReceived, status:newReceived>=pl.wtOrdered?"fully_received":"partially_received" };
+        const newReceived = (pl.wtReceived||0)+(grnLine.actualWt||grnLine.wtReceived||0);
+        const newQtyRec = (pl.qtyReceived||0)+(grnLine.qtyReceived||0);
+        return { ...pl, wtReceived:newReceived, qtyReceived:newQtyRec, status:newReceived>=pl.wtOrdered?"fully_received":"partially_received" };
       });
       const allFull = updatedLines.every(l=>l.status==="fully_received");
       const anyRec = updatedLines.some(l=>l.status==="fully_received"||l.status==="partially_received");
@@ -2345,64 +2386,90 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
                 <button onClick={()=>setPoImpModal(true)} style={css.btn.amber}>📥 Import CSV</button>
-                <button onClick={()=>setForm(f=>({...f,lines:[...(f.lines||[]),{matLibId:"",matCode:"",section:"",size:"",grade:"",matType:"MS",isPlate:false,qty:0,unit:"MT",unitPrice:0,wtOrdered:0}]}))} style={css.btn.sm}>+ Add Line</button>
+                <button onClick={()=>setForm(f=>({...f,lines:[...(f.lines||[]),{matLibId:"",matCode:"",sectionType:"",size:"",grade:"E250",matType:"MS",isPlate:false,qty:0,qtyOrdered:0,unit:"Pcs",pricingMethod:"PerUnit",unitPrice:0,wtOrdered:0,totalPrice:0,length:null,width:null,effectiveRateKg:0,qtyReceived:0}]}))} style={css.btn.sm}>+ Add Line</button>
               </div>
             } />
             {(form.lines||[]).map((l,i)=>{
-              const libItem = (materials||[]).find(m=>m.id===l.matLibId);
-              const lineWt = calcPoLineWt(l);
-              const itemCode = buildItemCode(l);
               return (
-                <div key={i} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
-                  {/* Material selector */}
-                  <div style={{ marginBottom:8 }}>
-                    <div style={css.label}>Material</div>
-                    <Sel value={l.matLibId||"__ns__"} onChange={e=>setForm(f=>{ const n=[...f.lines]; if(e.target.value==="__ns__"){n[i]={...n[i],matLibId:"",matCode:"",isPlate:false,wtPerMetre:null,wtPerM2:null,stdLength:null,sheetLength:null,sheetWidth:null};}else{const m=(materials||[]).find(x=>x.id===e.target.value); if(m)n[i]={...n[i],matLibId:m.id,matCode:m.matCode,section:m.sectionType,size:m.size,grade:m.grade,matType:m.matType,isPlate:m.isPlate,wtPerMetre:m.wtPerMetre||null,wtPerM2:m.wtPerM2||null,stdLength:null,sheetLength:null,sheetWidth:null};} return {...f,lines:n}; })}>
-                      <option value="__ns__">— Non-standard / not in library —</option>
-                      {(materials||[]).filter(m=>m.active).map(m=>(
-                        <option key={m.id} value={m.id}>{m.sectionType} {m.size} — {m.grade} ({m.wtPerMetre?`${m.wtPerMetre} kg/m`:`${m.wtPerM2} kg/m²`})</option>
-                      ))}
-                    </Sel>
-                  </div>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr auto", gap:8, alignItems:"end" }}>
-                    {/* Std length for sections */}
-                    {l.matLibId && !l.isPlate && (
-                      <Field label="Standard Length">
-                        <Sel value={l.stdLength||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],stdLength:+e.target.value}; return {...f,lines:n}; })}>
-                          <option value="">Select length...</option>
-                          {(libItem?.standardLengths||[]).map(sl=><option key={sl} value={sl}>{sl/1000}m ({sl}mm)</option>)}
-                        </Sel>
-                      </Field>
-                    )}
-                    {/* Sheet dims for plates */}
-                    {l.matLibId && l.isPlate && <>
-                      <Field label="Sheet Length (mm)"><Input type="number" value={l.sheetLength||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],sheetLength:+e.target.value}; return {...f,lines:n}; })} /></Field>
-                      <Field label="Sheet Width (mm)"><Input type="number" value={l.sheetWidth||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],sheetWidth:+e.target.value}; return {...f,lines:n}; })} /></Field>
-                    </>}
-                    {/* Free-text fallback */}
-                    {!l.matLibId && <>
-                      <Field label="Section"><Input value={l.section||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],section:e.target.value}; return {...f,lines:n}; })} placeholder="ISA, PLATE..." /></Field>
-                      <Field label="Size"><Input value={l.size||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],size:e.target.value}; return {...f,lines:n}; })} /></Field>
-                      <Field label="Grade"><Input value={l.grade||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],grade:e.target.value}; return {...f,lines:n}; })} /></Field>
-                      <Field label="Unit"><Sel value={l.unit||"MT"} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],unit:e.target.value}; return {...f,lines:n}; })}><option>MT</option><option>KG</option><option>Nos</option></Sel></Field>
-                    </>}
-                    <Field label="Qty"><Input type="number" value={l.qty||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],qty:+e.target.value,totalPrice:+e.target.value*(n[i].unitPrice||0)}; return {...f,lines:n}; })} /></Field>
-                    <Field label="Unit Price (₹/kg)"><Input type="number" value={l.unitPrice||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],unitPrice:+e.target.value,totalPrice:(n[i].qty||0)*+e.target.value}; return {...f,lines:n}; })} /></Field>
-                    <Field label="Wt Ordered (kg)"><Input value={lineWt>0?lineWt.toFixed(1):""} readOnly style={{opacity:0.6,cursor:"default",color:T.green,fontFamily:T.fontMono}} /></Field>
-                    <button onClick={()=>setForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:18 }}>✕</button>
-                  </div>
-                  {/* Live calc preview + item code */}
-                  <div style={{ marginTop:6, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-                    <div style={{ fontSize:11, color:T.textMid }}>
-                      {l.matLibId && !l.isPlate && l.stdLength>0 && <span>{l.qty} × {(l.stdLength/1000).toFixed(1)}m × {l.wtPerMetre} kg/m = <strong style={{color:T.green}}>{lineWt.toFixed(1)} kg</strong></span>}
-                      {l.matLibId && l.isPlate && l.sheetLength>0 && l.sheetWidth>0 && <span>{l.qty} × {(l.sheetLength/1000).toFixed(2)}m × {(l.sheetWidth/1000).toFixed(2)}m × {l.wtPerM2} kg/m² = <strong style={{color:T.green}}>{lineWt.toFixed(1)} kg</strong></span>}
-                    </div>
-                    <div style={{ display:"flex", gap:16, alignItems:"center" }}>
-                      {itemCode && <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.accentHi }}>📦 {itemCode}</span>}
-                      <span style={{ fontSize:11, color:T.textMid }}>Line Total: <strong style={{color:T.green,fontFamily:T.fontMono}}>{fmt.currency((l.qty||0)*(l.unitPrice||0))}</strong></span>
-                    </div>
-                  </div>
-                </div>
+  <div key={i} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
+    {/* Row 1: Material type selectors */}
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:8 }}>
+      <Field label="Section Type">
+        <Sel value={l.sectionType||""} onChange={e=>{
+          const st=e.target.value;
+          const isPlate=st==="PLATE";
+          setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],sectionType:st,isPlate,matLibId:"",wtPerM2:null,wtPerMetre:null}; return {...f,lines:n}; });
+        }}>
+          <option value="">— Select —</option>
+          {["ISA","ISMC","ISMB","PLATE","RHS","SHS","Flat Bar","Other"].map(s=><option key={s}>{s}</option>)}
+        </Sel>
+      </Field>
+      <Field label="Size / Thickness">
+        <Sel value={l.matLibId||"__ns__"} onChange={e=>{
+          if(e.target.value==="__ns__"){setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],matLibId:"",size:"",wtPerM2:null,wtPerMetre:null,isPlate:l.sectionType==="PLATE"}; return {...f,lines:n}; });}
+          else{ const m=(materials||[]).find(x=>x.id===e.target.value); if(m) setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],matLibId:m.id,matCode:m.matCode,sectionType:m.sectionType,size:m.size,grade:m.grade,matType:m.matType,isPlate:m.isPlate,wtPerMetre:m.wtPerMetre||null,wtPerM2:m.wtPerM2||null}; return {...f,lines:n}; }); }
+        }}>
+          <option value="__ns__">— Free text —</option>
+          {(materials||[]).filter(m=>m.active&&(!l.sectionType||m.sectionType===l.sectionType)).map(m=>(
+            <option key={m.id} value={m.id}>{m.size} ({m.wtPerMetre?m.wtPerMetre+" kg/m":m.wtPerM2+" kg/m²"})</option>
+          ))}
+        </Sel>
+      </Field>
+      {!l.matLibId && <Field label="Size (manual)"><Input value={l.size||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],size:e.target.value}; return {...f,lines:n}; })} placeholder="e.g. 75x75x8" /></Field>}
+      <Field label="Grade">
+        <Sel value={l.grade||"E250"} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],grade:e.target.value}; return {...f,lines:n}; })}>
+          <option>E250</option><option>E350</option><option>304</option><option>316</option><option>Other</option>
+        </Sel>
+      </Field>
+      <Field label="Mat Type">
+        <Sel value={l.matType||"MS"} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],matType:e.target.value}; return {...f,lines:n}; })}>
+          <option>MS</option><option>SS</option><option>AL</option>
+        </Sel>
+      </Field>
+    </div>
+    {/* Row 2: Dimensions (shown for count-based units) */}
+    {(l.unit||"Pcs").toUpperCase()!=="MT"&&(l.unit||"Pcs").toUpperCase()!=="KG"&&(
+      <div style={{ display:"grid", gridTemplateColumns:l.isPlate?"1fr 1fr 2fr":"1fr 2fr", gap:8, marginBottom:8 }}>
+        <Field label="Length (mm)"><Input type="number" value={l.length||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],length:+e.target.value||null}; return {...f,lines:n}; })} /></Field>
+        {l.isPlate&&<Field label="Width (mm)"><Input type="number" value={l.width||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],width:+e.target.value||null}; return {...f,lines:n}; })} /></Field>}
+        <div style={{ alignSelf:"flex-end", paddingBottom:6, fontSize:11, color:T.textLow }}>
+          {l.isPlate?"Plate dims: Length × Width (mm)":"Bar/section: full bar length in mm"}
+        </div>
+      </div>
+    )}
+    {/* Row 3: Qty + Pricing */}
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr auto", gap:8, alignItems:"end" }}>
+      <Field label={`Qty (${l.unit||"Pcs"})`}><Input type="number" value={l.qty||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nq=+e.target.value; const wt=calcPoLineWt({...n[i],qty:nq}); const tp=n[i].pricingMethod==="PerKg"?wt*(n[i].unitPrice||0):nq*(n[i].unitPrice||0); n[i]={...n[i],qty:nq,qtyOrdered:nq,wtOrdered:wt,totalPrice:tp,effectiveRateKg:wt>0?tp/wt:0}; return {...f,lines:n}; })} /></Field>
+      <Field label="Unit">
+        <Sel value={l.unit||"Pcs"} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nu=e.target.value; const wt=calcPoLineWt({...n[i],unit:nu}); n[i]={...n[i],unit:nu,wtOrdered:wt}; return {...f,lines:n}; })}>
+          <option>Sheets</option><option>Pcs</option><option>MT</option><option>KG</option><option>NOS</option>
+        </Sel>
+      </Field>
+      <Field label="Pricing">
+        <div style={{ display:"flex", gap:4, marginTop:4 }}>
+          {["PerUnit","PerKg"].map(pm=>(
+            <button key={pm} onClick={()=>setForm(f=>{ const n=[...f.lines]; const wt=calcPoLineWt(n[i]); const tp=pm==="PerKg"?wt*(n[i].unitPrice||0):(n[i].qty||0)*(n[i].unitPrice||0); n[i]={...n[i],pricingMethod:pm,totalPrice:tp,effectiveRateKg:wt>0?tp/wt:0}; return {...f,lines:n}; })} style={{ flex:1, padding:"4px 6px", fontSize:11, fontWeight:l.pricingMethod===pm?700:400, color:l.pricingMethod===pm?T.accent:T.textMid, background:l.pricingMethod===pm?T.bgCard:"transparent", border:`1px solid ${l.pricingMethod===pm?T.accent:T.border}`, borderRadius:4, cursor:"pointer", fontFamily:T.font }}>{pm==="PerUnit"?"/unit":"/kg"}</button>
+          ))}
+        </div>
+      </Field>
+      <Field label={l.pricingMethod==="PerKg"?"Price/kg (₹)":"Price/unit (₹)"}><Input type="number" value={l.unitPrice||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const up=+e.target.value; const wt=calcPoLineWt(n[i]); const tp=n[i].pricingMethod==="PerKg"?wt*up:(n[i].qty||0)*up; n[i]={...n[i],unitPrice:up,totalPrice:tp,effectiveRateKg:wt>0?tp/wt:0,effectiveRateUnit:n[i].pricingMethod==="PerKg"?(n[i].qty||0)>0?tp/(n[i].qty||0):0:up}; return {...f,lines:n}; })} /></Field>
+      <button onClick={()=>setForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:18 }}>✕</button>
+    </div>
+    {/* Row 4: Live calc preview */}
+    {(()=>{ const wt=calcPoLineWt(l); const tp=l.pricingMethod==="PerKg"?wt*(l.unitPrice||0):(l.qty||0)*(l.unitPrice||0); const effKg=wt>0?tp/wt:0; const mc=l.matCode||buildMatCode(l.sectionType||l.section,l.matType,l.grade,l.size); const ic=buildItemCode({...l,matCode:mc}); return (
+      <div style={{ marginTop:8, padding:"8px 12px", background:T.bgCard, borderRadius:6, display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8 }}>
+        <div><div style={css.label}>Wt Ordered</div><div style={{ fontSize:12,color:wt>0?T.green:T.textLow,fontFamily:T.fontMono,fontWeight:700 }}>{wt>0?`${fmt.num(Math.round(wt))} kg (${(wt/1000).toFixed(2)} T)`:"—"}</div></div>
+        <div><div style={css.label}>Line Total</div><div style={{ fontSize:12,color:T.green,fontFamily:T.fontMono,fontWeight:700 }}>{fmt.currency(tp)}</div></div>
+        <div><div style={css.label}>Eff. Rate/kg</div><div style={{ fontSize:12,color:T.accent,fontFamily:T.fontMono }}>{effKg>0?`₹${effKg.toFixed(2)}/kg`:"—"}</div></div>
+        <div><div style={css.label}>Item Code</div><div style={{ fontSize:11,color:ic?T.accentHi:T.textLow,fontFamily:T.fontMono }}>{ic||"—"}{l.matLibId&&<span style={{color:T.green,marginLeft:4}}>✓</span>}</div></div>
+      </div>
+    ); })()}
+    {/* Row 5: Delivery + Remarks */}
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8 }}>
+      <Field label="Expected Delivery"><Input type="date" value={l.expectedDelivery||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],expectedDelivery:e.target.value}; return {...f,lines:n}; })} /></Field>
+      <Field label="Remarks"><Input value={l.remarks||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],remarks:e.target.value}; return {...f,lines:n}; })} /></Field>
+    </div>
+  </div>
               );
             })}
           </div>
@@ -2442,9 +2509,9 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
   const canInspect = ["super_admin","qc_admin","qc_user","store_admin"].includes(user.role);
 
   const downloadPOTemplate = () => {
-    const hdr    = ["Section Type","Size","Grade","Material Type","Qty","Unit","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
-    const hints  = ["e.g. RHS","e.g. 100x50x4","e.g. E250","MS / SS","0.6","MT / T / KG / NOS / PCS","72000","20-03-2026","Any notes"];
-    const sample = ["RHS","100x50x4","E250","MS","0.6","MT","72000","20-03-2026","Main columns"];
+    const hdr    = ["Section Type","Size","Grade","Material Type","Length (mm)","Width (mm)","Qty","Unit","Pricing Method (PerUnit/PerKg)","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
+    const hints  = ["e.g. PLATE","12mm","E250","MS","6000","1250","5","Sheets","PerUnit","65000","20-03-2026","Any notes"];
+    const sample = ["ISA","75x75x8","E250","MS","12000","","40","Pcs","PerUnit","780","20-03-2026","Main columns"];
     const csv = [hdr,hints,sample].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const a = Object.assign(document.createElement("a"),{ href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:`po_lines_template_${po.id}.csv` });
     a.click(); URL.revokeObjectURL(a.href);
@@ -2482,8 +2549,9 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
       const updLines = p.lines.map(pl=>{
         const gl = newGrn.lines.find(x=>x.poLineId===pl.id);
         if(!gl) return pl;
-        const nw=(pl.wtReceived||0)+(gl.wtReceived||0);
-        return {...pl, wtReceived:nw, status:nw>=pl.wtOrdered?"fully_received":"partially_received"};
+        const nw=(pl.wtReceived||0)+(gl.actualWt||gl.wtReceived||0);
+        const nq=(pl.qtyReceived||0)+(gl.qtyReceived||0);
+        return {...pl, wtReceived:nw, qtyReceived:nq, status:nw>=pl.wtOrdered?"fully_received":"partially_received"};
       });
       const allF=updLines.every(l=>l.status==="fully_received");
       const anyR=updLines.some(l=>l.status==="fully_received"||l.status==="partially_received");
@@ -2513,10 +2581,13 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
         <Badge color={poStatusBadge[po.status]||"gray"}>{po.status?.replace("_"," ")}</Badge>
       </div>
       <div style={{ fontSize:18, fontWeight:800, color:T.text, marginBottom:2 }}>{po.vendorName}</div>
-      <div style={{ fontSize:12, color:T.textMid, marginBottom:16 }}>
-        PO Date: {fmt.date(po.poDate)} · Expected: {fmt.date(po.expectedDelivery)} ·
-        Value: <strong style={{color:T.green,fontFamily:T.fontMono}}>{fmt.currency(totalVal)}</strong> ·
-        Received: {fmt.wtT(totalWtRec)} of {fmt.wtT(totalWtOrd)}
+      <div style={{ fontSize:12, color:T.textMid, marginBottom:8 }}>PO Date: {fmt.date(po.poDate)} · Expected: {fmt.date(po.expectedDelivery)}</div>
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+        <StatCard label="Lines" value={po.lines?.length||0} color={T.text} />
+        <StatCard label="Total Value" value={fmt.currency(totalVal)} color={T.green} />
+        <StatCard label="Wt Ordered" value={`${fmt.num(totalWtOrd)} kg`} sub={`${(totalWtOrd/1000).toFixed(2)} T`} color={T.accent} />
+        <StatCard label="Wt Received" value={`${fmt.num(totalWtRec)} kg`} sub={totalWtOrd>0?`${Math.round(totalWtRec/totalWtOrd*100)}%`:""} color={totalWtRec>0?T.green:T.textLow} />
+        <StatCard label="GRNs" value={po.grns?.length||0} color={T.textMid} />
       </div>
 
       <div style={{ display:"flex", gap:8, marginBottom:16 }}>
@@ -2539,16 +2610,20 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
       {tab==="lines" && (
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead><tr><TH>#</TH><TH>Item Code / Material</TH><TH right>Qty</TH><TH right>Unit Price</TH><TH right>Total Price</TH><TH right>Wt Ordered (kg)</TH><TH right>Wt Received (kg)</TH><TH>Status</TH></tr></thead>
+            <thead><tr><TH>#</TH><TH>Section</TH><TH>Size</TH><TH>Grade</TH><TH right>Qty</TH><TH>Unit</TH><TH right>Unit Price</TH><TH>Pricing</TH><TH right>Eff ₹/kg</TH><TH right>Total</TH><TH right>Wt Ord (kg)</TH><TH right>Wt Rcvd (kg)</TH><TH>Status</TH></tr></thead>
             <tbody>
               {po.lines?.map((l,i)=>{
-                const dispCode = l.itemCode || l.matCode || (l.section?`${l.section} ${l.size} ${l.grade}`.trim():"—");
                 return (
                 <tr key={l.id} style={{ background:i%2===0?"transparent":T.bg }}>
                   <TD mono color={T.textLow}>{i+1}</TD>
-                  <TD><span style={{fontFamily:T.fontMono,fontSize:11,color:l.matLibId?T.accentHi:T.text}}>{dispCode}</span></TD>
-                  <TD right mono>{l.qty} {l.unit||"Nos"}</TD>
+                  <TD><span style={{fontFamily:T.fontMono,fontSize:11,color:l.matLibId?T.accentHi:T.text}}>{l.sectionType||l.section||"—"}</span></TD>
+                  <TD mono>{l.size||"—"}</TD>
+                  <TD>{l.grade||"—"}</TD>
+                  <TD right mono>{l.qtyOrdered||l.qty} {l.unit||"MT"}</TD>
+                  <TD>{l.unit||"MT"}</TD>
                   <TD right mono>{fmt.currency(l.unitPrice)}</TD>
+                  <TD><span style={{fontSize:11,color:T.textMid}}>{l.pricingMethod||"PerUnit"}</span></TD>
+                  <TD right mono>{l.effectiveRateKg>0?`₹${Number(l.effectiveRateKg).toFixed(1)}`:"—"}</TD>
                   <TD right mono bold color={T.green}>{fmt.currency(l.totalPrice)}</TD>
                   <TD right mono>{fmt.num(l.wtOrdered)}</TD>
                   <TD right mono color={l.wtReceived>0?T.green:T.textLow}>{fmt.num(l.wtReceived||0)}</TD>
@@ -2557,7 +2632,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
                 );
               })}
               <tr style={{ background:T.bgInput }}>
-                <td colSpan={4} style={{ padding:"6px 10px", fontWeight:700, fontSize:12, color:T.textMid }}>Total</td>
+                <td colSpan={9} style={{ padding:"6px 10px", fontWeight:700, fontSize:12, color:T.textMid }}>Total</td>
                 <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.currency(totalVal)}</td>
                 <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(totalWtOrd)}</td>
                 <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.num(totalWtRec)}</td>
@@ -2582,19 +2657,21 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
                   </div>
                   <div style={{ fontSize:12, color:T.textMid }}>Date: {fmt.date(grn.date)} · Vehicle: {grn.vehicleNo} · Challan: {grn.challanNo} · By: {grn.createdBy}</div>
                   {grn.batchNo&&<div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Batch: <span style={{fontFamily:T.fontMono,color:T.accentHi,fontWeight:700}}>{grn.batchNo}</span></div>}
+                  {grn.supplierInvoiceNo&&<div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Invoice: <span style={{fontFamily:T.fontMono,color:T.text}}>{grn.supplierInvoiceNo}</span>{grn.supplierInvoiceWt>0?` · Inv Wt: ${fmt.num(grn.supplierInvoiceWt)} kg`:""}{grn.supplierInvoiceAmt>0?` · Inv Amt: ${fmt.currency(grn.supplierInvoiceAmt)}`:""}</div>}
                   {grn.remarks && <div style={{ fontSize:12, color:T.textMid, marginTop:4 }}>{grn.remarks}</div>}
                 </div>
               </div>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                <thead><tr><TH>PO Line</TH><TH>Material</TH><TH right>Wt Received (kg)</TH><TH>Heat No</TH><TH>Condition</TH><TH>Inspection</TH></tr></thead>
+                <thead><tr><TH>PO Line</TH><TH>Material</TH><TH right>Qty Rcvd</TH><TH right>Calc Wt (kg)</TH><TH right>Actual Wt (kg)</TH><TH right>Variance</TH><TH>Insp</TH></tr></thead>
                 <tbody>
                   {grn.lines?.map((l,i)=>(
                     <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
                       <TD mono>{l.poLineId}</TD>
-                      <TD><span style={{fontFamily:T.fontMono,fontSize:11}}>{l.materialDesc}</span></TD>
-                      <TD right mono bold color={T.green}>{fmt.num(l.wtReceived)}</TD>
-                      <TD mono>{l.heatNo||<span style={{color:T.textLow}}>—</span>}</TD>
-                      <TD>{l.condition}</TD>
+                      <TD><span style={{fontFamily:T.fontMono,fontSize:11}}>{l.materialDesc||l.poLineId}</span></TD>
+                      <TD right mono>{l.qtyReceived||"—"}</TD>
+                      <TD right mono>{fmt.num(l.calculatedWt||l.wtReceived)}</TD>
+                      <TD right mono bold color={T.green}>{fmt.num(l.actualWt||l.wtReceived)}</TD>
+                      <TD right mono color={(()=>{ const vp=l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0; return vp<=2?T.green:vp<=5?T.amber:T.red; })()}>{l.variance!=null?`${l.variance>0?"+":""}${l.variance}`:"—"}</TD>
                       <TD><Badge color={grnStatusBadge[l.inspStatus]||"gray"}>{l.inspStatus}</Badge></TD>
                     </tr>
                   ))}
@@ -2627,41 +2704,46 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
               </Sel>
             </Field>
             <Field label="Remarks"><Input value={grnForm.remarks||""} onChange={e=>setGrnForm(f=>({...f,remarks:e.target.value}))} /></Field>
+            {["super_admin","store_admin","store_user"].includes(user.role) && <>
+              <Field label="Supplier Invoice No"><Input value={grnForm.supplierInvoiceNo||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceNo:e.target.value}))} /></Field>
+              <Field label="Supplier Invoice Wt (kg)"><Input type="number" value={grnForm.supplierInvoiceWt||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceWt:+e.target.value}))} /></Field>
+              <Field label="Supplier Invoice Amt (₹)"><Input type="number" value={grnForm.supplierInvoiceAmt||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceAmt:+e.target.value}))} /></Field>
+              <Field label="Reconciliation">
+                <Sel value={grnForm.reconciliationStatus||"pending"} onChange={e=>setGrnForm(f=>({...f,reconciliationStatus:e.target.value}))}>
+                  <option value="pending">Pending</option><option value="matched">Matched</option><option value="variance">Variance</option><option value="dispute">Dispute</option>
+                </Sel>
+              </Field>
+            </>}
           </G2>
           {(grnForm.lines||[]).some(l=>l.inspStatus==="hold") && (
             <Field label="Hold Reason"><Input value={grnForm.holdReason||""} onChange={e=>setGrnForm(f=>({...f,holdReason:e.target.value}))} placeholder="Reason for hold..." /></Field>
           )}
           <SectionHd title="Received Lines" action={
-            <button onClick={()=>setGrnForm(f=>({...f,lines:[...(f.lines||[]),{wtReceived:0,heatNo:"",condition:"good",inspStatus:"approved"}]}))} style={css.btn.sm}>+ Add Line</button>
+            <button onClick={()=>setGrnForm(f=>({...f,lines:[...(f.lines||[]),{poLineId:"",materialDesc:"",qtyReceived:0,calculatedWt:0,actualWt:0,variance:0,wtReceived:0,heatNo:"",condition:"good",inspStatus:"approved"}]}))} style={css.btn.sm}>+ Add Line</button>
           } />
           {(grnForm.lines||[]).map((l,i)=>(
             <div key={i} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
-              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr auto", gap:10, alignItems:"end" }}>
-                <Field label="PO Line Ref">
-                  <Sel value={l.poLineId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===e.target.value); n[i]={...n[i],poLineId:e.target.value,materialDesc:pl?.itemCode||pl?.matCode||`${pl?.section||""} ${pl?.size||""}`.trim()}; return {...f,lines:n}; })}>
-                    <option value="">Select PO line...</option>
-                    {po.lines?.map(pl=><option key={pl.id} value={pl.id}>{pl.id} — {pl.itemCode||pl.matCode||`${pl.section} ${pl.size}`.trim()}</option>)}
-                  </Sel>
-                </Field>
-                <Field label="Wt Received (kg)"><Input type="number" value={l.wtReceived||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],wtReceived:+e.target.value}; return {...f,lines:n}; })} /></Field>
-                <Field label={<span>Heat No {!l.heatNo&&<span style={{color:T.amber,fontSize:10}}>⚠ blank</span>}</span>}>
-                  <Input value={l.heatNo||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],heatNo:e.target.value}; return {...f,lines:n}; })} placeholder="From MTC..." />
-                </Field>
-                <Field label="Condition">
-                  <Sel value={l.condition||"good"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],condition:e.target.value}; return {...f,lines:n}; })}>
-                    <option value="good">Good</option>
-                    <option value="damaged">Damaged</option>
-                    <option value="short">Short Quantity</option>
-                  </Sel>
-                </Field>
-                <Field label="Insp Status">
-                  <Sel value={l.inspStatus||"approved"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],inspStatus:e.target.value}; return {...f,lines:n}; })}>
-                    <option value="approved">Approved</option>
-                    <option value="hold">Hold</option>
-                    <option value="rejected">Rejected</option>
-                  </Sel>
-                </Field>
-                <button onClick={()=>setGrnForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
+              <div>
+                <div style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr 1fr", gap:8, alignItems:"end", marginBottom:6 }}>
+                  <Field label="PO Line Ref">
+                    <Sel value={l.poLineId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===e.target.value); const plWt=pl?calcPoLineWt(pl):0; const plQty=pl?+(pl.qtyOrdered||pl.qty||0):0; const wtPU=plQty>0?plWt/plQty:0; const cw=n[i].qtyReceived>0&&wtPU>0?Math.round(n[i].qtyReceived*wtPU):plWt; n[i]={...n[i],poLineId:e.target.value,materialDesc:pl?.itemCode||pl?.matCode||`${pl?.sectionType||pl?.section||""} ${pl?.size||""}`.trim(),calculatedWt:Math.round(cw),actualWt:Math.round(cw),wtReceived:Math.round(cw),variance:0}; return {...f,lines:n}; })}>
+                      <option value="">Select PO line...</option>
+                      {po.lines?.map(pl=><option key={pl.id} value={pl.id}>{pl.id} — {pl.itemCode||pl.matCode||`${pl.sectionType||pl.section||""} ${pl.size||""}`.trim()} (Bal: {fmt.num((pl.wtOrdered||0)-(pl.wtReceived||0))} kg)</option>)}
+                    </Sel>
+                  </Field>
+                  <Field label="Qty Received"><Input type="number" value={l.qtyReceived||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===n[i].poLineId); const plWt=pl?calcPoLineWt(pl):0; const plQty=pl?+(pl.qtyOrdered||pl.qty||0):0; const wtPU=plQty>0?plWt/plQty:0; const qr=+e.target.value; const cw=wtPU>0?Math.round(qr*wtPU):0; n[i]={...n[i],qtyReceived:qr,calculatedWt:cw,actualWt:cw,wtReceived:cw,variance:0}; return {...f,lines:n}; })} placeholder="Units" /></Field>
+                  <Field label="Calc Wt (kg)"><Input value={l.calculatedWt||""} readOnly style={{opacity:0.6,cursor:"default",fontFamily:T.fontMono,fontSize:12}} /></Field>
+                  <Field label="Weighbridge (kg)"><Input type="number" value={l.actualWt||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const aw=+e.target.value; const vr=Math.round(aw-(n[i].calculatedWt||0)); n[i]={...n[i],actualWt:aw,wtReceived:aw,variance:vr}; return {...f,lines:n}; })} placeholder={`Calc: ${l.calculatedWt||0}`} /></Field>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr auto", gap:8, alignItems:"end" }}>
+                  {(()=>{ const vp=l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0; const vc=vp<=2?T.green:vp<=5?T.amber:T.red; return (
+                    <Field label="Variance"><Input value={l.variance!==undefined&&l.variance!==null&&l.calculatedWt>0?`${(l.variance>0?"+":"")}${l.variance} kg (${vp.toFixed(1)}%)`:"—"} readOnly style={{opacity:0.9,cursor:"default",fontFamily:T.fontMono,color:vc,fontSize:11}} /></Field>
+                  ); })()}
+                  <Field label={<span>Heat No {!l.heatNo&&<span style={{color:T.amber,fontSize:10}}>⚠</span>}</span>}><Input value={l.heatNo||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],heatNo:e.target.value}; return {...f,lines:n}; })} placeholder="From MTC..." /></Field>
+                  <Field label="Condition"><Sel value={l.condition||"good"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],condition:e.target.value}; return {...f,lines:n}; })}><option value="good">Good</option><option value="damaged">Damaged</option><option value="short">Short</option></Sel></Field>
+                  <Field label="Insp"><Sel value={l.inspStatus||"approved"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],inspStatus:e.target.value}; return {...f,lines:n}; })}><option value="approved">Approved</option><option value="hold">Hold</option><option value="rejected">Rejected</option></Sel></Field>
+                  <button onClick={()=>setGrnForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
+                </div>
               </div>
             </div>
           ))}
@@ -2719,7 +2801,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
       <TD mono>{lot.lotNo}</TD>
       <TD>{lot.matType} {lot.grade}</TD>
-      <TD>{lot.section}</TD>
+      <TD>{lot.sectionType||lot.section}</TD>
       <TD mono>{lot.size}</TD>
       <TD right mono bold color={T.gold}>{fmt.num(lot.wtReceived)}</TD>
       <TD><Badge color="teal">{lot.bayId}</Badge></TD>
@@ -2843,7 +2925,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // STOCK MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const StockModule = ({ user, stock, setStock, orders, contractors, issueRequests=[], setIssueRequests }) => {
+const StockModule = ({ user, stock, setStock, orders, contractors, materials, issueRequests=[], setIssueRequests }) => {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState(null);
@@ -2867,7 +2949,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, issueRequests
 
   const filtered = stock.filter(s => {
     const ms = filter==="all" || (filter==="offcuts"?s.isOffcut:s.status===filter);
-    const mq = !search || [s.lotNo,s.batchNo,s.matCode,s.section,s.size,s.grade,s.vendorName,s.heatNo].some(v=>(v||"").toLowerCase().includes(search.toLowerCase()));
+    const mq = !search || [s.lotNo,s.batchNo,s.matCode,(s.sectionType||s.section),s.size,s.grade,s.vendorName,s.heatNo].some(v=>(v||"").toLowerCase().includes(search.toLowerCase()));
     return ms && mq;
   });
 
@@ -2935,8 +3017,8 @@ const StockModule = ({ user, stock, setStock, orders, contractors, issueRequests
     let maxLot = 0;
     stock.forEach(s=>{ const m=(s.lotNo||"").match(/^LOT-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) maxLot=Math.max(maxLot,+m[2]); });
     const newLotNo = `LOT-${yr}-${String(maxLot+1).padStart(3,"0")}`;
-    const dim = activeLot.section==="PLATE" ? (mForm.offcutDim||"") : (mForm.offcutLength||"");
-    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, section:activeLot.section, size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"available", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
+    const dim = (activeLot.sectionType||activeLot.section)==="PLATE" ? (mForm.offcutDim||"") : (mForm.offcutLength||"");
+    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"available", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
     const consumed = +(mForm.consumedWt||0);
     setStock(prev=>[...prev.map(s=>s.id!==activeLot.id?s:{ ...s, wtConsumed:(s.wtConsumed||0)+consumed, auditLog:[...(s.auditLog||[]),{action:"offcut-created",orderId:"",wt:offcutWt,by:user.name,date:today(),reason:`Off-cut → ${newLotNo}`}] }), newLot]);
     showToast(`Off-cut lot created: ${newLotNo}`); closeModal();
@@ -3035,8 +3117,8 @@ const StockModule = ({ user, stock, setStock, orders, contractors, issueRequests
                 <TD><span style={{ color:T.textLow,fontSize:10 }}>{expandedId===s.id?"▼":"▶"}</span></TD>
                 <TD mono>{s.lotNo}{s.isOffcut&&<span style={{ marginLeft:4 }}><Badge color="teal">OC</Badge></span>}</TD>
                 <TD mono>{s.batchNo}</TD>
-                <TD mono>{s.matCode||`${s.section||""}/${s.size||""}`}</TD>
-                <TD>{s.section} {s.size}</TD>
+                <TD mono>{s.matCode||`${(s.sectionType||s.section)||""}/${s.size||""}`}</TD>
+                <TD>{s.sectionType||s.section} {s.size}</TD>
                 <TD><Badge color="gray">{s.grade}</Badge></TD>
                 <TD>{s.vendorName}</TD>
                 <TD><Badge color="teal">{s.bayId}</Badge></TD>
@@ -3131,7 +3213,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, issueRequests
         <Modal title={`Allocate Stock — ${activeLot.lotNo}`} onClose={closeModal} width={520}>
           <div style={{ ...css.card,background:T.bg,marginBottom:14 }}>
             <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8 }}>
-              {[["Mat Code",activeLot.matCode||`${activeLot.section} ${activeLot.size}`],["Grade",activeLot.grade],["Available",`${fmt.num(activeLot.wtAvailable)} kg`]].map(([k,v])=>(
+              {[["Mat Code",activeLot.matCode||`${(activeLot.sectionType||activeLot.section)} ${activeLot.size}`],["Grade",activeLot.grade],["Available",`${fmt.num(activeLot.wtAvailable)} kg`]].map(([k,v])=>(
                 <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12,color:T.text,fontFamily:T.fontMono }}>{v}</div></div>
               ))}
             </div>
@@ -3165,6 +3247,17 @@ const StockModule = ({ user, stock, setStock, orders, contractors, issueRequests
           )}
           <Field label="Weight to Allocate (kg)" required>
             <Input type="number" value={mForm.wt||""} onChange={e=>setMForm(f=>({...f,wt:e.target.value}))} max={activeLot.wtAvailable} placeholder={`Max ${fmt.num(activeLot.wtAvailable)} kg`} />
+            {(()=>{
+              const wt=parseFloat(mForm.wt)||0;
+              if(!wt||!activeLot) return null;
+              const perUnit=(activeLot.qtyReceived||0)>0?(activeLot.actualWt||activeLot.wtReceived||0)/(activeLot.qtyReceived||1):0;
+              if(!perUnit) return null;
+              const approxUnits=wt/perUnit;
+              const rounded=Math.ceil(approxUnits*2)/2;
+              const isPlate=(activeLot.sectionType||activeLot.section)==="PLATE";
+              const dimStr=activeLot.length&&activeLot.width?`${activeLot.length}×${activeLot.width}×${activeLot.size||""}`:activeLot.size||"";
+              return <div style={{fontSize:11,color:T.textMid,marginTop:4}}>≈ <strong style={{color:T.accent}}>{rounded}</strong> {isPlate?"sheet(s)":"bar(s)"}{dimStr?` of ${dimStr}`:""} ({fmt.num(Math.round(perUnit))} kg/unit)</div>;
+            })()}
           </Field>
           <InfoBanner color="blue">Partial allocation supported. Remaining weight stays available for other orders.</InfoBanner>
           <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
@@ -3306,8 +3399,8 @@ const StockModule = ({ user, stock, setStock, orders, contractors, issueRequests
           <Field label="Off-cut Remaining Weight (kg)" required>
             <Input type="number" value={mForm.offcutWt||""} onChange={e=>setMForm(f=>({...f,offcutWt:e.target.value}))} placeholder="Min 5 kg to record as off-cut..." />
           </Field>
-          <Field label={activeLot.section==="PLATE"?"Off-cut Dimensions (LxW mm)":"Off-cut Length (mm)"}>
-            {activeLot.section==="PLATE"
+          <Field label={(activeLot.sectionType||activeLot.section)==="PLATE"?"Off-cut Dimensions (LxW mm)":"Off-cut Length (mm)"}>
+            {(activeLot.sectionType||activeLot.section)==="PLATE"
               ?<Input value={mForm.offcutDim||""} onChange={e=>setMForm(f=>({...f,offcutDim:e.target.value}))} placeholder="e.g. 1300X400" />
               :<Input type="number" value={mForm.offcutLength||""} onChange={e=>setMForm(f=>({...f,offcutLength:e.target.value,offcutDim:e.target.value}))} placeholder="e.g. 2340" />
             }
@@ -3883,7 +3976,7 @@ const Dashboard = ({ user, pos, stock, purchaseReqs, orders }) => {
       {clientPend.length>0 && (
         <InfoBanner color="red">
           🚫 <strong>HARD GATE:</strong> {clientPend.length} lot(s) awaiting client inspection — production cannot start on these materials.
-          {clientPend.map(s=>` ${s.lotNo} (${s.section} ${s.size})`).join(",")}
+          {clientPend.map(s=>` ${s.lotNo} (${(s.sectionType||s.section)} ${s.size})`).join(",")}
         </InfoBanner>
       )}
 
@@ -3917,7 +4010,7 @@ const Dashboard = ({ user, pos, stock, purchaseReqs, orders }) => {
           {stock.map(s=>(
             <div key={s.id} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${T.border}`, alignItems:"center" }}>
               <div>
-                <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.text }}>{s.section} {s.size}</span>
+                <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.text }}>{(s.sectionType||s.section)} {s.size}</span>
                 <span style={{ fontSize:11, color:T.textMid, marginLeft:8 }}>{s.lotNo}</span>
               </div>
               <div style={{ display:"flex", gap:6, alignItems:"center" }}>
@@ -4688,7 +4781,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
               if (showCoverage) {
                 const reqWt = (p.calcTotalWt||p.clientTotalWt||0) * (drg?.qty||1);
                 const allocWt = (stock||[]).reduce((sum,s)=>{
-                  const matMatch = p.matCode ? s.matCode===p.matCode : (s.section===p.section&&s.size===p.size&&s.grade===p.grade);
+                  const matMatch = p.matCode ? s.matCode===p.matCode : ((s.sectionType||s.section)===p.section&&s.size===p.size&&s.grade===p.grade);
                   if (!matMatch) return sum;
                   return sum + (s.allocations||[]).filter(a=>a.drawingId===p.drawingId&&a.markNo===p.markNo).reduce((a,x)=>a+(x.wt||0),0);
                 },0);
@@ -6970,7 +7063,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
     });
     const rows = Object.values(byMat).map(row => {
       const availLots = stock.filter(s=>
-        (s.matCode===row.matCode||s.sectionType===row.section)&&
+        (s.matCode===row.matCode||(s.sectionType||s.section)===row.section)&&
         (s.status==="available"||s.status==="qc_hold")
       );
       const availKg = availLots.reduce((s,l)=>(s+(l.wtAvailable||l.wtReceived||0)),0);
@@ -7872,7 +7965,7 @@ export default function App() {
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setStock={setStock} orders={orders} vendors={vendors} materials={materials} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
-      case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
+      case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
