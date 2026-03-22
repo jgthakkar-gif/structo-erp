@@ -1036,7 +1036,7 @@ const UsersMaster = ({ user }) => {
 };
 
 // ─── COMPANY MASTER ───────────────────────────────────────────────────────────
-const CompanyMaster = ({ company, setCompany }) => {
+const CompanyMaster = ({ user, company, setCompany }) => {
   const [form, setForm] = React.useState({...company});
   const [dirty, setDirty] = React.useState(false);
   const upd = (k,v) => { setForm(f=>({...f,[k]:v})); setDirty(true); };
@@ -1091,6 +1091,23 @@ const CompanyMaster = ({ company, setCompany }) => {
           <button onClick={()=>{setCompany(form);setDirty(false);}} style={css.btn.primary}>Save Company Details</button>
         </div>
       )}
+      {/* Reset to seed data — super_admin only */}
+      <div style={{ marginTop:32, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
+        <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>DANGER ZONE</div>
+        <div style={{ display:"flex", alignItems:"center", gap:16, padding:"14px 16px", background:T.redBg, border:`1px solid ${T.red}44`, borderRadius:8 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Reset to seed data</div>
+            <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>Clears all saved data (orders, stock, POs, clients, vendors) and reloads with seed data. Use between test sessions.</div>
+          </div>
+          <button onClick={()=>{
+            if (!window.confirm('Reset ALL data to seed defaults? This cannot be undone.')) return;
+            ['structo_orders','structo_clients','structo_vendors','structo_pos','structo_stock','structo_purchaseReqs','structo_company'].forEach(k=>localStorage.removeItem(k));
+            window.location.reload();
+          }} style={{ ...css.btn.danger, whiteSpace:"nowrap", flexShrink:0 }}>
+            Reset to Seed Data
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -1184,7 +1201,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${T.border}`, marginBottom:20, overflowX:"auto" }}>
         {tabs.map(t=><button key={t.id} onClick={()=>setActiveTab(t.id)} style={{ padding:"10px 16px", fontSize:13, fontWeight:activeTab===t.id?700:500, color:activeTab===t.id?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:activeTab===t.id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", fontFamily:T.font, whiteSpace:"nowrap" }}>{t.label}</button>)}
       </div>
-      {activeTab==="company"     && <CompanyMaster      company={company} setCompany={setCompany} />}
+      {activeTab==="company"     && <CompanyMaster      user={user} company={company} setCompany={setCompany} />}
       {activeTab==="clients"     && <ClientsMaster     user={user} clients={clients} setClients={setClients} />}
       {activeTab==="vendors"     && <VendorsMaster     user={user} vendors={vendors} setVendors={setVendors} />}
       {activeTab==="contractors" && <ContractorsMaster user={user} contractors={contractors} />}
@@ -6546,27 +6563,34 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [mod, setMod] = useState("dashboard");
   const [sidebar, setSidebar] = useState(true);
-  const [purchaseReqs, setPurchaseReqs] = useState(INIT_PURCHASE_REQS);
-  const [pos, setPos] = useState(INIT_POS);
-  const [stock, setStock] = useState(INIT_STOCK);
-  const [nestingRuns, setNestingRuns] = useState(INIT_NESTING_RUNS);
-  const [instances, setInstances] = useState(INIT_INSTANCES);
-  const [orders, setOrders] = useState(SEED_ORDERS);
-  const [clients, setClients] = useState(CLIENTS_FULL);
-  const [vendors, setVendors] = useState(VENDORS);
-  const [contractors, setContractors] = useState(CONTRACTORS);
-  const [bays, setBays] = useState(BAYS_SEED);
-  const [materials, setMaterials] = useState(MATERIALS_LIBRARY);
-  const [paint, setPaint] = useState(PAINT_LIBRARY);
-  const [tpiAgencies, setTpiAgencies] = useState(TPI_AGENCIES);
+  const [purchaseReqs, setPurchaseReqs] = useState(() => { try { const s=localStorage.getItem('structo_purchaseReqs'); return s?JSON.parse(s):INIT_PURCHASE_REQS; } catch { return INIT_PURCHASE_REQS; } });
+  const [pos, setPos]                   = useState(() => { try { const s=localStorage.getItem('structo_pos'); return s?JSON.parse(s):INIT_POS; } catch { return INIT_POS; } });
+  const [stock, setStock]               = useState(() => { try { const s=localStorage.getItem('structo_stock'); return s?JSON.parse(s):INIT_STOCK; } catch { return INIT_STOCK; } });
+  const [nestingRuns, setNestingRuns]   = useState(INIT_NESTING_RUNS);
+  const [instances, setInstances]       = useState(INIT_INSTANCES);
+  const [orders, setOrders]             = useState(() => { try { const s=localStorage.getItem('structo_orders'); return s?JSON.parse(s):SEED_ORDERS; } catch { return SEED_ORDERS; } });
+  const [clients, setClients]           = useState(() => { try { const s=localStorage.getItem('structo_clients'); return s?JSON.parse(s):CLIENTS_FULL; } catch { return CLIENTS_FULL; } });
+  const [vendors, setVendors]           = useState(() => { try { const s=localStorage.getItem('structo_vendors'); return s?JSON.parse(s):VENDORS; } catch { return VENDORS; } });
+  const [contractors, setContractors]   = useState(CONTRACTORS);
+  const [bays, setBays]                 = useState(BAYS_SEED);
+  const [materials, setMaterials]       = useState(MATERIALS_LIBRARY);
+  const [paint, setPaint]               = useState(PAINT_LIBRARY);
+  const [tpiAgencies, setTpiAgencies]   = useState(TPI_AGENCIES);
   const [approvedMakes, setApprovedMakes] = useState(APPROVED_MAKES_LIBRARY);
-  const [machines, setMachines] = useState(MACHINES_SEED);
-  const [company, setCompany] = useState({
-    name:"Structo Fabricators", tradingName:"STRUCTO",
-    gstin:"", pan:"", state:"Maharashtra", stateCode:"27",
-    address:"", worksAddress:"", phone:"", email:"",
-    bankName:"", bankAccount:"", ifsc:"", logoUrl:""
+  const [machines, setMachines]         = useState(MACHINES_SEED);
+  const [company, setCompany]           = useState(() => {
+    const defaults = { name:"Structo Fabricators", tradingName:"STRUCTO", gstin:"", pan:"", state:"Maharashtra", stateCode:"27", address:"", worksAddress:"", phone:"", email:"", bankName:"", bankAccount:"", ifsc:"", logoUrl:"" };
+    try { const s=localStorage.getItem('structo_company'); return s?JSON.parse(s):defaults; } catch { return defaults; }
   });
+
+  // ── Persist 7 state arrays to localStorage ──
+  useEffect(() => { try { localStorage.setItem('structo_orders',       JSON.stringify(orders));       } catch(e) { console.warn('Storage full',e); } }, [orders]);
+  useEffect(() => { try { localStorage.setItem('structo_clients',      JSON.stringify(clients));      } catch(e) { console.warn('Storage full',e); } }, [clients]);
+  useEffect(() => { try { localStorage.setItem('structo_vendors',      JSON.stringify(vendors));      } catch(e) { console.warn('Storage full',e); } }, [vendors]);
+  useEffect(() => { try { localStorage.setItem('structo_pos',          JSON.stringify(pos));          } catch(e) { console.warn('Storage full',e); } }, [pos]);
+  useEffect(() => { try { localStorage.setItem('structo_stock',        JSON.stringify(stock));        } catch(e) { console.warn('Storage full',e); } }, [stock]);
+  useEffect(() => { try { localStorage.setItem('structo_purchaseReqs', JSON.stringify(purchaseReqs)); } catch(e) { console.warn('Storage full',e); } }, [purchaseReqs]);
+  useEffect(() => { try { localStorage.setItem('structo_company',      JSON.stringify(company));      } catch(e) { console.warn('Storage full',e); } }, [company]);
 
   if (!user) return <Login onLogin={u=>{setUser(u);setMod("dashboard");}} />;
 
