@@ -3901,7 +3901,7 @@ const Dashboard = ({ user, pos, stock, purchaseReqs, orders }) => {
             <div key={po.id} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${T.border}`, alignItems:"center" }}>
               <div>
                 <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.accentHi }}>{po.id}</span>
-                <span style={{ fontSize:11, color:T.textMid, marginLeft:8 }}>{po.vendorName.split(" ").slice(0,2).join(" ")}</span>
+                <span style={{ fontSize:11, color:T.textMid, marginLeft:8 }}>{(po.vendorName||"").split(" ").slice(0,2).join(" ")}</span>
               </div>
               <div style={{ display:"flex", gap:6, alignItems:"center" }}>
                 <span style={{ fontSize:11, color:T.textMid, fontFamily:T.fontMono }}>{po.lines.reduce((s,l)=>s+(l.totalPrice||0),0)/1000|0}K</span>
