@@ -428,6 +428,86 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
     };
   });
 
+// ─── PO LINE CSV IMPORT ───────────────────────────────────────────────────────
+const PO_LINE_COLS = [
+  { key:"sectionType",      variants:["section type","section","sectiontype"] },
+  { key:"size",             variants:["size"] },
+  { key:"grade",            variants:["grade"] },
+  { key:"matType",          variants:["material type","mat type","mattype","material"] },
+  { key:"qty",              variants:["qty","quantity","quantity (mt)","qty (mt)"] },
+  { key:"unit",             variants:["unit"] },
+  { key:"unitPrice",        variants:["unit price","unit price (₹)","rate","rate per unit","price"] },
+  { key:"expectedDelivery", variants:["expected delivery","delivery date","exp delivery","delivery"] },
+  { key:"remarks",          variants:["remarks","notes","remark"] },
+];
+
+const parsePOLineCSV = (text, materials) => {
+  const lines = text.split("\n").map(l =>
+    l.split(",").map(v => v.trim().replace(/^"|"$/g,"").replace(/""/g,'"'))
+  ).filter(l => l.some(v => v.trim()));
+  const allVariants = PO_LINE_COLS.flatMap(c => c.variants);
+  const hdrIdx = lines.findIndex(l =>
+    l.some(c => allVariants.some(v => c.toLowerCase().trim() === v))
+  );
+  if (hdrIdx < 0) return { rows:[], errors:["Could not find a recognised header row. Make sure it contains 'Section Type', 'Size', 'Qty', etc."], warnings:[] };
+  const hdrs = lines[hdrIdx].map(h => h.toLowerCase().trim());
+  const colMap = {};
+  PO_LINE_COLS.forEach(c => {
+    const idx = hdrs.findIndex(h => c.variants.some(v => h === v));
+    if (idx >= 0) colMap[c.key] = idx;
+  });
+  // Skip hint/example rows (row immediately after header where qty field is non-numeric)
+  const dataLines = lines.slice(hdrIdx + 1).filter(l => {
+    const qtyVal = colMap.qty !== undefined ? l[colMap.qty] : "";
+    return qtyVal === "" || !isNaN(parseFloat(qtyVal)) ? true : !/^e\.g\./i.test(qtyVal);
+  }).filter(l => l.some(v => v.trim()));
+  if (!dataLines.length) return { rows:[], errors:["No data rows found after the header row."], warnings:[] };
+  const ts = Date.now();
+  const rows = dataLines.map((l, i) => {
+    const get = k => (colMap[k] !== undefined ? (l[colMap[k]] || "").trim() : "");
+    const sectionType = get("sectionType");
+    const size        = get("size");
+    const grade       = get("grade") || "E250";
+    const matType     = get("matType") || "MS";
+    const qty         = parseFloat(get("qty")) || 0;
+    const unit        = get("unit") || "MT";
+    const unitPrice   = parseFloat(get("unitPrice")) || 0;
+    const remarks     = get("remarks");
+    const rawDel      = get("expectedDelivery");
+    let expectedDelivery = "";
+    if (rawDel) { const m = rawDel.match(/^(\d{2})-(\d{2})-(\d{4})$/); expectedDelivery = m ? `${m[3]}-${m[2]}-${m[1]}` : rawDel; }
+    const unitU  = unit.toUpperCase();
+    const wtOrdered  = (unitU==="MT"||unitU==="T") ? qty*1000 : qty;
+    const totalPrice = qty * unitPrice;
+    const libMatch   = (materials||[]).find(m =>
+      (m.sectionType||"").toLowerCase() === sectionType.toLowerCase() &&
+      (m.size||"").toLowerCase() === size.toLowerCase() &&
+      (m.grade||"").toLowerCase() === grade.toLowerCase()
+    );
+    return {
+      id: `POL-${ts}-${i}`,
+      section: sectionType, size, grade, matType, qty, unit, unitPrice,
+      totalPrice, wtOrdered, wtReceived:0, status:"pending",
+      expectedDelivery, remarks,
+      matLibId: libMatch?.id || "",
+      matCode:  libMatch?.matCode || buildMatCode(sectionType, matType, grade, size),
+      itemCode: "",
+      _libMatched: !!libMatch,
+    };
+  });
+  const blocking = rows.filter(r => !r.section || !r.size || !r.qty || !r.unitPrice);
+  if (blocking.length) return {
+    rows:[], errors:[`${blocking.length} row(s) are missing required fields (Section, Size, Qty, or Unit Price). Fix the file and re-upload.`], warnings:[]
+  };
+  const warnings = [];
+  const noMatch = rows.filter(r => !r._libMatched).length;
+  if (noMatch) warnings.push(`${noMatch} row(s) have no match in the Materials Library — they will still import.`);
+  const knownUnits = ["MT","T","KG","NOS","PCS"];
+  const badUnit = rows.filter(r => !knownUnits.includes(r.unit.toUpperCase())).length;
+  if (badUnit) warnings.push(`${badUnit} row(s) have an unrecognised unit — Wt Ordered defaulted to Qty value.`);
+  return { rows, errors:[], warnings };
+};
+
 // ─── PRODUCTION: INSTANCE CREATION ───────────────────────────────────────────
 // Called by cutting confirmation screen when a bar is confirmed cut.
 // confirmedParts: [{ markNo, drawingId, drawingNo, orderId, desc,
@@ -1831,6 +1911,85 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // PURCHASE MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
+const POLineImportModal = ({ rows, err, mode, setMode, fileRef, onFile, onDownload, onConfirm, onClose }) => (
+  <Modal title="Import PO Lines from CSV" onClose={onClose} width={820}>
+    <div style={{ background:"#0D1E3A", border:`1px solid ${T.borderHi}`, borderRadius:8, padding:"12px 16px", marginBottom:16 }}>
+      <div style={{ fontSize:13, fontWeight:700, color:T.accentHi, marginBottom:8 }}>How to Import</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, fontSize:12, color:T.textMid }}>
+        <div><span style={{color:T.accent,fontWeight:700}}>Step 1 </span>Download the template CSV with sample data.</div>
+        <div><span style={{color:T.accent,fontWeight:700}}>Step 2 </span>Fill in your lines. Date format: <b style={{color:T.text}}>DD-MM-YYYY</b>. Save as CSV.</div>
+        <div><span style={{color:T.accent,fontWeight:700}}>Step 3 </span>Upload, choose Append or Replace, preview and confirm.</div>
+      </div>
+    </div>
+    <div style={{ ...css.card, marginBottom:14 }}>
+      <div style={{ display:"flex", gap:16, alignItems:"flex-start", flexWrap:"wrap" }}>
+        <div>
+          <label style={css.label}>Upload CSV File</label>
+          <input type="file" accept=".csv" onChange={onFile} style={{ color:T.text, fontSize:12 }} />
+        </div>
+        <div>
+          <label style={css.label}>Import Mode</label>
+          <div style={{ display:"flex", gap:16, marginTop:4 }}>
+            {["append","replace"].map(m=>(
+              <label key={m} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer", fontSize:12, color:T.text }}>
+                <input type="radio" checked={mode===m} onChange={()=>setMode(m)} />
+                <span>{m==="append"?"Append to existing lines":"Replace all lines"}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+      {err && (
+        <div style={{ marginTop:10, padding:"8px 12px", borderRadius:6, fontSize:12,
+          background: err.startsWith("⚠") ? T.amberBg : T.redBg,
+          border:`1px solid ${err.startsWith("⚠") ? T.amber : T.redLo}`,
+          color: err.startsWith("⚠") ? T.amber : T.red }}>
+          {err}
+        </div>
+      )}
+    </div>
+    {rows.length > 0 && (
+      <div style={{ marginBottom:14 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:T.green, marginBottom:8 }}>
+          ✓ {rows.length} line{rows.length>1?"s":""} ready to import
+        </div>
+        <div style={{ overflowX:"auto", maxHeight:240, overflowY:"auto" }}>
+          <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+            <thead><tr>
+              {["Section","Size","Grade","Qty","Unit","Unit Price","Total Price","Wt Ordered (kg)","Library Match"].map(h=>(
+                <TH key={h}>{h}</TH>
+              ))}
+            </tr></thead>
+            <tbody>
+              {rows.map((r,i)=>(
+                <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
+                  <TD mono>{r.section}</TD>
+                  <TD mono>{r.size}</TD>
+                  <TD>{r.grade}</TD>
+                  <TD right mono>{r.qty}</TD>
+                  <TD>{r.unit}</TD>
+                  <TD right mono>{fmt.currency(r.unitPrice)}</TD>
+                  <TD right mono bold color={T.green}>{fmt.currency(r.totalPrice)}</TD>
+                  <TD right mono>{fmt.num(r.wtOrdered)}</TD>
+                  <TD>{r._libMatched ? <Badge color="green">✓ Matched</Badge> : <Badge color="amber">No match</Badge>}</TD>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+    <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+      <button onClick={onClose} style={css.btn.secondary}>Cancel</button>
+      <button onClick={onDownload} style={css.btn.secondary}>⬇ Download Template</button>
+      <button onClick={onConfirm} disabled={!rows.length}
+        style={{ ...css.btn.primary, opacity:rows.length?1:0.4 }}>
+        ✓ Confirm Import ({rows.length} line{rows.length!==1?"s":""})
+      </button>
+    </div>
+  </Modal>
+);
+
 const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, vendors, materials }) => {
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -1839,8 +1998,41 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
   const [grnModal, setGrnModal] = useState(null);
   const [grnForm, setGrnForm] = useState({ lines:[] });
   const [toast, setToast] = useState(null);
+  const [poImpModal, setPoImpModal] = useState(false);
+  const [poImpRows,  setPoImpRows]  = useState([]);
+  const [poImpErr,   setPoImpErr]   = useState("");
+  const [poImpMode,  setPoImpMode]  = useState("append");
+  const poImpRef = useRef(null);
 
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
+
+  const downloadPOTemplate = () => {
+    const hdr    = ["Section Type","Size","Grade","Material Type","Qty","Unit","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
+    const hints  = ["e.g. RHS","e.g. 100x50x4","e.g. E250","MS / SS","0.6","MT / T / KG / NOS / PCS","72000","20-03-2026","Any notes"];
+    const sample = ["RHS","100x50x4","E250","MS","0.6","MT","72000","20-03-2026","Main columns"];
+    const csv = [hdr,hints,sample].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a = Object.assign(document.createElement("a"),{ href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:"po_lines_template.csv" });
+    a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  const handlePOImpFile = async e => {
+    setPoImpErr(""); setPoImpRows([]);
+    const file = e.target.files[0]; if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".csv")) { setPoImpErr("Please upload a .csv file — save your spreadsheet as CSV first."); return; }
+    try {
+      const { rows, errors, warnings } = parsePOLineCSV(await file.text(), materials);
+      if (errors.length) { setPoImpErr(errors.join(" ")); return; }
+      setPoImpErr(warnings.length ? "⚠ " + warnings.join(" ") : "");
+      setPoImpRows(rows);
+    } catch(err) { setPoImpErr("Error reading file: " + err.message); }
+  };
+
+  const confirmPOImp = () => {
+    const base  = poImpMode==="replace" ? [] : (form.lines||[]);
+    const clean = poImpRows.map(({_libMatched,...r})=>r);
+    setForm(f=>({...f, lines:[...base,...clean]}));
+    setPoImpModal(false); setPoImpRows([]); setPoImpErr(""); poImpRef.current.value="";
+  };
 
   const canEdit = ["super_admin","purchase_admin","planning_admin"].includes(user.role);
 
@@ -1901,7 +2093,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
     setGrnForm({lines:[]});
   };
 
-  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} setStock={setStock} showToast={showToast} />;
+  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} setStock={setStock} showToast={showToast} materials={materials} />;
 
   return (
     <div>
@@ -1990,7 +2182,11 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
           </G2>
           <div style={{ marginTop:12, marginBottom:8 }}>
             <SectionHd title="PO Lines" action={
-              <button onClick={()=>setForm(f=>({...f,lines:[...(f.lines||[]),{matLibId:"",matCode:"",section:"",size:"",grade:"",matType:"MS",isPlate:false,qty:0,unit:"Nos",unitPrice:0,wtOrdered:0}]}))} style={css.btn.sm}>+ Add Line</button>
+              <div style={{ display:"flex", gap:6 }}>
+                <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
+                <button onClick={()=>setPoImpModal(true)} style={css.btn.amber}>📥 Import CSV</button>
+                <button onClick={()=>setForm(f=>({...f,lines:[...(f.lines||[]),{matLibId:"",matCode:"",section:"",size:"",grade:"",matType:"MS",isPlate:false,qty:0,unit:"MT",unitPrice:0,wtOrdered:0}]}))} style={css.btn.sm}>+ Add Line</button>
+              </div>
             } />
             {(form.lines||[]).map((l,i)=>{
               const libItem = (materials||[]).find(m=>m.id===l.matLibId);
@@ -2056,19 +2252,64 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
           </div>
         </Modal>
       )}
+      {/* Hidden file input for New PO CSV import */}
+      <input ref={poImpRef} type="file" accept=".csv" style={{display:"none"}} onChange={handlePOImpFile} />
+      {/* PO Line CSV Import Preview Modal */}
+      {poImpModal && <POLineImportModal
+        rows={poImpRows} err={poImpErr} mode={poImpMode} setMode={setPoImpMode}
+        fileRef={poImpRef} onFile={handlePOImpFile}
+        onDownload={downloadPOTemplate}
+        onConfirm={confirmPOImp}
+        onClose={()=>{setPoImpModal(false);setPoImpRows([]);setPoImpErr("");poImpRef.current.value="";}}
+      />}
     </div>
   );
 };
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
-const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast }) => {
+const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, materials }) => {
   const [tab, setTab] = useState("lines");
   const [grnModal, setGrnModal] = useState(false);
   const [grnForm, setGrnForm] = useState({ lines:[] });
   const [inspModal, setInspModal] = useState(null);
+  const [poImpModal, setPoImpModal] = useState(false);
+  const [poImpRows,  setPoImpRows]  = useState([]);
+  const [poImpErr,   setPoImpErr]   = useState("");
+  const [poImpMode,  setPoImpMode]  = useState("append");
+  const poImpRef = useRef(null);
 
   const canEdit = ["super_admin","purchase_admin","store_admin"].includes(user.role);
   const canInspect = ["super_admin","qc_admin","qc_user","store_admin"].includes(user.role);
+
+  const downloadPOTemplate = () => {
+    const hdr    = ["Section Type","Size","Grade","Material Type","Qty","Unit","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
+    const hints  = ["e.g. RHS","e.g. 100x50x4","e.g. E250","MS / SS","0.6","MT / T / KG / NOS / PCS","72000","20-03-2026","Any notes"];
+    const sample = ["RHS","100x50x4","E250","MS","0.6","MT","72000","20-03-2026","Main columns"];
+    const csv = [hdr,hints,sample].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a = Object.assign(document.createElement("a"),{ href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:`po_lines_template_${po.id}.csv` });
+    a.click(); URL.revokeObjectURL(a.href);
+  };
+
+  const handlePOImpFile = async e => {
+    setPoImpErr(""); setPoImpRows([]);
+    const file = e.target.files[0]; if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".csv")) { setPoImpErr("Please upload a .csv file."); return; }
+    try {
+      const { rows, errors, warnings } = parsePOLineCSV(await file.text(), materials);
+      if (errors.length) { setPoImpErr(errors.join(" ")); return; }
+      setPoImpErr(warnings.length ? "⚠ " + warnings.join(" ") : "");
+      setPoImpRows(rows);
+    } catch(err) { setPoImpErr("Error reading file: " + err.message); }
+  };
+
+  const confirmPOImpDetail = () => {
+    const ts   = Date.now();
+    const base = poImpMode==="replace" ? [] : (po.lines||[]);
+    const clean = poImpRows.map(({_libMatched,...r},i)=>({...r, id:`POL-${ts}-${i}`}));
+    setPos(prev=>prev.map(p=>p.id===po.id?{...p,lines:[...base,...clean]}:p));
+    showToast(`${clean.length} PO line(s) imported`);
+    setPoImpModal(false); setPoImpRows([]); setPoImpErr(""); poImpRef.current.value="";
+  };
 
   const saveGRN = () => {
     const ts = Date.now();
@@ -2126,6 +2367,12 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast }) => {
         ))}
         <div style={{ flex:1 }} />
         {canEdit && tab==="grns" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; setGrnForm({lines:[],batchNo:preview}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
+        {canEdit && tab==="lines" && po.status==="pending" && (
+          <div style={{ display:"flex", gap:6 }}>
+            <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
+            <button onClick={()=>setPoImpModal(true)} style={css.btn.amber}>📥 Import CSV</button>
+          </div>
+        )}
       </div>
 
       {/* PO Lines */}
@@ -2265,6 +2512,15 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast }) => {
           </div>
         </Modal>
       )}
+      {/* Hidden file input for PODetail CSV import */}
+      <input ref={poImpRef} type="file" accept=".csv" style={{display:"none"}} onChange={handlePOImpFile} />
+      {poImpModal && <POLineImportModal
+        rows={poImpRows} err={poImpErr} mode={poImpMode} setMode={setPoImpMode}
+        fileRef={poImpRef} onFile={handlePOImpFile}
+        onDownload={downloadPOTemplate}
+        onConfirm={confirmPOImpDetail}
+        onClose={()=>{setPoImpModal(false);setPoImpRows([]);setPoImpErr("");poImpRef.current.value="";}}
+      />}
     </div>
   );
 };
