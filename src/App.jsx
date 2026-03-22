@@ -4503,7 +4503,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
 };
 const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
   const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState("all"); const [modal, setModal] = useState(false); const [form, setForm] = useState({});
-  const filtered = orders.filter(o=>(o.projectDesc.toLowerCase().includes(search.toLowerCase())||o.clientPoNo.toLowerCase().includes(search.toLowerCase())||o.id.toLowerCase().includes(search.toLowerCase()))&&(statusFilter==="all"||o.status===statusFilter));
+  const filtered = orders.filter(o=>((o.id||'').toLowerCase().includes(search.toLowerCase())||(o.projectDesc||'').toLowerCase().includes(search.toLowerCase())||(o.clientPoNo||'').toLowerCase().includes(search.toLowerCase())||(o.clientId||'').toLowerCase().includes(search.toLowerCase()))&&(statusFilter==="all"||o.status===statusFilter));
   const canCreate = ["super_admin","planning_admin"].includes(user.role);
   const statusColor = {active:"green",completed:"blue",on_hold:"amber",cancelled:"red"};
   return (
@@ -6568,7 +6568,7 @@ export default function App() {
   const [stock, setStock]               = useState(() => { try { const s=localStorage.getItem('structo_stock'); return s?JSON.parse(s):INIT_STOCK; } catch { return INIT_STOCK; } });
   const [nestingRuns, setNestingRuns]   = useState(INIT_NESTING_RUNS);
   const [instances, setInstances]       = useState(INIT_INSTANCES);
-  const [orders, setOrders]             = useState(() => { try { const s=localStorage.getItem('structo_orders'); return s?JSON.parse(s):SEED_ORDERS; } catch { return SEED_ORDERS; } });
+  const [orders, setOrders]             = useState(() => { try { const s=localStorage.getItem('structo_orders'); if (!s) return SEED_ORDERS; const loaded=JSON.parse(s); return loaded.map(o=>({ drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o })); } catch { return SEED_ORDERS; } });
   const [clients, setClients]           = useState(() => { try { const s=localStorage.getItem('structo_clients'); return s?JSON.parse(s):CLIENTS_FULL; } catch { return CLIENTS_FULL; } });
   const [vendors, setVendors]           = useState(() => { try { const s=localStorage.getItem('structo_vendors'); return s?JSON.parse(s):VENDORS; } catch { return VENDORS; } });
   const [contractors, setContractors]   = useState(CONTRACTORS);
