@@ -1121,8 +1121,8 @@ const UsersMaster = ({ user }) => {
 
 // ─── COMPANY MASTER ───────────────────────────────────────────────────────────
 const CompanyMaster = ({ user, company, setCompany }) => {
-  const [form, setForm] = React.useState({...company});
-  const [dirty, setDirty] = React.useState(false);
+  const [form, setForm] = useState({...company});
+  const [dirty, setDirty] = useState(false);
   const upd = (k,v) => { setForm(f=>({...f,[k]:v})); setDirty(true); };
   return (
     <div>
@@ -3867,7 +3867,7 @@ const Dashboard = ({ user, pos, stock, purchaseReqs, orders }) => {
   return (
     <div>
       <div style={{ marginBottom:24 }}>
-        <div style={{ fontSize:22, fontWeight:800, color:T.text }}>Welcome back, {user.name.split(" ")[0]} 👋</div>
+        <div style={{ fontSize:22, fontWeight:800, color:T.text }}>Welcome back, {(user.name||"").split(" ")[0]} 👋</div>
         <div style={{ fontSize:13, color:T.textMid }}>{roleLabel} · {new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
       </div>
 
