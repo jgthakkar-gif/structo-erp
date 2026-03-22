@@ -464,7 +464,8 @@ const PO_LINE_COLS = [
   { key:"size",             variants:["size"] },
   { key:"grade",            variants:["grade"] },
   { key:"matType",          variants:["material type","mat type","mattype","material"] },
-  { key:"qty",              variants:["qty","quantity","quantity (mt)","qty (mt)"] },
+  { key:"qtyUnits",         variants:["qty (units)","qty(units)","qty units","qty","quantity"] },
+  { key:"wtRequired",       variants:["weight required (kg)","weight required","wt required (kg)","wt required","weight (kg)"] },
   { key:"unit",             variants:["unit"] },
   { key:"unitPrice",        variants:["unit price","unit price (₹)","rate","rate per unit","price"] },
   { key:"expectedDelivery", variants:["expected delivery","delivery date","exp delivery","delivery"] },
@@ -489,9 +490,9 @@ const parsePOLineCSV = (text, materials) => {
     const idx = hdrs.findIndex(h => c.variants.some(v => h === v));
     if (idx >= 0) colMap[c.key] = idx;
   });
-  // Skip hint/example rows (row immediately after header where qty field is non-numeric)
+  // Skip hint/example rows (row immediately after header where qty/wt field is non-numeric)
   const dataLines = lines.slice(hdrIdx + 1).filter(l => {
-    const qtyVal = colMap.qty !== undefined ? l[colMap.qty] : "";
+    const qtyVal = colMap.qtyUnits !== undefined ? l[colMap.qtyUnits] : (colMap.qty !== undefined ? l[colMap.qty] : "");
     return qtyVal === "" || !isNaN(parseFloat(qtyVal)) ? true : !/^e\.g\./i.test(qtyVal);
   }).filter(l => l.some(v => v.trim()));
   if (!dataLines.length) return { rows:[], errors:["No data rows found after the header row."], warnings:[] };
@@ -502,7 +503,10 @@ const parsePOLineCSV = (text, materials) => {
     const size        = get("size");
     const grade       = get("grade") || "E250";
     const matType     = get("matType") || "MS";
-    const qty         = parseFloat(get("qty")) || 0;
+    const qtyUnitsRaw  = get("qtyUnits");
+    const wtReqRaw     = get("wtRequired");
+    const qtyUnitsVal  = parseFloat(qtyUnitsRaw) || 0;
+    const wtReqVal     = parseFloat(wtReqRaw) || 0;
     const unit        = get("unit") || "MT";
     const unitPrice   = parseFloat(get("unitPrice")) || 0;
     const remarks     = get("remarks");
@@ -517,34 +521,64 @@ const parsePOLineCSV = (text, materials) => {
       (m.size||"").toLowerCase() === size.toLowerCase() &&
       (m.grade||"").toLowerCase() === grade.toLowerCase()
     );
-    const wtOrdered = calcPoLineWt({ qty, unit, sectionType, length, width,
-      matLibId: libMatch?.id||"", isPlate: libMatch?.isPlate||false,
-      wtPerM2: libMatch?.wtPerM2||null, wtPerMetre: libMatch?.wtPerMetre||null });
-    const totalPrice = qty * unitPrice;
+    const hasQty = qtyUnitsRaw !== "" && qtyUnitsVal > 0;
+    const hasWt  = wtReqRaw    !== "" && wtReqVal    > 0;
+    let orderMode, qty, wtOrdered, _csvWarning;
+    if (hasQty && !hasWt) {
+      orderMode = "ByUnits";
+      qty       = qtyUnitsVal;
+      wtOrdered = calcPoLineWt({ qty, unit, sectionType, length, width,
+        matLibId: libMatch?.id||"", isPlate: libMatch?.isPlate||false,
+        wtPerM2: libMatch?.wtPerM2||null, wtPerMetre: libMatch?.wtPerMetre||null });
+    } else if (hasWt && !hasQty) {
+      orderMode = "ByWeight";
+      wtOrdered = wtReqVal;
+      let wp = 0;
+      if (libMatch) {
+        if (libMatch.isPlate && length>0 && width>0) wp = (length/1000)*(width/1000)*(libMatch.wtPerM2||0);
+        else if (!libMatch.isPlate && length>0) wp = (length/1000)*(libMatch.wtPerMetre||0);
+      }
+      qty = wp>0 ? Math.ceil(wtOrdered/wp) : 0;
+    } else if (hasQty && hasWt) {
+      orderMode = "ByUnits";
+      qty       = qtyUnitsVal;
+      wtOrdered = calcPoLineWt({ qty, unit, sectionType, length, width,
+        matLibId: libMatch?.id||"", isPlate: libMatch?.isPlate||false,
+        wtPerM2: libMatch?.wtPerM2||null, wtPerMetre: libMatch?.wtPerMetre||null });
+      if (wtOrdered>0 && Math.abs(wtOrdered-wtReqVal)/wtOrdered>0.05)
+        _csvWarning = `Row ${i+1}: Both Qty and Weight filled — used Qty. Calc wt (${Math.round(wtOrdered)} kg) differs >5% from entered wt (${Math.round(wtReqVal)} kg).`;
+    } else {
+      orderMode = "ByUnits"; qty = 0; wtOrdered = 0;
+    }
+    const effectiveUnit = orderMode==="ByWeight" ? "KG" : (unit||"MT");
+    const totalPrice = pricingMethod==="PerKg" ? wtOrdered*unitPrice : qty*unitPrice;
     return {
       id: `POL-${ts}-${i}`,
-      sectionType, size, grade, matType, qty, unit, unitPrice,
+      sectionType, size, grade, matType, qty, unit: effectiveUnit, unitPrice,
       totalPrice, wtOrdered, wtReceived:0, status:"pending",
       expectedDelivery, remarks,
       matLibId: libMatch?.id || "",
       matCode:  libMatch?.matCode || buildMatCode(sectionType, matType, grade, size),
       itemCode: "",
-      qtyOrdered: qty, pricingMethod, length, width,
+      orderMode, qtyOrdered: qty, pricingMethod, length, width,
+      wtRequired: orderMode==="ByWeight" ? wtReqVal : 0,
       effectiveRateKg: wtOrdered>0 ? Math.round((qty*unitPrice)/wtOrdered*100)/100 : 0,
       effectiveRateUnit: unitPrice,
       qtyReceived: 0,
       _libMatched: !!libMatch,
+      _csvWarning: _csvWarning||null,
     };
   });
-  const blocking = rows.filter(r => !r.sectionType || !r.size || !r.qty || !r.unitPrice);
+  const blocking = rows.filter(r => !r.sectionType || !r.size || (!r.qty && !r.wtOrdered) || !r.unitPrice);
   if (blocking.length) return {
-    rows:[], errors:[`${blocking.length} row(s) are missing required fields (Section, Size, Qty, or Unit Price). Fix the file and re-upload.`], warnings:[]
+    rows:[], errors:[`${blocking.length} row(s) are missing required fields (Section, Size, Qty or Weight, or Unit Price). Fix the file and re-upload.`], warnings:[]
   };
   const warnings = [];
+  rows.filter(r=>r._csvWarning).forEach(r=>warnings.push(r._csvWarning));
   const noMatch = rows.filter(r => !r._libMatched).length;
   if (noMatch) warnings.push(`${noMatch} row(s) have no match in the Materials Library — they will still import.`);
-  const knownUnits = ["MT","T","KG","NOS","PCS"];
-  const badUnit = rows.filter(r => !knownUnits.includes(r.unit.toUpperCase())).length;
+  const knownUnits = ["MT","T","KG","NOS","PCS","SHEETS"];
+  const badUnit = rows.filter(r => r.orderMode==="ByUnits" && !knownUnits.includes((r.unit||"").toUpperCase())).length;
   if (badUnit) warnings.push(`${badUnit} row(s) have an unrecognised unit — Wt Ordered defaulted to Qty value.`);
   return { rows, errors:[], warnings };
 };
@@ -2207,9 +2241,9 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
   const downloadPOTemplate = () => {
-    const hdr    = ["Section Type","Size","Grade","Material Type","Length (mm)","Width (mm)","Qty","Unit","Pricing Method (PerUnit/PerKg)","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
-    const hints  = ["e.g. PLATE","12mm","E250","MS","6000","1250","5","Sheets","PerUnit","65000","20-03-2026","Any notes"];
-    const sample = ["ISA","75x75x8","E250","MS","12000","","40","Pcs","PerUnit","780","20-03-2026","Main columns"];
+    const hdr    = ["Section Type","Size","Grade","Material Type","Length (mm)","Width (mm)","Qty (units)","Weight Required (kg)","Unit","Pricing Method (PerUnit/PerKg)","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
+    const hints  = ["e.g. PLATE","12mm","E250","MS","6000","1250","5 (fill OR Weight — not both)","(leave blank if Qty filled)","Sheets","PerUnit","65000","20-03-2026","Any notes"];
+    const sample = ["ISA","75x75x8","E250","MS","12000","","40","","Pcs","PerUnit","780","20-03-2026","Main columns"];
     const csv = [hdr,hints,sample].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const a = Object.assign(document.createElement("a"),{ href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:"po_lines_template.csv" });
     a.click(); URL.revokeObjectURL(a.href);
@@ -2252,7 +2286,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
         vendorCode: v?.vendorCode||"",
         status:"pending",
         grns:[],
-        lines: lines.map((l,i)=>({...l, id:`POL-${Date.now()}-${i}`, wtReceived:0, status:"pending", wtOrdered:calcPoLineWt(l), itemCode:buildItemCode(l)})),
+        lines: lines.map((l,i)=>{ const wtOrdered=(l.orderMode||"ByUnits")==="ByWeight"?(l.wtRequired||l.wtOrdered||0):calcPoLineWt(l); return {...l, id:`POL-${Date.now()}-${i}`, wtReceived:0, status:"pending", wtOrdered, itemCode:buildItemCode(l)}; }),
         createdBy: user.name,
         createdDate: today(),
       };
@@ -2386,7 +2420,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
                 <button onClick={()=>setPoImpModal(true)} style={css.btn.amber}>📥 Import CSV</button>
-                <button onClick={()=>setForm(f=>({...f,lines:[...(f.lines||[]),{matLibId:"",matCode:"",sectionType:"",size:"",grade:"E250",matType:"MS",isPlate:false,qty:0,qtyOrdered:0,unit:"Pcs",pricingMethod:"PerUnit",unitPrice:0,wtOrdered:0,totalPrice:0,length:null,width:null,effectiveRateKg:0,qtyReceived:0}]}))} style={css.btn.sm}>+ Add Line</button>
+                <button onClick={()=>setForm(f=>({...f,lines:[...(f.lines||[]),{matLibId:"",matCode:"",sectionType:"",size:"",grade:"E250",matType:"MS",isPlate:false,orderMode:"ByUnits",qty:0,qtyOrdered:0,unit:"Pcs",pricingMethod:"PerUnit",unitPrice:0,wtOrdered:0,wtRequired:0,totalPrice:0,length:null,width:null,effectiveRateKg:0,qtyReceived:0}]}))} style={css.btn.sm}>+ Add Line</button>
               </div>
             } />
             {(form.lines||[]).map((l,i)=>{
@@ -2428,7 +2462,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
       </Field>
     </div>
     {/* Row 2: Dimensions (shown for count-based units) */}
-    {(l.unit||"Pcs").toUpperCase()!=="MT"&&(l.unit||"Pcs").toUpperCase()!=="KG"&&(
+    {((l.unit||"Pcs").toUpperCase()!=="MT"||(l.orderMode||"ByUnits")==="ByWeight")&&(
       <div style={{ display:"grid", gridTemplateColumns:l.isPlate?"1fr 1fr 2fr":"1fr 2fr", gap:8, marginBottom:8 }}>
         <Field label="Length (mm)"><Input type="number" value={l.length||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],length:+e.target.value||null}; return {...f,lines:n}; })} /></Field>
         {l.isPlate&&<Field label="Width (mm)"><Input type="number" value={l.width||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],width:+e.target.value||null}; return {...f,lines:n}; })} /></Field>}
@@ -2437,14 +2471,30 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
         </div>
       </div>
     )}
+    {/* Order mode toggle */}
+    <div style={{ display:"flex", gap:0, marginBottom:8, width:"fit-content", border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
+      {["ByUnits","ByWeight"].map(mode=>(
+        <button key={mode} onClick={()=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],orderMode:mode,unit:mode==="ByWeight"?"KG":n[i].unit==="KG"?"Pcs":n[i].unit}; return {...f,lines:n}; })} style={{ padding:"5px 14px", fontSize:12, fontWeight:(l.orderMode||"ByUnits")===mode?700:400, color:(l.orderMode||"ByUnits")===mode?T.bg:T.textMid, background:(l.orderMode||"ByUnits")===mode?T.accent:"transparent", border:"none", cursor:"pointer", fontFamily:T.font }}>
+          {mode==="ByUnits"?"Order by Units":"Order by Weight"}
+        </button>
+      ))}
+    </div>
     {/* Row 3: Qty + Pricing */}
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr auto", gap:8, alignItems:"end" }}>
-      <Field label={`Qty (${l.unit||"Pcs"})`}><Input type="number" value={l.qty||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nq=+e.target.value; const wt=calcPoLineWt({...n[i],qty:nq}); const tp=n[i].pricingMethod==="PerKg"?wt*(n[i].unitPrice||0):nq*(n[i].unitPrice||0); n[i]={...n[i],qty:nq,qtyOrdered:nq,wtOrdered:wt,totalPrice:tp,effectiveRateKg:wt>0?tp/wt:0}; return {...f,lines:n}; })} /></Field>
-      <Field label="Unit">
-        <Sel value={l.unit||"Pcs"} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nu=e.target.value; const wt=calcPoLineWt({...n[i],unit:nu}); n[i]={...n[i],unit:nu,wtOrdered:wt}; return {...f,lines:n}; })}>
-          <option>Sheets</option><option>Pcs</option><option>MT</option><option>KG</option><option>NOS</option>
-        </Sel>
-      </Field>
+      {(l.orderMode||"ByUnits")==="ByUnits" ? (
+        <Field label="Qty (sheets/pcs/bars)"><Input type="number" value={l.qty||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nq=+e.target.value; const wt=calcPoLineWt({...n[i],qty:nq}); const tp=n[i].pricingMethod==="PerKg"?wt*(n[i].unitPrice||0):nq*(n[i].unitPrice||0); n[i]={...n[i],qty:nq,qtyOrdered:nq,wtOrdered:wt,totalPrice:tp,effectiveRateKg:wt>0?tp/wt:0}; return {...f,lines:n}; })} /></Field>
+      ) : (
+        <Field label="Weight Required (kg)"><Input type="number" value={l.wtRequired||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const wr=+e.target.value; const lib=(materials||[]).find(m=>m.id===n[i].matLibId); let wp=0; if(lib){if(lib.isPlate&&n[i].length>0&&n[i].width>0)wp=(n[i].length/1000)*(n[i].width/1000)*(lib.wtPerM2||0);else if(!lib.isPlate&&n[i].length>0)wp=(n[i].length/1000)*(lib.wtPerMetre||0);} const hq=wp>0?Math.ceil(wr/wp):0; const tp=n[i].pricingMethod==="PerKg"?wr*(n[i].unitPrice||0):hq*(n[i].unitPrice||0); n[i]={...n[i],wtRequired:wr,wtOrdered:wr,qty:hq,qtyOrdered:hq,totalPrice:tp,effectiveRateKg:wr>0?tp/wr:0}; return {...f,lines:n}; })} /></Field>
+      )}
+      {(l.orderMode||"ByUnits")==="ByUnits" ? (
+        <Field label="Unit">
+          <Sel value={l.unit||"Pcs"} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nu=e.target.value; const wt=calcPoLineWt({...n[i],unit:nu}); n[i]={...n[i],unit:nu,wtOrdered:wt}; return {...f,lines:n}; })}>
+            <option>Sheets</option><option>Pcs</option><option>NOS</option>
+          </Sel>
+        </Field>
+      ) : (
+        <div />
+      )}
       <Field label="Pricing">
         <div style={{ display:"flex", gap:4, marginTop:4 }}>
           {["PerUnit","PerKg"].map(pm=>(
@@ -2456,14 +2506,37 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
       <button onClick={()=>setForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:18 }}>✕</button>
     </div>
     {/* Row 4: Live calc preview */}
-    {(()=>{ const wt=calcPoLineWt(l); const tp=l.pricingMethod==="PerKg"?wt*(l.unitPrice||0):(l.qty||0)*(l.unitPrice||0); const effKg=wt>0?tp/wt:0; const mc=l.matCode||buildMatCode(l.sectionType||l.section,l.matType,l.grade,l.size); const ic=buildItemCode({...l,matCode:mc}); return (
-      <div style={{ marginTop:8, padding:"8px 12px", background:T.bgCard, borderRadius:6, display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8 }}>
-        <div><div style={css.label}>Wt Ordered</div><div style={{ fontSize:12,color:wt>0?T.green:T.textLow,fontFamily:T.fontMono,fontWeight:700 }}>{wt>0?`${fmt.num(Math.round(wt))} kg (${(wt/1000).toFixed(2)} T)`:"—"}</div></div>
-        <div><div style={css.label}>Line Total</div><div style={{ fontSize:12,color:T.green,fontFamily:T.fontMono,fontWeight:700 }}>{fmt.currency(tp)}</div></div>
-        <div><div style={css.label}>Eff. Rate/kg</div><div style={{ fontSize:12,color:T.accent,fontFamily:T.fontMono }}>{effKg>0?`₹${effKg.toFixed(2)}/kg`:"—"}</div></div>
-        <div><div style={css.label}>Item Code</div><div style={{ fontSize:11,color:ic?T.accentHi:T.textLow,fontFamily:T.fontMono }}>{ic||"—"}{l.matLibId&&<span style={{color:T.green,marginLeft:4}}>✓</span>}</div></div>
-      </div>
-    ); })()}
+    {(()=>{
+      const isWtMode=(l.orderMode||"ByUnits")==="ByWeight";
+      const wt=isWtMode?(l.wtRequired||0):calcPoLineWt(l);
+      const tp=l.pricingMethod==="PerKg"?wt*(l.unitPrice||0):(l.qty||0)*(l.unitPrice||0);
+      const effKg=wt>0?tp/wt:0;
+      const mc=l.matCode||buildMatCode(l.sectionType||l.section,l.matType,l.grade,l.size);
+      const ic=buildItemCode({...l,matCode:mc});
+      let byWtHint=null;
+      if(isWtMode&&l.matLibId){
+        const lib=(materials||[]).find(m=>m.id===l.matLibId);
+        if(lib){
+          if(lib.isPlate&&l.length>0&&l.width>0){const wp=(l.length/1000)*(l.width/1000)*(lib.wtPerM2||0);const hq=wp>0?Math.ceil((l.wtRequired||0)/wp):null;if(hq!=null)byWtHint=`≈ ${hq} sheet${hq!==1?"s":""} of ${l.length}×${l.width}mm`;}
+          else if(!lib.isPlate&&l.length>0){const wp=(l.length/1000)*(lib.wtPerMetre||0);const hq=wp>0?Math.ceil((l.wtRequired||0)/wp):null;if(hq!=null)byWtHint=`≈ ${hq} bar${hq!==1?"s":""} of ${l.length}mm`;}
+        }
+      }
+      return (
+        <div style={{ marginTop:8, padding:"8px 12px", background:T.bgCard, borderRadius:6, display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8 }}>
+          <div>
+            <div style={css.label}>{isWtMode?"Qty Hint":"Wt Ordered"}</div>
+            <div style={{ fontSize:12,fontFamily:T.fontMono,fontWeight:700 }}>
+              {isWtMode
+                ? <span style={{color:byWtHint?T.textLow:T.textLow}}>{byWtHint||"— enter dimensions"}</span>
+                : <span style={{color:wt>0?T.green:T.textLow}}>{wt>0?`${fmt.num(Math.round(wt))} kg (${(wt/1000).toFixed(2)} T)`:"—"}</span>}
+            </div>
+          </div>
+          <div><div style={css.label}>Line Total</div><div style={{ fontSize:12,color:T.green,fontFamily:T.fontMono,fontWeight:700 }}>{fmt.currency(tp)}</div></div>
+          <div><div style={css.label}>Eff. Rate/kg</div><div style={{ fontSize:12,color:T.accent,fontFamily:T.fontMono }}>{effKg>0?`₹${effKg.toFixed(2)}/kg`:"—"}</div></div>
+          <div><div style={css.label}>Item Code</div><div style={{ fontSize:11,color:ic?T.accentHi:T.textLow,fontFamily:T.fontMono }}>{ic||"—"}{l.matLibId&&<span style={{color:T.green,marginLeft:4}}>✓</span>}</div></div>
+        </div>
+      );
+    })()}
     {/* Row 5: Delivery + Remarks */}
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8 }}>
       <Field label="Expected Delivery"><Input type="date" value={l.expectedDelivery||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],expectedDelivery:e.target.value}; return {...f,lines:n}; })} /></Field>
@@ -2509,9 +2582,9 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
   const canInspect = ["super_admin","qc_admin","qc_user","store_admin"].includes(user.role);
 
   const downloadPOTemplate = () => {
-    const hdr    = ["Section Type","Size","Grade","Material Type","Length (mm)","Width (mm)","Qty","Unit","Pricing Method (PerUnit/PerKg)","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
-    const hints  = ["e.g. PLATE","12mm","E250","MS","6000","1250","5","Sheets","PerUnit","65000","20-03-2026","Any notes"];
-    const sample = ["ISA","75x75x8","E250","MS","12000","","40","Pcs","PerUnit","780","20-03-2026","Main columns"];
+    const hdr    = ["Section Type","Size","Grade","Material Type","Length (mm)","Width (mm)","Qty (units)","Weight Required (kg)","Unit","Pricing Method (PerUnit/PerKg)","Unit Price (₹)","Expected Delivery (DD-MM-YYYY)","Remarks"];
+    const hints  = ["e.g. PLATE","12mm","E250","MS","6000","1250","5 (fill OR Weight — not both)","(leave blank if Qty filled)","Sheets","PerUnit","65000","20-03-2026","Any notes"];
+    const sample = ["ISA","75x75x8","E250","MS","12000","","40","","Pcs","PerUnit","780","20-03-2026","Main columns"];
     const csv = [hdr,hints,sample].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const a = Object.assign(document.createElement("a"),{ href:URL.createObjectURL(new Blob([csv],{type:"text/csv"})), download:`po_lines_template_${po.id}.csv` });
     a.click(); URL.revokeObjectURL(a.href);
@@ -2610,7 +2683,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
       {tab==="lines" && (
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead><tr><TH>#</TH><TH>Section</TH><TH>Size</TH><TH>Grade</TH><TH right>Qty</TH><TH>Unit</TH><TH right>Unit Price</TH><TH>Pricing</TH><TH right>Eff ₹/kg</TH><TH right>Total</TH><TH right>Wt Ord (kg)</TH><TH right>Wt Rcvd (kg)</TH><TH>Status</TH></tr></thead>
+            <thead><tr><TH>#</TH><TH>Section</TH><TH>Size</TH><TH>Grade</TH><TH right>Qty / Weight</TH><TH right>Unit Price</TH><TH>Pricing</TH><TH right>Eff ₹/kg</TH><TH right>Total</TH><TH right>Wt Ord (kg)</TH><TH right>Wt Rcvd (kg)</TH><TH>Status</TH></tr></thead>
             <tbody>
               {po.lines?.map((l,i)=>{
                 return (
@@ -2619,8 +2692,12 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
                   <TD><span style={{fontFamily:T.fontMono,fontSize:11,color:l.matLibId?T.accentHi:T.text}}>{l.sectionType||l.section||"—"}</span></TD>
                   <TD mono>{l.size||"—"}</TD>
                   <TD>{l.grade||"—"}</TD>
-                  <TD right mono>{l.qtyOrdered||l.qty} {l.unit||"MT"}</TD>
-                  <TD>{l.unit||"MT"}</TD>
+                  <TD right mono>
+                    {(l.orderMode||"ByUnits")==="ByWeight"
+                      ? <>{fmt.num(l.wtOrdered||0)} kg <span style={{color:T.textLow,fontSize:11}}>(≈ {l.qtyOrdered||l.qty} {l.unit==="KG"?"pcs":l.unit||"pcs"})</span></>
+                      : <>{l.qtyOrdered||l.qty} {l.unit||"MT"} <span style={{color:T.textLow,fontSize:11}}>({fmt.num(Math.round(l.wtOrdered||0))} kg)</span></>
+                    }
+                  </TD>
                   <TD right mono>{fmt.currency(l.unitPrice)}</TD>
                   <TD><span style={{fontSize:11,color:T.textMid}}>{l.pricingMethod||"PerUnit"}</span></TD>
                   <TD right mono>{l.effectiveRateKg>0?`₹${Number(l.effectiveRateKg).toFixed(1)}`:"—"}</TD>
@@ -2632,7 +2709,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
                 );
               })}
               <tr style={{ background:T.bgInput }}>
-                <td colSpan={9} style={{ padding:"6px 10px", fontWeight:700, fontSize:12, color:T.textMid }}>Total</td>
+                <td colSpan={8} style={{ padding:"6px 10px", fontWeight:700, fontSize:12, color:T.textMid }}>Total</td>
                 <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.currency(totalVal)}</td>
                 <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(totalWtOrd)}</td>
                 <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.num(totalWtRec)}</td>
