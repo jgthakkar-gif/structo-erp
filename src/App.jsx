@@ -932,6 +932,13 @@ const genBatchNo = (vendorCode, allPos, year) => {
   });
   return `${vendorCode}-${year}-${String(max+1).padStart(3,"0")}`;
 };
+const nextGrnId = (pos) => {
+  const year = new Date().getFullYear();
+  const allGrns = pos.flatMap(p => p.grns||[]);
+  const thisYear = allGrns.filter(g => g.id?.startsWith(`GRN-${year}`));
+  const next = String(thisYear.length + 1).padStart(3, '0');
+  return `GRN-${year}-${next}`;
+};
 const buildStockLots = (grnForm, po, grnId, ts) =>
   (grnForm.lines||[]).filter(l=>(l.wtReceived||0)>0).map((l,idx) => {
     const poLine = po.lines?.find(pl=>pl.id===l.poLineId)||{};
@@ -2826,8 +2833,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
   const saveGRN = (poId) => {
     const po = pos.find(p=>p.id===poId);
     const ts = Date.now();
-    const grnId = `GRN-${ts}`;
     const yr = new Date().getFullYear();
+    const grnId = nextGrnId(pos);
     const batchNoGrn = po?.vendorCode ? genBatchNo(po.vendorCode, pos, yr) : "";
     const newGrn = { ...grnForm, id:grnId, batchNo:batchNoGrn, date:today(), createdBy:user.name, lines:(grnForm.lines||[]) };
     setPos(prev => prev.map(p => {
@@ -3139,9 +3146,10 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
   };
 
   const saveGRN = () => {
+    if (!(grnForm.lines||[]).length) { showToast("Add at least one received line", "red"); return; }
     const ts = Date.now();
-    const grnId = `GRN-${ts}`;
     const yr = new Date().getFullYear();
+    const grnId = nextGrnId(pos);
     const batchNo = po.vendorCode ? genBatchNo(po.vendorCode, pos, yr) : "";
     const newGrn = { ...grnForm, id:grnId, batchNo, date:today(), createdBy:user.name, lines:(grnForm.lines||[]) };
     setPos(prev => prev.map(p => {
@@ -3197,7 +3205,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
           </button>
         ))}
         <div style={{ flex:1 }} />
-        {canEdit && tab==="grns" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; setGrnForm({lines:[],batchNo:preview}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
+        {canEdit && tab==="grns" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
         {canEdit && tab==="lines" && po.status==="pending" && (
           <div style={{ display:"flex", gap:6 }}>
             <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
