@@ -1014,7 +1014,7 @@ const parsePOLineCSV = (text, materials) => {
     if (rawDel) { const m = rawDel.match(/^(\d{2})-(\d{2})-(\d{4})$/); expectedDelivery = m ? `${m[3]}-${m[2]}-${m[1]}` : rawDel; }
     const length        = parseFloat(get("length")) || null;
     const width         = parseFloat(get("width")) || null;
-    const pricingMethod = get("pricingMethod") || "PerUnit";
+    const rawPricingMethod = get("pricingMethod");
     const libMatch   = (materials||[]).find(m =>
       (m.sectionType||"").toLowerCase() === sectionType.toLowerCase() &&
       (m.size||"").toLowerCase() === size.toLowerCase() &&
@@ -1050,6 +1050,8 @@ const parsePOLineCSV = (text, materials) => {
       orderMode = "ByUnits"; qty = 0; wtOrdered = 0;
     }
     const effectiveUnit = orderMode==="ByWeight" ? "KG" : (unit||"MT");
+    // ByWeight orders default to PerKg pricing if not explicitly specified in CSV
+    const pricingMethod = rawPricingMethod || (orderMode==="ByWeight" ? "PerKg" : "PerUnit");
     const totalPrice = pricingMethod==="PerKg" ? wtOrdered*unitPrice : qty*unitPrice;
     return {
       id: `POL-${ts}-${i}`,
