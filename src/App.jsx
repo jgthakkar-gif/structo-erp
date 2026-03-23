@@ -7729,9 +7729,11 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
   const computeRmPicture = () => {
     const byMat = {};
     selDrawings.forEach(({drawing, order}) => {
-      (drawing.parts||[]).filter(p=>p.fabType==="Fabricate"&&p.source==="Procure").forEach(p => {
-        const key = p.matCode||p.sectionType||"Unknown";
-        if (!byMat[key]) byMat[key] = {matCode:key, section:p.sectionType||"", grade:p.grade||"", requiredKg:0, requiredM:0, drawings:[], lots:[]};
+      const drawingParts = (order.parts||[]).filter(p=>p.drawingId===drawing.id);
+      drawingParts.filter(p=>p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure").forEach(p => {
+        const sec = p.sectionType||p.section||"";
+        const key = p.matCode||sec||"Unknown";
+        if (!byMat[key]) byMat[key] = {matCode:key, section:sec, grade:p.grade||"", requiredKg:0, requiredM:0, drawings:[], lots:[]};
         byMat[key].requiredKg += (p.clientTotalWt||0);
         byMat[key].requiredM  += (p.totalLength||0);
         byMat[key].drawings.push({drawingNo:drawing.drawingNo, orderId:order.id, kg:p.clientTotalWt||0});
