@@ -669,7 +669,7 @@ const PERMISSIONS = {
   finance_user:    { modules:["dashboard","finance"],                          canApprove:false, canOverride:false, canManageUsers:false },
   dispatch_admin:  { modules:["dashboard","dispatch","qc"],                    canApprove:true,  canOverride:false, canManageUsers:false },
   dispatch_user:   { modules:["dashboard","dispatch"],                         canApprove:false, canOverride:false, canManageUsers:false },
-  contractor:      { modules:["dashboard","my_work"],                          canApprove:false, canOverride:false, canManageUsers:false },
+  contractor:      { modules:["dashboard","production"],                       canApprove:false, canOverride:false, canManageUsers:false },
   machine_operator:{ modules:["dashboard","production"],                       canApprove:false, canOverride:false, canManageUsers:false },
 };
 
@@ -6599,6 +6599,75 @@ const DrawingAssignment = ({ user, drawing, order, instances, setInstances,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// STAGE WORKER QUEUE (blasting_engineer / painting_engineer)
+// ═══════════════════════════════════════════════════════════════════════════════
+const ROLE_STAGE_MAP = { blasting_engineer:"blasting", painting_engineer:"painting" };
+const StageWorkerQueue = ({ user, instances, setInstances }) => {
+  const stage = ROLE_STAGE_MAP[user.role];
+  const stageLabel = stage ? (stage.charAt(0).toUpperCase()+stage.slice(1)) : "";
+  const my      = instances.filter(i => i.currentStage === stage &&
+    ["pending_collection","in_progress","pending_supervisor"].includes(i.currentStatus));
+  const pending = my.filter(i => i.currentStatus === "pending_collection");
+  const inProg  = my.filter(i => i.currentStatus === "in_progress");
+  const pendSup = my.filter(i => i.currentStatus === "pending_supervisor");
+  const done    = instances.filter(i => i.currentStage === stage && i.currentStatus === "completed").slice(-5);
+
+  const upd = (id, patch) => setInstances(prev => prev.map(i => i.id===id ? {...i,...patch} : i));
+  const collect = id => upd(id, { currentStatus:"in_progress", collectedAt:today() });
+  const complete = id => upd(id, { currentStatus:"pending_supervisor", stageCompletedAt:today() });
+
+  const rowStyle = { padding:"10px 14px", borderBottom:`1px solid ${T.border}`, display:"grid",
+    gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"center", fontSize:13 };
+
+  const section = (title, color, items, action) => items.length === 0 ? null : (
+    <div style={{ marginBottom:16 }}>
+      <div style={{ fontWeight:600, fontSize:12, color:T[color]||T.textMid, textTransform:"uppercase",
+        letterSpacing:1, padding:"6px 14px", background:T.surfaceHi, borderBottom:`1px solid ${T.border}` }}>
+        {title} ({items.length})
+      </div>
+      {items.map(i => (
+        <div key={i.id} style={rowStyle}>
+          <span style={{ fontWeight:600 }}>{i.markNo} <span style={{ fontWeight:400, color:T.textMid }}>× {i.qty||1}</span></span>
+          <span style={{ color:T.textMid }}>{i.drawingNo||i.drawingId}</span>
+          <span style={{ color:T.textLow, fontSize:12 }}>{i.orderId}</span>
+          {action && <button onClick={()=>action(i.id)} style={{ ...css.btn.sm, background:T.accentLo, color:T.accent, border:`1px solid ${T.accent}` }}>{action===collect?"Collect":"Complete"}</button>}
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ padding:20, maxWidth:900 }}>
+      <SectionHd title={`My ${stageLabel} Work Queue`} sub={`Logged in as ${user.name}`} />
+      {my.length === 0 && done.length === 0 && (
+        <InfoBanner color="blue">No {stageLabel} work currently assigned to you.</InfoBanner>
+      )}
+      <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", marginBottom:16 }}>
+        {section(`Pending Collection`, "amber", pending, collect)}
+        {section(`In Progress`, "accent", inProg, complete)}
+        {section(`Awaiting Supervisor`, "textMid", pendSup, null)}
+      </div>
+      {done.length > 0 && (
+        <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+          <div style={{ fontWeight:600, fontSize:12, color:T.green, textTransform:"uppercase",
+            letterSpacing:1, padding:"6px 14px", background:T.surfaceHi, borderBottom:`1px solid ${T.border}` }}>
+            Recently Completed (last 5)
+          </div>
+          {done.map(i => (
+            <div key={i.id} style={rowStyle}>
+              <span style={{ fontWeight:600 }}>{i.markNo}</span>
+              <span style={{ color:T.textMid }}>{i.drawingNo||i.drawingId}</span>
+              <span style={{ color:T.textLow, fontSize:12 }}>{i.orderId}</span>
+              <Badge color="green">Done</Badge>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION STEP 5: CONTRACTOR WORK QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
 const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
@@ -8236,6 +8305,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
   if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} />;
   // Machine operator → machine queue
   if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} />;
+  // Stage workers (blasting/painting engineers) → stage-filtered work queue
+  if (["blasting_engineer","painting_engineer"].includes(user.role)) return <StageWorkerQueue user={user} instances={instances} setInstances={setInstances} />;
 
   const canAssign = ["super_admin","planning_admin","floor_planner"].includes(user.role);
 
