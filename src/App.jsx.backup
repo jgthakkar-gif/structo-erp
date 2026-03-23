@@ -2768,7 +2768,7 @@ const POLineImportModal = ({ rows, err, mode, setMode, fileRef, onFile, onDownlo
   </Modal>
 );
 
-const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, vendors, materials, setMaterials }) => {
+const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orders, vendors, materials, setMaterials }) => {
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
   const [modal, setModal] = useState(null);
@@ -2781,6 +2781,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
   const [poImpErr,   setPoImpErr]   = useState("");
   const [poImpMode,  setPoImpMode]  = useState("append");
   const poImpRef = useRef(null);
+  const [showCancelled, setShowCancelled] = useState(false);
 
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
   const [addToLibModal, setAddToLibModal] = useState(null);
@@ -2875,7 +2876,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
     setGrnForm({lines:[]});
   };
 
-  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} setStock={setStock} showToast={showToast} materials={materials} />;
+  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} />;
 
   return (
     <div>
@@ -2894,11 +2895,15 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
         <StatCard label="Fully Received" value={statusSummary.fully_received} color={T.green} />
       </div>
 
-      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:12 }}>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:12, alignItems:"center" }}>
+        <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.textMid, cursor:"pointer" }}>
+          <input type="checkbox" checked={showCancelled} onChange={e=>setShowCancelled(e.target.checked)} />
+          Show cancelled
+        </label>
         {canEdit && <button onClick={()=>{setForm({servedOrders:[],lines:[],poDate:today()});setModal("new_po");}} style={css.btn.primary}>+ New PO</button>}
       </div>
 
-      {pos.map(po => {
+      {pos.filter(po => showCancelled || po.status !== "cancelled").map(po => {
         const totalVal = po.lines.reduce((s,l)=>s+(l.totalPrice||0),0);
         const totalWtOrd = po.lines.reduce((s,l)=>s+(l.wtOrdered||0),0);
         const totalWtRec = po.lines.reduce((s,l)=>s+(l.wtReceived||0),0);
@@ -3198,7 +3203,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
 };
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
-const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, materials }) => {
+const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials }) => {
   const [tab, setTab] = useState("lines");
   const [grnModal, setGrnModal] = useState(false);
   const [grnForm, setGrnForm] = useState({ lines:[] });
@@ -3208,6 +3213,11 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
   const [poImpErr,   setPoImpErr]   = useState("");
   const [poImpMode,  setPoImpMode]  = useState("append");
   const poImpRef = useRef(null);
+  const [cancelModal, setCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [reverseModal, setReverseModal] = useState(null);
+  const [reverseReason, setReverseReason] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   const canEdit = ["super_admin","purchase_admin","store_admin"].includes(user.role);
   const canInspect = ["super_admin","qc_admin","qc_user","store_admin"].includes(user.role);
@@ -3248,7 +3258,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
     const yr = new Date().getFullYear();
     const grnId = nextGrnId(pos);
     const batchNo = po.vendorCode ? genBatchNo(po.vendorCode, pos, yr) : "";
-    const newGrn = { ...grnForm, id:grnId, batchNo, date:today(), createdBy:user.name, lines:(grnForm.lines||[]) };
+    const newGrn = { ...grnForm, id:grnId, batchNo, date:today(), createdBy:user.name, lines:(grnForm.lines||[]), status:"received" };
     setPos(prev => prev.map(p => {
       if (p.id!==po.id) return p;
       const updLines = p.lines.map(pl=>{
@@ -3271,6 +3281,61 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
     }
     showToast("GRN saved — materials added to RM QC queue");
     setGrnModal(false); setGrnForm({lines:[]});
+  };
+
+  const cancelPO = () => {
+    if (!cancelReason.trim()) return;
+    const hasReceived = (po.grns||[]).some(g => g.status === "received");
+    if (hasReceived) { showToast("Cancel all GRNs first", "red"); setCancelModal(false); return; }
+    setPos(prev => prev.map(p => p.id !== po.id ? p : {
+      ...p, status:"cancelled",
+      cancellationReason: cancelReason,
+      cancelledBy: user.name,
+      cancelledDate: today()
+    }));
+    showToast("PO cancelled");
+    setCancelModal(false);
+    onBack();
+  };
+
+  const reverseGRN = (grnId) => {
+    if (!reverseReason.trim()) return;
+    const grn = (po.grns||[]).find(g => g.id === grnId);
+    if (!grn) return;
+    const grnLots = (stock||[]).filter(s => s.grnId === grnId);
+    const blockedLot = grnLots.find(s => s.status !== "qc_hold");
+    if (blockedLot) { showToast("Cannot reverse — lot has been approved or allocated. Contact administrator.", "red"); return; }
+    setPos(prev => prev.map(p => {
+      if (p.id !== po.id) return p;
+      const updGrns = p.grns.map(g => g.id !== grnId ? g : {
+        ...g, status:"reversed",
+        reversalReason: reverseReason,
+        reversedBy: user.name,
+        reversedDate: today()
+      });
+      const updLines = p.lines.map(pl => {
+        const gl = grn.lines?.find(x => x.poLineId === pl.id);
+        if (!gl) return pl;
+        const nw = Math.max(0, (pl.wtReceived||0) - (gl.actualWt||gl.wtReceived||0));
+        const nq = Math.max(0, (pl.qtyReceived||0) - (gl.qtyReceived||0));
+        return { ...pl, wtReceived:nw, qtyReceived:nq, status: nw <= 0 ? "pending" : nw >= pl.wtOrdered ? "fully_received" : "partially_received" };
+      });
+      const allFull = updLines.every(l => l.status === "fully_received");
+      const anyRec  = updLines.some(l => l.status === "fully_received" || l.status === "partially_received");
+      const newStatus = p.status === "cancelled" ? "cancelled" : allFull ? "fully_received" : anyRec ? "partially_received" : "pending";
+      return { ...p, grns:updGrns, lines:updLines, status:newStatus };
+    }));
+    if (setStock) setStock(prev => prev.filter(s => s.grnId !== grnId));
+    showToast("GRN reversed — stock lots removed");
+    setReverseModal(null);
+    setReverseReason("");
+  };
+
+  const deletePO = () => {
+    setPos(prev => prev.filter(p => p.id !== po.id));
+    showToast("PO deleted");
+    setDeleteConfirm(false);
+    onBack();
   };
 
   const totalWtOrd = po.lines?.reduce((s,l)=>s+(l.wtOrdered||0),0)||0;
@@ -3302,7 +3367,13 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
           </button>
         ))}
         <div style={{ flex:1 }} />
-        {canEdit && tab==="grns" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
+        {user.role==="super_admin" && po.status==="pending" && (po.grns||[]).length===0 && (
+          <button onClick={()=>setDeleteConfirm(true)} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}` }}>Delete PO</button>
+        )}
+        {user.role==="super_admin" && po.status!=="cancelled" && !((po.grns||[]).length===0 && po.status==="pending") && (
+          <button onClick={()=>{ setCancelReason(""); setCancelModal(true); }} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}` }}>Cancel PO</button>
+        )}
+        {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
         {canEdit && tab==="lines" && po.status==="pending" && (
           <div style={{ display:"flex", gap:6 }}>
             <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
@@ -3365,18 +3436,22 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
         <div>
           {po.grns?.length===0 && <div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:32 }}>No GRNs raised yet</div>}
           {po.grns?.map(grn=>(
-            <div key={grn.id} style={{ ...css.card, marginBottom:12 }}>
+            <div key={grn.id} style={{ ...css.card, marginBottom:12, opacity:grn.status==="reversed"?0.7:1 }}>
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
                 <div>
                   <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
                     <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{grn.id}</span>
-                    <Badge color="green">Received</Badge>
+                    <Badge color={grn.status==="reversed"?"red":"green"}>{grn.status==="reversed"?"Reversed":"Received"}</Badge>
                   </div>
                   <div style={{ fontSize:12, color:T.textMid }}>Date: {fmt.date(grn.date)} · Vehicle: {grn.vehicleNo} · Challan: {grn.challanNo} · By: {grn.createdBy}</div>
                   {grn.batchNo&&<div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Batch: <span style={{fontFamily:T.fontMono,color:T.accentHi,fontWeight:700}}>{grn.batchNo}</span></div>}
                   {grn.supplierInvoiceNo&&<div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Invoice: <span style={{fontFamily:T.fontMono,color:T.text}}>{grn.supplierInvoiceNo}</span>{grn.supplierInvoiceWt>0?` · Inv Wt: ${fmt.num(grn.supplierInvoiceWt)} kg`:""}{grn.supplierInvoiceAmt>0?` · Inv Amt: ${fmt.currency(grn.supplierInvoiceAmt)}`:""}</div>}
                   {grn.remarks && <div style={{ fontSize:12, color:T.textMid, marginTop:4 }}>{grn.remarks}</div>}
+                  {grn.status==="reversed" && <div style={{ fontSize:11, color:T.red, marginTop:4 }}>Reversed by {grn.reversedBy} on {fmt.date(grn.reversedDate)} — {grn.reversalReason}</div>}
                 </div>
+                {user.role==="super_admin" && grn.status!=="reversed" && (
+                  <button onClick={()=>{ setReverseReason(""); setReverseModal(grn.id); }} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}`, alignSelf:"flex-start", fontSize:11 }}>Reverse GRN</button>
+                )}
               </div>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                 <thead><tr><TH>PO Line</TH><TH>Material</TH><TH right>Qty Rcvd</TH><TH right>Calc Wt (kg)</TH><TH right>Actual Wt (kg)</TH><TH right>Variance</TH><TH>Insp</TH></tr></thead>
@@ -3480,6 +3555,69 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
         onConfirm={confirmPOImpDetail}
         onClose={()=>{setPoImpModal(false);setPoImpRows([]);setPoImpErr("");poImpRef.current.value="";}}
       />}
+
+      {/* Cancel PO Modal */}
+      {cancelModal && (
+        <Modal title={`Cancel ${po.id}`} onClose={()=>setCancelModal(false)} width={480}>
+          {(po.grns||[]).some(g=>g.status==="received")
+            ? <>
+                <InfoBanner color="red">Cannot cancel — one or more GRNs have been received. Reverse all GRNs first, then cancel the PO.</InfoBanner>
+                <div style={{ display:"flex", justifyContent:"flex-end", marginTop:12 }}>
+                  <button onClick={()=>setCancelModal(false)} style={css.btn.primary}>OK</button>
+                </div>
+              </>
+            : <>
+                <InfoBanner color="amber">This will mark the PO as Cancelled. This action is logged and cannot be undone automatically.</InfoBanner>
+                <Field label="Cancellation Reason (mandatory)">
+                  <textarea value={cancelReason} onChange={e=>setCancelReason(e.target.value)} rows={3} style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontSize:13, padding:"8px 10px", fontFamily:T.font, resize:"vertical", boxSizing:"border-box" }} placeholder="State the reason for cancellation..." />
+                </Field>
+                <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
+                  <button onClick={()=>setCancelModal(false)} style={css.btn.secondary}>Back</button>
+                  <button onClick={cancelPO} disabled={!cancelReason.trim()} style={{ ...css.btn.primary, background:T.red, opacity:cancelReason.trim()?1:0.5 }}>Confirm Cancel</button>
+                </div>
+              </>
+          }
+        </Modal>
+      )}
+
+      {/* Reverse GRN Modal */}
+      {reverseModal && (()=>{
+        const grnLots = (stock||[]).filter(s => s.grnId === reverseModal);
+        const blockedLot = grnLots.find(s => s.status !== "qc_hold");
+        return (
+          <Modal title={`Reverse ${reverseModal}`} onClose={()=>setReverseModal(null)} width={480}>
+            {blockedLot
+              ? <>
+                  <InfoBanner color="red">Cannot reverse — lot {blockedLot.lotNo} has been approved or allocated. Contact administrator.</InfoBanner>
+                  <div style={{ display:"flex", justifyContent:"flex-end", marginTop:12 }}>
+                    <button onClick={()=>setReverseModal(null)} style={css.btn.primary}>OK</button>
+                  </div>
+                </>
+              : <>
+                  <InfoBanner color="red">Reversing this GRN will remove all stock lots created from it and subtract the received weight from PO line counters.</InfoBanner>
+                  <Field label="Reversal Reason (mandatory)">
+                    <textarea value={reverseReason} onChange={e=>setReverseReason(e.target.value)} rows={3} style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontSize:13, padding:"8px 10px", fontFamily:T.font, resize:"vertical", boxSizing:"border-box" }} placeholder="State the reason for reversal..." />
+                  </Field>
+                  <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
+                    <button onClick={()=>setReverseModal(null)} style={css.btn.secondary}>Back</button>
+                    <button onClick={()=>reverseGRN(reverseModal)} disabled={!reverseReason.trim()} style={{ ...css.btn.primary, background:T.red, opacity:reverseReason.trim()?1:0.5 }}>Confirm Reversal</button>
+                  </div>
+                </>
+            }
+          </Modal>
+        );
+      })()}
+
+      {/* Delete PO Confirm */}
+      {deleteConfirm && (
+        <Modal title="Delete Purchase Order" onClose={()=>setDeleteConfirm(false)} width={400}>
+          <InfoBanner color="red">Delete {po.id}? This cannot be undone.</InfoBanner>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}>
+            <button onClick={()=>setDeleteConfirm(false)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={deletePO} style={{ ...css.btn.primary, background:T.red }}>Delete PO</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
@@ -8758,7 +8896,7 @@ export default function App() {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
-      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
+      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} />;
