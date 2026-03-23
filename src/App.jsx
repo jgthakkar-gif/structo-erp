@@ -3300,32 +3300,44 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
 
   const reverseGRN = (grnId) => {
     if (!reverseReason.trim()) return;
-    const grn = (po.grns||[]).find(g => g.id === grnId);
-    if (!grn) return;
+    // Step 1 — validate: all lots for this GRN must be qc_hold
     const grnLots = (stock||[]).filter(s => s.grnId === grnId);
     const blockedLot = grnLots.find(s => s.status !== "qc_hold");
-    if (blockedLot) { showToast("Cannot reverse — lot has been approved or allocated. Contact administrator.", "red"); return; }
+    if (blockedLot) {
+      showToast(`Cannot reverse — lot ${blockedLot.lotNo} has been approved or allocated. Contact administrator.`, "red");
+      return;
+    }
+    // Step 2 — remove stock lots immediately using functional updater (always fresh)
+    setStock(prev => prev.filter(s => s.grnId !== grnId));
+    // Steps 3-5 — update PO lines, GRN status, and PO status atomically
+    // Read GRN lines from the pos functional updater to avoid stale-closure bugs
     setPos(prev => prev.map(p => {
       if (p.id !== po.id) return p;
+      const grn = p.grns.find(g => g.id === grnId);
+      if (!grn) return p;
+      // Step 3 — reverse wtReceived / qtyReceived on each matching PO line
+      const updLines = p.lines.map(pl => {
+        const gl = grn.lines?.find(x => x.poLineId === pl.id);
+        if (!gl) return pl;
+        const nw = Math.max(0, (pl.wtReceived||0) - (gl.actualWt||gl.wtReceived||0));
+        const nq = Math.max(0, (pl.qtyReceived||0) - (gl.qtyReceived||0));
+        return { ...pl, wtReceived:nw, qtyReceived:nq,
+          status: nw <= 0 ? "pending" : nw >= pl.wtOrdered ? "fully_received" : "partially_received" };
+      });
+      // Step 4 — recalculate PO status from updated lines
+      const allFull = updLines.every(l => l.status === "fully_received");
+      const anyRec  = updLines.some(l => l.status === "fully_received" || l.status === "partially_received");
+      const newPoStatus = p.status === "cancelled" ? "cancelled"
+        : allFull ? "fully_received" : anyRec ? "partially_received" : "pending";
+      // Step 5 — mark GRN reversed with audit fields
       const updGrns = p.grns.map(g => g.id !== grnId ? g : {
         ...g, status:"reversed",
         reversalReason: reverseReason,
         reversedBy: user.name,
         reversedDate: today()
       });
-      const updLines = p.lines.map(pl => {
-        const gl = grn.lines?.find(x => x.poLineId === pl.id);
-        if (!gl) return pl;
-        const nw = Math.max(0, (pl.wtReceived||0) - (gl.actualWt||gl.wtReceived||0));
-        const nq = Math.max(0, (pl.qtyReceived||0) - (gl.qtyReceived||0));
-        return { ...pl, wtReceived:nw, qtyReceived:nq, status: nw <= 0 ? "pending" : nw >= pl.wtOrdered ? "fully_received" : "partially_received" };
-      });
-      const allFull = updLines.every(l => l.status === "fully_received");
-      const anyRec  = updLines.some(l => l.status === "fully_received" || l.status === "partially_received");
-      const newStatus = p.status === "cancelled" ? "cancelled" : allFull ? "fully_received" : anyRec ? "partially_received" : "pending";
-      return { ...p, grns:updGrns, lines:updLines, status:newStatus };
+      return { ...p, grns:updGrns, lines:updLines, status:newPoStatus };
     }));
-    if (setStock) setStock(prev => prev.filter(s => s.grnId !== grnId));
     showToast("GRN reversed — stock lots removed");
     setReverseModal(null);
     setReverseReason("");
@@ -8843,7 +8855,14 @@ export default function App() {
   const [sidebar, setSidebar] = useState(true);
   const [purchaseReqs, setPurchaseReqs] = useState(() => { try { const s=localStorage.getItem('structo_purchaseReqs'); return s?JSON.parse(s):INIT_PURCHASE_REQS; } catch { return INIT_PURCHASE_REQS; } });
   const [pos, setPos]                   = useState(() => { try { const s=localStorage.getItem('structo_pos'); return s?JSON.parse(s):INIT_POS; } catch { return INIT_POS; } });
-  const [stock, setStock]               = useState(() => { try { const s=localStorage.getItem('structo_stock'); return s?JSON.parse(s):INIT_STOCK; } catch { return INIT_STOCK; } });
+  const [stock, setStock]               = useState(() => {
+    const ORPHANED_LOT_IDS = ['LOT-2026-005','LOT-2026-006','LOT-2026-007'];
+    try {
+      const s = localStorage.getItem('structo_stock');
+      const loaded = s ? JSON.parse(s) : INIT_STOCK;
+      return loaded.filter(lot => !ORPHANED_LOT_IDS.includes(lot.lotNo));
+    } catch { return INIT_STOCK; }
+  });
   const [nestingRuns, setNestingRuns]   = useState(INIT_NESTING_RUNS);
   const [instances, setInstances]       = useState(INIT_INSTANCES);
   const [orders, setOrders]             = useState(() => { try { const s=localStorage.getItem('structo_orders'); if (!s) return SEED_ORDERS; const loaded=JSON.parse(s); return loaded.map(o=>({ drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o })); } catch { return SEED_ORDERS; } });
