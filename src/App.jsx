@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const T = {
@@ -8668,7 +8668,7 @@ export default function App() {
           {visibleNav.map(item=>{
             const active=mod===item.id;
             return (
-              <button key={item.id} onClick={()=>setMod(item.id)} title={!sidebar?item.label:""} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:sidebar?"7px 12px":"7px 10px", background:active?`${T.accent}22`:"transparent", borderLeft:active?`2px solid ${T.accent}`:"2px solid transparent", border:"none", color:active?T.accent:T.textMid, cursor:"pointer", fontFamily:T.font, fontSize:12, fontWeight:active?700:400, textAlign:"left" }}>
+              <button key={item.id} onClick={()=>setMod(item.id)} title={!sidebar?item.label:""} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:sidebar?"7px 12px":"7px 10px", background:active?`${T.accent}22`:"transparent", border:"none", borderLeft:active?`2px solid ${T.accent}`:"2px solid transparent", color:active?T.accent:T.textMid, cursor:"pointer", fontFamily:T.font, fontSize:12, fontWeight:active?700:400, textAlign:"left" }}>
                 <span style={{ fontSize:13, flexShrink:0, width:18, textAlign:"center" }}>{item.icon}</span>
                 {sidebar && <span>{item.label}</span>}
               </button>
