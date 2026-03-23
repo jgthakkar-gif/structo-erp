@@ -908,22 +908,17 @@ const calcPoLineWt = (l) => {
   const unit = (l.unit||"MT").toUpperCase();
   if (unit==="MT"||unit==="T") return (l.qty||0)*1000;
   if (unit==="KG") return (l.qty||0);
-  // Count-based (Sheets/Pcs/NOS): use library data or dimensions
-  if (l.matLibId) {
-    const len = l.length||l.sheetLength||l.stdLength||0;
-    const wid = l.width||l.sheetWidth||0;
-    if (l.isPlate && len>0 && wid>0) return (l.qty||0)*((len)/1000)*((wid)/1000)*(l.wtPerM2||0);
-    if (!l.isPlate && len>0) return (l.qty||0)*((len)/1000)*(l.wtPerMetre||0);
-  }
-  // No library: if plate with dimensions, use density formula
-  const st = (l.sectionType||l.section||"").toUpperCase();
+  // Count-based (Sheets/Pcs/NOS): use library weight factors (present whether or not matLibId is set)
   const len = l.length||l.sheetLength||l.stdLength||0;
   const wid = l.width||l.sheetWidth||0;
+  if (l.isPlate && l.wtPerM2 && len>0 && wid>0) return (l.qty||0)*(len/1000)*(wid/1000)*(l.wtPerM2);
+  if (!l.isPlate && l.wtPerMetre && len>0) return (l.qty||0)*(len/1000)*(l.wtPerMetre);
+  // No library weight factors: if plate with dimensions, use density formula
+  const st = (l.sectionType||l.section||"").toUpperCase();
   if (st==="PLATE" && len>0 && wid>0) {
     const thk = parseFloat((l.size||"0").replace(/[^\d.]/g,""))||0;
-    return (l.qty||0)*((len)/1000)*((wid)/1000)*7.85*thk;
+    return (l.qty||0)*(len/1000)*(wid/1000)*7.85*thk;
   }
-  if (len>0 && l.wtPerMetre) return (l.qty||0)*((len)/1000)*(l.wtPerMetre||0);
   return calcWtOrdered(l.qty, l.unit);
 };
 const genBatchNo = (vendorCode, allPos, year) => {
@@ -1066,8 +1061,8 @@ const parsePOLineCSV = (text, materials) => {
       itemCode: "",
       orderMode, qtyOrdered: qty, pricingMethod, length, width,
       wtRequired: orderMode==="ByWeight" ? wtReqVal : 0,
-      effectiveRateKg: wtOrdered>0 ? Math.round((qty*unitPrice)/wtOrdered*100)/100 : 0,
-      effectiveRateUnit: unitPrice,
+      effectiveRateKg: wtOrdered>0 ? Math.round(totalPrice/wtOrdered*100)/100 : 0,
+      effectiveRateUnit: pricingMethod==="PerKg" ? (qty>0 ? Math.round(totalPrice/qty*100)/100 : 0) : unitPrice,
       qtyReceived: 0,
       _libMatched: !!libMatch,
       _csvWarning: _csvWarning||null,
@@ -2816,7 +2811,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
         vendorCode: v?.vendorCode||"",
         status:"pending",
         grns:[],
-        lines: lines.map((l,i)=>{ const wtOrdered=(l.orderMode||"ByUnits")==="ByWeight"?(l.wtRequired||l.wtOrdered||0):calcPoLineWt(l); return {...l, id:`POL-${Date.now()}-${i}`, wtReceived:0, status:"pending", wtOrdered, itemCode:buildItemCode(l)}; }),
+        lines: lines.map((l,i)=>{ const wtOrdered=(l.orderMode||"ByUnits")==="ByWeight"?(l.wtRequired||l.wtOrdered||0):calcPoLineWt(l); const totalPrice=l.pricingMethod==="PerKg"?wtOrdered*(l.unitPrice||0):(l.qty||0)*(l.unitPrice||0); const effectiveRateKg=wtOrdered>0?Math.round(totalPrice/wtOrdered*100)/100:0; const effectiveRateUnit=l.pricingMethod==="PerKg"?(l.qty||0)>0?Math.round(totalPrice/(l.qty||0)*100)/100:0:(l.unitPrice||0); return {...l, id:`POL-${Date.now()}-${i}`, wtReceived:0, status:"pending", wtOrdered, totalPrice, effectiveRateKg, effectiveRateUnit, itemCode:buildItemCode(l)}; }),
         createdBy: user.name,
         createdDate: today(),
       };
@@ -3012,13 +3007,13 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
     {/* Row 3: Qty + Pricing */}
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr auto", gap:8, alignItems:"end" }}>
       {(l.orderMode||"ByUnits")==="ByUnits" ? (
-        <Field label="Qty (sheets/pcs/bars)"><Input type="number" value={l.qty||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nq=+e.target.value; const wt=calcPoLineWt({...n[i],qty:nq}); const tp=n[i].pricingMethod==="PerKg"?wt*(n[i].unitPrice||0):nq*(n[i].unitPrice||0); n[i]={...n[i],qty:nq,qtyOrdered:nq,wtOrdered:wt,totalPrice:tp,effectiveRateKg:wt>0?tp/wt:0}; return {...f,lines:n}; })} /></Field>
+        <Field label="Qty (sheets/pcs/bars)"><Input type="number" value={l.qty||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nq=+e.target.value; const wt=calcPoLineWt({...n[i],qty:nq}); const tp=n[i].pricingMethod==="PerKg"?wt*(n[i].unitPrice||0):nq*(n[i].unitPrice||0); const ekg=wt>0?tp/wt:0; const eunit=n[i].pricingMethod==="PerKg"?nq>0?tp/nq:0:(n[i].unitPrice||0); n[i]={...n[i],qty:nq,qtyOrdered:nq,wtOrdered:wt,totalPrice:tp,effectiveRateKg:ekg,effectiveRateUnit:eunit}; return {...f,lines:n}; })} /></Field>
       ) : (
         <Field label="Weight Required (kg)"><Input type="number" value={l.wtRequired||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; const wr=+e.target.value; const lib=(materials||[]).find(m=>m.id===n[i].matLibId); let wp=0; if(lib){if(lib.isPlate&&n[i].length>0&&n[i].width>0)wp=(n[i].length/1000)*(n[i].width/1000)*(lib.wtPerM2||0);else if(!lib.isPlate&&n[i].length>0)wp=(n[i].length/1000)*(lib.wtPerMetre||0);} const hq=wp>0?Math.ceil(wr/wp):0; const tp=n[i].pricingMethod==="PerKg"?wr*(n[i].unitPrice||0):hq*(n[i].unitPrice||0); n[i]={...n[i],wtRequired:wr,wtOrdered:wr,qty:hq,qtyOrdered:hq,totalPrice:tp,effectiveRateKg:wr>0?tp/wr:0}; return {...f,lines:n}; })} /></Field>
       )}
       {(l.orderMode||"ByUnits")==="ByUnits" ? (
         <Field label="Unit">
-          <Sel value={l.unit||"Pcs"} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nu=e.target.value; const wt=calcPoLineWt({...n[i],unit:nu}); n[i]={...n[i],unit:nu,wtOrdered:wt}; return {...f,lines:n}; })}>
+          <Sel value={l.unit||"Pcs"} onChange={e=>setForm(f=>{ const n=[...f.lines]; const nu=e.target.value; const wt=calcPoLineWt({...n[i],unit:nu}); const tp=n[i].pricingMethod==="PerKg"?wt*(n[i].unitPrice||0):(n[i].qty||0)*(n[i].unitPrice||0); const ekg=wt>0?tp/wt:0; n[i]={...n[i],unit:nu,wtOrdered:wt,totalPrice:tp,effectiveRateKg:ekg}; return {...f,lines:n}; })}>
             <option>Sheets</option><option>Pcs</option><option>NOS</option>
           </Sel>
         </Field>
@@ -3028,7 +3023,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
       <Field label="Pricing">
         <div style={{ display:"flex", gap:4, marginTop:4 }}>
           {["PerUnit","PerKg"].map(pm=>(
-            <button key={pm} onClick={()=>setForm(f=>{ const n=[...f.lines]; const wt=calcPoLineWt(n[i]); const tp=pm==="PerKg"?wt*(n[i].unitPrice||0):(n[i].qty||0)*(n[i].unitPrice||0); n[i]={...n[i],pricingMethod:pm,totalPrice:tp,effectiveRateKg:wt>0?tp/wt:0}; return {...f,lines:n}; })} style={{ flex:1, padding:"4px 6px", fontSize:11, fontWeight:l.pricingMethod===pm?700:400, color:l.pricingMethod===pm?T.accent:T.textMid, background:l.pricingMethod===pm?T.bgCard:"transparent", border:`1px solid ${l.pricingMethod===pm?T.accent:T.border}`, borderRadius:4, cursor:"pointer", fontFamily:T.font }}>{pm==="PerUnit"?"/unit":"/kg"}</button>
+            <button key={pm} onClick={()=>setForm(f=>{ const n=[...f.lines]; const wt=calcPoLineWt(n[i]); const tp=pm==="PerKg"?wt*(n[i].unitPrice||0):(n[i].qty||0)*(n[i].unitPrice||0); const ekg=wt>0?tp/wt:0; const eunit=pm==="PerKg"?(n[i].qty||0)>0?tp/(n[i].qty||0):0:(n[i].unitPrice||0); n[i]={...n[i],pricingMethod:pm,totalPrice:tp,effectiveRateKg:ekg,effectiveRateUnit:eunit}; return {...f,lines:n}; })} style={{ flex:1, padding:"4px 6px", fontSize:11, fontWeight:l.pricingMethod===pm?700:400, color:l.pricingMethod===pm?T.accent:T.textMid, background:l.pricingMethod===pm?T.bgCard:"transparent", border:`1px solid ${l.pricingMethod===pm?T.accent:T.border}`, borderRadius:4, cursor:"pointer", fontFamily:T.font }}>{pm==="PerUnit"?"/unit":"/kg"}</button>
           ))}
         </div>
       </Field>
@@ -3230,7 +3225,10 @@ const PODetail = ({ po, onBack, user, pos, setPos, setStock, showToast, material
                   </TD>
                   <TD right mono>{fmt.currency(l.unitPrice)}</TD>
                   <TD><span style={{fontSize:11,color:T.textMid}}>{l.pricingMethod||"PerUnit"}</span></TD>
-                  <TD right mono>{l.effectiveRateKg>0?`₹${Number(l.effectiveRateKg).toFixed(1)}`:"—"}</TD>
+                  <TD right mono>
+                    {l.effectiveRateKg>0?`₹${Number(l.effectiveRateKg).toFixed(1)}/kg`:"—"}
+                    {l.pricingMethod==="PerKg"&&l.effectiveRateUnit>0&&<div style={{color:T.textLow,fontSize:10}}>₹{fmt.num(Math.round(l.effectiveRateUnit))}/{l.unit||"unit"}</div>}
+                  </TD>
                   <TD right mono bold color={T.green}>{fmt.currency(l.totalPrice)}</TD>
                   <TD right mono>{fmt.num(l.wtOrdered)}</TD>
                   <TD right mono color={l.wtReceived>0?T.green:T.textLow}>{fmt.num(l.wtReceived||0)}</TD>
