@@ -1069,6 +1069,9 @@ const parsePOLineCSV = (text, materials) => {
       matCode:  libMatch?.matCode || buildMatCode(sectionType, matType, grade, size),
       itemCode: "",
       orderMode, qtyOrdered: qty, pricingMethod, length, width,
+      isPlate: libMatch?.isPlate||false,
+      wtPerMetre: libMatch?.wtPerMetre||null,
+      wtPerM2: libMatch?.wtPerM2||null,
       wtRequired: orderMode==="ByWeight" ? wtReqVal : 0,
       effectiveRateKg: wtOrdered>0 ? Math.round(totalPrice/wtOrdered*100)/100 : 0,
       effectiveRateUnit: pricingMethod==="PerKg" ? (qty>0 ? Math.round(totalPrice/qty*100)/100 : 0) : unitPrice,
@@ -2820,7 +2823,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setStock, orders, ven
         vendorCode: v?.vendorCode||"",
         status:"pending",
         grns:[],
-        lines: lines.map((l,i)=>{ const wtOrdered=(l.orderMode||"ByUnits")==="ByWeight"?(l.wtRequired||l.wtOrdered||0):calcPoLineWt(l); const totalPrice=l.pricingMethod==="PerKg"?wtOrdered*(l.unitPrice||0):(l.qty||0)*(l.unitPrice||0); const effectiveRateKg=wtOrdered>0?Math.round(totalPrice/wtOrdered*100)/100:0; const effectiveRateUnit=l.pricingMethod==="PerKg"?(l.qty||0)>0?Math.round(totalPrice/(l.qty||0)*100)/100:0:(l.unitPrice||0); return {...l, id:`POL-${Date.now()}-${i}`, wtReceived:0, status:"pending", wtOrdered, totalPrice, effectiveRateKg, effectiveRateUnit, itemCode:buildItemCode(l)}; }),
+        lines: lines.map((l,i)=>{ const calcWt=calcPoLineWt(l); const wtOrdered=(l.orderMode||"ByUnits")==="ByWeight"?(l.wtRequired||l.wtOrdered||0):Math.max(calcWt, l.wtOrdered||0); const totalPrice=l.pricingMethod==="PerKg"?wtOrdered*(l.unitPrice||0):(l.qty||0)*(l.unitPrice||0); const effectiveRateKg=wtOrdered>0?Math.round(totalPrice/wtOrdered*100)/100:0; const effectiveRateUnit=l.pricingMethod==="PerKg"?(l.qty||0)>0?Math.round(totalPrice/(l.qty||0)*100)/100:0:(l.unitPrice||0); return {...l, id:`POL-${Date.now()}-${i}`, wtReceived:0, status:"pending", wtOrdered, totalPrice, effectiveRateKg, effectiveRateUnit, itemCode:buildItemCode(l)}; }),
         createdBy: user.name,
         createdDate: today(),
       };
