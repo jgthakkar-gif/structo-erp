@@ -7745,7 +7745,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
         (s.status==="available"||s.status==="qc_hold")
       );
       const availKg = availLots.reduce((s,l)=>(s+(l.wtAvailable||l.wtReceived||0)),0);
-      let status = "Not Received";
+      let status = "Not in stock — raise PO";
       if (availKg >= row.requiredKg && row.requiredKg > 0) status = "Sufficient";
       else if (availKg > 0 && availKg < row.requiredKg) status = "Partial";
       else if (availLots.some(l=>l.status==="qc_hold")) status = "QC Pending";
@@ -7770,13 +7770,13 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
 
     const suggs = [];
     candidates.forEach(({drawing, order}) => {
-      const parts = (drawing.parts||[]).filter(p=>p.fabType==="Fabricate"&&p.source==="Procure");
+      const parts = (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure");
       if (!parts.length) return;
       let extraKg = 0;
       let canCover = true;
       const needsByMat = {};
       parts.forEach(p=>{
-        const key = p.matCode||p.sectionType||"Unknown";
+        const key = p.matCode||p.sectionType||p.section||"Unknown";
         needsByMat[key] = (needsByMat[key]||0) + (p.clientTotalWt||0);
       });
       Object.entries(needsByMat).forEach(([mat,need])=>{
@@ -7966,7 +7966,12 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
       <div>
         <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 3 — Smart Suggestions</div>
         <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>Additional drawings that can be added to this release based on remaining RM stock.</div>
-        {scoreAsuggs.length===0&&scoreBsuggs.length===0&&<InfoBanner color="blue">No additional drawings can be added based on current stock levels.</InfoBanner>}
+        {scoreAsuggs.length===0&&scoreBsuggs.length===0&&(()=>{
+          if (rmPicture.length===0) return <InfoBanner color="amber">No material requirements found for selected drawings. Add parts to the drawing part list first, then create a production release.</InfoBanner>;
+          const hasRemain = rmPicture.some(r=>r.availableKg>r.requiredKg);
+          if (!hasRemain) return <InfoBanner color="blue">Selected drawings use all available stock for these materials. No surplus remaining for additional drawings.</InfoBanner>;
+          return <InfoBanner color="blue">No other drawings require these materials. All available drawings have been selected or are already in an active release.</InfoBanner>;
+        })()}
         {scoreAsuggs.length>0 && (
           <div style={{ marginBottom:20 }}>
             <div style={{ fontSize:13, fontWeight:700, color:T.green, marginBottom:8 }}>Add at no cost — stock fully covers</div>
