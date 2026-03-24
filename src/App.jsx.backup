@@ -1291,11 +1291,23 @@ const MField = ({ label, children, required }) => (
 );
 
 // ─── MASTERS: CLIENTS ─────────────────────────────────────────────────────────
-const ClientsMaster = ({ user, clients, setClients }) => {
+const ClientsMaster = ({ user, clients, setClients, orders, setOrders }) => {
   const [search, setSearch] = useState(""); const [modal, setModal] = useState(null); const [form, setForm] = useState({});
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const filtered = clients.filter(c=>c.name.toLowerCase().includes(search.toLowerCase())||c.code.toLowerCase().includes(search.toLowerCase()));
   const canEdit = user.role==="super_admin"||user.role==="finance_admin";
-  const save = () => { setClients(prev=>modal==="add"?[...prev,{...form,id:`CL-${String(prev.length+1).padStart(3,"0")}`}]:prev.map(c=>c.id===form.id?form:c)); setModal(null); };
+  const save = () => {
+    if (modal==="edit"&&setOrders) {
+      setOrders(prev=>prev.map(o=>o.clientId===form.id?{...o,clientName:form.name}:o));
+    }
+    setClients(prev=>modal==="add"?[...prev,{...form,id:`CL-${String(prev.length+1).padStart(3,"0")}`}]:prev.map(c=>c.id===form.id?form:c));
+    setModal(null);
+  };
+  const tryDelete = (client) => {
+    const refCount = (orders||[]).filter(o=>o.clientId===client.id).length;
+    if (refCount>0) { setDeleteConfirm({client, blocked:true, refCount}); }
+    else { setDeleteConfirm({client, blocked:false}); }
+  };
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
@@ -1310,7 +1322,12 @@ const ClientsMaster = ({ user, clients, setClients }) => {
         {key:"paymentTerms", label:"Payment Terms"},
         {key:"creditLimit", label:"Credit Limit", render:r=>fmt.currency(r.creditLimit)},
         {key:"active", label:"Status", render:r=><Badge color={r.active?"green":"gray"}>{r.active?"Active":"Inactive"}</Badge>},
-        {key:"actions", label:"", render:r=>canEdit?<button onClick={()=>{setForm({...r});setModal("edit");}} style={css.btn.ghost}>Edit</button>:null},
+        {key:"actions", label:"", render:r=>canEdit?(
+          <div style={{ display:"flex", gap:4 }}>
+            <button onClick={()=>{setForm({...r});setModal("edit");}} style={css.btn.ghost}>Edit</button>
+            {user.role==="super_admin"&&<button onClick={()=>tryDelete(r)} style={{ ...css.btn.ghost, color:T.red }}>Delete</button>}
+          </div>
+        ):null},
       ]} rows={filtered} />
       {modal&&<Modal title={modal==="add"?"Add Client":"Edit Client"} onClose={()=>setModal(null)} width={640}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
@@ -1327,6 +1344,17 @@ const ClientsMaster = ({ user, clients, setClients }) => {
         <MField label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})} style={{ ...css.input, minHeight:56, resize:"vertical" }} /></MField>
         <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={save} style={css.btn.primary}>Save Client</button></div>
       </Modal>}
+      {deleteConfirm&&(
+        <Modal title="Delete Client" onClose={()=>setDeleteConfirm(null)}>
+          {deleteConfirm.blocked
+            ? <InfoBanner color="red">Cannot delete — <strong>{deleteConfirm.client.name}</strong> is referenced by <strong>{deleteConfirm.refCount} order(s)</strong>. Remove or reassign those orders first.</InfoBanner>
+            : <InfoBanner color="red">Permanently delete <strong>{deleteConfirm.client.name}</strong>? This cannot be undone.</InfoBanner>}
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={()=>setDeleteConfirm(null)} style={css.btn.secondary}>Cancel</button>
+            {!deleteConfirm.blocked&&<button onClick={()=>{setClients(prev=>prev.filter(c=>c.id!==deleteConfirm.client.id));setDeleteConfirm(null);}} style={{ ...css.btn.primary, background:T.red, borderColor:T.red }}>Delete</button>}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
@@ -1354,11 +1382,12 @@ const genVendorCode = (name, vendors, excludeId) => {
   return { prefix, code, seq, collision: !!collider, colliderName:collider?.name||"", colliderCode:collider?.vendorCode||"", suggestion: collider ? `${prefix.slice(0,2)}X${String(seq).padStart(3,"0")}` : code };
 };
 
-const VendorsMaster = ({ user, vendors, setVendors }) => {
+const VendorsMaster = ({ user, vendors, setVendors, pos, setPos, stock }) => {
   const [search, setSearch] = useState(""); const [typeFilter, setTypeFilter] = useState("all");
   const [modal, setModal] = useState(null); // null | "add" | "edit"
   const [form, setForm] = useState({});
   const [customPrefix, setCustomPrefix] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   const canEdit = user.role==="super_admin"||user.role==="purchase_admin";
 
   const filtered = vendors.filter(v=>{
@@ -1388,8 +1417,16 @@ const VendorsMaster = ({ user, vendors, setVendors }) => {
       setVendors(prev=>[...prev,next]);
     } else {
       setVendors(prev=>prev.map(v=>v.id===next.id?next:v));
+      if (setPos) setPos(prev=>prev.map(p=>p.vendorId===next.id?{...p,vendorName:next.name}:p));
     }
     closeModal();
+  };
+
+  const tryDeleteVendor = (vendor) => {
+    const poCount = (pos||[]).filter(p=>p.vendorId===vendor.id).length;
+    const lotCount = (stock||[]).filter(s=>s.vendorId===vendor.id).length;
+    const refCount = poCount+lotCount;
+    setDeleteConfirm({vendor, blocked:refCount>0, poCount, lotCount});
   };
 
   return (
@@ -1413,7 +1450,12 @@ const VendorsMaster = ({ user, vendors, setVendors }) => {
         {key:"state", label:"State"},
         {key:"contact", label:"Contact"},
         {key:"active", label:"Status", render:r=><Badge color={r.active?"green":"gray"}>{r.active?"Active":"Inactive"}</Badge>},
-        {key:"actions", label:"", render:r=>canEdit?<button onClick={()=>openEdit(r)} style={css.btn.ghost}>Edit</button>:null},
+        {key:"actions", label:"", render:r=>canEdit?(
+          <div style={{ display:"flex", gap:4 }}>
+            <button onClick={()=>openEdit(r)} style={css.btn.ghost}>Edit</button>
+            {user.role==="super_admin"&&<button onClick={()=>tryDeleteVendor(r)} style={{ ...css.btn.ghost, color:T.red }}>Delete</button>}
+          </div>
+        ):null},
       ]} rows={filtered} />
 
       {modal&&<Modal title={modal==="add"?"Add Vendor":"Edit Vendor"} onClose={closeModal} width={520}>
@@ -1459,6 +1501,17 @@ const VendorsMaster = ({ user, vendors, setVendors }) => {
           <button onClick={saveVendor} style={css.btn.primary} disabled={!form.name?.trim()||effectiveCode.length<6}>✓ Save Vendor</button>
         </div>
       </Modal>}
+      {deleteConfirm&&(
+        <Modal title="Delete Vendor" onClose={()=>setDeleteConfirm(null)}>
+          {deleteConfirm.blocked
+            ? <InfoBanner color="red">Cannot delete — <strong>{deleteConfirm.vendor.name}</strong> is referenced by <strong>{deleteConfirm.poCount} PO(s)</strong> and <strong>{deleteConfirm.lotCount} stock lot(s)</strong>. Remove references first.</InfoBanner>
+            : <InfoBanner color="red">Permanently delete <strong>{deleteConfirm.vendor.name}</strong>? This cannot be undone.</InfoBanner>}
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={()=>setDeleteConfirm(null)} style={css.btn.secondary}>Cancel</button>
+            {!deleteConfirm.blocked&&<button onClick={()=>{setVendors(prev=>prev.filter(v=>v.id!==deleteConfirm.vendor.id));setDeleteConfirm(null);}} style={{ ...css.btn.primary, background:T.red, borderColor:T.red }}>Delete</button>}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
@@ -1584,7 +1637,12 @@ const MaterialsMaster = ({ user, materials, setMaterials }) => {
         {key:"weight", label:"Unit Weight", render:r=><span style={{fontFamily:T.fontMono}}>{r.wtPerMetre?`${r.wtPerMetre} kg/m`:`${r.wtPerM2} kg/m²`}</span>},
         {key:"stdLen", label:"Std Lengths", render:r=>r.isPlate?<span style={{color:T.textLow,fontSize:11}}>—</span>:<span style={{fontFamily:T.fontMono,fontSize:11}}>{(r.standardLengths||[]).map(l=>`${l/1000}m`).join(", ")||"—"}</span>},
         {key:"active", label:"Status", render:r=><Badge color={r.active?"green":"gray"}>{r.active?"Active":"Inactive"}</Badge>},
-        {key:"actions", label:"", render:r=>canEdit?<button onClick={()=>openEdit(r)} style={css.btn.ghost}>Edit</button>:null},
+        {key:"actions", label:"", render:r=>canEdit?(
+          <div style={{ display:"flex", gap:4 }}>
+            <button onClick={()=>openEdit(r)} style={css.btn.ghost}>Edit</button>
+            {user.role==="super_admin"&&<button onClick={()=>setMaterials(prev=>prev.map(m=>m.id===r.id?{...m,active:!m.active}:m))} style={{ ...css.btn.ghost, color:r.active?T.red:T.green, fontSize:11 }}>{r.active?"Deactivate":"Activate"}</button>}
+          </div>
+        ):null},
       ]} rows={paged} />
       {totalPages>1&&(
         <div style={{ display:"flex", gap:6, alignItems:"center", justifyContent:"center", marginTop:12 }}>
@@ -2030,7 +2088,7 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
 };
 
 // ─── MASTERS MODULE ───────────────────────────────────────────────────────────
-const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards }) => {
+const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock }) => {
   const tabs = [
     { id:"company",     label:"Company Details",     show: user.role==="super_admin" },
     { id:"prodstd",     label:"Production Standards", show: ["super_admin","planning_admin"].includes(user.role) },
@@ -2057,8 +2115,8 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       </div>
       {activeTab==="company"     && <CompanyMaster         user={user} company={company} setCompany={setCompany} />}
       {activeTab==="prodstd"     && <ProductionStandardsMaster user={user} productionStandards={productionStandards} setProductionStandards={setProductionStandards} />}
-      {activeTab==="clients"     && <ClientsMaster     user={user} clients={clients} setClients={setClients} />}
-      {activeTab==="vendors"     && <VendorsMaster     user={user} vendors={vendors} setVendors={setVendors} />}
+      {activeTab==="clients"     && <ClientsMaster     user={user} clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} />}
+      {activeTab==="vendors"     && <VendorsMaster     user={user} vendors={vendors} setVendors={setVendors} pos={pos} setPos={setPos} stock={stock} />}
       {activeTab==="contractors" && <ContractorsMaster user={user} contractors={contractors} />}
       {activeTab==="bays"        && <BaysMaster        user={user} bays={bays} setBays={setBays} />}
       {activeTab==="materials"   && <MaterialsMaster   user={user} materials={materials} setMaterials={setMaterials} />}
@@ -2090,6 +2148,8 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   const [matReqFilter, setMatReqFilter] = useState("all");
   const [newRunModal, setNewRunModal] = useState(false);
   const [runForm, setRunForm] = useState({});
+  const [rejectModal, setRejectModal] = useState(null); // prId
+  const [rejectReason, setRejectReason] = useState("");
 
   const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
@@ -2248,9 +2308,15 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
                         <TD mono>{r.size}</TD>
                         <TD right mono bold color={T.gold}>{fmt.num(r.wtRequired)}</TD>
                         <TD><span style={{ fontSize:11, color:T.textMid }}>{r.approvedMakes}</span></TD>
-                        <TD><Badge color={r.status==="approved"?"green":r.status==="po_raised"?"blue":"gray"}>{r.status}</Badge></TD>
+                        <TD><Badge color={r.status==="approved"?"green":r.status==="po_raised"?"blue":r.status==="rejected"?"red":"gray"}>{r.status}</Badge></TD>
                         {PERMISSIONS[user.role]?.canApprove && <TD>
-                          {r.status!=="approved"&&r.status!=="po_raised"&&<button onClick={()=>setPurchaseReqs(prev=>prev.map(pr=>pr.id===r.id?{...pr,status:"approved"}:pr))} style={{ ...css.btn.sm, background:T.greenLo, color:T.green, border:`1px solid ${T.green}` }}>Approve</button>}
+                          {r.status!=="approved"&&r.status!=="po_raised"&&r.status!=="rejected"&&(
+                            <div style={{ display:"flex", gap:4 }}>
+                              <button onClick={()=>setPurchaseReqs(prev=>prev.map(pr=>pr.id===r.id?{...pr,status:"approved"}:pr))} style={{ ...css.btn.sm, background:T.greenLo, color:T.green, border:`1px solid ${T.green}` }}>Approve</button>
+                              <button onClick={()=>{ setRejectModal(r.id); setRejectReason(""); }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Reject</button>
+                            </div>
+                          )}
+                          {r.status==="rejected"&&<span style={{ fontSize:11, color:T.textMid, fontStyle:"italic" }}>{r.rejectReason||""}</span>}
                         </TD>}
                       </tr>
                     ))}
@@ -2553,6 +2619,28 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
             </Modal>
           )}
         </div>
+      )}
+
+      {/* Reject PR Modal */}
+      {rejectModal && (
+        <Modal title="Reject Purchase Requisition" onClose={()=>setRejectModal(null)}>
+          <InfoBanner color="red">This PR will be marked as rejected. The planning team will need to re-raise it if required.</InfoBanner>
+          <div style={{ marginTop:12 }}>
+            <label style={css.label}>Reason for Rejection *</label>
+            <textarea value={rejectReason} onChange={e=>setRejectReason(e.target.value)}
+              rows={3} placeholder="State why this PR is being rejected..."
+              style={{ ...css.input, width:"100%", resize:"vertical", marginTop:4 }} />
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={()=>setRejectModal(null)} style={css.btn.secondary}>Cancel</button>
+            <button disabled={!rejectReason.trim()} onClick={()=>{
+              if (!rejectReason.trim()) return;
+              setPurchaseReqs(prev=>prev.map(pr=>pr.id===rejectModal?{...pr,status:"rejected",rejectReason:rejectReason.trim(),rejectedBy:user.name,rejectedDate:today()}:pr));
+              setRejectModal(null); setRejectReason("");
+              showToast("Purchase requisition rejected","red");
+            }} style={{ ...css.btn.primary, background:T.red, borderColor:T.red, opacity:rejectReason.trim()?1:0.4 }}>Reject PR</button>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -3300,32 +3388,44 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
 
   const reverseGRN = (grnId) => {
     if (!reverseReason.trim()) return;
-    const grn = (po.grns||[]).find(g => g.id === grnId);
-    if (!grn) return;
+    // Step 1 — validate: all lots for this GRN must be qc_hold
     const grnLots = (stock||[]).filter(s => s.grnId === grnId);
     const blockedLot = grnLots.find(s => s.status !== "qc_hold");
-    if (blockedLot) { showToast("Cannot reverse — lot has been approved or allocated. Contact administrator.", "red"); return; }
+    if (blockedLot) {
+      showToast(`Cannot reverse — lot ${blockedLot.lotNo} has been approved or allocated. Contact administrator.`, "red");
+      return;
+    }
+    // Step 2 — remove stock lots immediately using functional updater (always fresh)
+    setStock(prev => prev.filter(s => s.grnId !== grnId));
+    // Steps 3-5 — update PO lines, GRN status, and PO status atomically
+    // Read GRN lines from the pos functional updater to avoid stale-closure bugs
     setPos(prev => prev.map(p => {
       if (p.id !== po.id) return p;
+      const grn = p.grns.find(g => g.id === grnId);
+      if (!grn) return p;
+      // Step 3 — reverse wtReceived / qtyReceived on each matching PO line
+      const updLines = p.lines.map(pl => {
+        const gl = grn.lines?.find(x => x.poLineId === pl.id);
+        if (!gl) return pl;
+        const nw = Math.max(0, (pl.wtReceived||0) - (gl.actualWt||gl.wtReceived||0));
+        const nq = Math.max(0, (pl.qtyReceived||0) - (gl.qtyReceived||0));
+        return { ...pl, wtReceived:nw, qtyReceived:nq,
+          status: nw <= 0 ? "pending" : nw >= pl.wtOrdered ? "fully_received" : "partially_received" };
+      });
+      // Step 4 — recalculate PO status from updated lines
+      const allFull = updLines.every(l => l.status === "fully_received");
+      const anyRec  = updLines.some(l => l.status === "fully_received" || l.status === "partially_received");
+      const newPoStatus = p.status === "cancelled" ? "cancelled"
+        : allFull ? "fully_received" : anyRec ? "partially_received" : "pending";
+      // Step 5 — mark GRN reversed with audit fields
       const updGrns = p.grns.map(g => g.id !== grnId ? g : {
         ...g, status:"reversed",
         reversalReason: reverseReason,
         reversedBy: user.name,
         reversedDate: today()
       });
-      const updLines = p.lines.map(pl => {
-        const gl = grn.lines?.find(x => x.poLineId === pl.id);
-        if (!gl) return pl;
-        const nw = Math.max(0, (pl.wtReceived||0) - (gl.actualWt||gl.wtReceived||0));
-        const nq = Math.max(0, (pl.qtyReceived||0) - (gl.qtyReceived||0));
-        return { ...pl, wtReceived:nw, qtyReceived:nq, status: nw <= 0 ? "pending" : nw >= pl.wtOrdered ? "fully_received" : "partially_received" };
-      });
-      const allFull = updLines.every(l => l.status === "fully_received");
-      const anyRec  = updLines.some(l => l.status === "fully_received" || l.status === "partially_received");
-      const newStatus = p.status === "cancelled" ? "cancelled" : allFull ? "fully_received" : anyRec ? "partially_received" : "pending";
-      return { ...p, grns:updGrns, lines:updLines, status:newStatus };
+      return { ...p, grns:updGrns, lines:updLines, status:newPoStatus };
     }));
-    if (setStock) setStock(prev => prev.filter(s => s.grnId !== grnId));
     showToast("GRN reversed — stock lots removed");
     setReverseModal(null);
     setReverseReason("");
@@ -3629,6 +3729,8 @@ const RMQCModule = ({ user, stock, setStock }) => {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [toast, setToast] = useState(null);
+  const [revertModal, setRevertModal] = useState(null); // {type:"qc"|"client"|"reinspect", lot}
+  const [revertReason, setRevertReason] = useState("");
 
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
   const canQC = ["super_admin","qc_admin","qc_user","store_admin"].includes(user.role);
@@ -3636,6 +3738,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
   const qcPending = stock.filter(s=>s.rmQcStatus==="pending");
   const clientPending = stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="pending");
   const approved = stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="approved");
+  const failed = stock.filter(s=>s.rmQcStatus==="failed");
   const onHold = stock.filter(s=>s.status==="qc_hold");
 
   const doQC = (lotId, result, remarks) => {
@@ -3652,7 +3755,29 @@ const RMQCModule = ({ user, stock, setStock }) => {
     setModal(null);
   };
 
-  const QCRow = ({ lot, type }) => (
+  const revertQC = (lot, reason) => {
+    setStock(prev=>prev.map(s=>s.id===lot.id?{...s,rmQcStatus:"pending",qcRemarks:"",qcDate:null,qcBy:null,status:"qc_hold",
+      auditLog:[...(s.auditLog||[]),{action:"qc_reverted",by:user.name,date:today(),reason}]}:s));
+    setRevertModal(null); setRevertReason("");
+    showToast("RM QC approval reverted — lot returned to pending","amber");
+  };
+
+  const revertClientInsp = (lot, reason) => {
+    if ((lot.wtAllocated||0)>0) { showToast(`Cannot revert — lot has ${fmt.num(lot.wtAllocated)} kg allocated`,"red"); return; }
+    setStock(prev=>prev.map(s=>s.id===lot.id?{...s,clientInspStatus:"pending",clientInspRemarks:"",clientInspDate:null,status:"qc_hold",
+      auditLog:[...(s.auditLog||[]),{action:"client_insp_reverted",by:user.name,date:today(),reason}]}:s));
+    setRevertModal(null); setRevertReason("");
+    showToast("Client inspection reverted — lot returned to QC hold","amber");
+  };
+
+  const reInspect = (lot, reason) => {
+    setStock(prev=>prev.map(s=>s.id===lot.id?{...s,rmQcStatus:"pending",qcRemarks:"",qcDate:null,qcBy:null,status:"qc_hold",
+      auditLog:[...(s.auditLog||[]),{action:"reinspect_requested",by:user.name,date:today(),reason}]}:s));
+    setRevertModal(null); setRevertReason("");
+    showToast("Lot returned to RM QC Pending for re-inspection","green");
+  };
+
+  const QCRow = ({ lot, type, actions }) => (
     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
       <TD mono>{lot.lotNo}</TD>
       <TD>{lot.matType} {lot.grade}</TD>
@@ -3673,16 +3798,19 @@ const RMQCModule = ({ user, stock, setStock }) => {
         </Badge>
       </TD>
       <TD>
-        {canQC && (
-          <button onClick={()=>{setForm({lotId:lot.id,type,lot});setModal("inspect");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
-            {type==="qc"?"Inspect":"Client Insp"}
-          </button>
-        )}
+        <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+          {canQC && type!=="done" && type!=="failed" && (
+            <button onClick={()=>{setForm({lotId:lot.id,type,lot});setModal("inspect");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
+              {type==="qc"?"Inspect":"Client Insp"}
+            </button>
+          )}
+          {actions}
+        </div>
       </TD>
     </tr>
   );
 
-  const Section = ({ title, lots, type, color }) => (
+  const Section = ({ title, lots, type, color, actionsFor }) => (
     <div style={{ marginBottom:20 }}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
         <div style={{ fontSize:13, fontWeight:700, color:T.text }}>{title}</div>
@@ -3693,7 +3821,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
         : <div style={{ overflowX:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
               <thead><tr><TH>Lot No</TH><TH>Material</TH><TH>Section</TH><TH>Size</TH><TH right>Wt (kg)</TH><TH>Bay</TH><TH>Vendor</TH><TH>Received</TH><TH>MTC</TH><TH>Status</TH><TH>Action</TH></tr></thead>
-              <tbody>{lots.map(l=><QCRow key={l.id} lot={l} type={type} />)}</tbody>
+              <tbody>{lots.map(l=><QCRow key={l.id} lot={l} type={type} actions={actionsFor?actionsFor(l):null} />)}</tbody>
             </table>
           </div>
       }
@@ -3723,8 +3851,60 @@ const RMQCModule = ({ user, stock, setStock }) => {
       )}
 
       <Section title="RM QC Pending — Physical Inspection" lots={qcPending} type="qc" color="amber" />
-      <Section title="Client Inspection Pending" lots={clientPending} type="client" color="gold" />
-      <Section title="Approved & Available in Stock" lots={approved} type="done" color="green" />
+      <Section title="Client Inspection Pending" lots={clientPending} type="client" color="gold"
+        actionsFor={user.role==="super_admin"?lot=>(
+          <button onClick={()=>{setRevertModal({type:"qc",lot});setRevertReason("");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
+            Revert QC ↩
+          </button>
+        ):null}
+      />
+      <Section title="Approved & Available in Stock" lots={approved} type="done" color="green"
+        actionsFor={user.role==="super_admin"?lot=>(
+          <button onClick={()=>{setRevertModal({type:"client",lot});setRevertReason("");}} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>
+            Revert Insp ↩
+          </button>
+        ):null}
+      />
+      <Section title="Failed / Rejected Lots" lots={failed} type="failed" color="red"
+        actionsFor={["super_admin","qc_admin","qc_user"].includes(user.role)?lot=>(
+          <button onClick={()=>{setRevertModal({type:"reinspect",lot});setRevertReason("");}} style={{ ...css.btn.sm, background:T.greenLo, color:T.green, border:`1px solid ${T.green}` }}>
+            Re-inspect
+          </button>
+        ):null}
+      />
+
+      {/* Revert / Re-inspect Modal */}
+      {revertModal && (
+        <Modal title={revertModal.type==="qc"?"Revert RM QC Approval":revertModal.type==="client"?"Revert Client Inspection":"Send for Re-inspection"} onClose={()=>setRevertModal(null)}>
+          <InfoBanner color={revertModal.type==="reinspect"?"blue":"red"}>
+            {revertModal.type==="qc"&&"This will set the lot back to RM QC Pending. The QC approval will be cleared."}
+            {revertModal.type==="client"&&"This will set the lot back to QC Hold. The client inspection approval will be cleared. Blocked if material is allocated."}
+            {revertModal.type==="reinspect"&&"This will return the failed lot to RM QC Pending for a fresh inspection."}
+          </InfoBanner>
+          {revertModal.type==="client"&&(revertModal.lot.wtAllocated||0)>0&&(
+            <InfoBanner color="red">⚠ Cannot revert — this lot has {fmt.num(revertModal.lot.wtAllocated)} kg allocated. Release allocations first.</InfoBanner>
+          )}
+          <div style={{ marginTop:12 }}>
+            <label style={css.label}>Reason *</label>
+            <textarea value={revertReason} onChange={e=>setRevertReason(e.target.value)} rows={3}
+              placeholder="State the reason for this action..."
+              style={{ ...css.input, width:"100%", resize:"vertical", marginTop:4 }} />
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={()=>setRevertModal(null)} style={css.btn.secondary}>Cancel</button>
+            <button disabled={!revertReason.trim()||(revertModal.type==="client"&&(revertModal.lot.wtAllocated||0)>0)}
+              onClick={()=>{
+                if (!revertReason.trim()) return;
+                if (revertModal.type==="qc") revertQC(revertModal.lot, revertReason);
+                else if (revertModal.type==="client") revertClientInsp(revertModal.lot, revertReason);
+                else reInspect(revertModal.lot, revertReason);
+              }}
+              style={{ ...css.btn.primary, opacity:(revertReason.trim()&&!(revertModal.type==="client"&&(revertModal.lot.wtAllocated||0)>0))?1:0.4 }}>
+              Confirm
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {/* Inspection Modal */}
       {modal==="inspect" && (
@@ -3808,7 +3988,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     return ms && mq;
   });
 
-  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber" };
+  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red" };
   const openModal = (m,lot) => { setModal(m); setActiveLot(lot); setMForm({}); };
   const closeModal = () => { setModal(null); setActiveLot(null); setMForm({}); };
 
@@ -3879,6 +4059,25 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     showToast(`Off-cut lot created: ${newLotNo}`); closeModal();
   };
 
+  const saveWriteOff = () => {
+    if (!mForm.writeOffReason?.trim()) return showToast("Reason is required","amber");
+    const writeOffWt = +(mForm.writeOffWt||activeLot.wtAvailable||0);
+    if (writeOffWt <= 0) return showToast("Invalid write-off weight","amber");
+    if (writeOffWt > (activeLot.wtAvailable||0)) return showToast(`Cannot write off more than available weight (${fmt.num(activeLot.wtAvailable)} kg)`,"amber");
+    const newAvail = (activeLot.wtAvailable||0) - writeOffWt;
+    setStock(prev=>prev.map(s=>s.id!==activeLot.id?s:{
+      ...s,
+      wtAvailable: newAvail,
+      writeOffWt: (s.writeOffWt||0)+writeOffWt,
+      writeOffReason: mForm.writeOffReason.trim(),
+      writeOffType: mForm.writeOffType||"other",
+      status: newAvail<=0?"written_off":s.status,
+      auditLog:[...(s.auditLog||[]),{action:"written_off",wt:writeOffWt,by:user.name,date:today(),reason:mForm.writeOffReason.trim()}]
+    }));
+    showToast(`Write-off recorded — ${fmt.num(writeOffWt)} kg${newAvail<=0?" · Lot fully written off":""}`,"green");
+    closeModal();
+  };
+
   return (
     <div>
       {toast && <div style={{ position:"fixed",top:20,right:20,zIndex:2000,background:toast.color==="green"?T.greenBg:T.amberBg,border:`1px solid ${toast.color==="green"?T.green:T.amber}`,borderRadius:8,padding:"12px 20px",color:toast.color==="green"?T.green:T.amber,fontSize:13,fontWeight:600 }}>{toast.msg}</div>}
@@ -3947,7 +4146,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
           <span style={{ position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:T.textLow,fontSize:12 }}>🔍</span>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Lot, batch, matCode, vendor..." style={{ ...css.input,paddingLeft:28,width:260 }} />
         </div>
-        {[["all","All"],["available","Available"],["allocated","Allocated"],["issued","Issued"],["consumed","Consumed"],["qc_hold","QC Hold"],["offcuts","Off-cuts"]].map(([f,lbl])=>(
+        {[["all","All"],["available","Available"],["allocated","Allocated"],["issued","Issued"],["consumed","Consumed"],["qc_hold","QC Hold"],["written_off","Written Off"],["offcuts","Off-cuts"]].map(([f,lbl])=>(
           <button key={f} onClick={()=>setFilter(f)} style={{ ...css.btn.secondary,...(filter===f?{background:`${T.accent}22`,color:T.accent,borderColor:T.accent}:{}) }}>
             {lbl} ({f==="all"?stock.length:f==="offcuts"?stock.filter(s=>s.isOffcut).length:stock.filter(s=>s.status===f).length})
           </button>
@@ -4005,6 +4204,9 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
                     )}
                     {(s.issues||[]).length>0&&(
                       <button onClick={e=>{e.stopPropagation();const iss=s.issues[s.issues.length-1];setMForm({issNoteNo:iss.issueNoteNo,issEntry:iss,lotSnap:s,contractorName:iss.issuedTo});setModal("print");}} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>ISN↗</button>
+                    )}
+                    {user.role==="super_admin"&&(s.status==="available"||s.status==="qc_hold")&&(s.wtAllocated||0)===0&&(
+                      <button onClick={e=>{e.stopPropagation();openModal("writeoff",s);}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.redLo}`,fontSize:10 }}>Write Off</button>
                     )}
                   </div>
                 </TD>
@@ -4268,6 +4470,40 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
       )}
 
       {/* PRINT ISN MODAL */}
+      {modal==="writeoff"&&activeLot&&(
+        <Modal title={`Write Off Lot — ${activeLot.lotNo}`} onClose={closeModal} width={480}>
+          <InfoBanner color="red">Write-off permanently reduces available weight. This action is irreversible. Only use for damaged, lost, or expired material.</InfoBanner>
+          <div style={{ ...css.card, background:T.bg, marginBottom:14, marginTop:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:12 }}>
+              {[["Lot No",activeLot.lotNo],["Material",`${activeLot.matType} ${activeLot.grade}`],["Size",activeLot.size],["Available",`${fmt.num(activeLot.wtAvailable)} kg`]].map(([k,v])=>(
+                <div key={k}><div style={css.label}>{k}</div><div style={{ color:T.text, fontFamily:T.fontMono }}>{v}</div></div>
+              ))}
+            </div>
+          </div>
+          <Field label="Write-Off Type" required>
+            <Sel value={mForm.writeOffType||"other"} onChange={e=>setMForm(f=>({...f,writeOffType:e.target.value}))}>
+              {[["damaged","Damaged / Defective"],["lost","Lost / Misplaced"],["expired","Expired / Corroded"],["other","Other"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </Sel>
+          </Field>
+          <Field label="Weight to Write Off (kg)" required>
+            <Input type="number" value={mForm.writeOffWt||""} onChange={e=>setMForm(f=>({...f,writeOffWt:e.target.value}))}
+              placeholder={`Max ${fmt.num(activeLot.wtAvailable)} kg`} min={0.1} max={activeLot.wtAvailable} step={0.1} />
+          </Field>
+          <Field label="Reason *" required>
+            <Textarea value={mForm.writeOffReason||""} onChange={e=>setMForm(f=>({...f,writeOffReason:e.target.value}))}
+              placeholder="Describe the reason for write-off..." />
+          </Field>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={closeModal} style={css.btn.secondary}>Cancel</button>
+            <button disabled={!mForm.writeOffReason?.trim()||(+(mForm.writeOffWt||0))<=0}
+              onClick={saveWriteOff}
+              style={{ ...css.btn.primary, background:T.red, borderColor:T.red, opacity:(mForm.writeOffReason?.trim()&&+(mForm.writeOffWt||0)>0)?1:0.4 }}>
+              Confirm Write-Off
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {modal==="print"&&mForm.issEntry&&(
         <Modal title={`Issue Note — ${mForm.issNoteNo||""}`} onClose={closeModal} width={680}>
           <div style={{ background:"#fff",color:"#000",padding:32,borderRadius:8,fontFamily:"Georgia,serif",fontSize:13 }}>
@@ -5227,7 +5463,7 @@ const TabMilestones = ({ order, onChange, canEdit }) => {
     </div>
   );
 };
-const TabDrawings = ({ order, onChange, canEdit }) => {
+const TabDrawings = ({ order, onChange, canEdit, user }) => {
   const [modal, setModal] = useState(null); const [form, setForm] = useState({}); const [expandRev, setExpandRev] = useState(null);
   const [importModal, setImportModal] = useState(false); const [importRows, setImportRows] = useState([]); const [importErr, setImportErr] = useState(""); const [importMode, setImportMode] = useState("append");
   const fileRef = useRef(null);
@@ -5237,7 +5473,7 @@ const TabDrawings = ({ order, onChange, canEdit }) => {
   const totalWt = drawings.reduce((s,d)=>s+(d.totalWt||0),0);
   const receivedWt = drawings.filter(d=>d.receivedDate).reduce((s,d)=>s+(d.totalWt||0),0);
   const saveDrawing = () => { const twc=(form.qty||0)*(form.unitWt||0); const updated=modal==="add"?[...drawings,{...form,id:`D-${Date.now()}`,totalWt:twc,status:form.receivedDate?"active":"pending",revHistory:[{rev:form.revNo||"A",date:form.drawingDate||"",note:"Initial issue"}]}]:drawings.map(d=>d.id===form.id?{...d,...form,totalWt:twc}:d); onChange({...order,drawings:updated}); setModal(null); };
-  const saveRevision = () => { const updated=drawings.map(d=>d.id===form.id?{...d,revNo:form.revNo||d.revNo,drawingDate:form.drawingDate||d.drawingDate,receivedDate:form.receivedDate||d.receivedDate,driveLink:form.driveLink||d.driveLink,status:"active",revHistory:[...(d.revHistory||[]).map(r=>r.rev===d.revNo?{...r,superseded:true}:r),{rev:form.revNo,date:form.drawingDate,note:form.note,superseded:false}]}:d); onChange({...order,drawings:updated}); setModal(null); };
+  const saveRevision = () => { const updated=drawings.map(d=>d.id===form.id?{...d,revNo:form.revNo||d.revNo,drawingDate:form.drawingDate||d.drawingDate,receivedDate:form.receivedDate||d.receivedDate,driveLink:form.driveLink||d.driveLink,status:"active",revHistory:[...(d.revHistory||[]).map(r=>r.rev===d.revNo?{...r,superseded:true,supersededDate:today(),supersededBy:user?.name||""}:r),{rev:form.revNo,date:form.drawingDate,note:form.note,superseded:false}]}:d); onChange({...order,drawings:updated}); setModal(null); };
 
   // ── Drawing Register column spec (matches MRP Sheet 1) ──
   const DRG_COLS = [
@@ -5856,10 +6092,23 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
   const [activeTab, setActiveTab] = useState("basic");
   const [localOrder, setLocalOrder] = useState(order);
   const [dirty, setDirty] = useState(false);
+  const [cancelModal, setCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [reactivateModal, setReactivateModal] = useState(false);
+  const [reactivateReason, setReactivateReason] = useState("");
   const canEdit = user.role==="super_admin"||user.role==="planning_admin";
   const canEditFinance = user.role==="super_admin"||user.role==="planning_admin"||user.role==="finance_admin";
   const update = (updated) => { setLocalOrder(updated); setDirty(true); };
   const save = () => { onSave(localOrder); setDirty(false); };
+
+  const cancelOrder = (reason) => {
+    const cancelled = {...localOrder, status:"cancelled", cancellationReason:reason, cancelledBy:user.name, cancelledDate:today()};
+    setLocalOrder(cancelled); onSave(cancelled); setCancelModal(false); setCancelReason("");
+  };
+  const reactivateOrder = (reason) => {
+    const reactivated = {...localOrder, status:"active", reactivationReason:reason, reactivatedBy:user.name, reactivatedDate:today()};
+    setLocalOrder(reactivated); onSave(reactivated); setReactivateModal(false); setReactivateReason("");
+  };
   const isFinanceRole = user.role==="finance_admin"||user.role==="finance_user";
   useEffect(() => { if (isFinanceRole) setActiveTab("milestones"); }, []);
   const allTabs = [
@@ -5896,6 +6145,8 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
           {dirty&&canEdit&&<button onClick={()=>{setLocalOrder(order);setDirty(false);}} style={css.btn.secondary}>Discard</button>}
           {dirty&&!canEdit&&canEditFinance&&(activeTab==="milestones"||activeTab==="finance")&&<button onClick={save} style={{ ...css.btn.primary, background:T.green }}>✓ Save Finance</button>}
           {dirty&&!canEdit&&canEditFinance&&(activeTab==="milestones"||activeTab==="finance")&&<button onClick={()=>{setLocalOrder(order);setDirty(false);}} style={css.btn.secondary}>Discard</button>}
+          {user.role==="super_admin"&&localOrder.status!=="cancelled"&&<button onClick={()=>{setCancelReason("");setCancelModal(true);}} style={{ ...css.btn.secondary, color:T.red, borderColor:T.redLo }}>Cancel Order</button>}
+          {user.role==="super_admin"&&localOrder.status==="cancelled"&&<button onClick={()=>{setReactivateReason("");setReactivateModal(true);}} style={{ ...css.btn.secondary, color:T.green, borderColor:T.green }}>Reactivate</button>}
         </div>
       </div>
       <TabBar2 tabs={tabs} active={activeTab} onChange={setActiveTab} />
@@ -5903,16 +6154,54 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
       {activeTab==="gst"        && <TabGSTBilling    order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="shipping"   && <TabShipping      order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="milestones" && <TabMilestones    order={localOrder} onChange={update} canEdit={canEditFinance} />}
-      {activeTab==="drawings"   && <TabDrawings      order={localOrder} onChange={update} canEdit={canEdit} />}
+      {activeTab==="drawings"   && <TabDrawings      order={localOrder} onChange={update} canEdit={canEdit} user={user} />}
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
+
+      {cancelModal && (
+        <Modal title="Cancel Order" onClose={()=>setCancelModal(false)}>
+          <InfoBanner color="red">Cancelling this order will mark it as inactive. Existing allocations and POs are not automatically affected.</InfoBanner>
+          <div style={{ marginTop:12 }}>
+            <label style={css.label}>Cancellation Reason *</label>
+            <textarea value={cancelReason} onChange={e=>setCancelReason(e.target.value)} rows={3}
+              placeholder="State the reason for cancellation..."
+              style={{ ...css.input, width:"100%", resize:"vertical", marginTop:4 }} />
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={()=>setCancelModal(false)} style={css.btn.secondary}>Keep Active</button>
+            <button disabled={!cancelReason.trim()} onClick={()=>cancelOrder(cancelReason)}
+              style={{ ...css.btn.primary, background:T.red, borderColor:T.red, opacity:cancelReason.trim()?1:0.4 }}>
+              Cancel Order
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {reactivateModal && (
+        <Modal title="Reactivate Order" onClose={()=>setReactivateModal(false)}>
+          <InfoBanner color="blue">Order will be set back to Active status.</InfoBanner>
+          <div style={{ marginTop:12 }}>
+            <label style={css.label}>Reason for Reactivation *</label>
+            <textarea value={reactivateReason} onChange={e=>setReactivateReason(e.target.value)} rows={3}
+              placeholder="Why is this order being reactivated?"
+              style={{ ...css.input, width:"100%", resize:"vertical", marginTop:4 }} />
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={()=>setReactivateModal(false)} style={css.btn.secondary}>Cancel</button>
+            <button disabled={!reactivateReason.trim()} onClick={()=>reactivateOrder(reactivateReason)}
+              style={{ ...css.btn.primary, opacity:reactivateReason.trim()?1:0.4 }}>
+              Reactivate Order
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
 const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
-  const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState("all"); const [modal, setModal] = useState(false); const [form, setForm] = useState({});
-  const filtered = orders.filter(o=>((o.id||'').toLowerCase().includes(search.toLowerCase())||(o.projectDesc||'').toLowerCase().includes(search.toLowerCase())||(o.clientPoNo||'').toLowerCase().includes(search.toLowerCase())||(o.clientId||'').toLowerCase().includes(search.toLowerCase()))&&(statusFilter==="all"||o.status===statusFilter));
+  const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState("all"); const [modal, setModal] = useState(false); const [form, setForm] = useState({}); const [showCancelled, setShowCancelled] = useState(false);
+  const filtered = orders.filter(o=>(showCancelled||o.status!=="cancelled")&&((o.id||'').toLowerCase().includes(search.toLowerCase())||(o.projectDesc||'').toLowerCase().includes(search.toLowerCase())||(o.clientPoNo||'').toLowerCase().includes(search.toLowerCase())||(o.clientId||'').toLowerCase().includes(search.toLowerCase()))&&(statusFilter==="all"||o.status===statusFilter));
   const canCreate = ["super_admin","planning_admin"].includes(user.role);
   const statusColor = {active:"green",completed:"blue",on_hold:"amber",cancelled:"red"};
   return (
@@ -5931,6 +6220,10 @@ const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
         <div style={{ display:"flex", gap:8 }}>
           <div style={{ position:"relative" }}><span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", color:T.textLow }}>🔍</span><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search orders..." style={{ ...css.input, paddingLeft:32, width:240 }} /></div>
           <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{ ...css.input, width:140 }}><option value="all">All Status</option><option value="active">Active</option><option value="on_hold">On Hold</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select>
+          <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer", fontSize:12, color:T.textMid, userSelect:"none" }}>
+            <input type="checkbox" checked={showCancelled} onChange={e=>setShowCancelled(e.target.checked)} />
+            Show cancelled
+          </label>
         </div>
         {canCreate&&<button onClick={()=>{setForm({status:"active",orderUnit:"Ton",gstRate:18,orderDate:today(),drawings:[],parts:[],milestones:[],shippingAddresses:[],amendments:[],invoices:[],quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}});setModal(true);}} style={css.btn.primary}>+ New Order</button>}
       </div>
@@ -8843,7 +9136,14 @@ export default function App() {
   const [sidebar, setSidebar] = useState(true);
   const [purchaseReqs, setPurchaseReqs] = useState(() => { try { const s=localStorage.getItem('structo_purchaseReqs'); return s?JSON.parse(s):INIT_PURCHASE_REQS; } catch { return INIT_PURCHASE_REQS; } });
   const [pos, setPos]                   = useState(() => { try { const s=localStorage.getItem('structo_pos'); return s?JSON.parse(s):INIT_POS; } catch { return INIT_POS; } });
-  const [stock, setStock]               = useState(() => { try { const s=localStorage.getItem('structo_stock'); return s?JSON.parse(s):INIT_STOCK; } catch { return INIT_STOCK; } });
+  const [stock, setStock]               = useState(() => {
+    const ORPHANED_LOT_IDS = ['LOT-2026-005','LOT-2026-006','LOT-2026-007'];
+    try {
+      const s = localStorage.getItem('structo_stock');
+      const loaded = s ? JSON.parse(s) : INIT_STOCK;
+      return loaded.filter(lot => !ORPHANED_LOT_IDS.includes(lot.lotNo));
+    } catch { return INIT_STOCK; }
+  });
   const [nestingRuns, setNestingRuns]   = useState(INIT_NESTING_RUNS);
   const [instances, setInstances]       = useState(INIT_INSTANCES);
   const [orders, setOrders]             = useState(() => { try { const s=localStorage.getItem('structo_orders'); if (!s) return SEED_ORDERS; const loaded=JSON.parse(s); return loaded.map(o=>({ drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o })); } catch { return SEED_ORDERS; } });
@@ -8904,7 +9204,7 @@ export default function App() {
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
-      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} />;
+      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} />;
       default:          return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
     }
   };

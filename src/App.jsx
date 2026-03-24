@@ -947,7 +947,7 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
       batchNo:grnForm.batchNo||"",
       itemCode:poLine.itemCode||"", matCode:poLine.matCode||"", matLibId:poLine.matLibId||"",
-      matType:poLine.matType||"", grade:poLine.grade||"", sectionType:poLine.sectionType||"", size:poLine.size||"",
+      matType:poLine.matType||"MS", grade:poLine.grade||"", sectionType:poLine.sectionType||poLine.section||"", size:poLine.size||"",
       heatNo:l.heatNo||"",
       wtReceived:l.wtReceived, wtAvailable:l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
       status:"qc_hold", bayId:grnForm.bayId||"", mtcUploaded:false, mtcDoc:"",
@@ -3742,8 +3742,14 @@ const RMQCModule = ({ user, stock, setStock }) => {
   const onHold = stock.filter(s=>s.status==="qc_hold");
 
   const doQC = (lotId, result, remarks) => {
-    setStock(prev=>prev.map(s=>s.id===lotId?{...s,rmQcStatus:result,qcRemarks:remarks,qcDate:today(),qcBy:user.name,
-      status:result==="failed"?"rejected":s.status}:s));
+    const mtcDoc  = form.mtcLink?.trim()||"";
+    const heatNo  = form.heatNo?.trim()||"";
+    setStock(prev=>prev.map(s=>s.id===lotId?{...s,
+      rmQcStatus:result, qcRemarks:remarks, qcDate:today(), qcBy:user.name,
+      status:result==="failed"?"rejected":s.status,
+      mtcDoc: mtcDoc||s.mtcDoc, heatNo: heatNo||s.heatNo,
+      mtcUploaded: mtcDoc ? true : s.mtcUploaded
+    }:s));
     showToast(result==="approved"?"RM QC Approved — pending client inspection":"RM QC result saved");
     setModal(null);
   };
@@ -3912,7 +3918,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
           <div style={{ ...css.card, background:T.bg, marginBottom:14 }}>
             <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>LOT DETAILS</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              {[["Lot No",form.lot?.lotNo],["Material",`${form.lot?.matType} ${form.lot?.grade}`],["Section/Size",`${form.lot?.section} ${form.lot?.size}`],["Wt Received",`${fmt.num(form.lot?.wtReceived)} kg`],["Bay",form.lot?.bayId],["MTC",form.lot?.mtcUploaded?"Uploaded ✓":"⚠ Missing"]].map(([k,v])=>(
+              {[["Lot No",form.lot?.lotNo],["Material",`${form.lot?.matType} ${form.lot?.grade}`],["Section/Size",`${(form.lot?.sectionType||form.lot?.section||'')} ${form.lot?.size||''}`.trim()],["Wt Received",`${fmt.num(form.lot?.wtReceived)} kg`],["Bay",form.lot?.bayId],["MTC",form.lot?.mtcUploaded?"Uploaded ✓":"⚠ Missing"]].map(([k,v])=>(
                 <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12, color:v?.includes?.("⚠")?T.red:T.text, fontFamily:k.includes("Lot")||k.includes("Wt")||k.includes("Bay")?T.fontMono:T.font }}>{v}</div></div>
               ))}
             </div>
@@ -3920,17 +3926,39 @@ const RMQCModule = ({ user, stock, setStock }) => {
 
           {form.type==="qc" && (
             <div>
+              <div style={{ ...css.card, background:T.bg, marginBottom:14 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:10, letterSpacing:"0.06em" }}>MTC DOCUMENT UPLOAD</div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                  <div style={{ gridColumn:"span 2" }}>
+                    <label style={css.label}>Drive Link</label>
+                    <input value={form.mtcLink||""} onChange={e=>setForm(f=>({...f,mtcLink:e.target.value}))}
+                      placeholder="https://drive.google.com/..."
+                      style={{ ...css.input, marginTop:4, width:"100%" }} />
+                  </div>
+                  <div>
+                    <label style={css.label}>Heat Number</label>
+                    <input value={form.heatNo||""} onChange={e=>setForm(f=>({...f,heatNo:e.target.value}))}
+                      placeholder="e.g. JSW-HEAT-2026-001"
+                      style={{ ...css.input, marginTop:4 }} />
+                  </div>
+                </div>
+              </div>
               <Field label="Inspection Checks">
                 <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                   {["MTC Verified","Dimensions Checked","Visual Inspection OK","Surface Condition OK","Identification Marking OK"].map(check=>(
-                    <label key={check} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
-                      <input type="checkbox" checked={form[check]||false} onChange={e=>setForm(f=>({...f,[check]:e.target.checked}))} />
-                      <span style={{ fontSize:12, color:T.text }}>{check}</span>
-                    </label>
+                    <div key={check}>
+                      <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
+                        <input type="checkbox" checked={form[check]||false} onChange={e=>setForm(f=>({...f,[check]:e.target.checked}))} />
+                        <span style={{ fontSize:12, color:T.text }}>{check}</span>
+                      </label>
+                      {check==="MTC Verified" && form["MTC Verified"] && !(form.mtcLink||"").trim() && (
+                        <div style={{ fontSize:11, color:T.amber, marginTop:3, marginLeft:24 }}>⚠ MTC Verified requires a document link</div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </Field>
-              {!form.lot?.mtcUploaded && <InfoBanner color="red">⚠ MTC not uploaded — system will allow QC but will log warning. Upload MTC before client inspection.</InfoBanner>}
+              {!form.lot?.mtcUploaded && !(form.mtcLink||"").trim() && <InfoBanner color="red">⚠ MTC not uploaded — system will allow QC but will log warning. Upload MTC before client inspection.</InfoBanner>}
             </div>
           )}
 
@@ -3968,6 +3996,8 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
   const [activeLot, setActiveLot] = useState(null);
   const [mForm, setMForm] = useState({});
   const [toast, setToast] = useState(null);
+  const [mtcUploadId, setMtcUploadId] = useState(null); // lotId with inline MTC form open
+  const [mtcForm, setMtcForm] = useState({});
 
   const yr = new Date().getFullYear();
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
@@ -4180,7 +4210,32 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
                 <TD right mono bold color={T.green}>{fmt.num(s.wtAvailable)}</TD>
                 <TD right mono color={T.accent}>{fmt.num(s.wtAllocated)}</TD>
                 <TD right mono color="#A78BFA">{fmt.num(s.wtIssued||0)}</TD>
-                <TD>{s.mtcUploaded?<a href={s.mtcDoc} target="_blank" rel="noreferrer" style={{ fontSize:10,color:T.green,fontWeight:700 }}>MTC ✓</a>:<span style={{ fontSize:10,color:T.red,fontWeight:700 }}>⚠ Missing</span>}</TD>
+                <TD onClick={e=>e.stopPropagation()}>
+                  {s.mtcUploaded
+                    ? <a href={s.mtcDoc} target="_blank" rel="noreferrer" style={{ fontSize:10,color:T.green,fontWeight:700 }}>MTC ✓</a>
+                    : <div>
+                        <span style={{ fontSize:10,color:T.red,fontWeight:700 }}>⚠ Missing</span>
+                        {mtcUploadId!==s.id
+                          ? <button onClick={()=>{setMtcUploadId(s.id);setMtcForm({});}} style={{ ...css.btn.sm,fontSize:9,marginLeft:4,padding:"1px 6px",background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}` }}>Upload</button>
+                          : <div style={{ marginTop:4, display:"flex", flexDirection:"column", gap:4, minWidth:180 }}>
+                              <input value={mtcForm.link||""} onChange={e=>setMtcForm(f=>({...f,link:e.target.value}))}
+                                placeholder="Drive link..." style={{ ...css.input,fontSize:10,padding:"3px 6px" }} />
+                              <input value={mtcForm.heatNo||""} onChange={e=>setMtcForm(f=>({...f,heatNo:e.target.value}))}
+                                placeholder="Heat number..." style={{ ...css.input,fontSize:10,padding:"3px 6px" }} />
+                              <div style={{ display:"flex",gap:4 }}>
+                                <button disabled={!(mtcForm.link||"").trim()} onClick={()=>{
+                                  if (!(mtcForm.link||"").trim()) return;
+                                  setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,mtcDoc:mtcForm.link.trim(),heatNo:mtcForm.heatNo||l.heatNo,mtcUploaded:true}));
+                                  setMtcUploadId(null); setMtcForm({});
+                                  showToast("MTC uploaded","green");
+                                }} style={{ ...css.btn.sm,fontSize:9,padding:"2px 8px",opacity:(mtcForm.link||"").trim()?1:0.4 }}>Save</button>
+                                <button onClick={()=>setMtcUploadId(null)} style={{ ...css.btn.sm,fontSize:9,padding:"2px 8px",background:"transparent",color:T.textMid,border:`1px solid ${T.border}` }}>✕</button>
+                              </div>
+                            </div>
+                        }
+                      </div>
+                  }
+                </TD>
                 <TD mono>{s.heatNo||<span style={{ color:T.textLow }}>—</span>}</TD>
                 <TD><Badge color={qcStatusBadge[s.rmQcStatus]||"gray"}>{s.rmQcStatus}</Badge></TD>
                 <TD><Badge color={qcStatusBadge[s.clientInspStatus]||"gray"}>{s.clientInspStatus}</Badge></TD>
@@ -6327,8 +6382,34 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
   const [selBarRef, setSelBarRef] = useState(null);
   const [barForm, setBarForm]   = useState({});
   const [toast, setToast]       = useState(null);
+  const [testRunModal, setTestRunModal] = useState(false);
+  const [testForm, setTestForm] = useState({});
 
   const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3500); };
+
+  const createTestRun = () => {
+    if (!testForm.orderId || !testForm.lotId || !(testForm.numBars > 0)) return;
+    const yr = new Date().getFullYear();
+    let max = 0;
+    (nestingRuns||[]).forEach(r=>{ const m=(r.id||"").match(/^NEST-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) max=Math.max(max,+m[2]); });
+    const newId = `NEST-${yr}-${String(max+1).padStart(3,"0")}`;
+    const lot = stock.find(s=>s.id===testForm.lotId)||{};
+    const selDrgIds = testForm.drawingIds||[];
+    const newRun = {
+      id: newId, runDate: new Date().toISOString().slice(0,10), runBy: user.name,
+      materialCode: lot.matCode||lot.itemCode||"",
+      orders: [testForm.orderId], drawings: selDrgIds,
+      lotsUsed: [testForm.lotId],
+      sheetsOrBarsUsed: +testForm.numBars,
+      utilisationPct: +(testForm.utilPct||0),
+      wasteKg: +(testForm.wasteKg||0),
+      offcutsCreated: [], dxfLink: "",
+      status: "confirmed", parts: [],
+    };
+    setNestingRuns(prev=>[...prev, newRun]);
+    setTestRunModal(false); setTestForm({});
+    showToast(`Test nesting run ${newId} created — ready for cutting confirmation`);
+  };
   const selRun = nestingRuns.find(r => r.id === selRunId);
   const cuttingMachines = machines.filter(m => m.type === "Cutting" && m.active);
 
@@ -6533,9 +6614,16 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
     return (
       <div>
         {toastEl}
-        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
-          <button onClick={onBack} style={css.btn.ghost}>← Back</button>
-          <div style={{ fontSize:18,fontWeight:800,color:T.text }}>Cutting Confirmation</div>
+        <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20,justifyContent:"space-between",flexWrap:"wrap" }}>
+          <div style={{ display:"flex",gap:8,alignItems:"center" }}>
+            <button onClick={onBack} style={css.btn.ghost}>← Back</button>
+            <div style={{ fontSize:18,fontWeight:800,color:T.text }}>Cutting Confirmation</div>
+          </div>
+          {user.role==="super_admin"&&(
+            <button onClick={()=>{setTestForm({});setTestRunModal(true);}} style={{ ...css.btn.secondary, fontSize:12 }}>
+              + Create Test Nesting Run
+            </button>
+          )}
         </div>
         {confirmedRuns.length===0
           ? <InfoBanner color="amber">No confirmed nesting runs. Go to MRP → Nesting Runs and set a run to Confirmed before cutting.</InfoBanner>
@@ -6572,6 +6660,78 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
               );
             })
         }
+
+        {/* Test Nesting Run Modal */}
+        {testRunModal && (() => {
+          const selOrder = orders.find(o=>o.id===testForm.orderId);
+          const availDrawings = selOrder ? (selOrder.drawings||[]).filter(d=>d.receivedDate) : [];
+          const availLots = stock.filter(s=>(s.status==="available"||s.status==="qc_hold")&&(s.wtAvailable||0)>0);
+          const selDrgs = testForm.drawingIds||[];
+          const isPlateRun = (() => { const lot=stock.find(s=>s.id===testForm.lotId); return lot ? (lot.sectionType||"").toUpperCase()==="PLATE" : false; })();
+          const barLabel = isPlateRun ? "sheets" : "bars";
+          const canCreate = testForm.orderId && testForm.lotId && +testForm.numBars > 0;
+          return (
+            <Modal title="Create Test Nesting Run" onClose={()=>setTestRunModal(false)} width={560}>
+              <InfoBanner color="blue">Creates a confirmed nesting run for testing the cutting confirmation flow. No DeepNest file required.</InfoBanner>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginTop:12 }}>
+                <div style={{ gridColumn:"span 2" }}>
+                  <label style={css.label}>Order *</label>
+                  <select value={testForm.orderId||""} onChange={e=>setTestForm(f=>({...f,orderId:e.target.value,drawingIds:[]}))} style={{ ...css.input, marginTop:4 }}>
+                    <option value="">Select order…</option>
+                    {(orders||[]).filter(o=>o.status==="active").map(o=><option key={o.id} value={o.id}>{o.id} — {o.projectDesc}</option>)}
+                  </select>
+                </div>
+                {selOrder && availDrawings.length > 0 && (
+                  <div style={{ gridColumn:"span 2" }}>
+                    <label style={css.label}>Drawings (select one or more)</label>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginTop:4 }}>
+                      {availDrawings.map(d=>(
+                        <label key={d.id} style={{ display:"flex", alignItems:"center", gap:5, cursor:"pointer", fontSize:12, color:T.text, background:selDrgs.includes(d.id)?T.accentLo:T.bgInput, border:`1px solid ${selDrgs.includes(d.id)?T.accent:T.border}`, borderRadius:4, padding:"3px 8px" }}>
+                          <input type="checkbox" checked={selDrgs.includes(d.id)} onChange={e=>{
+                            const ids = e.target.checked ? [...selDrgs,d.id] : selDrgs.filter(x=>x!==d.id);
+                            setTestForm(f=>({...f,drawingIds:ids}));
+                          }} style={{ display:"none" }} />
+                          {d.drawingNo}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div style={{ gridColumn:"span 2" }}>
+                  <label style={css.label}>Material Lot *</label>
+                  <select value={testForm.lotId||""} onChange={e=>setTestForm(f=>({...f,lotId:e.target.value}))} style={{ ...css.input, marginTop:4 }}>
+                    <option value="">Select lot…</option>
+                    {availLots.map(s=><option key={s.id} value={s.id}>{s.lotNo} — {s.matCode||s.itemCode||""} — {(s.wtAvailable||0).toFixed(1)} kg avail</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={css.label}>No. of {barLabel} *</label>
+                  <input type="number" min={1} value={testForm.numBars||""} onChange={e=>setTestForm(f=>({...f,numBars:e.target.value}))} style={{ ...css.input, marginTop:4 }} placeholder="e.g. 6" />
+                </div>
+                <div>
+                  <label style={css.label}>Utilisation %</label>
+                  <input type="number" min={0} max={100} value={testForm.utilPct||""} onChange={e=>setTestForm(f=>({...f,utilPct:e.target.value}))} style={{ ...css.input, marginTop:4 }} placeholder="e.g. 87" />
+                </div>
+                <div>
+                  <label style={css.label}>Waste (kg)</label>
+                  <input type="number" min={0} value={testForm.wasteKg||""} onChange={e=>setTestForm(f=>({...f,wasteKg:e.target.value}))} style={{ ...css.input, marginTop:4 }} placeholder="e.g. 45" />
+                </div>
+              </div>
+              {canCreate && (
+                <div style={{ marginTop:12, padding:"8px 12px", background:T.bg, borderRadius:6, fontSize:12, color:T.textMid }}>
+                  Will create <strong style={{color:T.text,fontFamily:T.fontMono}}>NEST-{new Date().getFullYear()}-{String(((nestingRuns||[]).reduce((mx,r)=>{const m=(r.id||"").match(/^NEST-(\d{4})-(\d+)$/);return(m&&+m[1]===new Date().getFullYear())?Math.max(mx,+m[2]):mx;},0))+1).padStart(3,"0")}</strong> with {testForm.numBars} {barLabel}, ready for cutting confirmation.
+                </div>
+              )}
+              <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+                <button onClick={()=>setTestRunModal(false)} style={css.btn.secondary}>Cancel</button>
+                <button disabled={!canCreate} onClick={createTestRun}
+                  style={{ ...css.btn.primary, opacity:canCreate?1:0.4 }}>
+                  Create Test Run
+                </button>
+              </div>
+            </Modal>
+          );
+        })()}
       </div>
     );
   }
@@ -8270,14 +8430,14 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
   const computeRmPicture = () => {
     const byMat = {};
     selDrawings.forEach(({drawing, order}) => {
+      const dQty = drawing.qty || 1;
       const drawingParts = (order.parts||[]).filter(p=>p.drawingId===drawing.id);
       drawingParts.filter(p=>p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure").forEach(p => {
         const sec = p.sectionType||p.section||"";
         const key = p.matCode||sec||"Unknown";
-        if (!byMat[key]) byMat[key] = {matCode:key, section:sec, grade:p.grade||"", requiredKg:0, requiredM:0, drawings:[], lots:[]};
-        byMat[key].requiredKg += (p.clientTotalWt||0);
-        byMat[key].requiredM  += (p.totalLength||0);
-        byMat[key].drawings.push({drawingNo:drawing.drawingNo, orderId:order.id, kg:p.clientTotalWt||0});
+        if (!byMat[key]) byMat[key] = {matCode:key, section:sec, grade:p.grade||"", requiredKg:0, drawings:[], lots:[]};
+        byMat[key].requiredKg += (p.clientTotalWt||0) * dQty;
+        byMat[key].drawings.push({drawingNo:drawing.drawingNo, orderId:order.id, kg:(p.clientTotalWt||0)*dQty, qty:dQty});
       });
     });
     const rows = Object.values(byMat).map(row => {
@@ -8290,7 +8450,23 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
       if (availKg >= row.requiredKg && row.requiredKg > 0) status = "Sufficient";
       else if (availKg > 0 && availKg < row.requiredKg) status = "Partial";
       else if (availLots.some(l=>l.status==="qc_hold")) status = "QC Pending";
-      return {...row, availableKg:availKg, status, lots:availLots};
+
+      // Compute Req (m) / Req (m²) from library
+      const libEntry = (materials||[]).find(m=>m.matCode===row.matCode);
+      let requiredM = 0;
+      let reqDisplay = "—";
+      if (libEntry && !libEntry.isPlate && (libEntry.wtPerMetre||0) > 0) {
+        requiredM = row.requiredKg / libEntry.wtPerMetre;
+        const stdLens = libEntry.standardLengths||[];
+        const maxLen = stdLens.length > 0 ? stdLens[stdLens.length-1] / 1000 : 12;
+        const bars = Math.ceil(requiredM / maxLen);
+        reqDisplay = `${requiredM.toFixed(1)} m (≈ ${bars} bars of ${maxLen*1000}mm)`;
+      } else if (libEntry && libEntry.isPlate && (libEntry.wtPerM2||0) > 0) {
+        requiredM = row.requiredKg / libEntry.wtPerM2;
+        reqDisplay = `${requiredM.toFixed(2)} m²`;
+      }
+
+      return {...row, availableKg:availKg, status, lots:availLots, requiredM, reqDisplay};
     });
     setRmPicture(rows);
   };
@@ -8463,7 +8639,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                   <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{r.section}</td>
                   <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{r.grade}</td>
                   <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12, fontWeight:700 }}>{r.requiredKg.toFixed(1)}</td>
-                  <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{r.requiredM.toFixed(1)}</td>
+                  <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12, color:r.reqDisplay==="—"?T.textLow:T.text }}>{r.reqDisplay||"—"}</td>
                   <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{r.availableKg.toFixed(1)}</td>
                   <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={rmStatusColor(r.status)}>{r.status}</Badge></td>
                   <td style={{ padding:"6px 10px", borderBottom:`1px solid ${T.border}`, fontSize:11, color:T.textMid }}>{r.lots.length} lot{r.lots.length!==1?"s":""}</td>
@@ -8473,7 +8649,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                     <td colSpan={9} style={{ padding:"0 20px 12px 32px", background:T.bg, borderBottom:`1px solid ${T.border}` }}>
                       <div style={{ fontSize:11, color:T.textMid, marginTop:8, marginBottom:4 }}>Drawings needing this material:</div>
                       {r.drawings.map((d,di)=>(
-                        <div key={di} style={{ fontSize:11, color:T.text }}>{d.drawingNo} ({d.orderId}) — {d.kg.toFixed(1)} kg</div>
+                        <div key={di} style={{ fontSize:11, color:T.text }}>{d.drawingNo} ({d.orderId}){d.qty>1?` × ${d.qty}`:""} — {d.kg.toFixed(1)} kg</div>
                       ))}
                       {r.lots.length>0 && <>
                         <div style={{ fontSize:11, color:T.textMid, marginTop:8, marginBottom:4 }}>Available lots:</div>
@@ -9129,13 +9305,93 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
   );
 };
 
+// ─── STARTUP MIGRATION: PO LINE WEIGHTS ──────────────────────────────────────
+// Fixes POs saved before the library .0-strip fix where wtOrdered was not
+// calculated (equals qtyOrdered or is 0). Runs once at load from localStorage.
+const normSz = s => (s||'').toLowerCase().split('x').map(seg=>/^\d+\.0$/.test(seg)?seg.replace('.0',''):seg).join('x');
+
+const migratePOLines = (pos, materials) => {
+  return pos.map(po => ({
+    ...po,
+    lines: (po.lines||[]).map(line => {
+      const looksWrong = (line.wtOrdered||0) === (line.qtyOrdered||0) || (line.wtOrdered||0) === 0;
+      if (!looksWrong) return line;
+
+      const libMatch = (materials||[]).find(m =>
+        (m.sectionType||'').toLowerCase() === (line.sectionType||'').toLowerCase() &&
+        normSz(m.size) === normSz(line.size||'') &&
+        (m.grade||'').toLowerCase() === (line.grade||'').toLowerCase()
+      );
+      if (!libMatch) return line;
+
+      let wtOrdered = line.wtOrdered;
+      if (libMatch.wtPerMetre && line.length && line.qtyOrdered) {
+        wtOrdered = Math.round(line.qtyOrdered * (line.length / 1000) * libMatch.wtPerMetre * 100) / 100;
+      } else if (libMatch.wtPerM2 && line.length && line.width && line.qtyOrdered) {
+        wtOrdered = Math.round(line.qtyOrdered * (line.length / 1000) * (line.width / 1000) * libMatch.wtPerM2 * 100) / 100;
+      }
+      if (wtOrdered === line.wtOrdered) return line; // no change calculated
+
+      const totalPrice = line.pricingMethod === 'PerKg'
+        ? wtOrdered * (line.unitPrice||0)
+        : (line.qtyOrdered||0) * (line.unitPrice||0);
+      const effectiveRateKg = wtOrdered > 0 ? Math.round(totalPrice / wtOrdered * 100) / 100 : 0;
+
+      return { ...line, wtOrdered, totalPrice, effectiveRateKg, libraryMatch: true, wtSource: 'library-migrated' };
+    })
+  }));
+};
+
+// ─── STARTUP MIGRATION: GRN LINE WEIGHTS ─────────────────────────────────────
+// Fixes GRN lines where actualWt === qtyReceived (unit mix-up — should be kg
+// not MT). Recalculates using library wtPerMetre and updates po.lines[i].wtReceived.
+const migrateGRNLines = (pos, materials) => {
+  return pos.map(po => {
+    const grns = (po.grns||[]).map(grn => ({
+      ...grn,
+      lines: (grn.lines||[]).map(gl => {
+        const looksWrong = (gl.actualWt||0) === (gl.qtyReceived||0) && (gl.qtyReceived||0) < 100;
+        if (!looksWrong) return gl;
+
+        const poLine = (po.lines||[]).find(l => l.id === gl.poLineId);
+        if (!poLine) return gl;
+
+        const libMatch = (materials||[]).find(m =>
+          (m.sectionType||'').toLowerCase() === (poLine.sectionType||'').toLowerCase() &&
+          normSz(m.size) === normSz(poLine.size||'') &&
+          (m.grade||'').toLowerCase() === (poLine.grade||'').toLowerCase()
+        );
+        if (!libMatch || !libMatch.wtPerMetre) return gl;
+
+        const length = poLine.length;
+        if (!length) return gl;
+        const actualWt = Math.round(gl.qtyReceived * (length / 1000) * libMatch.wtPerMetre * 100) / 100;
+
+        return { ...gl, actualWt, calculatedWt: actualWt, variance: 0, wtSource: 'grn-migrated' };
+      })
+    }));
+
+    // Also fix po.lines[i].wtReceived to match corrected GRN actuals
+    const lines = (po.lines||[]).map(line => {
+      const newWtReceived = grns.reduce((sum, grn) => {
+        const gl = (grn.lines||[]).find(l => l.poLineId === line.id);
+        return sum + (gl ? (gl.actualWt||0) : 0);
+      }, 0);
+      if (newWtReceived === (line.wtReceived||0)) return line;
+      return { ...line, wtReceived: Math.round(newWtReceived * 100) / 100 };
+    });
+
+    return { ...po, grns, lines };
+  });
+};
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
   const [mod, setMod] = useState("dashboard");
   const [sidebar, setSidebar] = useState(true);
   const [purchaseReqs, setPurchaseReqs] = useState(() => { try { const s=localStorage.getItem('structo_purchaseReqs'); return s?JSON.parse(s):INIT_PURCHASE_REQS; } catch { return INIT_PURCHASE_REQS; } });
-  const [pos, setPos]                   = useState(() => { try { const s=localStorage.getItem('structo_pos'); return s?JSON.parse(s):INIT_POS; } catch { return INIT_POS; } });
+  const [pos, setPos]                   = useState(() => { try { const s=localStorage.getItem('structo_pos'); if (s) { const loaded=JSON.parse(s); return migrateGRNLines(migratePOLines(loaded, MATERIALS_LIBRARY), MATERIALS_LIBRARY); } return INIT_POS; } catch { return INIT_POS; } });
   const [stock, setStock]               = useState(() => {
     const ORPHANED_LOT_IDS = ['LOT-2026-005','LOT-2026-006','LOT-2026-007'];
     try {
