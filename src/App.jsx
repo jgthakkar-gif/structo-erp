@@ -700,12 +700,12 @@ const BAYS = Array.from({length:25},(_,i)=>({ id:`BAY-${String(i+1).padStart(2,"
 
 // ─── SEED: MACHINES ───────────────────────────────────────────────────────────
 const MACHINES_SEED = [
-  { id:"MCH-001", name:"Plasma Cutter 1",  type:"Cutting", bayLocation:"Bay 3", active:true },
-  { id:"MCH-002", name:"Flame Cutter 1",   type:"Cutting", bayLocation:"Bay 3", active:true },
-  { id:"MCH-003", name:"Band Saw 1",       type:"Cutting", bayLocation:"Bay 5", active:true },
-  { id:"MCH-004", name:"MIG Welder 1",     type:"Welding", bayLocation:"Bay 7", active:true },
-  { id:"MCH-005", name:"MIG Welder 2",     type:"Welding", bayLocation:"Bay 7", active:true },
-  { id:"MCH-006", name:"SAW Machine 1",    type:"Welding", bayLocation:"Bay 8", active:true },
+  { id:"MCH-001", name:"Plasma Cutter 1",  type:"Cutting", bayLocation:"Bay 3", active:true, capabilities:['cut_straight','cut_profile','bevel','grind'], specs:{maxThicknessMm:25,maxSectionSizeMm:0,notes:"Hypertherm XPR300"} },
+  { id:"MCH-002", name:"Flame Cutter 1",   type:"Cutting", bayLocation:"Bay 3", active:true, capabilities:['cut_straight','cut_profile','bevel'],         specs:{maxThicknessMm:100,maxSectionSizeMm:0,notes:""} },
+  { id:"MCH-003", name:"Band Saw 1",       type:"Cutting", bayLocation:"Bay 5", active:true, capabilities:['cut_straight','grind'],                        specs:{maxThicknessMm:200,maxSectionSizeMm:0,notes:""} },
+  { id:"MCH-004", name:"MIG Welder 1",     type:"Welding", bayLocation:"Bay 7", active:true, capabilities:[],                                              specs:{maxThicknessMm:0,maxSectionSizeMm:0,notes:""} },
+  { id:"MCH-005", name:"MIG Welder 2",     type:"Welding", bayLocation:"Bay 7", active:true, capabilities:[],                                              specs:{maxThicknessMm:0,maxSectionSizeMm:0,notes:""} },
+  { id:"MCH-006", name:"SAW Machine 1",    type:"Welding", bayLocation:"Bay 8", active:true, capabilities:[],                                              specs:{maxThicknessMm:0,maxSectionSizeMm:0,notes:""} },
 ];
 
 // ─── SEED: ORDERS (summary only - parts & drawings needed for MRP) ───────────
@@ -721,19 +721,20 @@ const ORDERS = [
       { id:"D006", drawingNo:"TPL-JETTY-PL-02",  title:"Platform Level 2",   qty:2,  unitWt:920.00, totalWt:1840.00, phase:3, priority:1, receivedDate:"",           status:"pending" },
     ],
     parts:[
-      { id:"P001", drawingId:"D001", drawingNo:"TPL-JETTY-COL-01", markNo:"SBK-101", desc:"BRACKET ANGLE",     fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISA",     size:"75x75x8",   length:150,  qtyPerDrg:80, clientUnitWt:1.335,  clientTotalWt:106.8,  source:"Procure"      },
-      { id:"P002", drawingId:"D001", drawingNo:"TPL-JETTY-COL-01", markNo:"SBK-103", desc:"HEAVY BRACKET",     fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISA",     size:"150x150x16",length:270,  qtyPerDrg:5,  clientUnitWt:9.666,  clientTotalWt:48.33,  source:"Procure"      },
-      { id:"P003", drawingId:"D001", drawingNo:"TPL-JETTY-COL-01", markNo:"PL-001",  desc:"BASE PLATE 10MM",   fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE",   size:"10mm",      length:500,  qtyPerDrg:4,  clientUnitWt:19.625, clientTotalWt:78.5,   source:"Procure"      },
+      { id:"P001", drawingId:"D001", drawingNo:"TPL-JETTY-COL-01", markNo:"SBK-101", desc:"BRACKET ANGLE",     fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISA",     size:"75x75x8",   length:150,  qtyPerDrg:80, clientUnitWt:1.335,  clientTotalWt:106.8,  source:"Procure",       requiredOps:['Cut'] },
+      { id:"P002", drawingId:"D001", drawingNo:"TPL-JETTY-COL-01", markNo:"SBK-103", desc:"HEAVY BRACKET",     fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISA",     size:"150x150x16",length:270,  qtyPerDrg:5,  clientUnitWt:9.666,  clientTotalWt:48.33,  source:"Procure",       requiredOps:['Cut'] },
+      { id:"P003", drawingId:"D001", drawingNo:"TPL-JETTY-COL-01", markNo:"PL-001",  desc:"BASE PLATE 10MM",   fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE",   size:"10mm",      length:500,  qtyPerDrg:4,  clientUnitWt:19.625, clientTotalWt:78.5,   source:"Procure",       requiredOps:['Cut'] },
       { id:"P004", drawingId:"D001", drawingNo:"TPL-JETTY-COL-01", markNo:"BOLT-M24",desc:"M24 HDG BOLTS",     fabType:"Bought Out",matType:"MS", grade:"Galv", section:"—",       size:"M24x100",   length:100,  qtyPerDrg:32, clientUnitWt:0.51,   clientTotalWt:16.32,  source:"Procure"      },
-      { id:"P005", drawingId:"D002", drawingNo:"TPL-JETTY-BM-01",  markNo:"WB-201",  desc:"WIDE FLANGE BEAM",  fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMB",    size:"300",       length:6200, qtyPerDrg:2,  clientUnitWt:285.82, clientTotalWt:571.64, source:"Procure"      },
-      { id:"P006", drawingId:"D002", drawingNo:"TPL-JETTY-BM-01",  markNo:"CH-202",  desc:"CHANNEL PURLIN",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMC",    size:"150",       length:2500, qtyPerDrg:8,  clientUnitWt:41.0,   clientTotalWt:328.0,  source:"Client Supply"},
-      { id:"P007", drawingId:"D002", drawingNo:"TPL-JETTY-BM-01",  markNo:"FB-203",  desc:"FLAT BAR STIFFENER",fabType:"Fabricate", matType:"MS", grade:"E250", section:"Flat Bar",size:"75x10",    length:150,  qtyPerDrg:50, clientUnitWt:0.883,  clientTotalWt:44.15,  source:"Procure"      },
-      { id:"P008", drawingId:"D003", drawingNo:"TPL-JETTY-BP-01",  markNo:"BP-301",  desc:"BASE PLATE 12MM",   fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE",   size:"12mm",      length:600,  qtyPerDrg:1,  clientUnitWt:33.912, clientTotalWt:33.912, source:"Procure"      },
+      { id:"P005", drawingId:"D002", drawingNo:"TPL-JETTY-BM-01",  markNo:"WB-201",  desc:"WIDE FLANGE BEAM",  fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMB",    size:"300",       length:6200, qtyPerDrg:2,  clientUnitWt:285.82, clientTotalWt:571.64, source:"Procure",       requiredOps:['Cut'] },
+      { id:"P006", drawingId:"D002", drawingNo:"TPL-JETTY-BM-01",  markNo:"CH-202",  desc:"CHANNEL PURLIN",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMC",    size:"150",       length:2500, qtyPerDrg:8,  clientUnitWt:41.0,   clientTotalWt:328.0,  source:"Client Supply", requiredOps:['Cut'] },
+      { id:"P007", drawingId:"D002", drawingNo:"TPL-JETTY-BM-01",  markNo:"FB-203",  desc:"FLAT BAR STIFFENER",fabType:"Fabricate", matType:"MS", grade:"E250", section:"Flat Bar",size:"75x10",    length:150,  qtyPerDrg:50, clientUnitWt:0.883,  clientTotalWt:44.15,  source:"Procure",       requiredOps:['Cut'] },
+      { id:"P008", drawingId:"D003", drawingNo:"TPL-JETTY-BP-01",  markNo:"BP-301",  desc:"BASE PLATE 12MM",   fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE",   size:"12mm",      length:600,  qtyPerDrg:1,  clientUnitWt:33.912, clientTotalWt:33.912, source:"Procure",       requiredOps:['Cut'] },
       { id:"P009", drawingId:"D003", drawingNo:"TPL-JETTY-BP-01",  markNo:"SBK-302", desc:"ANCHOR BOLTS",      fabType:"Bought Out",matType:"MS", grade:"Galv", section:"—",       size:"M30x600",   length:600,  qtyPerDrg:4,  clientUnitWt:3.37,   clientTotalWt:13.48,  source:"Procure"      },
-      { id:"P010", drawingId:"D004", drawingNo:"TPL-JETTY-BRK-01", markNo:"BRC-401", desc:"DIAGONAL BRACING",  fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISA",     size:"100x100x10",length:2400, qtyPerDrg:4,  clientUnitWt:35.76,  clientTotalWt:143.04, source:"Procure"      },
-      { id:"P011", drawingId:"D004", drawingNo:"TPL-JETTY-BRK-01", markNo:"GP-402",  desc:"GUSSET PLATE 8MM",  fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE",   size:"8mm",       length:300,  qtyPerDrg:8,  clientUnitWt:4.712,  clientTotalWt:37.696, source:"Procure"      },
+      { id:"P010", drawingId:"D004", drawingNo:"TPL-JETTY-BRK-01", markNo:"BRC-401", desc:"DIAGONAL BRACING",  fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISA",     size:"100x100x10",length:2400, qtyPerDrg:4,  clientUnitWt:35.76,  clientTotalWt:143.04, source:"Procure",       requiredOps:['Cut'] },
+      { id:"P011", drawingId:"D004", drawingNo:"TPL-JETTY-BRK-01", markNo:"GP-402",  desc:"GUSSET PLATE 8MM",  fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE",   size:"8mm",       length:300,  qtyPerDrg:8,  clientUnitWt:4.712,  clientTotalWt:37.696, source:"Procure",       requiredOps:['Cut'] },
     ],
     quality:{ approvedMakes:[ {matType:"MS Plates",makes:"JSW Steel, SAIL"},{matType:"Angles/ISA",makes:"JSW Steel, SAIL"},{matType:"Channels/ISMC",makes:"JSW Steel, SAIL"},{matType:"Beams/ISMB",makes:"JSW Steel, SAIL"} ] },
+    transport: { transportScope:'per_dispatch', preferredTransporter:'', vehicleType:'', distanceKm:0, freightEstimate:0, insurance:false, odc:false, nightRestriction:false, policeEscort:false, specialReqs:'', freightBilling:'dispatch_line', clientTransporter:'', clientVehicleContact:'', loadingInstructions:'' },
   },
   {
     id:"SF-2025-0002", clientId:"CL-002", projectDesc:"NTPC Mouda — Equipment Support Structure", orderQty:45, orderUnit:"Ton", ratePerUnit:88000, orderValue:3960000, status:"active",
@@ -743,13 +744,14 @@ const ORDERS = [
       { id:"D103", drawingNo:"BHEL-ESS-ACC-01", title:"Access Platform & Handrail",qty:1,unitWt:360.0, totalWt:360.0,  phase:1, priority:3, receivedDate:"",           status:"pending" },
     ],
     parts:[
-      { id:"P101", drawingId:"D101", drawingNo:"BHEL-ESS-FR-01",  markNo:"FR-101", desc:"MAIN COLUMN RHS",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"RHS",   size:"100x50x4",length:3500,qtyPerDrg:4, clientUnitWt:32.27,  clientTotalWt:129.08, source:"Procure" },
-      { id:"P102", drawingId:"D101", drawingNo:"BHEL-ESS-FR-01",  markNo:"FR-102", desc:"HORIZONTAL ISMB",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMB",  size:"200",     length:2000,qtyPerDrg:3, clientUnitWt:50.8,   clientTotalWt:152.4,  source:"Procure" },
-      { id:"P103", drawingId:"D101", drawingNo:"BHEL-ESS-FR-01",  markNo:"PL-103", desc:"MOUNTING PLATE 16MM",fabType:"Fabricate", matType:"MS", grade:"E350", section:"PLATE", size:"16mm",    length:400, qtyPerDrg:2, clientUnitWt:20.096, clientTotalWt:40.192, source:"Procure" },
-      { id:"P104", drawingId:"D102", drawingNo:"BHEL-ESS-PED-01", markNo:"PED-201",desc:"PEDESTAL ISMC",      fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMC",  size:"200",     length:800, qtyPerDrg:2, clientUnitWt:17.68,  clientTotalWt:35.36,  source:"Procure" },
-      { id:"P105", drawingId:"D102", drawingNo:"BHEL-ESS-PED-01", markNo:"BP-202", desc:"BASE PLATE 12MM",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE", size:"12mm",    length:300, qtyPerDrg:1, clientUnitWt:8.478,  clientTotalWt:8.478,  source:"Procure" },
+      { id:"P101", drawingId:"D101", drawingNo:"BHEL-ESS-FR-01",  markNo:"FR-101", desc:"MAIN COLUMN RHS",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"RHS",   size:"100x50x4",length:3500,qtyPerDrg:4, clientUnitWt:32.27,  clientTotalWt:129.08, source:"Procure", requiredOps:['Cut'] },
+      { id:"P102", drawingId:"D101", drawingNo:"BHEL-ESS-FR-01",  markNo:"FR-102", desc:"HORIZONTAL ISMB",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMB",  size:"200",     length:2000,qtyPerDrg:3, clientUnitWt:50.8,   clientTotalWt:152.4,  source:"Procure", requiredOps:['Cut'] },
+      { id:"P103", drawingId:"D101", drawingNo:"BHEL-ESS-FR-01",  markNo:"PL-103", desc:"MOUNTING PLATE 16MM",fabType:"Fabricate", matType:"MS", grade:"E350", section:"PLATE", size:"16mm",    length:400, qtyPerDrg:2, clientUnitWt:20.096, clientTotalWt:40.192, source:"Procure", requiredOps:['Cut'] },
+      { id:"P104", drawingId:"D102", drawingNo:"BHEL-ESS-PED-01", markNo:"PED-201",desc:"PEDESTAL ISMC",      fabType:"Fabricate", matType:"MS", grade:"E250", section:"ISMC",  size:"200",     length:800, qtyPerDrg:2, clientUnitWt:17.68,  clientTotalWt:35.36,  source:"Procure", requiredOps:['Cut'] },
+      { id:"P105", drawingId:"D102", drawingNo:"BHEL-ESS-PED-01", markNo:"BP-202", desc:"BASE PLATE 12MM",    fabType:"Fabricate", matType:"MS", grade:"E250", section:"PLATE", size:"12mm",    length:300, qtyPerDrg:1, clientUnitWt:8.478,  clientTotalWt:8.478,  source:"Procure", requiredOps:['Cut'] },
     ],
     quality:{ approvedMakes:[ {matType:"MS Plates",makes:"JSW Steel, SAIL, Tata Steel"},{matType:"RHS/SHS",makes:"APL Apollo, Tata Structura"} ] },
+    transport: { transportScope:'per_dispatch', preferredTransporter:'', vehicleType:'', distanceKm:0, freightEstimate:0, insurance:false, odc:false, nightRestriction:false, policeEscort:false, specialReqs:'', freightBilling:'dispatch_line', clientTransporter:'', clientVehicleContact:'', loadingInstructions:'' },
   },
 ];
 
@@ -875,7 +877,7 @@ const INIT_STOCK = [
 
 // ─── NESTING RUNS ─────────────────────────────────────────────────────────────
 const INIT_NESTING_RUNS = [
-  { id:"NEST-2025-001", runDate:"2025-02-10", runBy:"Vikram Singh", materialCode:"ISA/MS/E250/75X75X8", orders:["SF-2025-0001"], drawings:["D001","D004"], lotsUsed:["STK-001"], sheetsOrBarsUsed:18, utilisationPct:84.2, wasteKg:312, offcutsCreated:[], dxfLink:"https://drive.google.com/file/d/nest001/view", status:"confirmed", parts:[] },
+  { id:"NEST-2025-001", runDate:"2025-02-10", runBy:"Vikram Singh", materialCode:"ISA/MS/E250/75x75x8", orders:["SF-2025-0001"], drawings:["D001","D004"], lotsUsed:["STK-001"], sheetsOrBarsUsed:18, utilisationPct:84.2, wasteKg:312, offcutsCreated:[], dxfLink:"https://drive.google.com/file/d/nest001/view", status:"confirmed", parts:[] },
   { id:"NEST-2026-001", runDate:"2026-03-18", runBy:"Vikram Singh", materialCode:"ISMB/MS/E250/300", orders:["SF-2025-0001","SF-2025-0002"], drawings:["D002","D101"], lotsUsed:["STK-005"], sheetsOrBarsUsed:12, utilisationPct:91.5, wasteKg:88, offcutsCreated:[], dxfLink:"", status:"draft", parts:[] },
 ];
 
@@ -1901,6 +1903,7 @@ const MachinesMaster = ({ user, machines, setMachines }) => {
         { key:"name",        label:"Machine Name", render:r=><span style={{fontWeight:700}}>{r.name}</span> },
         { key:"type",        label:"Type",         render:r=><Badge color={typeColor[r.type]||"gray"}>{r.type}</Badge> },
         { key:"bayLocation", label:"Bay Location"  },
+        { key:"capabilities", label:"Capabilities", render:r=><div style={{display:'flex',flexWrap:'wrap',gap:4}}>{(r.capabilities||[]).map(c=><span key={c} style={{background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:4,padding:'1px 6px',fontSize:10,color:T.textMid}}>{c}</span>)}</div> },
         { key:"active",      label:"Status",       render:r=><Badge color={r.active?"green":"gray"}>{r.active?"Active":"Inactive"}</Badge> },
         { key:"actions",     label:"",             render:r=>canEdit?<button onClick={()=>openEdit(r)} style={css.btn.ghost}>Edit</button>:null },
       ]} rows={machines} />
@@ -1923,6 +1926,25 @@ const MachinesMaster = ({ user, machines, setMachines }) => {
               <option value="yes">Active</option><option value="no">Inactive</option>
             </select>
           </MField>
+          <div style={{marginTop:8}}>
+            <div style={css.label}>Capabilities</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:4}}>
+              {[['cut_straight','Cut Straight'],['cut_profile','Cut Profile'],['bevel','Bevel'],['drill','Drill'],['grind','Grind'],['mark','Mark'],['notch','Notch'],['bend','Bend'],['roll','Roll'],['press_brake','Press Brake'],['shot_blast','Shot Blast'],['spray_paint','Spray Paint']].map(([v,l])=>(
+                <label key={v} style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',fontSize:12}}>
+                  <input type="checkbox" checked={(form.capabilities||[]).includes(v)} onChange={e=>{const caps=form.capabilities||[];setForm(f=>({...f,capabilities:e.target.checked?[...caps,v]:caps.filter(c=>c!==v)}));}} />
+                  <span style={{color:T.text}}>{l}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div style={{marginTop:8}}>
+            <div style={css.label}>Specs</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:4}}>
+              <MField label="Max Thickness (mm)"><input type="number" value={(form.specs||{}).maxThicknessMm||''} onChange={e=>setForm(f=>({...f,specs:{...(f.specs||{}),maxThicknessMm:+e.target.value}}))} style={css.input} /></MField>
+              <MField label="Max Section Size (mm)"><input type="number" value={(form.specs||{}).maxSectionSizeMm||''} onChange={e=>setForm(f=>({...f,specs:{...(f.specs||{}),maxSectionSizeMm:+e.target.value}}))} style={css.input} /></MField>
+              <div style={{gridColumn:'span 2'}}><MField label="Notes"><input value={(form.specs||{}).notes||''} onChange={e=>setForm(f=>({...f,specs:{...(f.specs||{}),notes:e.target.value}}))} style={css.input} /></MField></div>
+            </div>
+          </div>
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
             <button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button>
             <button onClick={save} style={css.btn.primary} disabled={!form.name?.trim()}>✓ Save Machine</button>
@@ -4118,11 +4140,39 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
         const confirmReq = (req) => {
           const yr = new Date().getFullYear();
           let maxIsn = 0;
+          // Scan both issueRequests and stock lot issues for highest ISN seq
           (issueRequests||[]).forEach(r=>{ const m=(r.issueNoteNo||"").match(/^ISN-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) maxIsn=Math.max(maxIsn,+m[2]); });
+          stock.forEach(s=>(s.issues||[]).forEach(iss=>{ const m=(iss.issueNoteNo||"").match(/^ISN-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) maxIsn=Math.max(maxIsn,+m[2]); }));
           const issueNoteNo = `ISN-${yr}-${String(maxIsn+1).padStart(3,"0")}`;
-          setIssueRequests(prev=>prev.map(r=>r.id!==req.id?r:{
-            ...r, status:"issued", issuedBy:user.username, issueDate:new Date().toISOString().slice(0,10), issueNoteNo,
+          const issueDate = today();
+          const wt = req.wtRequested||0;
+
+          // Update the stock lot
+          setStock(prev=>prev.map(lot=>{
+            if (lot.id!==req.lotId) return lot;
+            return {
+              ...lot,
+              status:"issued",
+              wtIssued:(lot.wtIssued||0)+wt,
+              wtAvailable:Math.max(0,(lot.wtAvailable||0)-wt),
+              issues:[...(lot.issues||[]),{
+                issueId:issueNoteNo, issueDate, issuedTo:req.machineName,
+                machineId:req.machineId||"", releaseId:req.releaseId||"",
+                wt, issuedBy:user.name, issueNoteNo
+              }],
+              auditLog:[...(lot.auditLog||[]),{
+                action:"issued", by:user.name, date:issueDate,
+                reason:"Issued to machine operator via IRQ"
+              }]
+            };
           }));
+
+          // Update the IRQ
+          setIssueRequests(prev=>prev.map(r=>r.id!==req.id?r:{
+            ...r, status:"issued", issuedBy:user.name, issueDate, issueNoteNo,
+          }));
+
+          showToast(`Issue note ${issueNoteNo} generated`,"green");
         };
         const rejectReq = (req, reason) => {
           setIssueRequests(prev=>prev.map(r=>r.id!==req.id?r:{...r,status:"rejected",remarks:reason||"Rejected by store"}));
@@ -5230,17 +5280,17 @@ const SEED_ORDERS = [
       { id:"D006", drawingNo:"TPL-JETTY-PL-02",  title:"Platform Level 2",   qty:2,  unitWt:920.00,totalWt:1840.00,revNo:"A",drawingDate:"2025-01-08",receivedDate:"",           phase:3,priority:1,driveLink:"",fileType:"",status:"pending",revHistory:[] },
     ],
     parts:[
-      { id:"P001",drawingId:"D001",revNo:"B",itemNo:1, markNo:"SBK-101",desc:"BRACKET ANGLE",          fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISA",    size:"75x75x8",   length:150, width:75, qtyPerDrg:80,clientUnitWt:1.335, clientTotalWt:106.8,  calcUnitWt:1.335, calcTotalWt:106.8,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
-      { id:"P002",drawingId:"D001",revNo:"B",itemNo:2, markNo:"SBK-103",desc:"HEAVY BRACKET",          fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISA",    size:"150x150x16",length:270, width:150,qtyPerDrg:5, clientUnitWt:9.666, clientTotalWt:48.33,  calcUnitWt:9.666, calcTotalWt:48.33,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
-      { id:"P003",drawingId:"D001",revNo:"B",itemNo:3, markNo:"PL-001", desc:"BASE PLATE 10MM",        fabType:"Fabricate", matType:"MS",grade:"E250",section:"PLATE",  size:"10mm",      length:500, width:500,qtyPerDrg:4, clientUnitWt:19.625,clientTotalWt:78.5,   calcUnitWt:19.625,calcTotalWt:78.5,   jointsAllowed:true, source:"Procure",      partLink:"",remarks:"" },
-      { id:"P004",drawingId:"D001",revNo:"B",itemNo:4, markNo:"BOLT-M24",desc:"M24 HDG BOLTS",         fabType:"Bought Out",matType:"MS",grade:"Galv",section:"—",      size:"M24x100",   length:100, width:0,  qtyPerDrg:32,clientUnitWt:0.51,  clientTotalWt:16.32,  calcUnitWt:0.51,  calcTotalWt:16.32,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"Galvanised hot dip" },
-      { id:"P005",drawingId:"D002",revNo:"A",itemNo:1, markNo:"WB-201", desc:"WIDE FLANGE BEAM",       fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISMB",   size:"300",       length:6200,width:0,  qtyPerDrg:2, clientUnitWt:285.82,clientTotalWt:571.64, calcUnitWt:285.82,calcTotalWt:571.64, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
-      { id:"P006",drawingId:"D002",revNo:"A",itemNo:2, markNo:"CH-202", desc:"CHANNEL PURLIN",         fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISMC",   size:"150",       length:2500,width:0,  qtyPerDrg:8, clientUnitWt:41.0,  clientTotalWt:328.0,  calcUnitWt:41.0,  calcTotalWt:328.0,  jointsAllowed:false,source:"Client Supply", partLink:"",remarks:"Client supplied SAIL material" },
-      { id:"P007",drawingId:"D002",revNo:"A",itemNo:3, markNo:"FB-203", desc:"FLAT BAR STIFFENER",     fabType:"Fabricate", matType:"MS",grade:"E250",section:"Flat Bar",size:"75x10",     length:150, width:75, qtyPerDrg:50,clientUnitWt:0.883, clientTotalWt:44.15,  calcUnitWt:0.883, calcTotalWt:44.15,  jointsAllowed:true, source:"Procure",      partLink:"",remarks:"" },
-      { id:"P008",drawingId:"D003",revNo:"A",itemNo:1, markNo:"BP-301", desc:"BASE PLATE 12MM",        fabType:"Fabricate", matType:"MS",grade:"E250",section:"PLATE",  size:"12mm",      length:600, width:600,qtyPerDrg:1, clientUnitWt:33.912,clientTotalWt:33.912, calcUnitWt:33.912,calcTotalWt:33.912, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
-      { id:"P009",drawingId:"D003",revNo:"A",itemNo:2, markNo:"SBK-302",desc:"ANCHOR BOLTS",           fabType:"Bought Out",matType:"MS",grade:"Galv",section:"—",      size:"M30x600",   length:600, width:0,  qtyPerDrg:4, clientUnitWt:3.37,  clientTotalWt:13.48,  calcUnitWt:3.37,  calcTotalWt:13.48,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"With nuts and washers" },
-      { id:"P010",drawingId:"D004",revNo:"A",itemNo:1, markNo:"BRC-401",desc:"DIAGONAL BRACING",       fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISA",    size:"100x100x10",length:2400,width:0,  qtyPerDrg:4, clientUnitWt:35.76, clientTotalWt:143.04, calcUnitWt:35.76, calcTotalWt:143.04, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
-      { id:"P011",drawingId:"D004",revNo:"A",itemNo:2, markNo:"GP-402", desc:"GUSSET PLATE 8MM",       fabType:"Fabricate", matType:"MS",grade:"E250",section:"PLATE",  size:"8mm",       length:300, width:250,qtyPerDrg:8, clientUnitWt:4.712, clientTotalWt:37.696, calcUnitWt:4.712, calcTotalWt:37.696, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
+      { id:"P001",drawingId:"D001",revNo:"B",itemNo:1, markNo:"SBK-101",desc:"BRACKET ANGLE",          fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISA",    size:"75x75x8",   matCode:"ISA/MS/E250/75x75x8",    length:150, width:75, qtyPerDrg:80,clientUnitWt:1.335, clientTotalWt:106.8,  calcUnitWt:1.335, calcTotalWt:106.8,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
+      { id:"P002",drawingId:"D001",revNo:"B",itemNo:2, markNo:"SBK-103",desc:"HEAVY BRACKET",          fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISA",    size:"150x150x16",matCode:"ISA/MS/E250/150x150x16", length:270, width:150,qtyPerDrg:5, clientUnitWt:9.666, clientTotalWt:48.33,  calcUnitWt:9.666, calcTotalWt:48.33,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
+      { id:"P003",drawingId:"D001",revNo:"B",itemNo:3, markNo:"PL-001", desc:"BASE PLATE 10MM",        fabType:"Fabricate", matType:"MS",grade:"E250",section:"PLATE",  size:"10mm",      matCode:"PLATE/MS/E250/10mm",      length:500, width:500,qtyPerDrg:4, clientUnitWt:19.625,clientTotalWt:78.5,   calcUnitWt:19.625,calcTotalWt:78.5,   jointsAllowed:true, source:"Procure",      partLink:"",remarks:"" },
+      { id:"P004",drawingId:"D001",revNo:"B",itemNo:4, markNo:"BOLT-M24",desc:"M24 HDG BOLTS",         fabType:"Bought Out",matType:"MS",grade:"Galv",section:"—",      size:"M24x100",                                     length:100, width:0,  qtyPerDrg:32,clientUnitWt:0.51,  clientTotalWt:16.32,  calcUnitWt:0.51,  calcTotalWt:16.32,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"Galvanised hot dip" },
+      { id:"P005",drawingId:"D002",revNo:"A",itemNo:1, markNo:"WB-201", desc:"WIDE FLANGE BEAM",       fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISMB",   size:"300",       matCode:"ISMB/MS/E250/300",        length:6200,width:0,  qtyPerDrg:2, clientUnitWt:285.82,clientTotalWt:571.64, calcUnitWt:285.82,calcTotalWt:571.64, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
+      { id:"P006",drawingId:"D002",revNo:"A",itemNo:2, markNo:"CH-202", desc:"CHANNEL PURLIN",         fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISMC",   size:"150",       matCode:"ISMC/MS/E250/150",        length:2500,width:0,  qtyPerDrg:8, clientUnitWt:41.0,  clientTotalWt:328.0,  calcUnitWt:41.0,  calcTotalWt:328.0,  jointsAllowed:false,source:"Client Supply", partLink:"",remarks:"Client supplied SAIL material" },
+      { id:"P007",drawingId:"D002",revNo:"A",itemNo:3, markNo:"FB-203", desc:"FLAT BAR STIFFENER",     fabType:"Fabricate", matType:"MS",grade:"E250",section:"Flat Bar",size:"75x10",     matCode:"Flat Bar/MS/E250/75x10",  length:150, width:75, qtyPerDrg:50,clientUnitWt:0.883, clientTotalWt:44.15,  calcUnitWt:0.883, calcTotalWt:44.15,  jointsAllowed:true, source:"Procure",      partLink:"",remarks:"" },
+      { id:"P008",drawingId:"D003",revNo:"A",itemNo:1, markNo:"BP-301", desc:"BASE PLATE 12MM",        fabType:"Fabricate", matType:"MS",grade:"E250",section:"PLATE",  size:"12mm",      matCode:"PLATE/MS/E250/12mm",      length:600, width:600,qtyPerDrg:1, clientUnitWt:33.912,clientTotalWt:33.912, calcUnitWt:33.912,calcTotalWt:33.912, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
+      { id:"P009",drawingId:"D003",revNo:"A",itemNo:2, markNo:"SBK-302",desc:"ANCHOR BOLTS",           fabType:"Bought Out",matType:"MS",grade:"Galv",section:"—",      size:"M30x600",                                     length:600, width:0,  qtyPerDrg:4, clientUnitWt:3.37,  clientTotalWt:13.48,  calcUnitWt:3.37,  calcTotalWt:13.48,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"With nuts and washers" },
+      { id:"P010",drawingId:"D004",revNo:"A",itemNo:1, markNo:"BRC-401",desc:"DIAGONAL BRACING",       fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISA",    size:"100x100x10",matCode:"ISA/MS/E250/100x100x10",  length:2400,width:0,  qtyPerDrg:4, clientUnitWt:35.76, clientTotalWt:143.04, calcUnitWt:35.76, calcTotalWt:143.04, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
+      { id:"P011",drawingId:"D004",revNo:"A",itemNo:2, markNo:"GP-402", desc:"GUSSET PLATE 8MM",       fabType:"Fabricate", matType:"MS",grade:"E250",section:"PLATE",  size:"8mm",       matCode:"PLATE/MS/E250/8mm",       length:300, width:250,qtyPerDrg:8, clientUnitWt:4.712, clientTotalWt:37.696, calcUnitWt:4.712, calcTotalWt:37.696, jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
     ],
     quality:{ tpiRequired:true,tpiAgencyId:"TPI-001",tpiAgencyName:"Bureau Veritas India",tpiHoldPoints:["welding","painting"],wpsDoc:"",
       approvedMakes:[{id:"QAM-001",matType:"MS Plates",makes:"JSW Steel, SAIL",remarks:"No Essar material"},{id:"QAM-002",matType:"Angles/ISA",makes:"JSW Steel, SAIL",remarks:""},{id:"QAM-003",matType:"Channels/ISMC",makes:"JSW Steel, SAIL",remarks:""},{id:"QAM-004",matType:"Beams/ISMB",makes:"JSW Steel, SAIL",remarks:"JSW preferred"}],
@@ -5271,11 +5321,11 @@ const SEED_ORDERS = [
       { id:"D103", drawingNo:"BHEL-ESS-ACC-01", title:"Access Platform & Handrail",qty:1, unitWt:360.0, totalWt:360.0,  revNo:"A",drawingDate:"2025-01-22",receivedDate:"",           phase:1,priority:3,driveLink:"",fileType:"",status:"pending",revHistory:[] },
     ],
     parts:[
-      { id:"P101",drawingId:"D101",revNo:"A",itemNo:1,markNo:"FR-101",desc:"MAIN COLUMN RHS",    fabType:"Fabricate",matType:"MS",grade:"E250",section:"RHS",  size:"100x50x4",length:3500,width:0,qtyPerDrg:4,clientUnitWt:32.27, clientTotalWt:129.08, calcUnitWt:32.27, calcTotalWt:129.08, jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
-      { id:"P102",drawingId:"D101",revNo:"A",itemNo:2,markNo:"FR-102",desc:"HORIZONTAL ISMB",    fabType:"Fabricate",matType:"MS",grade:"E250",section:"ISMB", size:"200",      length:2000,width:0,qtyPerDrg:3,clientUnitWt:50.8,  clientTotalWt:152.4,  calcUnitWt:50.8,  calcTotalWt:152.4,  jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
-      { id:"P103",drawingId:"D101",revNo:"A",itemNo:3,markNo:"PL-103",desc:"MOUNTING PLATE 16MM",fabType:"Fabricate",matType:"MS",grade:"E350",section:"PLATE",size:"16mm",     length:400, width:400,qtyPerDrg:2,clientUnitWt:20.096,clientTotalWt:40.192, calcUnitWt:20.096,calcTotalWt:40.192, jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
-      { id:"P104",drawingId:"D102",revNo:"A",itemNo:1,markNo:"PED-201",desc:"PEDESTAL ISMC",     fabType:"Fabricate",matType:"MS",grade:"E250",section:"ISMC", size:"200",      length:800, width:0,qtyPerDrg:2,clientUnitWt:17.68, clientTotalWt:35.36,  calcUnitWt:17.68, calcTotalWt:35.36,  jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
-      { id:"P105",drawingId:"D102",revNo:"A",itemNo:2,markNo:"BP-202", desc:"BASE PLATE 12MM",   fabType:"Fabricate",matType:"MS",grade:"E250",section:"PLATE",size:"12mm",     length:300, width:300,qtyPerDrg:1,clientUnitWt:8.478, clientTotalWt:8.478,  calcUnitWt:8.478, calcTotalWt:8.478,  jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
+      { id:"P101",drawingId:"D101",revNo:"A",itemNo:1,markNo:"FR-101",desc:"MAIN COLUMN RHS",    fabType:"Fabricate",matType:"MS",grade:"E250",section:"RHS",  size:"100x50x4",matCode:"RHS/MS/E250/100x50x4", length:3500,width:0,qtyPerDrg:4,clientUnitWt:32.27, clientTotalWt:129.08, calcUnitWt:32.27, calcTotalWt:129.08, jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
+      { id:"P102",drawingId:"D101",revNo:"A",itemNo:2,markNo:"FR-102",desc:"HORIZONTAL ISMB",    fabType:"Fabricate",matType:"MS",grade:"E250",section:"ISMB", size:"200",     matCode:"ISMB/MS/E250/200",     length:2000,width:0,qtyPerDrg:3,clientUnitWt:50.8,  clientTotalWt:152.4,  calcUnitWt:50.8,  calcTotalWt:152.4,  jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
+      { id:"P103",drawingId:"D101",revNo:"A",itemNo:3,markNo:"PL-103",desc:"MOUNTING PLATE 16MM",fabType:"Fabricate",matType:"MS",grade:"E350",section:"PLATE",size:"16mm",    matCode:"PLATE/MS/E350/16mm",   length:400, width:400,qtyPerDrg:2,clientUnitWt:20.096,clientTotalWt:40.192, calcUnitWt:20.096,calcTotalWt:40.192, jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
+      { id:"P104",drawingId:"D102",revNo:"A",itemNo:1,markNo:"PED-201",desc:"PEDESTAL ISMC",     fabType:"Fabricate",matType:"MS",grade:"E250",section:"ISMC", size:"200",     matCode:"ISMC/MS/E250/200",     length:800, width:0,qtyPerDrg:2,clientUnitWt:17.68, clientTotalWt:35.36,  calcUnitWt:17.68, calcTotalWt:35.36,  jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
+      { id:"P105",drawingId:"D102",revNo:"A",itemNo:2,markNo:"BP-202", desc:"BASE PLATE 12MM",   fabType:"Fabricate",matType:"MS",grade:"E250",section:"PLATE",size:"12mm",    matCode:"PLATE/MS/E250/12mm",   length:300, width:300,qtyPerDrg:1,clientUnitWt:8.478, clientTotalWt:8.478,  calcUnitWt:8.478, calcTotalWt:8.478,  jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
     ],
     quality:{ tpiRequired:false,tpiAgencyId:"",tpiAgencyName:"",tpiHoldPoints:[],wpsDoc:"",
       approvedMakes:[{id:"QAM-101",matType:"MS Plates",makes:"JSW Steel, SAIL, Tata Steel",remarks:""},{id:"QAM-102",matType:"RHS/SHS",makes:"APL Apollo, Tata Structura",remarks:""}],
@@ -5380,6 +5430,69 @@ const TabGSTBilling = ({ order, onChange, canEdit }) => {
         <div><label style={css.label}>State</label><input value={b.state||""} onChange={e=>upd("state",e.target.value)} disabled={!canEdit} style={css.input} /></div>
         <div><label style={css.label}>State Code</label><input value={b.stateCode||""} onChange={e=>upd("stateCode",e.target.value)} disabled={!canEdit} style={css.input} /></div>
       </div>
+    </div>
+  );
+};
+const TabTransport = ({ order, onChange, canEdit }) => {
+  const [form, setForm] = React.useState(order.transport||{transportScope:'per_dispatch',preferredTransporter:'',vehicleType:'',distanceKm:0,freightEstimate:0,insurance:false,odc:false,nightRestriction:false,policeEscort:false,specialReqs:'',freightBilling:'dispatch_line',clientTransporter:'',clientVehicleContact:'',loadingInstructions:''});
+  const [dirty, setDirty] = React.useState(false);
+  const upd = (field, val) => { setForm(f=>({...f,[field]:val})); setDirty(true); };
+  const save = () => { onChange({...order, transport:form}); setDirty(false); };
+  const discard = () => { setForm(order.transport||{}); setDirty(false); };
+  const scope = form.transportScope||'per_dispatch';
+  const weArrange = scope==='we_separate'||scope==='we_included';
+  return (
+    <div>
+      {/* Section 1 */}
+      <div style={{...css.card, marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Transport Scope</div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}>
+          {[['client','Client arranges transport to site'],['we_separate','We arrange — billed separately'],['we_included','We arrange — included in order value'],['per_dispatch','Per dispatch — decided at time of dispatch']].map(([v,l])=>(
+            <label key={v} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+              <input type="radio" checked={scope===v} onChange={()=>upd('transportScope',v)} disabled={!canEdit} />
+              <span style={{fontSize:13,color:T.text}}>{l}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      {/* Section 2 — Our Transport Details */}
+      {weArrange&&<div style={{...css.card,marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Our Transport Details</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <MField label="Preferred Transporter"><input value={form.preferredTransporter||''} onChange={e=>upd('preferredTransporter',e.target.value)} disabled={!canEdit} style={css.input} /></MField>
+          <MField label="Vehicle Type"><select value={form.vehicleType||''} onChange={e=>upd('vehicleType',e.target.value)} disabled={!canEdit} style={css.input}><option value=''>Select...</option><option>Open flatbed</option><option>Crane-assisted</option><option>Closed body</option><option>Low-bed trailer</option><option>Own vehicle</option></select></MField>
+          <MField label="Approx Distance (km)"><input type="number" value={form.distanceKm||''} onChange={e=>upd('distanceKm',+e.target.value)} disabled={!canEdit} style={css.input} /></MField>
+          <MField label="Freight Estimate per Trip (₹)"><input type="number" value={form.freightEstimate||''} onChange={e=>upd('freightEstimate',+e.target.value)} disabled={!canEdit} style={css.input} /></MField>
+          <MField label="Insurance"><select value={form.insurance?'yes':'no'} onChange={e=>upd('insurance',e.target.value==='yes')} disabled={!canEdit} style={css.input}><option value='no'>No</option><option value='yes'>Yes</option></select></MField>
+          <MField label="ODC (Over-Dimensional Cargo)"><select value={form.odc?'yes':'no'} onChange={e=>upd('odc',e.target.value==='yes')} disabled={!canEdit} style={css.input}><option value='no'>No</option><option value='yes'>Yes</option></select></MField>
+          {form.odc&&<div style={{gridColumn:'span 2'}}><MField label="ODC Notes"><input value={form.odcNote||''} onChange={e=>upd('odcNote',e.target.value)} disabled={!canEdit} style={css.input} /></MField></div>}
+          <MField label="Night Movement Restriction"><select value={form.nightRestriction?'yes':'no'} onChange={e=>upd('nightRestriction',e.target.value==='yes')} disabled={!canEdit} style={css.input}><option value='no'>No</option><option value='yes'>Yes</option></select></MField>
+          <MField label="Police Escort Required"><select value={form.policeEscort?'yes':'no'} onChange={e=>upd('policeEscort',e.target.value==='yes')} disabled={!canEdit} style={css.input}><option value='no'>No</option><option value='yes'>Yes</option></select></MField>
+          <div style={{gridColumn:'span 2'}}><MField label="Special Requirements"><textarea value={form.specialReqs||''} onChange={e=>upd('specialReqs',e.target.value)} disabled={!canEdit} rows={2} style={{...css.input,width:'100%',resize:'vertical',fontFamily:T.font}} /></MField></div>
+        </div>
+      </div>}
+      {/* Section 3 — Freight Billing */}
+      {scope==='we_separate'&&<div style={{...css.card,marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Freight Billing</div>
+        <div style={{display:'flex',gap:16}}>
+          {[['dispatch_line','Add as line item on dispatch invoice'],['separate_invoice','Raise separate freight invoice']].map(([v,l])=>(
+            <label key={v} style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+              <input type="radio" checked={(form.freightBilling||'dispatch_line')===v} onChange={()=>upd('freightBilling',v)} disabled={!canEdit} />
+              <span style={{fontSize:13,color:T.text}}>{l}</span>
+            </label>
+          ))}
+        </div>
+      </div>}
+      {/* Section 4 — Client Arranges */}
+      {scope==='client'&&<div style={{...css.card,marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>Client Transporter Details</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+          <MField label="Transporter Name"><input value={form.clientTransporter||''} onChange={e=>upd('clientTransporter',e.target.value)} disabled={!canEdit} style={css.input} /></MField>
+          <MField label="Vehicle Contact"><input value={form.clientVehicleContact||''} onChange={e=>upd('clientVehicleContact',e.target.value)} disabled={!canEdit} style={css.input} /></MField>
+          <div style={{gridColumn:'span 2'}}><MField label="Loading Instructions"><textarea value={form.loadingInstructions||''} onChange={e=>upd('loadingInstructions',e.target.value)} disabled={!canEdit} rows={3} style={{...css.input,width:'100%',resize:'vertical',fontFamily:T.font}} /></MField></div>
+        </div>
+      </div>}
+      {dirty&&canEdit&&<div style={{display:'flex',gap:8}}><button onClick={save} style={css.btn.primary}>✓ Save Transport</button><button onClick={discard} style={css.btn.secondary}>Discard</button></div>}
     </div>
   );
 };
@@ -6003,6 +6116,17 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
           <MField label="Qty Per Drawing *"><input type="number" value={form.qtyPerDrg||""} onChange={e=>setForm(f=>({...f,qtyPerDrg:+e.target.value}))} style={css.input} /></MField>
           <MField label="Client Unit Wt (kg)"><input type="number" value={form.clientUnitWt||""} onChange={e=>setForm(f=>({...f,clientUnitWt:+e.target.value,clientTotalWt:(+e.target.value)*(form.qtyPerDrg||0)}))} style={css.input} /></MField>
           <MField label="Joints Allowed"><select value={form.jointsAllowed?"yes":"no"} onChange={e=>setForm(f=>({...f,jointsAllowed:e.target.value==="yes"}))} style={css.input}><option value="no">No</option><option value="yes">Yes</option></select></MField>
+          {form.fabType==="Fabricate"&&<div style={{gridColumn:'span 2'}}>
+            <div style={css.label}>Required Operations</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:4}}>
+              {['Cut','Bevel','Drill','Grind','Mark','Notch'].map(op=>(
+                <label key={op} style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer',fontSize:12}}>
+                  <input type="checkbox" checked={(form.requiredOps||[]).includes(op)} onChange={e=>{const ops=form.requiredOps||[];setForm(f=>({...f,requiredOps:e.target.checked?[...ops,op]:ops.filter(o=>o!==op)}));}} />
+                  <span style={{color:T.text}}>{op}</span>
+                </label>
+              ))}
+            </div>
+          </div>}
         </div>
         <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}>
           <button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button>
@@ -6098,7 +6222,7 @@ const TabQuality = ({ order, onChange, canEdit }) => {
         {(q.paintCoats||[]).map((c,i)=><div key={i} style={{ ...css.card, marginBottom:8 }}><div style={{ display:"flex", gap:8, marginBottom:12 }}><Badge color={c.type==="Primer"?"blue":c.type==="MIO"?"amber":"green"}>Coat {c.coatNo} — {c.type}</Badge><span style={{ fontSize:12, color:T.textMid }}>DFT: {c.dft}μm · Dry: {c.dryTime}h</span></div><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr auto", gap:10, alignItems:"end" }}><div><div style={css.label}>Type</div><select value={c.type||"Primer"} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],type:e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input}><option>Primer</option><option>MIO</option><option>Finish</option><option>Intermediate</option></select></div><div><div style={css.label}>DFT (μm)</div><input type="number" value={c.dft||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],dft:+e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Make</div><input value={c.make||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],make:e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Product</div><input value={c.product||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],product:e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Dry Time (h)</div><input type="number" value={c.dryTime||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],dryTime:+e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div>{canEdit&&<button onClick={()=>updQ("paintCoats",q.paintCoats.filter((_,j)=>j!==i))} style={{ ...css.btn.ghost, color:T.red }}>✕</button>}</div></div>)}
       </div>}
       {activeQ==="weld"&&<div style={{ ...css.card }}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Process</label><select value={q.weldSpec?.process||"SMAW"} onChange={e=>updQ("weldSpec",{...q.weldSpec,process:e.target.value})} disabled={!canEdit} style={css.input}><option>SMAW</option><option>GMAW</option><option>FCAW</option><option>SAW</option></select></div><div><label style={css.label}>Electrode Type</label><input value={q.weldSpec?.electrodeType||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,electrodeType:e.target.value})} disabled={!canEdit} style={css.input} placeholder="E7018" /></div><div><label style={css.label}>Grade</label><input value={q.weldSpec?.grade||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,grade:e.target.value})} disabled={!canEdit} style={css.input} /></div><div><label style={css.label}>Make</label><input value={q.weldSpec?.make||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,make:e.target.value})} disabled={!canEdit} style={css.input} placeholder="Lincoln Electric..." /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Remarks</label><input value={q.weldSpec?.remarks||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,remarks:e.target.value})} disabled={!canEdit} style={css.input} /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>WPS/WPQ Document</label><div style={{ display:"flex", gap:8 }}><input value={q.wpsDoc||""} onChange={e=>updQ("wpsDoc",e.target.value)} disabled={!canEdit} style={{ ...css.input, flex:1 }} placeholder="Drive link..." />{q.wpsDoc&&<a href={q.wpsDoc} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none" }}>View</a>}</div><div style={{ fontSize:11, color:T.red, marginTop:4 }}>⚠ Critical — required for TPI inspection</div></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Welding sequence / distortion control notes (optional)</label><textarea value={q.weldSpec?.weldingSequence||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,weldingSequence:e.target.value})} disabled={!canEdit} rows={3} placeholder="e.g. Weld base plates before flange plates. Alternate sides on long members. Back-step on plates over 300mm." style={{ ...css.input, width:"100%", resize:"vertical", fontFamily:T.font }} /></div></div></div>}
-      {activeQ==="tpi"&&<div style={{ ...css.card }}><div style={{ marginBottom:12 }}><div style={css.label}>TPI Required</div><div style={{ display:"flex", gap:12 }}><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===true} onChange={()=>updQ("tpiRequired",true)} disabled={!canEdit} /><span style={{ color:T.text }}>Yes</span></label><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===false} onChange={()=>updQ("tpiRequired",false)} disabled={!canEdit} /><span style={{ color:T.text }}>No</span></label></div></div>{q.tpiRequired&&<div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>TPI Agency</label><select value={q.tpiAgencyId||""} onChange={e=>{ const a=TPI_AGENCIES.find(t=>t.id===e.target.value); updQ("tpiAgencyId",e.target.value); updQ("tpiAgencyName",a?.name||""); }} disabled={!canEdit} style={css.input}><option value="">Select...</option>{TPI_AGENCIES.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></div><div><div style={css.label}>Hold Points</div><div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>{["welding","painting","rm_inspection"].map(hp=><label key={hp} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={(q.tpiHoldPoints||[]).includes(hp)} disabled={!canEdit} onChange={e=>{ const pts=q.tpiHoldPoints||[]; updQ("tpiHoldPoints",e.target.checked?[...pts,hp]:pts.filter(p=>p!==hp)); }} /><span style={{ fontSize:12, color:T.text, textTransform:"capitalize" }}>{hp.replace("_"," ")}</span></label>)}</div></div></div>}</div>}
+      {activeQ==="tpi"&&<div style={{ ...css.card }}><div style={{ marginBottom:12 }}><div style={css.label}>TPI Required</div><div style={{ display:"flex", gap:12 }}><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===true} onChange={()=>updQ("tpiRequired",true)} disabled={!canEdit} /><span style={{ color:T.text }}>Yes</span></label><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===false} onChange={()=>updQ("tpiRequired",false)} disabled={!canEdit} /><span style={{ color:T.text }}>No</span></label></div></div>{q.tpiRequired&&<div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>TPI Agency</label><select value={q.tpiAgencyId||""} onChange={e=>{ const a=TPI_AGENCIES.find(t=>t.id===e.target.value); updQ("tpiAgencyId",e.target.value); updQ("tpiAgencyName",a?.name||""); }} disabled={!canEdit} style={css.input}><option value="">Select...</option>{TPI_AGENCIES.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></div><div><div style={css.label}>Hold Points</div><div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>{[["rm_inspection","RM Inspection"],["fit_up","Fit-Up"],["welding","Welding"],["blasting","Blasting"],["painting","Painting"]].map(([hp,label])=><label key={hp} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={(q.tpiHoldPoints||[]).includes(hp)} disabled={!canEdit} onChange={e=>{ const pts=q.tpiHoldPoints||[]; updQ("tpiHoldPoints",e.target.checked?[...pts,hp]:pts.filter(p=>p!==hp)); }} /><span style={{ fontSize:12, color:T.text }}>{label}</span></label>)}</div></div></div>}</div>}
       {activeQ==="dispatch"&&<div style={{ ...css.card }}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Packing Type</label><select value={q.dispatchSpec?.packingType||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,packingType:e.target.value})} disabled={!canEdit} style={css.input}><option value="">Select...</option><option>Shrink wrap only</option><option>Wooden rafters + shrink wrap</option><option>Wooden box</option><option>Custom</option></select></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Remarks</label><textarea value={q.dispatchSpec?.remarks||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,remarks:e.target.value})} disabled={!canEdit} style={{ ...css.input, minHeight:60, resize:"vertical" }} /></div></div></div>}
       {activeQ==="mdcc"&&<div>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}><div style={{ fontSize:14, fontWeight:700, color:T.text }}>MDCC Dossier Checklist</div>{canEdit&&<button onClick={()=>updQ("mdccDocs",[...(q.mdccDocs||[]),{id:`MDCC-D-${Date.now()}`,docName:"",mandatory:true}])} style={css.btn.primary}>+ Add Document</button>}</div>
@@ -6168,6 +6292,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
   useEffect(() => { if (isFinanceRole) setActiveTab("milestones"); }, []);
   const allTabs = [
     {id:"basic",label:"Basic Details"},{id:"gst",label:"GST & Billing"},{id:"shipping",label:"Shipping"},
+    {id:"transport",label:"Transport"},
     {id:"milestones",label:"Payment Milestones"},{id:"drawings",label:"Drawing Register",planningOnly:true},
     {id:"parts",label:"Drawing Part List",planningOnly:true},{id:"quality",label:"Quality",planningOnly:true},
     {id:"finance",label:"Finance & Amendments"},
@@ -6208,6 +6333,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
       {activeTab==="basic"      && <TabBasicDetails  order={localOrder} onChange={update} canEdit={canEdit} clients={clients||[]} />}
       {activeTab==="gst"        && <TabGSTBilling    order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="shipping"   && <TabShipping      order={localOrder} onChange={update} canEdit={canEdit} />}
+      {activeTab==="transport"   && <TabTransport     order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="milestones" && <TabMilestones    order={localOrder} onChange={update} canEdit={canEditFinance} />}
       {activeTab==="drawings"   && <TabDrawings      order={localOrder} onChange={update} canEdit={canEdit} user={user} />}
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
@@ -7703,26 +7829,30 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
 // PRODUCTION STEP 6: SUPERVISOR SOFT GATE
 // ═══════════════════════════════════════════════════════════════════════════════
 const STAGE_NEXT = {
-  cutting:"fitup", fitup:"welding", welding:"tpi_weld", tpi_weld:"blasting",
-  blasting:"painting", painting:"tpi_paint", tpi_paint:"mdcc", mdcc:"dispatch", dispatch:null,
+  cutting:"cutting_qc", cutting_qc:"fitup", fitup:"welding", welding:"tpi_weld", tpi_weld:"blasting",
+  tpi_fitup:"welding", blasting:"painting", tpi_blast:"painting",
+  painting:"tpi_paint", tpi_paint:"mdcc", mdcc:"dispatch", dispatch:null,
 };
 
 const STAGE_CHECKLISTS = {
-  fitup:    ["All parts present per drawing","Dimensions within tolerance","Alignment acceptable","Tack welds correctly placed"],
-  welding:  ["All joints welded","Visual weld quality acceptable","No undercutting or porosity visible","Spatter cleaned"],
-  blasting: ["Surface grade achieved (Sa 2.5 / Sa 3)","No missed areas","Completed within time limit before painting","All pieces re-marked with paint pen post-blast","Mark numbers legible and match cut list","Surface profile achieved"],
+  cutting_qc: ["Length verified (±2mm)","Width/height verified","All pieces measured","Cut face smooth","Grinding complete","No heat distortion","All parts stamped","Stamp location correct","Mark legible"],
+  fitup:    ["All parts present per drawing","Dimensions within tolerance","Alignment acceptable","Tack welds correctly placed","Overall length checked","Diagonal 1 checked","Diagonal 2 checked"],
+  welding:  ["All joints welded","Visual weld quality acceptable","No undercutting or porosity visible","Spatter cleaned","Weld gauge reading noted","Post-weld length checked"],
+  blasting: ["Surface grade achieved (Sa 2.5 / Sa 3)","No missed areas","Profile readings taken","Salt contamination checked","Re-marking verified"],
+  tpi_fitup:["Fit-up inspection report reviewed","Dimensional check acceptable per report","Inspector sign-off obtained"],
   tpi_weld: ["Weld inspection report reviewed","All joints acceptable per report","NDE records complete (if required)"],
+  tpi_blast:["Blasting inspection report reviewed","Surface profile readings acceptable","Salt contamination within spec"],
   tpi_paint:["Paint inspection report reviewed","DFT readings within specification","Holiday test passed"],
   mdcc:     ["MTC copies attached","TPI Weld report attached","TPI Paint report attached","Dimensional report attached","Packing list attached","Test certificates attached"],
   dispatch: ["Material loaded onto vehicle","Dispatch challan prepared","Gate pass issued"],
 };
 
 const SUPERVISOR_STAGES = {
-  super_admin:         ["fitup","welding","tpi_weld","blasting","painting","tpi_paint","mdcc","dispatch"],
-  production_engineer: ["fitup","welding","blasting"],
+  super_admin:         ["cutting_qc","fitup","welding","tpi_fitup","tpi_weld","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"],
+  production_engineer: ["cutting_qc","fitup","welding","blasting"],
   blasting_engineer:   ["blasting"],
   painting_engineer:   ["painting"],
-  qc_admin:            ["tpi_weld","painting","tpi_paint","mdcc"],
+  qc_admin:            ["cutting_qc","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
   dispatch_admin:      ["dispatch"],
 };
 
@@ -7776,8 +7906,15 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
 
   const doApprove = (group, remarks) => {
     const stage = group.stage;
-    const isTpi = stage==="tpi_weld"||stage==="tpi_paint";
-    const nextStage = STAGE_NEXT[stage];
+    const isTpi = stage==="tpi_weld"||stage==="tpi_paint"||stage==="tpi_fitup"||stage==="tpi_blast";
+    const orderForGroup = orders.find(o=>o.id===group.orderId);
+    const orderQuality = orderForGroup?.quality||{};
+    let nextStage = STAGE_NEXT[stage];
+    if (stage==="fitup") {
+      nextStage = (orderQuality.tpiHoldPoints||[]).includes('fit_up') ? 'tpi_fitup' : 'welding';
+    } else if (stage==="blasting") {
+      nextStage = (orderQuality.tpiHoldPoints||[]).includes('blasting') ? 'tpi_blast' : 'painting';
+    }
     const ids = group.insts.map(i=>i.instanceId);
     const checkedItems = Object.keys(checks).filter(k=>checks[k]);
     setInstances(prev => prev.map(i => {
@@ -7854,7 +7991,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
   const selGD = selGroup ? groups[selGroup] : null;
   if (selGD) {
     const stage = selGD.stage;
-    const isTpi  = stage==="tpi_weld"||stage==="tpi_paint";
+    const isTpi  = stage==="tpi_weld"||stage==="tpi_paint"||stage==="tpi_fitup"||stage==="tpi_blast";
     const isMdcc = stage==="mdcc";
     const isPainting = stage==="painting";
     // MDCC checklist driven by order's mdccDocs; fall back to static list
@@ -7865,9 +8002,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
       : (STAGE_CHECKLISTS[stage] || []);
     const tpiDetailsOk = !isTpi || (tpiForm.agency&&tpiForm.reportNo&&tpiForm.reportDate);
     const mdccOk = !isMdcc || mdccRefNo.trim().length > 0;
-    const allChecked = checklist.every(item=>checks[item]) &&
-      (isPainting ? (dft&&!isNaN(dft)&&parseFloat(dft)>0) : true) &&
-      tpiDetailsOk && mdccOk;
+    const allChecked = checklist.every(item=>checks[item]) && tpiDetailsOk && mdccOk;
 
     return (
       <div>
@@ -7957,20 +8092,85 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
               ))}
             </div>
           )}
-          {isPainting && (
-            <div style={{ marginTop:checklist.length>0?12:0 }}>
-              <label style={{ fontSize:11,fontWeight:700,color:T.textMid,display:"block",marginBottom:4 }}>DFT READING (μm) — REQUIRED</label>
-              <div style={{ display:"flex",alignItems:"center",gap:8 }}>
-                <input type="number" min="0" step="0.1" value={dft} onChange={e=>setDft(e.target.value)}
-                  placeholder="e.g. 75" style={{ ...css.input,width:120 }} />
-                <span style={{ fontSize:12,color:T.textMid }}>μm</span>
-              </div>
-            </div>
-          )}
           {checklist.length===0&&!isPainting&&(
             <div style={{ fontSize:13,color:T.textMid }}>No standard checklist for this stage. Add remarks before approving.</div>
           )}
         </div>
+        {/* Fitup measurements */}
+        {stage==="fitup" && (
+          <div style={{...css.card,marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>DIMENSIONAL READINGS (mm)</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              {[['fitupLength','Overall Length'],['fitupDiag1','Diagonal 1'],['fitupDiag2','Diagonal 2'],['fitupKeyPos','Key Position']].map(([k,l])=>(
+                <div key={k}>
+                  <label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>{l}</label>
+                  <input type="number" value={docRefs[k]||''} onChange={e=>setDocRefs(p=>({...p,[k]:e.target.value}))} placeholder="mm" style={{...css.input,width:'100%'}} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* Welding NDT */}
+        {stage==="welding" && (
+          <div style={{...css.card,marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>WELD GAUGE & NDT</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Weld Gauge Reading (mm)</label><input type="number" value={docRefs['weldGauge']||''} onChange={e=>setDocRefs(p=>({...p,weldGauge:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Post-Weld Length (mm)</label><input type="number" value={docRefs['postWeldLength']||''} onChange={e=>setDocRefs(p=>({...p,postWeldLength:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+            </div>
+            <div style={{marginTop:8}}>
+              <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12}}>
+                <input type="checkbox" checked={!!docRefs['ndtRequired']} onChange={e=>setDocRefs(p=>({...p,ndtRequired:e.target.checked}))} />
+                <span style={{color:T.text}}>NDT Required</span>
+              </label>
+              {docRefs['ndtRequired']&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
+                <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>NDT Type(s)</label><input value={docRefs['ndtTypes']||''} onChange={e=>setDocRefs(p=>({...p,ndtTypes:e.target.value}))} placeholder="UT, MPI, RT, PT" style={{...css.input,width:'100%'}} /></div>
+                <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Result</label><select value={docRefs['ndtResult']||'Pass'} onChange={e=>setDocRefs(p=>({...p,ndtResult:e.target.value}))} style={css.input}><option>Pass</option><option>Fail</option><option>Conditional</option></select></div>
+                <div style={{gridColumn:'span 2'}}><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Report Link</label><input value={docRefs['ndtLink']||''} onChange={e=>setDocRefs(p=>({...p,ndtLink:e.target.value}))} placeholder="Drive link..." style={{...css.input,width:'100%'}} /></div>
+              </div>}
+            </div>
+          </div>
+        )}
+        {/* Blasting profile readings */}
+        {stage==="blasting" && (
+          <div style={{...css.card,marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>SURFACE PROFILE READINGS (µm)</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+              {['Reading 1','Reading 2','Reading 3'].map((l,i)=>(
+                <div key={i}><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>{l}</label><input type="number" value={docRefs[`profile${i+1}`]||''} onChange={e=>setDocRefs(p=>({...p,[`profile${i+1}`]:e.target.value}))} placeholder="µm" style={{...css.input,width:'100%'}} /></div>
+              ))}
+            </div>
+            {[docRefs['profile1'],docRefs['profile2'],docRefs['profile3']].some(v=>v)&&(()=>{
+              const vals=[docRefs['profile1'],docRefs['profile2'],docRefs['profile3']].filter(v=>v).map(Number);
+              const avg=vals.reduce((s,v)=>s+v,0)/vals.length;
+              const pass=avg>=40&&avg<=70;
+              return <div style={{marginTop:6,fontSize:11,color:pass?T.green:T.red}}>Avg: {avg.toFixed(1)} µm — {pass?"PASS (40–70 µm)":"FAIL (outside 40–70 µm range)"}</div>;
+            })()}
+            <div style={{marginTop:8,display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Salt Contamination (mg/m²)</label><input type="number" value={docRefs['saltLevel']||''} onChange={e=>setDocRefs(p=>({...p,saltLevel:e.target.value}))} style={{...css.input,width:'100%'}} />{docRefs['saltLevel']&&<div style={{fontSize:11,color:+docRefs['saltLevel']<=20?T.green:T.red,marginTop:2}}>{+docRefs['saltLevel']<=20?"PASS (≤20 mg/m²)":"FAIL (>20 mg/m²)"}</div>}</div>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Dust Rating (1–5)</label><input type="number" min="1" max="5" value={docRefs['dustRating']||''} onChange={e=>setDocRefs(p=>({...p,dustRating:e.target.value}))} style={{...css.input,width:'100%'}} />{docRefs['dustRating']&&<div style={{fontSize:11,color:+docRefs['dustRating']<=2?T.green:T.red,marginTop:2}}>{+docRefs['dustRating']<=2?"PASS (≤2)":"FAIL (>2, ISO 8502-3)"}</div>}</div>
+            </div>
+          </div>
+        )}
+        {/* Painting DFT per coat */}
+        {isPainting && (
+          <div style={{...css.card,marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>PAINT BATCH & DFT READINGS</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Paint Batch No.</label><input value={docRefs['paintBatchNo']||''} onChange={e=>setDocRefs(p=>({...p,paintBatchNo:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Temp (°C)</label><input type="number" value={docRefs['envTemp']||''} onChange={e=>setDocRefs(p=>({...p,envTemp:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>RH (%)</label><input type="number" value={docRefs['envRH']||''} onChange={e=>setDocRefs(p=>({...p,envRH:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Dew Point (°C)</label><input type="number" value={docRefs['envDewPt']||''} onChange={e=>setDocRefs(p=>({...p,envDewPt:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Surface Temp (°C)</label><input type="number" value={docRefs['envSurfTemp']||''} onChange={e=>setDocRefs(p=>({...p,envSurfTemp:e.target.value}))} style={{...css.input,width:'100%'}} />{(docRefs['envSurfTemp']&&docRefs['envDewPt'])&&<div style={{fontSize:11,color:+docRefs['envSurfTemp']>=(+docRefs['envDewPt']+3)?T.green:T.red,marginTop:2}}>{+docRefs['envSurfTemp']>=(+docRefs['envDewPt']+3)?"OK (surface ≥ dew+3)":"WARNING: surface temp too low"}</div>}</div>
+            </div>
+            <div style={{fontSize:11,color:T.textMid,marginBottom:4}}>DFT READINGS (µm) — 5 measurements</div>
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {[1,2,3,4,5].map(i=>(
+                <input key={i} type="number" value={docRefs[`dft${i}`]||''} onChange={e=>setDocRefs(p=>({...p,[`dft${i}`]:e.target.value}))} placeholder={`R${i}`} style={{...css.input,width:60}} />
+              ))}
+            </div>
+          </div>
+        )}
         {/* MDCC reference number — required for MDCC approval */}
         {isMdcc && (
           <div style={{ ...css.card, marginBottom:14, border:`1px solid ${T.accent}44` }}>
@@ -8400,6 +8600,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
   // Step 3 — smart suggestions
   const [suggestions, setSuggestions] = useState([]); // [{...drawing, score:"A"|"B", extraKg}]
   const [addedSugg, setAddedSugg] = useState({});
+  const [expandedDrg, setExpandedDrg] = useState(new Set());
 
   // Step 4 — machine assignments
   const [machineAsgn, setMachineAsgn] = useState({}); // {matCode: {machineId,lotId,startDate,endDate}}
@@ -8422,22 +8623,26 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
 
   const toggleDrw = key => setSelDrawings(prev => {
     const exists = prev.find(s=>s.drawingId===key.drawingId&&s.orderId===key.orderId);
-    return exists ? prev.filter(s=>!(s.drawingId===key.drawingId&&s.orderId===key.orderId)) : [...prev, key];
+    if (exists) return prev.filter(s=>!(s.drawingId===key.drawingId&&s.orderId===key.orderId));
+    const alreadyReleased = releases.filter(r=>r.status==="in_progress").flatMap(r=>r.drawings).filter(d=>d.drawingId===key.drawingId&&d.orderId===key.orderId).length;
+    const unitsToRelease = Math.max(1, (key.drawing?.qty||1) - alreadyReleased);
+    return [...prev, {...key, unitsToRelease}];
   });
   const isSelected = (drawingId, orderId) => selDrawings.some(s=>s.drawingId===drawingId&&s.orderId===orderId);
 
   // ── Step 2 compute ──
   const computeRmPicture = () => {
     const byMat = {};
-    selDrawings.forEach(({drawing, order}) => {
-      const dQty = drawing.qty || 1;
+    selDrawings.forEach(entry => {
+      const {drawing, order} = entry;
+      const unitsToRelease = entry.unitsToRelease ?? (drawing.qty || 1);
       const drawingParts = (order.parts||[]).filter(p=>p.drawingId===drawing.id);
       drawingParts.filter(p=>p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure").forEach(p => {
         const sec = p.sectionType||p.section||"";
         const key = p.matCode||sec||"Unknown";
         if (!byMat[key]) byMat[key] = {matCode:key, section:sec, grade:p.grade||"", requiredKg:0, drawings:[], lots:[]};
-        byMat[key].requiredKg += (p.clientTotalWt||0) * dQty;
-        byMat[key].drawings.push({drawingNo:drawing.drawingNo, orderId:order.id, kg:(p.clientTotalWt||0)*dQty, qty:dQty});
+        byMat[key].requiredKg += (p.clientTotalWt||0) * unitsToRelease;
+        byMat[key].drawings.push({drawingNo:drawing.drawingNo, orderId:order.id, kg:(p.clientTotalWt||0)*unitsToRelease, qty:unitsToRelease});
       });
     });
     const rows = Object.values(byMat).map(row => {
@@ -8523,8 +8728,14 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
 
   // ── Step 4 helpers ──
   const updAsgn = (matCode, field, val) =>
-    setMachineAsgn(prev=>({...prev,[matCode]:{...prev[matCode],[field]:val}}));
-  const cutMachines = (machines||[]).filter(m=>m.type==="Cutting"&&m.active!==false);
+    setMachineAsgn(prev => {
+      const defaultStart = new Date().toISOString().slice(0,10);
+      const defaultEnd   = new Date(Date.now()+2*864e5).toISOString().slice(0,10);
+      const existing = prev[matCode] || {machineId:"",lotId:"",startDate:defaultStart,endDate:defaultEnd};
+      return {...prev, [matCode]: {...existing, [field]: val}};
+    });
+  const fmtDateDisp = d => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : "";
+  const cutMachines = (machines||[]).filter(m=>m.active!==false&&(m.capabilities||[]).some(c=>['cut_straight','cut_profile','cut_straight'].includes(c)||m.type==="Cutting"));
 
   // ── Step 5 helpers ──
   const updCont = (drawingId, field, val) =>
@@ -8574,7 +8785,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
           <table style={{ width:"100%", borderCollapse:"collapse", background:T.bgCard, borderRadius:8, overflow:"hidden" }}>
             <thead>
               <tr>
-                {["","Drawing No","Order","Client","Parts","Weight (kg)","Tier","Priority","RM"].map(h=>(
+                {["","Drawing No","Order","Client","Parts","Weight (kg)","Tier","Priority","Release Qty"].map(h=>(
                   <th key={h} style={{ padding:"8px 10px", fontSize:11, color:T.textMid, fontWeight:700, textAlign:"left", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -8597,7 +8808,22 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{totalKg.toFixed(1)}</td>
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={TIER_COLOR[tier?.id]||"blue"}>{tier?.label||"?"}</Badge></td>
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{PRI_BADGE(score)}</td>
-                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:11, color:T.textMid }}>{drawing.receivedDate||"—"}</td>
+                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>
+                      {(() => {
+                        const selEntry = selDrawings.find(s=>s.drawingId===drawingId&&s.orderId===orderId);
+                        if (!sel) return <span style={{color:T.textLow,fontSize:11}}>—</span>;
+                        const maxUnits = drawing.qty||1;
+                        const curr = selEntry?.unitsToRelease||1;
+                        return (
+                          <div style={{display:'flex',alignItems:'center',gap:4}}>
+                            <button onClick={e=>{e.stopPropagation();if(curr>1)setSelDrawings(p=>p.map(s=>s.drawingId===drawingId&&s.orderId===orderId?{...s,unitsToRelease:curr-1}:s));}} style={{...css.btn.ghost,padding:'1px 6px',fontSize:12}}>−</button>
+                            <span style={{fontFamily:T.fontMono,fontSize:12,minWidth:20,textAlign:'center'}}>{curr}</span>
+                            <button onClick={e=>{e.stopPropagation();if(curr<maxUnits)setSelDrawings(p=>p.map(s=>s.drawingId===drawingId&&s.orderId===orderId?{...s,unitsToRelease:curr+1}:s));}} style={{...css.btn.ghost,padding:'1px 6px',fontSize:12}}>+</button>
+                            <span style={{fontSize:10,color:T.textLow}}>/{maxUnits}</span>
+                          </div>
+                        );
+                      })()}
+                    </td>
                   </tr>
                 );
               })}
@@ -8673,58 +8899,59 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
   );
 
   const Step3 = () => {
-    const scoreAsuggs = suggestions.filter(s=>s.suggScore==="A"&&!addedSugg[s.drawing.id+s.order.id]);
-    const scoreBsuggs = suggestions.filter(s=>s.suggScore==="B"&&!addedSugg[s.drawing.id+s.order.id]);
-    const addSugg = (sugg) => {
-      setSelDrawings(prev=>[...prev,{drawingId:sugg.drawing.id,orderId:sugg.order.id,drawing:sugg.drawing,order:sugg.order,tier:sugg.tier,score:sugg.score}]);
-      setAddedSugg(p=>({...p,[sugg.drawing.id+sugg.order.id]:true}));
+    const selSet = new Set(selDrawings.map(s=>s.drawingId+"|"+s.orderId));
+
+    const addSugg = (drawing, order) => {
+      if (selSet.has(drawing.id+"|"+order.id)) return;
+      const tier  = productionStandards ? getAssemblyTier(drawing, productionStandards) : {id:"simple",label:"Simple"};
+      const score = productionStandards ? getCriticalityScore(drawing, order, productionStandards) : 999;
+      const unitsToRelease = drawing.qty||1;
+      setSelDrawings(prev=>[...prev,{drawingId:drawing.id,orderId:order.id,drawing,order,tier,score,unitsToRelease}]);
+      setAddedSugg(p=>({...p,[drawing.id+order.id]:true}));
     };
+
+    // Section B — by matCode
+    const matGroups = {};
+    rmPicture.forEach(r => {
+      const candidates = orders.flatMap(order =>
+        (order.drawings||[]).filter(d=>d.receivedDate&&!activeReleaseDrawingIds.has(d.id)&&!selSet.has(d.id+"|"+order.id))
+          .map(d=>({drawing:d,order}))
+      ).filter(({drawing,order}) => {
+        const parts = (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure");
+        return parts.some(p=>(p.matCode||p.section)===r.matCode);
+      });
+      if (candidates.length > 0) matGroups[r.matCode] = candidates;
+    });
+
+    const hasAny = Object.keys(matGroups).length > 0;
+
     return (
       <div>
         <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 3 — Smart Suggestions</div>
-        <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>Additional drawings that can be added to this release based on remaining RM stock.</div>
-        {scoreAsuggs.length===0&&scoreBsuggs.length===0&&(()=>{
-          if (rmPicture.length===0) return <InfoBanner color="amber">No material requirements found for selected drawings. Add parts to the drawing part list first, then create a production release.</InfoBanner>;
-          const hasRemain = rmPicture.some(r=>r.availableKg>r.requiredKg);
-          if (!hasRemain) return <InfoBanner color="blue">Selected drawings use all available stock for these materials. No surplus remaining for additional drawings.</InfoBanner>;
-          return <InfoBanner color="blue">No other drawings require these materials. All available drawings have been selected or are already in an active release.</InfoBanner>;
-        })()}
-        {scoreAsuggs.length>0 && (
-          <div style={{ marginBottom:20 }}>
-            <div style={{ fontSize:13, fontWeight:700, color:T.green, marginBottom:8 }}>Add at no cost — stock fully covers</div>
-            {scoreAsuggs.map(s=>(
-              <div key={s.drawing.id+s.order.id} style={{ ...css.card, display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                <div>
-                  <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi }}>{s.drawing.drawingNo}</span>
-                  <span style={{ color:T.textMid, fontSize:11, marginLeft:8 }}>{s.order.id}</span>
-                  <Badge color={TIER_COLOR[s.tier?.id]||"blue"} style={{ marginLeft:8 }}>{s.tier?.label}</Badge>
-                  {s.makeConflict && <Badge color="amber" style={{ marginLeft:8 }}>Make conflict ⚠</Badge>}
+        <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>Additional drawings that share the same RM types and can be batched into this cutting run.</div>
+        {!hasAny && <InfoBanner color="blue">No additional drawings found that share RM types with your current selection.</InfoBanner>}
+        {Object.entries(matGroups).map(([matCode, candidates]) => (
+          <div key={matCode} style={{...css.card, marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.accentHi,marginBottom:8}}>Also needs {matCode} — add to this cutting run:</div>
+            {candidates.map(({drawing,order}) => {
+              const added = addedSugg[drawing.id+order.id];
+              const parts = (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure");
+              const extraKg = parts.filter(p=>(p.matCode||p.section)===matCode).reduce((s,p)=>s+(p.clientTotalWt||0),0) * (drawing.qty||1);
+              return (
+                <div key={drawing.id+order.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 0',borderBottom:`1px solid ${T.border}`}}>
+                  <div>
+                    <span style={{fontFamily:T.fontMono,fontSize:12,color:T.text,fontWeight:700}}>{drawing.drawingNo}</span>
+                    <span style={{fontSize:11,color:T.textMid,marginLeft:8}}>{order.id} · {drawing.qty} units · +{extraKg.toFixed(1)} kg {matCode}</span>
+                  </div>
+                  {added ? <Badge color="green">Added</Badge> : <button onClick={()=>addSugg(drawing,order)} style={css.btn.primary}>+ Add</button>}
                 </div>
-                <button onClick={()=>addSugg(s)} style={css.btn.green}>+ Add</button>
-              </div>
-            ))}
+              );
+            })}
           </div>
-        )}
-        {scoreBsuggs.length>0 && (
-          <div style={{ marginBottom:20 }}>
-            <div style={{ fontSize:13, fontWeight:700, color:T.amber, marginBottom:8 }}>Add with minor top-up (&lt;20% extra procurement)</div>
-            {scoreBsuggs.map(s=>(
-              <div key={s.drawing.id+s.order.id} style={{ ...css.card, display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                <div>
-                  <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi }}>{s.drawing.drawingNo}</span>
-                  <span style={{ color:T.textMid, fontSize:11, marginLeft:8 }}>{s.order.id}</span>
-                  <Badge color={TIER_COLOR[s.tier?.id]||"blue"} style={{ marginLeft:8 }}>{s.tier?.label}</Badge>
-                  <span style={{ color:T.amber, fontSize:11, marginLeft:8 }}>+{s.extraKg.toFixed(1)} kg needed</span>
-                  {s.makeConflict && <Badge color="amber" style={{ marginLeft:8 }}>Make conflict ⚠</Badge>}
-                </div>
-                <button onClick={()=>addSugg(s)} style={css.btn.amber}>+ Add</button>
-              </div>
-            ))}
-          </div>
-        )}
+        ))}
         <div style={{ marginTop:16, display:"flex", gap:8 }}>
           <button onClick={()=>setStep(2)} style={css.btn.ghost}>← Back</button>
-          <button onClick={()=>setStep(4)} style={css.btn.primary}>Next: Assign Machines →</button>
+          <button onClick={()=>setStep(4)} style={css.btn.primary}>Next: Machine Assignment →</button>
         </div>
       </div>
     );
@@ -9402,7 +9629,28 @@ export default function App() {
   });
   const [nestingRuns, setNestingRuns]   = useState(INIT_NESTING_RUNS);
   const [instances, setInstances]       = useState(INIT_INSTANCES);
-  const [orders, setOrders]             = useState(() => { try { const s=localStorage.getItem('structo_orders'); if (!s) return SEED_ORDERS; const loaded=JSON.parse(s); return loaded.map(o=>({ drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o })); } catch { return SEED_ORDERS; } });
+  const [orders, setOrders]             = useState(() => {
+    try {
+      const s = localStorage.getItem('structo_orders');
+      if (!s) return SEED_ORDERS;
+      const loaded = JSON.parse(s);
+      return loaded.map(o => {
+        const base = { drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, transport:{transportScope:'per_dispatch',preferredTransporter:'',vehicleType:'',distanceKm:0,freightEstimate:0,insurance:false,odc:false,nightRestriction:false,policeEscort:false,specialReqs:'',freightBilling:'dispatch_line',clientTransporter:'',clientVehicleContact:'',loadingInstructions:''}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o };
+        // Migrate parts missing matCode
+        base.parts = (base.parts||[]).map(p => {
+          let updated = p;
+          if (!updated.matCode && updated.section && updated.section!=="—" && updated.grade && updated.size) {
+            updated = { ...updated, matCode:`${updated.section}/MS/${updated.grade}/${updated.size}` };
+          }
+          if (!updated.requiredOps && updated.fabType==="Fabricate") {
+            updated = { ...updated, requiredOps:['Cut'] };
+          }
+          return updated;
+        });
+        return base;
+      });
+    } catch { return SEED_ORDERS; }
+  });
   const [clients, setClients]           = useState(() => { try { const s=localStorage.getItem('structo_clients'); return s?JSON.parse(s):CLIENTS_FULL; } catch { return CLIENTS_FULL; } });
   const [vendors, setVendors]           = useState(() => { try { const s=localStorage.getItem('structo_vendors'); return s?JSON.parse(s):VENDORS; } catch { return VENDORS; } });
   const [contractors, setContractors]   = useState(CONTRACTORS);
