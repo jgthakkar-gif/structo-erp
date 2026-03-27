@@ -8964,11 +8964,13 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
       {rmPicture.filter(r=>r.status!=="Not Received").length===0 && <InfoBanner color="amber">No materials are available. Proceed to assign contractors for manual scheduling.</InfoBanner>}
       {rmPicture.map(r=>{
         const avail = r.status!=="Not Received";
+        const todayISO    = new Date().toISOString().slice(0,10);
+        const twoDaysISO  = new Date(Date.now()+2*864e5).toISOString().slice(0,10);
         const asgn  = machineAsgn[r.matCode]||{};
         const tier  = selDrawings[0]?.tier;
         const cutAheadDays = tier ? Math.ceil(tier.fitup/8) : 1;
         const cutAheadDate = new Date(Date.now()+(cutAheadDays*86400000)).toISOString().slice(0,10);
-        const endDate = asgn.endDate||"";
+        const endDate = asgn.endDate||twoDaysISO;
         const lateWarn = endDate && endDate > cutAheadDate;
         return (
           <div key={r.matCode} style={{ ...css.card, marginBottom:12, opacity:avail?1:0.5 }}>
@@ -8995,11 +8997,11 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                 </div>
                 <div>
                   <label style={css.label}>Start Date</label>
-                  <input type="date" value={asgn.startDate||""} onChange={e=>updAsgn(r.matCode,"startDate",e.target.value)} style={css.input} />
+                  <input type="date" value={asgn.startDate||todayISO} onChange={e=>updAsgn(r.matCode,"startDate",e.target.value)} style={css.input} />
                 </div>
                 <div>
                   <label style={css.label}>End Date</label>
-                  <input type="date" value={endDate} onChange={e=>updAsgn(r.matCode,"endDate",e.target.value)} style={{ ...css.input, borderColor:lateWarn?T.amber:T.border }} />
+                  <input type="date" value={endDate} onChange={e=>updAsgn(r.matCode,"endDate",e.target.value)} style={{ ...css.input, borderColor:lateWarn?T.amber:undefined }} />
                 </div>
               </div>
             )}
