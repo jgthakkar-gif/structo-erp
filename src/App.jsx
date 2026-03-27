@@ -8731,6 +8731,13 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
     setMachineAsgn(prev => {
       const defaultStart = new Date().toISOString().slice(0,10);
       const defaultEnd   = new Date(Date.now()+2*864e5).toISOString().slice(0,10);
+      // For date fields, skip state update while year is still being typed (e.g. "0002").
+      // Returning prev unchanged means no re-render → no Step4 remount → browser keeps
+      // the intermediate digit sequence (0002 → 0020 → 0202 → 2026) without interruption.
+      if ((field==="startDate"||field==="endDate") && val) {
+        const yr = parseInt((val||"").split("-")[0], 10);
+        if (!yr || yr < 2000 || yr > 2100) return prev;
+      }
       const existing = prev[matCode] || {machineId:"",lotId:"",startDate:defaultStart,endDate:defaultEnd};
       return {...prev, [matCode]: {...existing, [field]: val}};
     });
