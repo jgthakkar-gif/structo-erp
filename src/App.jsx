@@ -7828,6 +7828,8 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION STEP 6: SUPERVISOR SOFT GATE
 // ═══════════════════════════════════════════════════════════════════════════════
+const TPI_STAGES = ["tpi_weld","tpi_paint","tpi_fitup","tpi_blast"];
+
 const STAGE_NEXT = {
   cutting:"cutting_qc", cutting_qc:"fitup", fitup:"welding", welding:"tpi_weld", tpi_weld:"blasting",
   tpi_fitup:"welding", blasting:"painting", tpi_blast:"painting",
@@ -7906,7 +7908,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
 
   const doApprove = (group, remarks) => {
     const stage = group.stage;
-    const isTpi = stage==="tpi_weld"||stage==="tpi_paint"||stage==="tpi_fitup"||stage==="tpi_blast";
+    const isTpi = TPI_STAGES.includes(stage);
     const orderForGroup = orders.find(o=>o.id===group.orderId);
     const orderQuality = orderForGroup?.quality||{};
     let nextStage = STAGE_NEXT[stage];
@@ -7991,7 +7993,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
   const selGD = selGroup ? groups[selGroup] : null;
   if (selGD) {
     const stage = selGD.stage;
-    const isTpi  = stage==="tpi_weld"||stage==="tpi_paint"||stage==="tpi_fitup"||stage==="tpi_blast";
+    const isTpi  = TPI_STAGES.includes(stage);
     const isMdcc = stage==="mdcc";
     const isPainting = stage==="painting";
     // MDCC checklist driven by order's mdccDocs; fall back to static list
@@ -8741,8 +8743,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
       const existing = prev[matCode] || {machineId:"",lotId:"",startDate:defaultStart,endDate:defaultEnd};
       return {...prev, [matCode]: {...existing, [field]: val}};
     });
-  const fmtDateDisp = d => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : "";
-  const cutMachines = (machines||[]).filter(m=>m.active!==false&&(m.capabilities||[]).some(c=>['cut_straight','cut_profile','cut_straight'].includes(c)||m.type==="Cutting"));
+  const cutMachines = (machines||[]).filter(m=>m.active!==false&&((m.capabilities||[]).some(c=>['cut_straight','cut_profile'].includes(c))||m.type==="Cutting"));
 
   // ── Step 5 helpers ──
   const updCont = (drawingId, field, val) =>
@@ -8964,15 +8965,16 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
     );
   };
 
-  const Step4 = () => (
+  const Step4 = () => {
+    const todayISO   = new Date().toISOString().slice(0,10);
+    const twoDaysISO = new Date(Date.now()+2*864e5).toISOString().slice(0,10);
+    return (
     <div>
       <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 4 — Assign Machines</div>
       <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>Assign cutting machines to available material lots.</div>
       {rmPicture.filter(r=>r.status!=="Not Received").length===0 && <InfoBanner color="amber">No materials are available. Proceed to assign contractors for manual scheduling.</InfoBanner>}
       {rmPicture.map(r=>{
         const avail = r.status!=="Not Received";
-        const todayISO    = new Date().toISOString().slice(0,10);
-        const twoDaysISO  = new Date(Date.now()+2*864e5).toISOString().slice(0,10);
         const asgn  = machineAsgn[r.matCode]||{};
         const tier  = selDrawings[0]?.tier;
         const cutAheadDays = tier ? Math.ceil(tier.fitup/8) : 1;
@@ -9021,7 +9023,8 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
         <button onClick={()=>setStep(5)} style={css.btn.primary}>Next: Assign Contractors →</button>
       </div>
     </div>
-  );
+    );
+  };
 
   const productionEngineers = USERS.filter(u=>u.role==="production_engineer"&&u.active);
   const STAGE_OPTS_ALL = [
