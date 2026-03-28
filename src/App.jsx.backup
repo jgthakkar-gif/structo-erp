@@ -6038,7 +6038,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
       <input ref={fileRef2} type="file" accept=".csv" style={{display:"none"}} onChange={handleFile} />
       <div style={{ overflowX:"auto" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-          <thead><tr>{["Line","Item","Drawing","Mark No","Description","Fab/BO","Material Code","L(mm)","Qty","Client Wt","Calc Wt","Joints","Source","Req Ops","Coverage",""].map(h=><th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap", background:T.bg }}>{h}</th>)}</tr></thead>
+          <thead><tr>{["Line","Item","Drawing","Mark No","Description","Fab/BO","Material Code","L(mm)","W(mm)","Qty","Client Wt","Calc Wt","Joints","Source","Req Ops","Coverage",""].map(h=><th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap", background:T.bg }}>{h}</th>)}</tr></thead>
           <tbody>
             {filtered.length===0?<tr><td colSpan={14} style={{ padding:32, textAlign:"center", color:T.textLow }}>No parts found</td></tr>:filtered.map((p,i)=>{
               const drg=drawings.find(d=>d.id===p.drawingId);
@@ -6067,6 +6067,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={p.fabType==="Fabricate"?"blue":"gray"}>{p.fabType==="Fabricate"?"Fab":"B/O"}</Badge></td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:11, color:p.matLibId?T.accentHi:T.textMid }}>{dispCode}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"right" }}>{fmt.num(p.length)}</td>
+                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"right", color:(p.width>0)?T.text:T.textLow }}>{p.width>0?fmt.num(p.width):"—"}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"center" }}>{p.qtyPerDrg}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.amber, textAlign:"right" }}>{p.clientTotalWt?.toFixed(2)}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.green, textAlign:"right" }}>{p.calcTotalWt?.toFixed(2)}</td>
@@ -6078,7 +6079,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
               </tr>;
             })}
           </tbody>
-          {filtered.length>0&&<tfoot><tr><td colSpan={10} style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontSize:12, fontWeight:700, color:T.textMid }}>TOTALS ({filtered.length} parts)</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.amber, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.clientTotalWt||0),0).toFixed(2)}</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.green, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.calcTotalWt||0),0).toFixed(2)}</td><td colSpan={5}/></tr></tfoot>}
+          {filtered.length>0&&<tfoot><tr><td colSpan={11} style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontSize:12, fontWeight:700, color:T.textMid }}>TOTALS ({filtered.length} parts)</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.amber, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.clientTotalWt||0),0).toFixed(2)}</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.green, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.calcTotalWt||0),0).toFixed(2)}</td><td colSpan={5}/></tr></tfoot>}
         </table>
       </div>
       {modal&&<Modal title={modal==="add"?"Add Part":"Edit Part"} onClose={()=>setModal(null)} width={760}>
