@@ -5653,6 +5653,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
     { key:"revNo",        hdr:"Rev No",           required:false, hint:"e.g. A, B, C" },
     { key:"drawingDate",  hdr:"Drawing Date",     required:false, hint:"DD-MM-YYYY" },
     { key:"receivedDate", hdr:"Received Date",    required:false, hint:"DD-MM-YYYY. Blank = pending." },
+    { key:"poLineItem",   hdr:"PO Line Item",     required:false, hint:"Line number in client's PO document. Used in dispatch challans." },
     { key:"phase",        hdr:"Phase",            required:true,  hint:"1, 2, 3 …" },
     { key:"priority",     hdr:"Priority",         required:true,  hint:"1 = highest within phase" },
     { key:"driveLink",    hdr:"Drive Link",       required:false, hint:"Google Drive URL" },
@@ -5662,7 +5663,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
   const downloadTemplate = () => {
     const header = DRG_COLS.map(c=>c.hdr);
     const hints  = DRG_COLS.map(c=>c.hint);
-    const sample = ["DRG-001","Sample Drawing",4,850.5,"","A","01-01-2025","15-01-2025",1,1,"https://drive.google.com/...",""];
+    const sample = ["DRG-001","Sample Drawing",4,850.5,"","A","01-01-2025","15-01-2025",1,1,1,"https://drive.google.com/...",""];
     const rows = [header, hints, sample];
     const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const blob = new Blob([csv],{type:"text/csv"});
@@ -5715,6 +5716,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
           revNo: r.revNo?.trim()||"A",
           drawingDate: parseDate(r.drawingDate),
           receivedDate: parseDate(r.receivedDate),
+          poLineItem: parseInt(r.poLineItem)||0,
           phase: parseInt(r.phase)||1,
           priority: parseInt(r.priority)||1,
           driveLink: r.driveLink?.trim()||"",
@@ -5765,7 +5767,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
               <span style={{ fontSize:12, color:T.textMid }}>{pDrawings.length} drawing(s) · {(pDrawings.reduce((s,d)=>s+(d.totalWt||0),0)/1000).toFixed(2)} T</span>
             </div>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead><tr>{["Pri","Drawing No","Title","Qty","Unit Wt","Total Wt","Rev","Drg Date","Received","File","Status","Revisions",""].map(h=><th key={h} style={{ padding:"7px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
+              <thead><tr>{["Pri","Drawing No","Title","Qty","Unit Wt","Total Wt","Rev","Drg Date","Received","PO Line","File","Status","Revisions",""].map(h=><th key={h} style={{ padding:"7px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
               <tbody>
                 {pDrawings.map((d,i)=>(
                   <>
@@ -5779,6 +5781,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, textAlign:"center" }}><Badge color="gray">Rev {d.revNo}</Badge></td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, color:T.textMid, whiteSpace:"nowrap" }}>{fmt.date(d.drawingDate)}</td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, color:d.receivedDate?T.green:T.amber, whiteSpace:"nowrap" }}>{d.receivedDate?fmt.date(d.receivedDate):"⏳ Pending"}</td>
+                      <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:11, textAlign:"center", color:d.poLineItem?T.text:T.textLow }}>{d.poLineItem||"—"}</td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{d.driveLink?<a href={d.driveLink} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none", background:T.greenLo, color:T.green, padding:"3px 8px" }}>View</a>:<span style={{ fontSize:11, color:T.textLow }}>—</span>}</td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={d.receivedDate?"green":"amber"}>{d.receivedDate?"Received":"Pending"}</Badge></td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{(d.revHistory||[]).length>0&&<button onClick={()=>setExpandRev(expandRev===d.id?null:d.id)} style={{ ...css.btn.ghost, fontSize:11, padding:"2px 8px", color:T.accent, border:`1px solid ${T.border}`, borderRadius:4 }}>{expandRev===d.id?"▲":"▼"} {d.revHistory.length} rev</button>}</td>
@@ -5797,7 +5800,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
           </div>
         ))}
       </div>
-      {(modal==="add"||modal==="edit")&&<Modal title={modal==="add"?"Add Drawing":"Edit Drawing"} onClose={()=>setModal(null)} width={700}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Drawing No</label><input value={form.drawingNo||""} onChange={e=>setForm({...form,drawingNo:e.target.value})} style={css.input} /></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Title</label><input value={form.title||""} onChange={e=>setForm({...form,title:e.target.value})} style={css.input} /></div><div><label style={css.label}>Qty</label><input type="number" value={form.qty||""} onChange={e=>setForm({...form,qty:+e.target.value,totalWt:(+e.target.value)*(form.unitWt||0)})} style={css.input} /></div><div><label style={css.label}>Unit Wt (kg)</label><input type="number" value={form.unitWt||""} onChange={e=>setForm({...form,unitWt:+e.target.value,totalWt:(form.qty||0)*(+e.target.value)})} style={css.input} /></div><div><label style={css.label}>Rev No</label><input value={form.revNo||""} onChange={e=>setForm({...form,revNo:e.target.value})} style={css.input} placeholder="A" /></div><div><label style={css.label}>Drawing Date</label><input type="date" value={form.drawingDate||""} onChange={e=>setForm({...form,drawingDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Received Date</label><input type="date" value={form.receivedDate||""} onChange={e=>setForm({...form,receivedDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Phase</label><select value={form.phase||1} onChange={e=>setForm({...form,phase:+e.target.value})} style={css.input}>{[1,2,3,4,5].map(n=><option key={n} value={n}>Phase {n}</option>)}</select></div><div><label style={css.label}>Priority</label><select value={form.priority||1} onChange={e=>setForm({...form,priority:+e.target.value})} style={css.input}>{[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>Priority {n}</option>)}</select></div><div><label style={css.label}>Drive Link</label><input value={form.driveLink||""} onChange={e=>setForm({...form,driveLink:e.target.value})} style={css.input} placeholder="https://drive.google.com/..." /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={saveDrawing} style={css.btn.primary}>Save Drawing</button></div></Modal>}
+      {(modal==="add"||modal==="edit")&&<Modal title={modal==="add"?"Add Drawing":"Edit Drawing"} onClose={()=>setModal(null)} width={700}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Drawing No</label><input value={form.drawingNo||""} onChange={e=>setForm({...form,drawingNo:e.target.value})} style={css.input} /></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Title</label><input value={form.title||""} onChange={e=>setForm({...form,title:e.target.value})} style={css.input} /></div><div><label style={css.label}>Qty</label><input type="number" value={form.qty||""} onChange={e=>setForm({...form,qty:+e.target.value,totalWt:(+e.target.value)*(form.unitWt||0)})} style={css.input} /></div><div><label style={css.label}>Unit Wt (kg)</label><input type="number" value={form.unitWt||""} onChange={e=>setForm({...form,unitWt:+e.target.value,totalWt:(form.qty||0)*(+e.target.value)})} style={css.input} /></div><div><label style={css.label}>Rev No</label><input value={form.revNo||""} onChange={e=>setForm({...form,revNo:e.target.value})} style={css.input} placeholder="A" /></div><div><label style={css.label}>Drawing Date</label><input type="date" value={form.drawingDate||""} onChange={e=>setForm({...form,drawingDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Received Date</label><input type="date" value={form.receivedDate||""} onChange={e=>setForm({...form,receivedDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>PO Line Item</label><input type="number" value={form.poLineItem||""} onChange={e=>setForm({...form,poLineItem:+e.target.value})} style={css.input} placeholder="1" /></div><div><label style={css.label}>Phase</label><select value={form.phase||1} onChange={e=>setForm({...form,phase:+e.target.value})} style={css.input}>{[1,2,3,4,5].map(n=><option key={n} value={n}>Phase {n}</option>)}</select></div><div><label style={css.label}>Priority</label><select value={form.priority||1} onChange={e=>setForm({...form,priority:+e.target.value})} style={css.input}>{[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>Priority {n}</option>)}</select></div><div><label style={css.label}>Drive Link</label><input value={form.driveLink||""} onChange={e=>setForm({...form,driveLink:e.target.value})} style={css.input} placeholder="https://drive.google.com/..." /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={saveDrawing} style={css.btn.primary}>Save Drawing</button></div></Modal>}
       {modal==="revise"&&<Modal title={`Revise — ${form.drawingNo}`} onClose={()=>setModal(null)} width={500}><div style={{ ...css.card, background:T.amberBg, border:`1px solid ${T.amber}`, marginBottom:14, fontSize:12, color:T.amber }}>Current Rev <strong>{form.oldRevNo}</strong> will be marked Superseded.</div><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>New Rev No</label><input value={form.revNo||""} onChange={e=>setForm({...form,revNo:e.target.value})} style={css.input} placeholder="B" /></div><div><label style={css.label}>Drawing Date</label><input type="date" value={form.drawingDate||""} onChange={e=>setForm({...form,drawingDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Received Date</label><input type="date" value={form.receivedDate||""} onChange={e=>setForm({...form,receivedDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Drive Link</label><input value={form.driveLink||""} onChange={e=>setForm({...form,driveLink:e.target.value})} style={css.input} /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Revision Note</label><input value={form.note||""} onChange={e=>setForm({...form,note:e.target.value})} style={css.input} placeholder="e.g. Column dimensions revised" /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={saveRevision} style={{ ...css.btn.primary, background:T.amber }}>Save Revision</button></div></Modal>}
 
       {/* ── EXCEL IMPORT MODAL ── */}
@@ -5896,6 +5899,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
   const PART_COLS = [
     { key:"drawingNo",     hdr:"Drawing No",       required:true,  hint:"Must match a drawing in the register" },
     { key:"revNo",         hdr:"Rev No",           required:false, hint:"Drawing revision, e.g. A" },
+    { key:"drawingLineItem", hdr:"Drawing Line Item", required:false, hint:"Line number from client's drawing BOM, e.g. 1, 2, 3" },
     { key:"itemNo",        hdr:"Item No",          required:false, hint:"1, 2, 3 … within drawing" },
     { key:"markNo",        hdr:"Mark No",          required:true,  hint:"e.g. SBK-101, PL-001" },
     { key:"desc",          hdr:"Description",      required:true,  hint:"Part description" },
@@ -5911,6 +5915,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
     { key:"clientTotalWt", hdr:"Client Total Wt",  required:false, hint:"kg — leave blank for auto" },
     { key:"jointsAllowed", hdr:"Joints Allowed",   required:false, hint:"Yes or No" },
     { key:"source",        hdr:"Source",           required:false, hint:"Procure / Client Supply / Stock" },
+    { key:"requiredOps",   hdr:"Required Ops",     required:false, hint:"Comma-separated: Cut, Bevel, Drill, Grind, Mark, Notch. Defaults to Cut for Fabricate." },
     { key:"partLink",      hdr:"Part Drawing Link",required:false, hint:"Drive URL" },
     { key:"remarks",       hdr:"Remarks",          required:false, hint:"Any notes" },
   ];
@@ -5918,8 +5923,10 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
   const downloadTemplate = () => {
     const header = PART_COLS.map(c=>c.hdr);
     const hints  = PART_COLS.map(c=>c.hint);
-    const sample = ["DRG-001","A",1,"SBK-101","BRACKET ANGLE","Fabricate","MS","E250","ISA","75x75x8",150,75,80,1.335,106.8,"No","Procure","",""];
-    const rows = [header, hints, sample];
+    const sample1 = ["DRG-001","A",1,1,"SBK-101","BRACKET ANGLE","Fabricate","MS","E250","ISA","75x75x8",150,75,80,1.335,106.8,"No","Procure","Cut,Bevel","",""];
+    const sample2 = ["DRG-001","A",2,2,"PL-001","BASE PLATE 10MM","Fabricate","MS","E250","PLATE","10mm",500,500,4,19.625,78.5,"No","Procure","Cut","",""];
+    const sample3 = ["DRG-001","A",3,3,"BOLT-M20","HEX BOLT M20x60","Bought Out","MS","8.8","","","","",20,"","","No","Procure","","",""];
+    const rows = [header, hints, sample1, sample2, sample3];
     const csv = rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const blob = new Blob([csv],{type:"text/csv"});
     const url = URL.createObjectURL(blob);
@@ -5961,6 +5968,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
             drawingId: drg?.id||"",
             drawingNo: drgNo,
             revNo: r.revNo?.trim()||"A",
+            drawingLineItem: parseInt(r.drawingLineItem)||0,
             itemNo: parseInt(r.itemNo)||i+1,
             markNo: r.markNo?.trim()||"",
             desc: r.desc?.trim()||"",
@@ -5980,6 +5988,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
             calcTotalWt: ctw,
             jointsAllowed: r.jointsAllowed?.toLowerCase()==="yes",
             source: ["Procure","Client Supply","Stock"].find(s=>s.toLowerCase()===r.source?.toLowerCase())||"Procure",
+            requiredOps: r.requiredOps?.trim() ? r.requiredOps.split(",").map(o=>o.trim()).filter(Boolean) : (r.fabType?.includes("Bought")||r.fabType?.toLowerCase()==="bought out" ? [] : ['Cut']),
             partLink: r.partLink?.trim()||"",
             remarks: r.remarks?.trim()||"",
             _drgMatched: !!drg,
@@ -6022,14 +6031,14 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
         {canEdit&&<div style={{ display:"flex", gap:8 }}>
           <button onClick={downloadTemplate} style={css.btn.secondary}>⬇ Download Template</button>
           <button onClick={()=>setImportModal(true)} style={css.btn.amber}>📥 Import from Excel/CSV</button>
-          <button onClick={()=>{setForm({fabType:"Fabricate",matType:"MS",grade:"E250",source:"Procure",jointsAllowed:false,drawingId:filterDrg!=="all"?filterDrg:"",matLibId:"",matCode:""});setModal("add");}} style={css.btn.primary}>+ Add Part</button>
+          <button onClick={()=>{setForm({fabType:"Fabricate",matType:"MS",grade:"E250",source:"Procure",jointsAllowed:false,drawingLineItem:1,requiredOps:['Cut'],drawingId:filterDrg!=="all"?filterDrg:"",matLibId:"",matCode:""});setModal("add");}} style={css.btn.primary}>+ Add Part</button>
         </div>}
       </div>
       {/* Hidden file input */}
       <input ref={fileRef2} type="file" accept=".csv" style={{display:"none"}} onChange={handleFile} />
       <div style={{ overflowX:"auto" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-          <thead><tr>{["Item","Drawing","Mark No","Description","Fab/BO","Material Code","L(mm)","Qty","Client Wt","Calc Wt","Joints","Source","Coverage",""].map(h=><th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap", background:T.bg }}>{h}</th>)}</tr></thead>
+          <thead><tr>{["Line","Item","Drawing","Mark No","Description","Fab/BO","Material Code","L(mm)","Qty","Client Wt","Calc Wt","Joints","Source","Req Ops","Coverage",""].map(h=><th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap", background:T.bg }}>{h}</th>)}</tr></thead>
           <tbody>
             {filtered.length===0?<tr><td colSpan={14} style={{ padding:32, textAlign:"center", color:T.textLow }}>No parts found</td></tr>:filtered.map((p,i)=>{
               const drg=drawings.find(d=>d.id===p.drawingId);
@@ -6050,6 +6059,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
                 else covBadge = <Badge color="amber">{fmt.num(Math.round(short))} kg short</Badge>;
               }
               return <tr key={p.id} style={{ background:i%2===0?"transparent":T.bg }}>
+                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:11, color:T.textMid }}>{p.drawingLineItem||"—"}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:11, color:T.textMid }}>{p.itemNo}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:11, color:T.accentHi, fontFamily:T.fontMono, whiteSpace:"nowrap" }}>{drg?.drawingNo||"—"}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{p.markNo}</td>
@@ -6062,16 +6072,18 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.green, textAlign:"right" }}>{p.calcTotalWt?.toFixed(2)}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={p.jointsAllowed?"amber":"gray"}>{p.jointsAllowed?"Yes":"No"}</Badge></td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={srcColor[p.source]||"gray"}>{p.source}</Badge></td>
+                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{p.fabType==="Fabricate"?(p.requiredOps||[]).map(op=><span key={op} style={{display:"inline-block",background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:3,padding:"1px 5px",fontSize:10,marginRight:3,fontFamily:T.fontMono}}>{op}</span>):<Badge color="gray">B/O</Badge>}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{covBadge||<span style={{ color:T.textLow, fontSize:11 }}>—</span>}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{canEdit&&<button onClick={()=>{setForm({...p});setModal("edit");}} style={css.btn.ghost}>Edit</button>}</td>
               </tr>;
             })}
           </tbody>
-          {filtered.length>0&&<tfoot><tr><td colSpan={8} style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontSize:12, fontWeight:700, color:T.textMid }}>TOTALS ({filtered.length} parts)</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.amber, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.clientTotalWt||0),0).toFixed(2)}</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.green, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.calcTotalWt||0),0).toFixed(2)}</td><td colSpan={4}/></tr></tfoot>}
+          {filtered.length>0&&<tfoot><tr><td colSpan={10} style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontSize:12, fontWeight:700, color:T.textMid }}>TOTALS ({filtered.length} parts)</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.amber, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.clientTotalWt||0),0).toFixed(2)}</td><td style={{ padding:"8px 10px", borderTop:`1px solid ${T.borderHi}`, fontFamily:T.fontMono, fontWeight:700, color:T.green, textAlign:"right" }}>{filtered.reduce((s,p)=>s+(p.calcTotalWt||0),0).toFixed(2)}</td><td colSpan={5}/></tr></tfoot>}
         </table>
       </div>
       {modal&&<Modal title={modal==="add"?"Add Part":"Edit Part"} onClose={()=>setModal(null)} width={760}>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          <MField label="Drawing Line Item"><input type="number" value={form.drawingLineItem||""} onChange={e=>setForm(f=>({...f,drawingLineItem:+e.target.value}))} style={css.input} placeholder="1" /></MField>
           <MField label="Drawing">
             <select value={form.drawingId||""} onChange={e=>setForm(f=>({...f,drawingId:e.target.value}))} style={css.input}>
               <option value="">Select...</option>{drawings.map(d=><option key={d.id} value={d.id}>{d.drawingNo}</option>)}
@@ -9648,7 +9660,12 @@ export default function App() {
       const loaded = JSON.parse(s);
       return loaded.map(o => {
         const base = { drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, transport:{transportScope:'per_dispatch',preferredTransporter:'',vehicleType:'',distanceKm:0,freightEstimate:0,insurance:false,odc:false,nightRestriction:false,policeEscort:false,specialReqs:'',freightBilling:'dispatch_line',clientTransporter:'',clientVehicleContact:'',loadingInstructions:''}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o };
-        // Migrate parts missing matCode
+        // Migrate drawings missing poLineItem
+        base.drawings = (base.drawings||[]).map(d =>
+          d.poLineItem != null ? d : { ...d, poLineItem:0 }
+        );
+        // Migrate parts missing matCode / requiredOps / drawingLineItem
+        const drgCounters = {};
         base.parts = (base.parts||[]).map(p => {
           let updated = p;
           if (!updated.matCode && updated.section && updated.section!=="—" && updated.grade && updated.size) {
@@ -9656,6 +9673,11 @@ export default function App() {
           }
           if (!updated.requiredOps && updated.fabType==="Fabricate") {
             updated = { ...updated, requiredOps:['Cut'] };
+          }
+          if (!updated.drawingLineItem) {
+            const key = updated.drawingId||"__none__";
+            drgCounters[key] = (drgCounters[key]||0) + 1;
+            updated = { ...updated, drawingLineItem:drgCounters[key] };
           }
           return updated;
         });
