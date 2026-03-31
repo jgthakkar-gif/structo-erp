@@ -1014,7 +1014,8 @@ const PO_LINE_COLS = [
 const normalize = s => (s||'').toLowerCase().split('x').map(seg => /^\d+\.0$/.test(seg) ? seg.replace('.0','') : seg).join('x');
 
 const parsePOLineCSV = (text, materials) => {
-  const lines = text.split("\n").map(l =>
+  const clean = (text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const lines = clean.split("\n").map(l =>
     l.split(",").map(v => v.trim().replace(/^"|"$/g,"").replace(/""/g,'"'))
   ).filter(l => l.some(v => v.trim()));
   const allVariants = PO_LINE_COLS.flatMap(c => c.variants);
@@ -5951,7 +5952,8 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
     const ext = file.name.split(".").pop().toLowerCase();
     try {
       if(ext==="csv") {
-        const text = await file.text();
+        const raw = await file.text();
+        const text = (raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
         const lines = text.split("\n").map(l=>l.split(",").map(v=>v.trim().replace(/^"|"$/g,"").replace(/""/g,'"')));
         // find header row
         const hdrIdx = lines.findIndex(l=>l.some(c=>c.toLowerCase().includes("drawing no")||c.toLowerCase().includes("drawing_no")));
@@ -6223,7 +6225,8 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
     const ext = file.name.split(".").pop().toLowerCase();
     try {
       if(ext==="csv") {
-        const text = await file.text();
+        const raw = await file.text();
+        const text = (raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
         const lines = text.split("\n").map(l=>l.split(",").map(v=>v.trim().replace(/^"|"$/g,"").replace(/""/g,'"')));
         const hdrIdx = lines.findIndex(l=>l.some(c=>c.toLowerCase().includes("mark no")||c.toLowerCase().includes("markno")||c.toLowerCase().includes("mark_no")));
         if(hdrIdx<0){ setImportErr("Could not find header row. Make sure one row contains 'Mark No'."); return; }
