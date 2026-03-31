@@ -73,6 +73,7 @@ const USERS = [
   { id:"U032", name:"Balaji Engineering",   username:"balaji.engg",     password:"con123",   role:"contractor",          active:true, contractorId:"CON-004" },
   { id:"U033", name:"Ajay Kadam",           username:"ajay.kadam",      password:"machine123", role:"machine_operator",   active:true },
   { id:"U034", name:"Ravi Thakur",          username:"ravi.thakur",     password:"machine123", role:"machine_operator",   active:true },
+  { id:"USR-008", name:"Arjun Patil",       username:"arjun.qc",        password:"qc123",      role:"qc_user",            active:true },
 ];
 
 // ─── CONTRACTORS ──────────────────────────────────────────────────────────────
@@ -660,7 +661,7 @@ const PERMISSIONS = {
   store_admin:     { modules:["dashboard","stock","bays"],                     canApprove:true,  canOverride:false, canManageUsers:false },
   store_user:      { modules:["dashboard","stock"],                            canApprove:false, canOverride:false, canManageUsers:false },
   qc_admin:        { modules:["dashboard","qc","qc_ops","stock","production"],  canApprove:true,  canOverride:true,  canManageUsers:false },
-  qc_user:         { modules:["dashboard","qc"],                               canApprove:false, canOverride:false, canManageUsers:false },
+  qc_user:         { modules:["dashboard","production","qc"],                  canApprove:true,  canOverride:false, canManageUsers:false },
   floor_planner:   { modules:["dashboard","mrp","production","stock"],         canApprove:true,  canOverride:false, canManageUsers:false },
   production_engineer:{ modules:["dashboard","production","qc"],               canApprove:true,  canOverride:true,  canManageUsers:false },
   blasting_engineer:  { modules:["dashboard","production"],                    canApprove:false, canOverride:false, canManageUsers:false },
@@ -6893,6 +6894,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
       isPlate: matLib?.isPlate||false,
       wtPerMetre: matLib?.wtPerMetre||0, wtPerM2: matLib?.wtPerM2||0,
       machineCaps,
+      subStageChecks: { cut:false, bevel:false, grind:false, drill:false },
       parts: getRunParts(run).map(p=>({
         ...p, included:true, actualQty:p.plannedQty,
         shortReason:"", isDefective:false, defectType:"dimensional", defectReason:"",
@@ -6956,6 +6958,14 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
       }),
       confirmedBy:user.name, confirmDate, existingInstances:instances,
     });
+    // Task 1E: pending_secondary when drill not completed but machine has drill capability
+    if (barForm.subStageChecks?.drill === false && (barForm.machineCaps||[]).includes('drill')) {
+      newInst.forEach(inst => {
+        if (inst.currentStatus === "pending_collection") {
+          inst.currentStatus = "pending_secondary";
+        }
+      });
+    }
     setInstances(prev=>[...prev,...newInst]);
 
     // Update stock lot wtConsumed (sections only; plates calculated from dims)
@@ -7002,6 +7012,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
         offcutLength:barForm.isPlate?null:+(barForm.offcutLength||0),
         offcutDimensions:barForm.isPlate?`${barForm.offcutLength}X${barForm.offcutWidth}`:"",
         nestingRunId:selRunId, allocations:[], issues:[],
+        reservations:[...(parentLot.reservations||[])],
         auditLog:[{action:"offcut-created",orderId:"",wt:oc,by:user.name,
           date:confirmDate,reason:`Cut: ${selRunId}/${selBarRef}`}],
       }]);
@@ -8144,47 +8155,63 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
         return (
           <>
             <SectionLabel title="WAITING FOR CUTTING" count={waitingDrawings.length} color={T.textLow} />
-            <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
-              {waitingDrawings.map((d,i) => (
-                <div key={i} style={{ ...css.card,border:`1px solid ${T.border}` }}>
-                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
-                    <div>
-                      <div style={{ fontWeight:700,fontSize:13,color:T.textMid,fontFamily:T.fontMono }}>{d.drawingNo||d.drawingId}</div>
-                      <div style={{ fontSize:12,color:T.textLow }}>Release: {d.releaseId}</div>
-                    </div>
-                    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                      {d.assemblyGroup && <Badge color="blue">{d.assemblyGroup}</Badge>}
-                      <Badge color="gray">Waiting</Badge>
-                    </div>
-                  </div>
-                  {(() => {
-                    const drgInstances = instances.filter(inst=>inst.drawingId===(d.drawingId||d.id));
-                    const total = drgInstances.length || 1;
-                    const cutCleared = drgInstances.filter(inst=>["fitup","welding","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"].includes(inst.currentStage)).length;
-                    const cuttingInProgress = drgInstances.filter(inst=>inst.currentStage==="cutting"||inst.currentStage==="cutting_qc").length;
-                    const notStarted = Math.max(0, total - cutCleared - cuttingInProgress);
-                    if (total<=1&&cutCleared===0&&cuttingInProgress===0) return null;
-                    return (
-                      <div style={{ fontSize:11, borderTop:`1px solid ${T.border}`, paddingTop:8 }}>
-                        <table style={{ width:"100%", borderCollapse:"collapse" }}>
-                          <tbody>
-                            {[
-                              {label:"Cut and QC cleared — ready to collect", val:cutCleared, color:T.green},
-                              {label:"Cutting in progress", val:cuttingInProgress, color:T.accent},
-                              {label:"Cut not started", val:notStarted, color:T.textLow},
-                            ].map(row=>(
-                              <tr key={row.label}>
-                                <td style={{ padding:"2px 0", color:T.textMid }}>{row.label}</td>
-                                <td style={{ padding:"2px 0", textAlign:"right", color:row.color, fontWeight:600 }}>{row.val}/{total}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    );
-                  })()}
+            {/* Ready to collect batch notification */}
+            {(() => {
+              const readyCount = (instances||[]).filter(i=>
+                i.assignedContractorId === cid &&
+                ['fitup','welding'].includes(i.currentStage)
+              ).length;
+              if (readyCount === 0) return null;
+              return (
+                <div style={{background:'#16a34a22',border:'1px solid #16a34a',borderRadius:6,padding:'8px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{color:'#22c55e',fontWeight:700,fontSize:14}}>●</span>
+                  <span style={{color:'#22c55e',fontWeight:600}}>{readyCount} part{readyCount>1?'s':''} cut and cleared — ready to collect</span>
                 </div>
-              ))}
+              );
+            })()}
+            <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
+              {waitingDrawings.map((drg,i) => {
+                const drgInstances = (instances||[]).filter(inst=>inst.drawingId===drg.drawingId && inst.orderId===drg.orderId);
+                const cutCleared = drgInstances.filter(inst=>['fitup','welding','tpi_weld','assembly','blasting','painting','tpi_paint','mdcc','dispatch','complete'].includes(inst.currentStage)).length;
+                const cuttingInProg = drgInstances.filter(inst=>['cutting','cutting_qc'].includes(inst.currentStage)).length;
+                const notStarted = Math.max(0, (drg.qty||0) - drgInstances.length);
+                return (
+                  <div key={i} style={{ ...css.card,border:`1px solid ${T.border}` }}>
+                    <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
+                      <div>
+                        <div style={{ fontWeight:700,fontSize:13,color:T.textMid,fontFamily:T.fontMono,display:'flex',alignItems:'center',flexWrap:'wrap',gap:4 }}>
+                          {drg.drawingNo||drg.drawingId}
+                          {drg.assemblyGroup && (
+                            <span style={{fontSize:11,background:'#7c3aed22',border:'1px solid #7c3aed',color:'#a78bfa',borderRadius:4,padding:'1px 6px',marginLeft:4}}>
+                              {drg.assemblyGroup}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize:12,color:T.textLow }}>Release: {drg.releaseId}{drg.qty ? ` · Qty: ${drg.qty}` : ''}</div>
+                      </div>
+                      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                        <Badge color="gray">Waiting</Badge>
+                      </div>
+                    </div>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,marginTop:8}}>
+                      <tbody>
+                        {[
+                          ['Cut and QC cleared — ready to collect', cutCleared, '#22c55e'],
+                          ['Cutting in progress', cuttingInProg, '#3b82f6'],
+                          ['Cut not started', notStarted, '#6b7280'],
+                        ].map(([label,count,col])=>(
+                          <tr key={label} style={{borderBottom:'1px solid #222'}}>
+                            <td style={{padding:'3px 6px',color:'#ccc'}}>{label}</td>
+                            <td style={{padding:'3px 6px',textAlign:'right',fontWeight:600,color:col}}>
+                              {count}/{drg.qty||0}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
             </div>
           </>
         );
@@ -8224,10 +8251,11 @@ const SUPERVISOR_STAGES = {
   blasting_engineer:   ["blasting"],
   painting_engineer:   ["painting"],
   qc_admin:            ["cutting_qc","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
+  qc_user:             ["cutting_qc","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
   dispatch_admin:      ["dispatch"],
 };
 
-const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, onBack }) => {
+const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, releases, machines, onBack }) => {
   const [selGroup, setSelGroup]   = useState(null);
   const [checks, setChecks]       = useState({});
   const [dft, setDft]             = useState("");
@@ -8237,6 +8265,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
   const [rejectReason, setRejectReason] = useState("");
   const [mdccRefNo, setMdccRefNo] = useState("");
   const [dimReadings, setDimReadings] = useState({});
+  const [localChecks, setLocalChecks] = useState({});
 
   const myStages = SUPERVISOR_STAGES[user.role] || [];
 
@@ -8259,6 +8288,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
         batchNo:i.batchNo||"", insts:[], rejCount:0,
         weldingSequence: ord?.quality?.weldSpec?.weldingSequence||"",
         endDate: ord?.endDate||"9999-99-99",
+        assignedEngineer: i.assignedEngineer||null,
       };
     }
     groups[k].insts.push(i);
@@ -8268,13 +8298,16 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
   });
 
   // Sort: pinned first, then by rejection count desc, then by dispatch date asc (most urgent first)
-  const sortedGroups = Object.values(groups).sort((a,b)=>{
-    if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-    if (b.rejCount !== a.rejCount) return b.rejCount - a.rejCount;
-    return (a.endDate||"") < (b.endDate||"") ? -1 : 1;
-  });
+  const sortedGroups = Object.values(groups)
+    // QC engineer sees only their assigned jobs
+    .filter(g => user.role !== 'qc_user' || (g.assignedEngineer === user.id || g.assignedEngineer === user.username))
+    .sort((a,b)=>{
+      if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+      if (b.rejCount !== a.rejCount) return b.rejCount - a.rejCount;
+      return (a.endDate||"") < (b.endDate||"") ? -1 : 1;
+    });
 
-  const resetApproval = () => { setChecks({}); setDft(""); setDocRefs({}); setTpiForm({agency:"",reportNo:"",reportDate:"",outcome:"pass"}); setRejectMode(false); setRejectReason(""); setMdccRefNo(""); setDimReadings({}); };
+  const resetApproval = () => { setChecks({}); setDft(""); setDocRefs({}); setTpiForm({agency:"",reportNo:"",reportDate:"",outcome:"pass"}); setRejectMode(false); setRejectReason(""); setMdccRefNo(""); setDimReadings({}); setLocalChecks({}); };
 
   const doApprove = (group, remarks) => {
     const stage = group.stage;
@@ -8294,6 +8327,18 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
       }
     } else if (stage==="blasting") {
       nextStage = (orderQuality.tpiHoldPoints||[]).includes('blasting') ? 'tpi_blast' : 'painting';
+    }
+    if (stage === 'assembly') {
+      // Check if this drawing's assembly has tpiRequired
+      const orderForGrp = orders.find(o=>o.id===group.orderId);
+      const drg = orderForGrp?.drawings?.find(d=>d.id===group.drawingId);
+      const asmDef = (orderForGrp?.assemblies||[]).find(a=>(a.drawingsAssigned||[]).includes(group.drawingId));
+      if (asmDef?.tpiRequired) {
+        if (!localChecks?.assemblyTpiApproved) {
+          alert('TPI approval required for this assembly before proceeding to Blasting');
+          return;
+        }
+      }
     }
     const ids = group.insts.map(i=>i.instanceId);
     const checkedItems = Object.keys(checks).filter(k=>checks[k]);
@@ -8491,6 +8536,32 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
             </div>
           </div>
         )}
+        {/* Fitup: tack weld verification + piece marking + welding sequence */}
+        {stage === 'fitup' && <>
+          <div style={{...css.card,marginBottom:14}}>
+            <div style={{fontWeight:600,marginBottom:6,fontSize:13}}>Tack Weld Verification</div>
+            {['Tack weld size acceptable','Tack weld spacing per procedure','No cracks in tack welds'].map((item,i)=>(
+              <label key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,cursor:'pointer'}}>
+                <input type="checkbox" checked={!!(localChecks||{})[`tw_${i}`]}
+                  onChange={e=>setLocalChecks(c=>({...c,[`tw_${i}`]:e.target.checked}))} />
+                <span style={{fontSize:13}}>{item}</span>
+              </label>
+            ))}
+            <div style={{fontWeight:600,marginTop:10,marginBottom:6,fontSize:13}}>Piece Marking</div>
+            {['Piece marking present and legible','Mark matches drawing number'].map((item,i)=>(
+              <label key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,cursor:'pointer'}}>
+                <input type="checkbox" checked={!!(localChecks||{})[`pm_${i}`]}
+                  onChange={e=>setLocalChecks(c=>({...c,[`pm_${i}`]:e.target.checked}))} />
+                <span style={{fontSize:13}}>{item}</span>
+              </label>
+            ))}
+            <div style={{fontWeight:600,marginTop:10,marginBottom:4,fontSize:13}}>Welding Sequence</div>
+            <textarea rows={2} placeholder="Note welding sequence requirement..."
+              value={(localChecks||{}).weldingSequenceNote||''}
+              onChange={e=>setLocalChecks(c=>({...c,weldingSequenceNote:e.target.value}))}
+              style={{width:'100%',background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:6,borderRadius:4,fontSize:13,resize:'vertical'}} />
+          </div>
+        </>}
         {/* Welding NDT */}
         {stage==="welding" && (
           <div style={{...css.card,marginBottom:14}}>
@@ -8498,6 +8569,24 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
               <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Weld Gauge Reading (mm)</label><input type="number" value={docRefs['weldGauge']||''} onChange={e=>setDocRefs(p=>({...p,weldGauge:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
               <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Post-Weld Length (mm)</label><input type="number" value={docRefs['postWeldLength']||''} onChange={e=>setDocRefs(p=>({...p,postWeldLength:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+            </div>
+            {/* Additional measurement inputs */}
+            <div style={{fontWeight:600,marginTop:12,marginBottom:6,fontSize:13}}>Measurements</div>
+            <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+              <div>
+                <div style={{fontSize:12,color:'#aaa',marginBottom:3}}>Weld Gauge Reading (mm)</div>
+                <input type="number" step="0.1" placeholder="0.0"
+                  value={(localChecks||{}).weldGaugeReading||''}
+                  onChange={e=>setLocalChecks(c=>({...c,weldGaugeReading:e.target.value}))}
+                  style={{width:120,background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:'6px 8px',borderRadius:4,fontSize:13}} />
+              </div>
+              <div>
+                <div style={{fontSize:12,color:'#aaa',marginBottom:3}}>Post-Weld Length (mm)</div>
+                <input type="number" step="1" placeholder="0"
+                  value={(localChecks||{}).postWeldLength||''}
+                  onChange={e=>setLocalChecks(c=>({...c,postWeldLength:e.target.value}))}
+                  style={{width:140,background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:'6px 8px',borderRadius:4,fontSize:13}} />
+              </div>
             </div>
             <div style={{marginTop:8}}>
               <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12}}>
@@ -8529,7 +8618,20 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
             })()}
             <div style={{marginTop:8,display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
               <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Salt Contamination (mg/m²)</label><input type="number" value={docRefs['saltLevel']||''} onChange={e=>setDocRefs(p=>({...p,saltLevel:e.target.value}))} style={{...css.input,width:'100%'}} />{docRefs['saltLevel']&&<div style={{fontSize:11,color:+docRefs['saltLevel']<=20?T.green:T.red,marginTop:2}}>{+docRefs['saltLevel']<=20?"PASS (≤20 mg/m²)":"FAIL (>20 mg/m²)"}</div>}</div>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Dust Rating (1–5)</label><input type="number" min="1" max="5" value={docRefs['dustRating']||''} onChange={e=>setDocRefs(p=>({...p,dustRating:e.target.value}))} style={{...css.input,width:'100%'}} />{docRefs['dustRating']&&<div style={{fontSize:11,color:+docRefs['dustRating']<=2?T.green:T.red,marginTop:2}}>{+docRefs['dustRating']<=2?"PASS (≤2)":"FAIL (>2, ISO 8502-3)"}</div>}</div>
+              <div>
+                <label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Dust Rating (ISO 8502-3)</label>
+                <select value={(localChecks||{}).dustRating||''}
+                  onChange={e=>setLocalChecks(c=>({...c,dustRating:e.target.value}))}
+                  style={{...css.input,width:'100%'}}>
+                  <option value="">Select...</option>
+                  <option value="1">Rating 1 — Very low</option>
+                  <option value="2">Rating 2 — Low (Pass)</option>
+                  <option value="3">Rating 3 — Medium</option>
+                  <option value="4">Rating 4 — High (Fail)</option>
+                  <option value="5">Rating 5 — Very high (Fail)</option>
+                </select>
+                {(localChecks||{}).dustRating&&<div style={{fontSize:11,color:+(localChecks.dustRating)<=2?T.green:T.red,marginTop:2}}>{+(localChecks.dustRating)<=2?"PASS (≤ Rating 2)":"FAIL (> Rating 2, ISO 8502-3)"}</div>}
+              </div>
             </div>
           </div>
         )}
@@ -8547,6 +8649,19 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
               <div style={{ fontSize:13, fontWeight:700, color }}>{hoursElapsed.toFixed(1)} hours since blasting sign-off</div>
               <div style={{ fontSize:11, color, marginTop:4 }}>{label}</div>
               <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Blast date: {blastEntry.signedOffDate} — Primer window: 4 hours max</div>
+            </div>
+          );
+        })()}
+        {/* Time to primer warning — shown on painting stage */}
+        {isPainting && (() => {
+          const blastApproval = (selGD.insts[0]?.stageHistory||[]).slice().reverse().find(h=>h.stage==='blasting'&&h.signedOffDate);
+          if (!blastApproval?.signedOffDate) return null;
+          const hrs = (Date.now() - new Date(blastApproval.signedOffDate).getTime()) / 3600000;
+          const col = hrs >= 4 ? '#ef4444' : hrs >= 3 ? '#f59e0b' : '#22c55e';
+          const msg = hrs >= 4 ? 'CRITICAL: >4h since blasting — primer application overdue!' : hrs >= 3 ? 'Warning: >3h since blasting — apply primer soon' : 'Time since blasting within limit';
+          return (
+            <div style={{background:col+'22',border:`1px solid ${col}`,borderRadius:6,padding:'8px 12px',marginBottom:12,color:col,fontSize:13}}>
+              ⏱ {msg} ({hrs.toFixed(1)}h elapsed)
             </div>
           );
         })()}
@@ -8623,6 +8738,52 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
             </div>
           );
         })()}
+        {/* Painting: per-coat DFT summary table */}
+        {isPainting && (() => {
+          const paintOrder = orders.find(o=>o.id===selGD.orderId);
+          const paintSpec = paintOrder?.quality?.paintCoats||[];
+          if (paintSpec.length === 0) return null;
+          const history = selGD.insts[0]?.stageHistory||[];
+          const coatApprovals = paintSpec.map((coat,i)=>{
+            const approval = history.find(h=>h.stage==='painting'&&h.coatIndex===i);
+            return { ...coat, approvedDFT: approval?.dftReading||null };
+          });
+          const totalSpec = paintSpec.reduce((s,c)=>s+(Number(c.dft)||0),0);
+          const totalActual = coatApprovals.reduce((s,c)=>s+(Number(c.approvedDFT)||0),0);
+          return (
+            <div style={{background:'#1a1a2e',border:'1px solid #333',borderRadius:6,padding:12,marginBottom:14}}>
+              <div style={{fontWeight:600,marginBottom:8,fontSize:13}}>DFT Summary</div>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead><tr>
+                  <th style={{textAlign:'left',padding:'4px 8px',color:'#aaa'}}>Coat</th>
+                  <th style={{textAlign:'right',padding:'4px 8px',color:'#aaa'}}>Spec (μm)</th>
+                  <th style={{textAlign:'right',padding:'4px 8px',color:'#aaa'}}>Actual (μm)</th>
+                  <th style={{textAlign:'right',padding:'4px 8px',color:'#aaa'}}>Status</th>
+                </tr></thead>
+                <tbody>
+                  {coatApprovals.map((c,i)=>(
+                    <tr key={i} style={{borderTop:'1px solid #222'}}>
+                      <td style={{padding:'4px 8px'}}>{c.name||`Coat ${i+1}`}</td>
+                      <td style={{textAlign:'right',padding:'4px 8px'}}>{c.dft||'—'}</td>
+                      <td style={{textAlign:'right',padding:'4px 8px'}}>{c.approvedDFT||'—'}</td>
+                      <td style={{textAlign:'right',padding:'4px 8px',color:c.approvedDFT&&Number(c.approvedDFT)>=Number(c.dft)?'#22c55e':'#aaa'}}>
+                        {c.approvedDFT ? (Number(c.approvedDFT)>=Number(c.dft)?'✓ Pass':'⚠ Low') : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr style={{borderTop:'2px solid #444',fontWeight:600}}>
+                    <td style={{padding:'4px 8px'}}>TOTAL</td>
+                    <td style={{textAlign:'right',padding:'4px 8px'}}>{totalSpec}</td>
+                    <td style={{textAlign:'right',padding:'4px 8px',color:totalActual>=totalSpec?'#22c55e':'#f59e0b'}}>{totalActual||'—'}</td>
+                    <td style={{textAlign:'right',padding:'4px 8px',color:totalActual>=totalSpec?'#22c55e':'#f59e0b'}}>
+                      {totalActual>0?(totalActual>=totalSpec?'✓ Total Pass':'⚠ Below Spec'):'—'}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
         {/* MDCC reference number — required for MDCC approval */}
         {isMdcc && (
           <div style={{ ...css.card, marginBottom:14, border:`1px solid ${T.accent}44` }}>
@@ -8677,20 +8838,81 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
             </div>
           );
         })()}
-        {/* Dimension readings for cutting_qc */}
-        {selGD.stage==="cutting_qc" && selGD.insts.length>0 && (
-          <div style={{ ...css.card, marginBottom:14 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>DIMENSION READINGS</div>
-            {[...new Set(selGD.insts.map(i=>i.markNo))].map(markNo=>(
-              <div key={markNo} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
-                <span style={{ fontSize:12, color:T.text, minWidth:80 }}>{markNo}</span>
-                <span style={{ fontSize:12, color:T.textMid }}>Measured length:</span>
-                <input type="number" value={dimReadings[markNo]||""} onChange={e=>setDimReadings(prev=>({...prev,[markNo]:e.target.value}))} placeholder="mm" style={{ ...css.input, width:100, fontSize:12 }} />
-                <span style={{ fontSize:11, color:T.textMid }}>mm</span>
+        {/* Assembly TPI fields — shown when assembly's tpiRequired is set */}
+        {stage==="assembly" && (() => {
+          const orderForGrp = orders.find(o=>o.id===selGD?.orderId);
+          const asmDef = (orderForGrp?.assemblies||[]).find(a=>(a.drawingsAssigned||[]).includes(selGD?.drawingId));
+          if (!asmDef?.tpiRequired) return null;
+          return (
+            <div style={{background:'#f59e0b11',border:'1px solid #f59e0b',borderRadius:6,padding:10,marginTop:10,marginBottom:14}}>
+              <div style={{fontWeight:600,color:'#f59e0b',marginBottom:8,fontSize:13}}>TPI Required for this Assembly</div>
+              <div style={{display:'flex',gap:12,flexWrap:'wrap',marginBottom:8}}>
+                <div>
+                  <div style={{fontSize:12,color:'#aaa',marginBottom:3}}>Inspector Name</div>
+                  <input value={(localChecks||{}).assemblyTpiInspector||''}
+                    onChange={e=>setLocalChecks(c=>({...c,assemblyTpiInspector:e.target.value}))}
+                    placeholder="Inspector name"
+                    style={{background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:'6px 8px',borderRadius:4,fontSize:13,width:180}} />
+                </div>
+                <div>
+                  <div style={{fontSize:12,color:'#aaa',marginBottom:3}}>IRN Number</div>
+                  <input value={(localChecks||{}).assemblyTpiIRN||''}
+                    onChange={e=>setLocalChecks(c=>({...c,assemblyTpiIRN:e.target.value}))}
+                    placeholder="IRN-XXXX"
+                    style={{background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:'6px 8px',borderRadius:4,fontSize:13,width:140}} />
+                </div>
               </div>
-            ))}
-          </div>
-        )}
+              <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}}>
+                <input type="checkbox" checked={!!(localChecks||{}).assemblyTpiApproved}
+                  onChange={e=>setLocalChecks(c=>({...c,assemblyTpiApproved:e.target.checked}))} />
+                <span style={{fontSize:13,fontWeight:600}}>TPI Assembly Inspection Approved</span>
+              </label>
+            </div>
+          );
+        })()}
+        {/* Dimension readings for cutting_qc */}
+        {selGD.stage==="cutting_qc" && selGD.insts.length>0 && (()=>{
+          // Derive machine capabilities from releases for this group's nestingRunId
+          const nestingRunId = selGD.insts[0]?.nestingRunId;
+          const relForRun = nestingRunId ? (releases||[]).find(r=>(r.machineAssignments||[]).some(ma=>ma.nestingRunId===nestingRunId)||(r.drawings||[]).some(d=>d.nestingRunId===nestingRunId)) : null;
+          const machineId = relForRun ? ((relForRun.machineAssignments||[])[0]?.machineId||"") : "";
+          const machineObj = machineId ? (machines||[]).find(m=>m.id===machineId) : null;
+          const machineCaps = machineObj?.capabilities||[];
+          return (
+            <div style={{ ...css.card, marginBottom:14 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>DIMENSION READINGS</div>
+              {[...new Set(selGD.insts.map(i=>i.markNo))].map(markNo=>(
+                <div key={markNo} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
+                  <span style={{ fontSize:12, color:T.text, minWidth:80 }}>{markNo}</span>
+                  <span style={{ fontSize:12, color:T.textMid }}>Measured length:</span>
+                  <input type="number" value={dimReadings[markNo]||""} onChange={e=>setDimReadings(prev=>({...prev,[markNo]:e.target.value}))} placeholder="mm" style={{ ...css.input, width:100, fontSize:12 }} />
+                  <span style={{ fontSize:11, color:T.textMid }}>mm</span>
+                </div>
+              ))}
+              {/* Conditional secondary ops checklist based on machine capabilities */}
+              {machineCaps.includes('bevel') && <>
+                <div style={{fontWeight:600,marginTop:10,marginBottom:4,fontSize:13}}>Bevel QC Items</div>
+                {['Bevel angle correct per drawing','Bevel face clean and uniform','Bevel length matches requirement'].map((item,i)=>(
+                  <label key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,cursor:'pointer'}}>
+                    <input type="checkbox" checked={!!(localChecks||{})[`bevel_${i}`]}
+                      onChange={e=>setLocalChecks(c=>({...c,[`bevel_${i}`]:e.target.checked}))} />
+                    <span style={{fontSize:13}}>{item}</span>
+                  </label>
+                ))}
+              </>}
+              {machineCaps.includes('drill') && <>
+                <div style={{fontWeight:600,marginTop:10,marginBottom:4,fontSize:13}}>Drill QC Items</div>
+                {['Hole diameter correct','Hole position per drawing','Hole perpendicularity acceptable','Burrs removed'].map((item,i)=>(
+                  <label key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,cursor:'pointer'}}>
+                    <input type="checkbox" checked={!!(localChecks||{})[`drill_${i}`]}
+                      onChange={e=>setLocalChecks(c=>({...c,[`drill_${i}`]:e.target.checked}))} />
+                    <span style={{fontSize:13}}>{item}</span>
+                  </label>
+                ))}
+              </>}
+            </div>
+          );
+        })()}
         {/* Rejection history */}
         {selGD.insts.some(i=>(i.stageHistory||[]).some(h=>h.stage===stage&&(h.rejections||[]).length>0)) && (
           <div style={{ ...css.card,marginBottom:14,border:`1px solid ${T.red}44` }}>
@@ -9094,7 +9316,7 @@ const PRI_BADGE = score => {
 
 const TIER_COLOR = { simple:"blue", medium:"green", complex:"amber", heavy:"red" };
 
-const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, contractors, releases, setReleases, productionStandards, onBack }) => {
+const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, contractors, releases, setReleases, productionStandards, instances, onBack }) => {
   const today = () => new Date().toISOString().slice(0,10);
   const [step, setStep] = useState(1);
 
@@ -9501,6 +9723,49 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
       <div>
         <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 3 — Smart Suggestions</div>
         <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>Additional drawings that share the same RM types and can be batched into this cutting run.</div>
+        {/* Section A: Drawings In Progress */}
+        {(() => {
+          const inProgressDrgs = selDrawings.filter(sd => {
+            const hasInstances = (instances||[]).some(i => i.drawingId===sd.drawingId && i.orderId===sd.orderId);
+            const allDispatched = (instances||[]).filter(i=>i.drawingId===sd.drawingId&&i.orderId===sd.orderId)
+              .every(i=>['dispatch','complete'].includes(i.currentStage));
+            return hasInstances && !allDispatched;
+          });
+          if (inProgressDrgs.length === 0) return null;
+          return (
+            <div style={{marginBottom:20}}>
+              <div style={{fontWeight:600,marginBottom:10,color:'#e2e8f0'}}>Drawings In Progress</div>
+              {inProgressDrgs.map(sd => {
+                const drg = (orders||[]).flatMap(o=>o.drawings||[]).find(d=>d.id===sd.drawingId);
+                const drgInsts = (instances||[]).filter(i=>i.drawingId===sd.drawingId&&i.orderId===sd.orderId);
+                const cutDone = drgInsts.filter(i=>!['cutting','cutting_qc'].includes(i.currentStage)&&i.currentStage!=='').length;
+                const total = drg?.qty||drgInsts.length||1;
+                const pct = Math.round((cutDone/total)*100);
+                const drgMatCodes = (drg?.parts||[]).filter(p=>p.fabType==='Fabricate').map(p=>p.matCode).filter(Boolean);
+                const offcuts = (stock||[]).filter(s =>
+                  s.status==='available' && s.offcutParentId &&
+                  drgMatCodes.some(mc => mc === s.matCode)
+                );
+                return (
+                  <div key={sd.drawingId} style={{background:'#1e293b',borderRadius:6,padding:12,marginBottom:8,border:'1px solid #334155'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                      <span style={{fontWeight:600,fontSize:13}}>{drg?.drawingNo||sd.drawingId}</span>
+                      <span style={{fontSize:12,color:'#94a3b8'}}>{cutDone}/{total} units cut ({pct}%)</span>
+                    </div>
+                    <div style={{background:'#0f172a',borderRadius:4,height:6,marginBottom:8}}>
+                      <div style={{background:'#22c55e',width:`${pct}%`,height:'100%',borderRadius:4,transition:'width 0.3s'}} />
+                    </div>
+                    {offcuts.length > 0 && (
+                      <div style={{fontSize:12,color:'#f59e0b',marginTop:4}}>
+                        💡 {offcuts.length} off-cut lot{offcuts.length>1?'s':''} available for this drawing's RM types
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
         {!hasAny && <InfoBanner color="blue">No additional drawings found that share RM types with your current selection.</InfoBanner>}
         {Object.entries(matGroups).map(([matCode, candidates]) => (
           <div key={matCode} style={{...css.card, marginBottom:12}}>
@@ -9938,6 +10203,20 @@ const StepConfigModal = ({ drawings, orders, machines, contractors, parts, onSav
               ))}
             </div>
 
+            {/* Assembly read-only card */}
+            {(() => {
+              const drg = (drawings||[]).find(d => d.drawingId === conf.drawingId) ||
+                          (orders||[]).flatMap(o=>o.drawings||[]).find(d=>d.id===conf.drawingId);
+              if (!drg?.assemblyGroup) return null;
+              return (
+                <div style={{background:'#7c3aed11',border:'1px solid #7c3aed55',borderRadius:6,padding:10,margin:'6px 0',display:'flex',alignItems:'center',gap:10}}>
+                  <span style={{fontSize:13,fontWeight:600,color:'#a78bfa'}}>Assembly</span>
+                  <span style={{fontSize:12,color:'#94a3b8',marginLeft:4}}>{drg.assemblyGroup}</span>
+                  <span style={{fontSize:11,color:'#64748b',marginLeft:'auto',fontStyle:'italic'}}>auto-inserted between Welding and Blasting</span>
+                </div>
+              );
+            })()}
+
             {/* Part operations */}
             {conf.parts.length>0 && (
               <div>
@@ -9959,6 +10238,15 @@ const StepConfigModal = ({ drawings, orders, machines, contractors, parts, onSav
                               newParts[pIdx]={...p,ops:e.target.checked?[...curOps,op]:curOps.filter(o=>o!==op)};
                               updConfig(dIdx,{...conf,parts:newParts});
                             }} style={{ accentColor:T.accent }} />
+                            {op==='Drill' && (p.ops||[]).includes('Drill') && (() => {
+                              const hasDrillMachine = (machines||[]).some(m => m.active !== false && (m.capabilities||[]).includes('drill'));
+                              if (hasDrillMachine) return null;
+                              return (
+                                <div style={{fontSize:11,color:'#f59e0b',marginTop:2,marginLeft:24}}>
+                                  ⚠ No drill-capable machine found — secondary station will be required
+                                </div>
+                              );
+                            })()}
                           </TD>
                         ))}
                       </tr>
@@ -9979,7 +10267,7 @@ const StepConfigModal = ({ drawings, orders, machines, contractors, parts, onSav
 };
 
 // ─── C3: Cross-Order Production Drawing Register ──────────────────────────────
-const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, onBack }) => {
+const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, machines, onBack }) => {
   const [filterOrder, setFilterOrder] = useState("");
   const [filterAssembly, setFilterAssembly] = useState("");
   const [filterStage, setFilterStage] = useState("");
@@ -10079,7 +10367,14 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
         <div style={{ display:"flex", gap:8, marginBottom:12, padding:"10px 14px", background:T.accent+"22", borderRadius:8, alignItems:"center" }}>
           <span style={{ fontSize:12, color:T.accent, fontWeight:600 }}>{selected.size} drawing(s) selected</span>
           <button style={css.btn.primary} onClick={()=>setStepConfigModal(true)}>Configure Steps</button>
-          <button style={{ ...css.btn.secondary, color:T.amber }} onClick={()=>{}}>Reserve Stock</button>
+          <button style={{ ...css.btn.secondary, color:T.amber }} onClick={()=>{
+            const rows = filtered;
+            const orderRefs = [...new Set([...selected].map(id => {
+              const row = rows.find(r => r.drawingId === id.split("/")[0] && r.orderId === id.split("/")[1]);
+              return row?.orderRef || row?.orderId;
+            }))].filter(Boolean).join(', ');
+            alert(`Navigate to Stock → Reservations to reserve material for order(s): ${orderRefs}`);
+          }}>Reserve Stock</button>
           <button style={{ ...css.btn.ghost }} onClick={()=>setSelected(new Set())}>Clear</button>
         </div>
       )}
@@ -10188,6 +10483,48 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
                               ))}
                             </tbody>
                           </table>
+                        </div>
+                        {/* Section C: Assignment */}
+                        <div style={{marginTop:12}}>
+                          <div style={{fontWeight:600,fontSize:12,color:'#aaa',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.05em'}}>Assignment</div>
+                          {(() => {
+                            const rel = (releases||[]).find(r =>
+                              r.orderId === d.orderId &&
+                              (r.drawings||[]).some(rd => rd.drawingId === d.drawingId)
+                            );
+                            const ma = rel ? (rel.machineAssignments||[]).find(ma2 =>
+                              d.parts.some(p => p.matCode === ma2.matCode)
+                            ) : null;
+                            const machine = ma ? (machines||[]).find(m => m.id === ma.machineId) : null;
+                            const drgObj = (orders||[]).flatMap(o=>o.drawings||[]).find(dr=>dr.id===d.drawingId);
+                            const contrSteps = (drgObj?.productionSteps||[]).filter(s => s.type === 'Outbound');
+                            return (
+                              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                                <tbody>
+                                  <tr style={{borderBottom:'1px solid #1e293b'}}>
+                                    <td style={{padding:'4px 8px',color:'#94a3b8',width:140}}>Assigned Machine</td>
+                                    <td style={{padding:'4px 8px',color:'#e2e8f0'}}>{machine ? `${machine.name} (${machine.bayLocation||'—'})` : '—'}</td>
+                                  </tr>
+                                  <tr style={{borderBottom:'1px solid #1e293b'}}>
+                                    <td style={{padding:'4px 8px',color:'#94a3b8'}}>Machine Assignment</td>
+                                    <td style={{padding:'4px 8px',color:'#e2e8f0'}}>
+                                      {ma ? `${ma.startDate||'—'} → ${ma.endDate||'—'}` : '—'}
+                                    </td>
+                                  </tr>
+                                  <tr>
+                                    <td style={{padding:'4px 8px',color:'#94a3b8'}}>Outbound Steps</td>
+                                    <td style={{padding:'4px 8px',color:'#e2e8f0'}}>
+                                      {contrSteps.length === 0 ? '—' : contrSteps.map((s,i) => (
+                                        <span key={i} style={{marginRight:8,background:'#7c3aed22',border:'1px solid #7c3aed55',borderRadius:4,padding:'1px 6px',color:'#a78bfa',fontSize:11}}>
+                                          {s.name}{s.contractorName ? ` — ${s.contractorName}` : ''}
+                                        </span>
+                                      ))}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            );
+                          })()}
                         </div>
                       </td>
                     </tr>
@@ -10471,13 +10808,13 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
   if (view==="release_new") return (
     <ProductionReleaseWizard user={user} orders={orders} stock={stock} materials={materials||[]}
       machines={machines} contractors={contractors} releases={releases||[]} setReleases={setReleases}
-      productionStandards={productionStandards} onBack={()=>setView("dashboard")} />
+      productionStandards={productionStandards} instances={instances||[]} onBack={()=>setView("dashboard")} />
   );
 
   // ── Supervisor queue view ──
   if (view==="approvals") return (
     <SupervisorQueue user={user} instances={instances} setInstances={setInstances}
-      orders={orders} tpiAgencies={tpiAgencies||[]} onBack={()=>setView("dashboard")} />
+      orders={orders} tpiAgencies={tpiAgencies||[]} releases={releases||[]} machines={machines||[]} onBack={()=>setView("dashboard")} />
   );
 
   // ── Outbound processing view ──
@@ -10488,7 +10825,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
 
   // ── Drawing Register view ──
   if (view==="register") return (
-    <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} onBack={()=>setView("dashboard")} />
+    <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} machines={machines||[]} onBack={()=>setView("dashboard")} />
   );
 
   // ── Progress grid view ──
