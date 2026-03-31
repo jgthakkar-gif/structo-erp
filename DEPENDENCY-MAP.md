@@ -356,6 +356,8 @@ instance.dimReadings (array of {markNo, measuredMm} — cutting QC only)
   DISPLAYS: cutting_qc approval form — "Measured length of [markNo]: [____] mm"
              stageHistory entry containing dimReadings
   TRIGGERS: Saved with stage approval — stored in stageHistory[].dimReadings
+  SECONDARY: If machine has 'bevel' capability → 3 bevel QC checklist items shown
+             If machine has 'drill' capability → 4 drill QC checklist items shown
   IF CHANGED: Never edit after approved — historical QC record
 
 instance.subStageChecks ({cut:bool, bevel:bool, grind:bool, drill:bool})
@@ -364,10 +366,48 @@ instance.subStageChecks ({cut:bool, bevel:bool, grind:bool, drill:bool})
            Secondary station routing — if pending ops after cut confirmation
   WRITES:  Cutting confirmation — checkboxes driven by barForm.machineCaps
   DISPLAYS: Cutting confirmation bar form — sub-stage checklist
-  TRIGGERS: drill unchecked → instance.currentStatus set to "pending_secondary"
+  TRIGGERS: drill unchecked AND machine has drill cap → currentStatus:"pending_secondary"
   NOTE: Only checkboxes for capabilities present on the assigned machine are shown
         e.g. if machine has no 'drill' capability, drill checkbox is hidden
   IF CHANGED: pending_secondary instances need routing to secondary machine assignment
+
+instance.defectAction (scrap_recut | rectify | accept_deviation)
+  *** NEW FIELD — set at cutting confirmation when isDefective=true ***
+  READS:   QC Admin — defect resolution tracking
+  WRITES:  Cutting confirmation bar form — defectAction select (visible when isDefective)
+  DISPLAYS: Cutting confirmation, QC Admin pending jobs
+  TRIGGERS: scrap_recut → part re-enters nesting queue
+             rectify → part stays at cutting stage pending fix
+             accept_deviation → part proceeds with deviation note
+  IF CHANGED: Requires super_admin after initial save
+
+stageHistory[].weldGaugeReading (number, mm — welding stage)
+stageHistory[].postWeldLength (number, mm — welding stage)
+  *** NEW FIELDS — recorded at welding stage approval ***
+  WRITES:  SupervisorQueue welding stage form — Measurements section
+  DISPLAYS: Welding approval form, MDCC dossier
+  IF CHANGED: Never edit after approved — historical QC record
+
+stageHistory[].dustRating (string "1"-"5" — blasting stage, ISO 8502-3)
+  *** NEW FIELD — recorded at blasting stage approval ***
+  WRITES:  SupervisorQueue blasting stage form — Dust Rating select
+  TRIGGERS: Rating 1-2 = Pass, Rating 3-5 = Fail
+  IF CHANGED: Never edit after approved
+
+stageHistory[].envTemp / envRH / envDewPt / envSurfTemp (painting stage)
+  *** NEW FIELDS — environmental conditions captured at each coat approval ***
+  WRITES:  SupervisorQueue painting stage form — Environmental Conditions section
+  DISPLAYS: Painting approval form, MDCC dossier
+  IF CHANGED: Never edit after approved
+
+instance.assignedEngineer (user.id — set by QC auto-assignment rules)
+  *** NEW FIELD — set in doApprove when creating next pending_supervisor item ***
+  READS:   SupervisorQueue filter — qc_user sees only their assigned jobs
+           QC Admin screen — Pending Jobs table
+  WRITES:  doApprove — auto-assigned via qcRules matching processType
+           QC Admin — manual override (sets assignedEngineer + appends to overrideLog)
+  TRIGGERS: Set → qc_user role filters queue to their jobs only
+  IF CHANGED: Override requires QC Admin — logged in overrideLog
 
 instance.tpiStatus (per stage: not_required|pending|cleared)
   READS:   Stage gate — checks alongside qcStatus before transition
@@ -696,4 +736,4 @@ KEY DESIGN DECISIONS RECORDED HERE:
   - 1D bar nesting built IN ERP — no external API needed
   - Plate nesting uses Nesting Center API — REST API, Python/JS client
 
-Last updated: March 2026 — Session 4 Phase 3 — v1.2
+Last updated: March 2026 — Session 4 Phase 3 (gap fill) — v1.3
