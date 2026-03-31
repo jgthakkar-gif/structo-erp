@@ -659,7 +659,7 @@ const PERMISSIONS = {
   purchase_user:   { modules:["dashboard","purchase"],                         canApprove:false, canOverride:false, canManageUsers:false },
   store_admin:     { modules:["dashboard","stock","bays"],                     canApprove:true,  canOverride:false, canManageUsers:false },
   store_user:      { modules:["dashboard","stock"],                            canApprove:false, canOverride:false, canManageUsers:false },
-  qc_admin:        { modules:["dashboard","qc","stock","production"],          canApprove:true,  canOverride:true,  canManageUsers:false },
+  qc_admin:        { modules:["dashboard","qc","qc_ops","stock","production"],  canApprove:true,  canOverride:true,  canManageUsers:false },
   qc_user:         { modules:["dashboard","qc"],                               canApprove:false, canOverride:false, canManageUsers:false },
   floor_planner:   { modules:["dashboard","mrp","production","stock"],         canApprove:true,  canOverride:false, canManageUsers:false },
   production_engineer:{ modules:["dashboard","production","qc"],               canApprove:true,  canOverride:true,  canManageUsers:false },
@@ -706,6 +706,7 @@ const MACHINES_SEED = [
   { id:"MCH-004", name:"MIG Welder 1",     type:"Welding", bayLocation:"Bay 7", active:true, capabilities:[],                                              specs:{maxThicknessMm:0,maxSectionSizeMm:0,notes:""} },
   { id:"MCH-005", name:"MIG Welder 2",     type:"Welding", bayLocation:"Bay 7", active:true, capabilities:[],                                              specs:{maxThicknessMm:0,maxSectionSizeMm:0,notes:""} },
   { id:"MCH-006", name:"SAW Machine 1",    type:"Welding", bayLocation:"Bay 8", active:true, capabilities:[],                                              specs:{maxThicknessMm:0,maxSectionSizeMm:0,notes:""} },
+  { id:"MCH-007", name:"Pillar Drill 1",   type:"Drilling", bayLocation:"Bay 6", active:true, capabilities:["drill","mark"],                               specs:{maxThicknessMm:50,maxSectionSizeMm:0,notes:"Radial arm drill"} },
 ];
 
 // ─── SEED: ORDERS (summary only - parts & drawings needed for MRP) ───────────
@@ -865,14 +866,14 @@ const INIT_POS = [
 
 // ─── SEED: STOCK ──────────────────────────────────────────────────────────────
 const INIT_STOCK = [
-  { id:"STK-001", lotNo:"LOT-2025-001", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:2000, variance:0, size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:2000, wtAvailable:1800, wtAllocated:200, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc001/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:200}] },
-  { id:"STK-002", lotNo:"LOT-2025-002", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-002", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:500,  variance:0, size:"150x150x16", itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:500,  wtAvailable:500,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc002/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[] },
-  { id:"STK-003", lotNo:"LOT-2025-003", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-004", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"PLATE", qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:1500, variance:0, size:"10mm",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1500, wtAvailable:1200, wtAllocated:300, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-05", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc003/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:300}] },
-  { id:"STK-004", lotNo:"LOT-2025-004", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:800,  variance:0, size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"qc_hold",  bayId:"BAY-04", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending",  receivedDate:"2025-02-06", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"MTC not received from supplier" },
-  { id:"STK-005", lotNo:"LOT-2026-001", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-009", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", sectionType:"ISMB",  qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:3000, variance:0, size:"300",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:3000, wtAvailable:3000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
-  { id:"STK-006", lotNo:"LOT-2026-002", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-010", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", sectionType:"PLATE", qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:800,  variance:0, size:"12mm",      itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold",   bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"Surface rust and minor edge damage on plates — awaiting QC decision" },
-  { id:"STK-007", lotNo:"LOT-2026-003", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-013", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", sectionType:"RHS",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:1000, variance:0, size:"100x50x4",  itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1000, wtAvailable:1000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
-  { id:"STK-008", lotNo:"LOT-2026-004", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-014", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", sectionType:"SHS",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:250,  variance:0, size:"75x75x5",   itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:250,  wtAvailable:250,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], qcHoldReason:"" },
+  { id:"STK-001", lotNo:"LOT-2025-001", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:2000, variance:0, size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:2000, wtAvailable:1800, wtAllocated:200, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc001/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:200}], reservations:[] },
+  { id:"STK-002", lotNo:"LOT-2025-002", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-002", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:500,  variance:0, size:"150x150x16", itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:500,  wtAvailable:500,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-03", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc002/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[], reservations:[] },
+  { id:"STK-003", lotNo:"LOT-2025-003", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-004", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"PLATE", qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:1500, variance:0, size:"10mm",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1500, wtAvailable:1200, wtAllocated:300, wtIssued:0, wtConsumed:0, status:"available", bayId:"BAY-05", mtcUploaded:true,  mtcDoc:"https://drive.google.com/file/d/mtc003/view", rmQcStatus:"approved", clientInspStatus:"approved", receivedDate:"2025-02-04", isOffcut:false, parentLotId:"", allocations:[{orderId:"SF-2025-0001",drawingId:"D001",wt:300}], reservations:[] },
+  { id:"STK-004", lotNo:"LOT-2025-004", batchNo:"JSW001-2025-001", poId:"PO-2025-001", poLineId:"POL-001", grnId:"GRN-2025-001", vendorId:"V-001", vendorCode:"JSW001", vendorName:"JSW Steel Limited", matType:"MS", grade:"E250", sectionType:"ISA",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:800,  variance:0, size:"75x75x8",    itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0,   wtIssued:0, wtConsumed:0, status:"qc_hold",  bayId:"BAY-04", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending",  receivedDate:"2025-02-06", isOffcut:false, parentLotId:"", allocations:[], reservations:[], qcHoldReason:"MTC not received from supplier" },
+  { id:"STK-005", lotNo:"LOT-2026-001", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-009", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", sectionType:"ISMB",  qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:3000, variance:0, size:"300",       itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:3000, wtAvailable:3000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], reservations:[], qcHoldReason:"" },
+  { id:"STK-006", lotNo:"LOT-2026-002", batchNo:"STE002-2026-001", poId:"PO-2026-001", poLineId:"POL-010", grnId:"GRN-2026-001", vendorId:"V-002", vendorCode:"STE002", vendorName:"Steel Authority of India", matType:"MS", grade:"E250", sectionType:"PLATE", qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:800,  variance:0, size:"12mm",      itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:800,  wtAvailable:800,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold",   bayId:"BAY-07", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending",  clientInspStatus:"pending", receivedDate:"2026-03-14", isOffcut:false, parentLotId:"", allocations:[], reservations:[], qcHoldReason:"Surface rust and minor edge damage on plates — awaiting QC decision" },
+  { id:"STK-007", lotNo:"LOT-2026-003", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-013", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", sectionType:"RHS",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:1000, variance:0, size:"100x50x4",  itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:1000, wtAvailable:1000, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], reservations:[], qcHoldReason:"" },
+  { id:"STK-008", lotNo:"LOT-2026-004", batchNo:"APL003-2026-001", poId:"PO-2026-002", poLineId:"POL-014", grnId:"GRN-2026-002", vendorId:"V-003", vendorCode:"APL003", vendorName:"APL Apollo Tubes",        matType:"MS", grade:"E250", sectionType:"SHS",   qtyReceived:0, unit:"MT", length:null, width:null, calculatedWt:0, actualWt:250,  variance:0, size:"75x75x5",   itemCode:"", matCode:"", matLibId:"", heatNo:"", wtReceived:250,  wtAvailable:250,  wtAllocated:0, wtIssued:0, wtConsumed:0, status:"qc_hold", bayId:"BAY-09", mtcUploaded:false, mtcDoc:"", rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:"2026-03-15", isOffcut:false, parentLotId:"", allocations:[], reservations:[], qcHoldReason:"" },
 ];
 
 // ─── NESTING RUNS ─────────────────────────────────────────────────────────────
@@ -1274,6 +1275,7 @@ const NAV = [
   { id:"purchase",  label:"Purchase",     icon:"🛒", module:"purchase"   },
   { id:"stock",     label:"Stock",        icon:"📦", module:"stock"      },
   { id:"qc",        label:"RM Quality",   icon:"✓",  module:"qc"         },
+  { id:"qc_ops",    label:"QC Admin",     icon:"🔍", module:"qc_ops"     },
   { id:"production",label:"Production",   icon:"⚙️", module:"production" },
   { id:"finance",   label:"Finance",      icon:"₹",  module:"finance"    },
   { id:"dispatch",  label:"Dispatch",     icon:"🚚", module:"dispatch"   },
@@ -4045,6 +4047,10 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
   const [toast, setToast] = useState(null);
   const [mtcUploadId, setMtcUploadId] = useState(null); // lotId with inline MTC form open
   const [mtcForm, setMtcForm] = useState({});
+  const [resModal, setResModal] = useState(null); // null | "add" | "confirm_release"
+  const [resForm, setResForm] = useState({});
+  const [resLot, setResLot] = useState(null);
+  const [resRelIdx, setResRelIdx] = useState(-1);
 
   const yr = new Date().getFullYear();
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
@@ -4060,12 +4066,12 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
   };
 
   const filtered = stock.filter(s => {
-    const ms = filter==="all" || (filter==="offcuts"?s.isOffcut:s.status===filter);
+    const ms = filter==="all" || (filter==="offcuts"?s.isOffcut:filter==="reserved"?(s.reservations||[]).length>0:s.status===filter);
     const mq = !search || [s.lotNo,s.batchNo,s.matCode,(s.sectionType||s.section),s.size,s.grade,s.vendorName,s.heatNo].some(v=>(v||"").toLowerCase().includes(search.toLowerCase()));
     return ms && mq;
   });
 
-  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red" };
+  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber" };
   const openModal = (m,lot) => { setModal(m); setActiveLot(lot); setMForm({}); };
   const closeModal = () => { setModal(null); setActiveLot(null); setMForm({}); };
 
@@ -4130,7 +4136,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     stock.forEach(s=>{ const m=(s.lotNo||"").match(/^LOT-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) maxLot=Math.max(maxLot,+m[2]); });
     const newLotNo = `LOT-${yr}-${String(maxLot+1).padStart(3,"0")}`;
     const dim = (activeLot.sectionType||activeLot.section)==="PLATE" ? (mForm.offcutDim||"") : (mForm.offcutLength||"");
-    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"available", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
+    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"pending_offcut_verification", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
     const consumed = +(mForm.consumedWt||0);
     setStock(prev=>[...prev.map(s=>s.id!==activeLot.id?s:{ ...s, wtConsumed:(s.wtConsumed||0)+consumed, auditLog:[...(s.auditLog||[]),{action:"offcut-created",orderId:"",wt:offcutWt,by:user.name,date:today(),reason:`Off-cut → ${newLotNo}`}] }), newLot]);
     showToast(`Off-cut lot created: ${newLotNo}`); closeModal();
@@ -4153,6 +4159,35 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     }));
     showToast(`Write-off recorded — ${fmt.num(writeOffWt)} kg${newAvail<=0?" · Lot fully written off":""}`,"green");
     closeModal();
+  };
+
+  const saveReserve = () => {
+    if (!resForm.orderId || !resForm.kg) { showToast("Fill required fields","amber"); return; }
+    const kg = +resForm.kg;
+    if (kg<=0 || kg>resLot.wtAvailable) { showToast(`Max available: ${fmt.num(resLot.wtAvailable)} kg`,"amber"); return; }
+    const ord = orders.find(o=>o.id===resForm.orderId);
+    const entry = { orderId:resForm.orderId, orderRef:ord?.id||"", kg, reservedBy:user.name, reservedAt:today() };
+    setStock(prev=>prev.map(s=>s.id!==resLot.id?s:{
+      ...s,
+      reservations:[...(s.reservations||[]),entry],
+      status:(s.status==="available"||s.status==="reserved")?"reserved":s.status,
+      auditLog:[...(s.auditLog||[]),{action:"reserved",orderId:resForm.orderId,wt:kg,by:user.name,date:today(),reason:""}]
+    }));
+    showToast("Reservation added"); setResModal(null); setResLot(null); setResForm({});
+  };
+
+  const releaseReservation = (lot, idx) => {
+    const entry = (lot.reservations||[])[idx];
+    if (!entry) return;
+    setStock(prev=>prev.map(s=>{
+      if (s.id!==lot.id) return s;
+      const newRes = s.reservations.filter((_,i)=>i!==idx);
+      return { ...s, reservations:newRes,
+        status: newRes.length===0 ? "available" : "reserved",
+        auditLog:[...(s.auditLog||[]),{action:"reservation_released",orderId:entry.orderId,wt:entry.kg,by:user.name,date:today(),reason:"Released by user"}]
+      };
+    }));
+    showToast("Reservation released");
   };
 
   return (
@@ -4251,12 +4286,57 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
           <span style={{ position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:T.textLow,fontSize:12 }}>🔍</span>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Lot, batch, matCode, vendor..." style={{ ...css.input,paddingLeft:28,width:260 }} />
         </div>
-        {[["all","All"],["available","Available"],["allocated","Allocated"],["issued","Issued"],["consumed","Consumed"],["qc_hold","QC Hold"],["written_off","Written Off"],["offcuts","Off-cuts"]].map(([f,lbl])=>(
+        {[["all","All"],["available","Available"],["reserved","Reserved"],["allocated","Allocated"],["issued","Issued"],["consumed","Consumed"],["qc_hold","QC Hold"],["written_off","Written Off"],["offcuts","Off-cuts"]].map(([f,lbl])=>(
           <button key={f} onClick={()=>setFilter(f)} style={{ ...css.btn.secondary,...(filter===f?{background:`${T.accent}22`,color:T.accent,borderColor:T.accent}:{}) }}>
-            {lbl} ({f==="all"?stock.length:f==="offcuts"?stock.filter(s=>s.isOffcut).length:stock.filter(s=>s.status===f).length})
+            {lbl} ({f==="all"?stock.length:f==="offcuts"?stock.filter(s=>s.isOffcut).length:f==="reserved"?stock.filter(s=>(s.reservations||[]).length>0).length:stock.filter(s=>s.status===f).length})
           </button>
         ))}
       </div>
+
+      {/* Off-cuts Pending Verification */}
+      {(user.role==="store_admin"||user.role==="super_admin"||user.role==="planning_admin") && (() => {
+        const pendingOc = stock.filter(s=>s.status==="pending_offcut_verification");
+        if (pendingOc.length===0) return null;
+        return (
+          <div style={{ ...css.card, border:`1px solid ${T.amber}55`, marginBottom:16 }}>
+            <div style={{ fontSize:12, fontWeight:800, color:T.amber, marginBottom:12 }}>
+              ⚠ OFF-CUTS PENDING VERIFICATION — {pendingOc.length} lot{pendingOc.length!==1?"s":""}
+            </div>
+            {pendingOc.map(lot=>(
+              <div key={lot.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderTop:`1px solid ${T.border}` }}>
+                <div>
+                  <div style={{ fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.accentHi }}>{lot.lotNo}</div>
+                  <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                    {lot.matCode||lot.sectionType} · {lot.wtReceived} kg
+                    {lot.offcutLength?` · ${lot.offcutLength}mm`:""}{lot.offcutDimensions?` · ${lot.offcutDimensions}`:""}
+                    {" · "}From nesting run: {lot.nestingRunId||"—"}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={()=>{
+                    setStock(prev=>prev.map(s=>s.id!==lot.id?s:{
+                      ...s, status:"available",
+                      reservations:[...(s.reservations||[])],
+                      auditLog:[...(s.auditLog||[]),{action:"offcut-verified",wt:lot.wtReceived,by:user.name,date:today(),reason:"Off-cut verified and accepted"}]
+                    }));
+                    showToast("Off-cut verified and accepted","green");
+                  }} style={{ ...css.btn.primary, fontSize:11 }}>✓ Verify & Accept</button>
+                  <button onClick={()=>{
+                    const reason = prompt("Rejection reason:");
+                    if (!reason) return;
+                    setStock(prev=>prev.map(s=>s.id!==lot.id?s:{
+                      ...s, status:"written_off",
+                      qcHoldReason:`Off-cut rejected: ${reason}`,
+                      auditLog:[...(s.auditLog||[]),{action:"offcut-rejected",wt:lot.wtReceived,by:user.name,date:today(),reason}]
+                    }));
+                    showToast("Off-cut rejected","amber");
+                  }} style={{ ...css.btn.secondary, fontSize:11, color:T.red, borderColor:T.redLo }}>✕ Reject</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       <div style={{ overflowX:"auto" }}>
         <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
@@ -4335,6 +4415,9 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
                     {(s.issues||[]).length>0&&(
                       <button onClick={e=>{e.stopPropagation();const iss=s.issues[s.issues.length-1];setMForm({issNoteNo:iss.issueNoteNo,issEntry:iss,lotSnap:s,contractorName:iss.issuedTo});setModal("print");}} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>ISN↗</button>
                     )}
+                    {canRelease && s.status!=="consumed" && s.status!=="written_off" && s.status!=="issued" && (
+                      <button onClick={e=>{e.stopPropagation();setResLot(s);setResForm({});setResModal("add");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}`, fontSize:10 }}>Reserve</button>
+                    )}
                     {user.role==="super_admin"&&(s.status==="available"||s.status==="qc_hold")&&(s.wtAllocated||0)===0&&(
                       <button onClick={e=>{e.stopPropagation();openModal("writeoff",s);}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.redLo}`,fontSize:10 }}>Write Off</button>
                     )}
@@ -4370,6 +4453,20 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
                             <tr key={i}><td style={{ padding:"4px 8px",fontFamily:T.fontMono,color:T.accent }}>{iss.issueNoteNo}</td><td style={{ padding:"4px 8px" }}>{iss.issueDate}</td><td style={{ padding:"4px 8px" }}>{iss.issuedTo}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{iss.orderId}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{fmt.num(iss.wt)}</td><td style={{ padding:"4px 8px" }}>{iss.dxfLink?<a href={iss.dxfLink} target="_blank" rel="noreferrer" style={{ color:T.accent }}>DXF↗</a>:"—"}</td></tr>
                           ))}</tbody>
                         </table>
+                      </div>
+                    )}
+                    {/* Reservations */}
+                    {(s.reservations||[]).length>0&&(
+                      <div style={{ marginTop:8, padding:"8px 12px", background:T.amberBg+"44", borderRadius:6 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginBottom:6 }}>RESERVATIONS</div>
+                        {(s.reservations||[]).map((r,ri)=>(
+                          <div key={ri} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"3px 0", borderBottom:`1px solid ${T.border}` }}>
+                            <span style={{ fontSize:11, color:T.text }}>{r.orderRef} — {fmt.num(r.kg)} kg — by {r.reservedBy} on {r.reservedAt}</span>
+                            {(user.role==="super_admin"||user.role==="planning_admin") && (
+                              <button onClick={()=>releaseReservation(s,ri)} style={{ ...css.btn.sm, fontSize:9, color:T.red, padding:"1px 6px" }}>Release</button>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
                     {(s.auditLog||[]).length>0&&(
@@ -4630,6 +4727,29 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
               style={{ ...css.btn.primary, background:T.red, borderColor:T.red, opacity:(mForm.writeOffReason?.trim()&&+(mForm.writeOffWt||0)>0)?1:0.4 }}>
               Confirm Write-Off
             </button>
+          </div>
+        </Modal>
+      )}
+
+      {resModal==="add" && resLot && (
+        <Modal title={`Reserve Stock — ${resLot.lotNo}`} onClose={()=>{setResModal(null);setResLot(null);setResForm({});}}>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>Available: <strong style={{color:T.green}}>{fmt.num(resLot.wtAvailable)} kg</strong></div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <div style={{ gridColumn:"span 2" }}>
+              <label style={css.label}>Order *</label>
+              <select value={resForm.orderId||""} onChange={e=>setResForm({...resForm,orderId:e.target.value})} style={css.input}>
+                <option value="">Select order...</option>
+                {(orders||[]).filter(o=>o.status==="active").map(o=><option key={o.id} value={o.id}>{o.id} — {o.projectDesc?.slice(0,40)}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn:"span 2" }}>
+              <label style={css.label}>Reserve Quantity (kg) *</label>
+              <input type="number" value={resForm.kg||""} onChange={e=>setResForm({...resForm,kg:e.target.value})} min={1} max={resLot.wtAvailable} style={css.input} placeholder={`Max: ${fmt.num(resLot.wtAvailable)} kg`} />
+            </div>
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+            <button onClick={()=>{setResModal(null);setResLot(null);setResForm({});}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={saveReserve} style={css.btn.primary}>Save Reservation</button>
           </div>
         </Modal>
       )}
@@ -5297,12 +5417,12 @@ const SEED_ORDERS = [
       { id:"MS-005", desc:"Retention",                           type:"final",   gstPct:18, basis:"percent", value:5,  trigger:"retention",      invoices:[] },
     ],
     drawings:[
-      { id:"D001", drawingNo:"TPL-JETTY-COL-01", title:"Main Column Type A", qty:4,  unitWt:857.78,totalWt:3431.12,revNo:"B",drawingDate:"2025-01-05",receivedDate:"2025-01-12",phase:1,priority:1,driveLink:"https://drive.google.com/file/d/dwg001/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2024-12-20",note:"Initial issue"},{rev:"B",date:"2025-01-05",note:"Column dimensions revised"}] },
-      { id:"D002", drawingNo:"TPL-JETTY-BM-01",  title:"Main Beam Type B",   qty:6,  unitWt:420.50,totalWt:2523.00,revNo:"A",drawingDate:"2025-01-05",receivedDate:"2025-01-12",phase:1,priority:2,driveLink:"https://drive.google.com/file/d/dwg002/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-05",note:"Initial issue"}] },
-      { id:"D003", drawingNo:"TPL-JETTY-BP-01",  title:"Base Plate Assembly", qty:8,  unitWt:215.30,totalWt:1722.40,revNo:"A",drawingDate:"2025-01-05",receivedDate:"2025-01-12",phase:1,priority:2,driveLink:"https://drive.google.com/file/d/dwg003/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-05",note:"Initial issue"}] },
-      { id:"D004", drawingNo:"TPL-JETTY-BRK-01", title:"Bracings H&D",       qty:12, unitWt:145.60,totalWt:1747.20,revNo:"A",drawingDate:"2025-01-08",receivedDate:"2025-01-15",phase:2,priority:1,driveLink:"https://drive.google.com/file/d/dwg004/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-08",note:"Initial issue"}] },
-      { id:"D005", drawingNo:"TPL-JETTY-PL-01",  title:"Platform Level 1",   qty:2,  unitWt:980.00,totalWt:1960.00,revNo:"A",drawingDate:"2025-01-08",receivedDate:"",           phase:2,priority:2,driveLink:"",fileType:"",status:"pending",revHistory:[] },
-      { id:"D006", drawingNo:"TPL-JETTY-PL-02",  title:"Platform Level 2",   qty:2,  unitWt:920.00,totalWt:1840.00,revNo:"A",drawingDate:"2025-01-08",receivedDate:"",           phase:3,priority:1,driveLink:"",fileType:"",status:"pending",revHistory:[] },
+      { id:"D001", drawingNo:"TPL-JETTY-COL-01", title:"Main Column Type A", qty:4,  unitWt:857.78,totalWt:3431.12,revNo:"B",drawingDate:"2025-01-05",receivedDate:"2025-01-12",phase:1,priority:1,driveLink:"https://drive.google.com/file/d/dwg001/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2024-12-20",note:"Initial issue"},{rev:"B",date:"2025-01-05",note:"Column dimensions revised"}],assemblyGroup:"ASM-001" },
+      { id:"D002", drawingNo:"TPL-JETTY-BM-01",  title:"Main Beam Type B",   qty:6,  unitWt:420.50,totalWt:2523.00,revNo:"A",drawingDate:"2025-01-05",receivedDate:"2025-01-12",phase:1,priority:2,driveLink:"https://drive.google.com/file/d/dwg002/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-05",note:"Initial issue"}],assemblyGroup:"ASM-001" },
+      { id:"D003", drawingNo:"TPL-JETTY-BP-01",  title:"Base Plate Assembly", qty:8,  unitWt:215.30,totalWt:1722.40,revNo:"A",drawingDate:"2025-01-05",receivedDate:"2025-01-12",phase:1,priority:2,driveLink:"https://drive.google.com/file/d/dwg003/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-05",note:"Initial issue"}],assemblyGroup:"ASM-002" },
+      { id:"D004", drawingNo:"TPL-JETTY-BRK-01", title:"Bracings H&D",       qty:12, unitWt:145.60,totalWt:1747.20,revNo:"A",drawingDate:"2025-01-08",receivedDate:"2025-01-15",phase:2,priority:1,driveLink:"https://drive.google.com/file/d/dwg004/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-08",note:"Initial issue"}],assemblyGroup:"ASM-002" },
+      { id:"D005", drawingNo:"TPL-JETTY-PL-01",  title:"Platform Level 1",   qty:2,  unitWt:980.00,totalWt:1960.00,revNo:"A",drawingDate:"2025-01-08",receivedDate:"",           phase:2,priority:2,driveLink:"",fileType:"",status:"pending",revHistory:[],assemblyGroup:"" },
+      { id:"D006", drawingNo:"TPL-JETTY-PL-02",  title:"Platform Level 2",   qty:2,  unitWt:920.00,totalWt:1840.00,revNo:"A",drawingDate:"2025-01-08",receivedDate:"",           phase:3,priority:1,driveLink:"",fileType:"",status:"pending",revHistory:[],assemblyGroup:"" },
     ],
     parts:[
       { id:"P001",drawingId:"D001",revNo:"B",itemNo:1, markNo:"SBK-101",desc:"BRACKET ANGLE",          fabType:"Fabricate", matType:"MS",grade:"E250",section:"ISA",    size:"75x75x8",   matCode:"ISA/MS/E250/75x75x8",    length:150, width:75, qtyPerDrg:80,clientUnitWt:1.335, clientTotalWt:106.8,  calcUnitWt:1.335, calcTotalWt:106.8,  jointsAllowed:false,source:"Procure",      partLink:"",remarks:"" },
@@ -5326,6 +5446,11 @@ const SEED_ORDERS = [
     },
     amendments:[{id:"AMD-001",field:"orderQty",oldVal:"220 Ton",newVal:"250 Ton",date:"2025-02-15",changedBy:"Anita Sharma",reason:"Client revised scope per letter TPL/AMD/2025/001",docLink:"https://drive.google.com/file/d/amd001/view"}],
     invoices:[], createdBy:"Anita Sharma", createdAt:"2025-01-12",
+    assemblyInspectionRequired:true,
+    assemblies:[
+      { id:"ASM-001", assemblyNumber:"ASM-001", assemblyName:"Jetty Column Assembly", drawingsAssigned:["D001","D002"], tpiRequired:false, clientContact:"", expectedInspectionDate:"", notes:"" },
+      { id:"ASM-002", assemblyNumber:"ASM-002", assemblyName:"Base Frame Assembly", drawingsAssigned:["D003","D004"], tpiRequired:false, clientContact:"", expectedInspectionDate:"", notes:"" },
+    ],
   },
   {
     id:"SF-2025-0002", status:"active", clientId:"CL-002", clientPoNo:"BHEL/PO/2025/ESS/0187",
@@ -5341,9 +5466,9 @@ const SEED_ORDERS = [
       { id:"MS-104", desc:"Retention",            type:"final",   gstPct:18, basis:"percent", value:10, trigger:"retention",      invoices:[] },
     ],
     drawings:[
-      { id:"D101", drawingNo:"BHEL-ESS-FR-01",  title:"Equipment Support Frame",   qty:2, unitWt:980.0, totalWt:1960.0, revNo:"A",drawingDate:"2025-01-22",receivedDate:"2025-01-28",phase:1,priority:1,driveLink:"https://drive.google.com/file/d/d101/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-22",note:"Initial issue"}] },
-      { id:"D102", drawingNo:"BHEL-ESS-PED-01", title:"Equipment Pedestal",        qty:4, unitWt:145.0, totalWt:580.0,  revNo:"A",drawingDate:"2025-01-22",receivedDate:"2025-01-28",phase:1,priority:2,driveLink:"https://drive.google.com/file/d/d102/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-22",note:"Initial issue"}] },
-      { id:"D103", drawingNo:"BHEL-ESS-ACC-01", title:"Access Platform & Handrail",qty:1, unitWt:360.0, totalWt:360.0,  revNo:"A",drawingDate:"2025-01-22",receivedDate:"",           phase:1,priority:3,driveLink:"",fileType:"",status:"pending",revHistory:[] },
+      { id:"D101", drawingNo:"BHEL-ESS-FR-01",  title:"Equipment Support Frame",   qty:2, unitWt:980.0, totalWt:1960.0, revNo:"A",drawingDate:"2025-01-22",receivedDate:"2025-01-28",phase:1,priority:1,driveLink:"https://drive.google.com/file/d/d101/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-22",note:"Initial issue"}],assemblyGroup:"" },
+      { id:"D102", drawingNo:"BHEL-ESS-PED-01", title:"Equipment Pedestal",        qty:4, unitWt:145.0, totalWt:580.0,  revNo:"A",drawingDate:"2025-01-22",receivedDate:"2025-01-28",phase:1,priority:2,driveLink:"https://drive.google.com/file/d/d102/view",fileType:"PDF",status:"active",revHistory:[{rev:"A",date:"2025-01-22",note:"Initial issue"}],assemblyGroup:"" },
+      { id:"D103", drawingNo:"BHEL-ESS-ACC-01", title:"Access Platform & Handrail",qty:1, unitWt:360.0, totalWt:360.0,  revNo:"A",drawingDate:"2025-01-22",receivedDate:"",           phase:1,priority:3,driveLink:"",fileType:"",status:"pending",revHistory:[],assemblyGroup:"" },
     ],
     parts:[
       { id:"P101",drawingId:"D101",revNo:"A",itemNo:1,markNo:"FR-101",desc:"MAIN COLUMN RHS",    fabType:"Fabricate",matType:"MS",grade:"E250",section:"RHS",  size:"100x50x4",matCode:"RHS/MS/E250/100x50x4", length:3500,width:0,qtyPerDrg:4,clientUnitWt:32.27, clientTotalWt:129.08, calcUnitWt:32.27, calcTotalWt:129.08, jointsAllowed:false,source:"Procure",partLink:"",remarks:"" },
@@ -5360,6 +5485,7 @@ const SEED_ORDERS = [
       mdccDocs:[{id:"MDCC-D-101",docName:"Mill Test Certificates",mandatory:true},{id:"MDCC-D-102",docName:"Dimensional Check Report",mandatory:true},{id:"MDCC-D-103",docName:"Paint DFT Report",mandatory:true},{id:"MDCC-D-104",docName:"Packing List",mandatory:false}],
     },
     amendments:[], invoices:[], createdBy:"Vikram Singh", createdAt:"2025-01-30",
+    assemblyInspectionRequired:false, assemblies:[],
   },
 ];
 
@@ -5421,6 +5547,10 @@ const TabBasicDetails = ({ order, onChange, canEdit, clients }) => {
         <div><label style={css.label}>Order Qty ({order.orderUnit||"Unit"})</label><input type="number" value={order.orderQty||""} onChange={e=>onChange({...order,orderQty:+e.target.value,orderValue:(order.ratePerUnit||0)*(+e.target.value)})} disabled={!canEdit} style={css.input} /></div>
         <div><label style={css.label}>Order Value (₹) — Auto</label><input value={fmt.currency(order.orderValue||0)} disabled style={{ ...css.input, opacity:0.7, color:T.green }} /></div>
         <div><label style={css.label}>GST Rate (%)</label><select value={order.gstRate||18} onChange={e=>onChange({...order,gstRate:+e.target.value})} disabled={!canEdit} style={css.input}><option value={0}>0%</option><option value={5}>5%</option><option value={12}>12%</option><option value={18}>18%</option></select></div>
+        <div style={{ gridColumn:"span 2", display:"flex", alignItems:"center", gap:10, padding:"8px 0" }}>
+          <input type="checkbox" id="asmInspChk" checked={!!order.assemblyInspectionRequired} onChange={e=>onChange({...order,assemblyInspectionRequired:e.target.checked})} disabled={!canEdit} style={{ width:16, height:16, accentColor:T.accent }} />
+          <label htmlFor="asmInspChk" style={{ fontSize:13, color:T.text, cursor:"pointer" }}>Assembly Inspection Required <span style={{fontSize:11,color:T.textMid}}>(enables Assemblies tab)</span></label>
+        </div>
       </div>
       <div style={{ marginTop:12 }}>
         <label style={css.label}>Client PO Document</label>
@@ -5656,6 +5786,110 @@ const TabMilestones = ({ order, onChange, canEdit }) => {
     </div>
   );
 };
+const TabAssemblies = ({ order, onChange, canEdit }) => {
+  const assemblies = order.assemblies||[];
+  const drawings = order.drawings||[];
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState({});
+
+  const openAdd = () => { setForm({ id:`ASM-${Date.now()}`, assemblyNumber:"", assemblyName:"", drawingsAssigned:[], tpiRequired:false, clientContact:"", expectedInspectionDate:"", notes:"" }); setModal("add"); };
+  const openEdit = (a) => { setForm({...a}); setModal("edit"); };
+  const saveAsm = () => {
+    const updated = modal==="add" ? [...assemblies,form] : assemblies.map(a=>a.id===form.id?form:a);
+    // Sync drawing.assemblyGroup for all drawings
+    const newDrawings = drawings.map(d => {
+      const inAsm = updated.find(a=>a.drawingsAssigned.includes(d.id));
+      return { ...d, assemblyGroup: inAsm ? inAsm.id : "" };
+    });
+    onChange({...order, assemblies:updated, drawings:newDrawings});
+    setModal(null);
+  };
+  const deleteAsm = (id) => {
+    const updated = assemblies.filter(a=>a.id!==id);
+    const newDrawings = drawings.map(d => d.assemblyGroup===id ? {...d,assemblyGroup:""} : d);
+    onChange({...order, assemblies:updated, drawings:newDrawings});
+  };
+  const toggleDrawing = (drgId) => {
+    const cur = form.drawingsAssigned||[];
+    setForm({...form, drawingsAssigned: cur.includes(drgId) ? cur.filter(x=>x!==drgId) : [...cur,drgId]});
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+        <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Assembly Groups</div>
+        {canEdit && <button onClick={openAdd} style={css.btn.primary}>+ Add Assembly</button>}
+      </div>
+      {assemblies.length===0 && (
+        <div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:32 }}>No assembly groups defined. Add one to start grouping drawings.</div>
+      )}
+      {assemblies.map(a => {
+        const asmDrawings = drawings.filter(d=>a.drawingsAssigned.includes(d.id));
+        return (
+          <div key={a.id} style={{ ...css.card, marginBottom:12, border:`1px solid ${T.border}` }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, color:T.text }}>{a.assemblyNumber} — {a.assemblyName}</div>
+                <div style={{ fontSize:11, color:T.textMid, marginTop:4 }}>
+                  {asmDrawings.length} drawing{asmDrawings.length!==1?"s":""}: {asmDrawings.map(d=>d.drawingNo).join(", ")||"None assigned"}
+                </div>
+                {a.tpiRequired && <Badge color="amber" style={{marginTop:4}}>TPI Required</Badge>}
+                {a.expectedInspectionDate && <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Expected inspection: {a.expectedInspectionDate}</div>}
+                {a.notes && <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>{a.notes}</div>}
+              </div>
+              {canEdit && (
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={()=>openEdit(a)} style={css.btn.sm}>Edit</button>
+                  <button onClick={()=>deleteAsm(a.id)} style={{ ...css.btn.sm, color:T.red }}>Delete</button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {modal && (
+        <Modal title={modal==="add"?"Add Assembly Group":"Edit Assembly Group"} onClose={()=>setModal(null)}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <div><label style={css.label}>Assembly Number *</label><input value={form.assemblyNumber||""} onChange={e=>setForm({...form,assemblyNumber:e.target.value})} style={css.input} /></div>
+            <div><label style={css.label}>Assembly Name *</label><input value={form.assemblyName||""} onChange={e=>setForm({...form,assemblyName:e.target.value})} style={css.input} /></div>
+            <div><label style={css.label}>Client Contact</label><input value={form.clientContact||""} onChange={e=>setForm({...form,clientContact:e.target.value})} style={css.input} /></div>
+            <div><label style={css.label}>Expected Inspection Date</label><input type="date" value={form.expectedInspectionDate||""} onChange={e=>setForm({...form,expectedInspectionDate:e.target.value})} style={css.input} /></div>
+            <div style={{ gridColumn:"span 2", display:"flex", alignItems:"center", gap:8 }}>
+              <input type="checkbox" checked={!!form.tpiRequired} onChange={e=>setForm({...form,tpiRequired:e.target.checked})} style={{ width:14, height:14, accentColor:T.accent }} />
+              <span style={{ fontSize:12, color:T.text }}>TPI Required for this assembly</span>
+            </div>
+            <div style={{ gridColumn:"span 2" }}><label style={css.label}>Notes</label><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})} rows={2} style={{ ...css.input, resize:"vertical" }} /></div>
+          </div>
+          <div style={{ marginTop:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>ASSIGN DRAWINGS</div>
+            {drawings.filter(d=>d.receivedDate).length===0 && <div style={{ fontSize:12, color:T.textLow }}>No received drawings available.</div>}
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {drawings.filter(d=>d.receivedDate||true).map(d => {
+                const checked = (form.drawingsAssigned||[]).includes(d.id);
+                const usedByOther = assemblies.find(a=>a.id!==form.id&&a.drawingsAssigned.includes(d.id));
+                return (
+                  <div key={d.id} onClick={()=>!usedByOther&&toggleDrawing(d.id)}
+                    style={{ padding:"4px 10px", borderRadius:4, fontSize:11, cursor:usedByOther?"not-allowed":"pointer",
+                      background: checked ? T.accent+"33" : T.bgInput,
+                      border:`1px solid ${checked ? T.accent : T.border}`,
+                      color: usedByOther ? T.textLow : T.text, opacity:usedByOther?0.5:1 }}>
+                    {d.drawingNo} {usedByOther?`(in ${usedByOther.assemblyNumber})`:""}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+            <button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={saveAsm} disabled={!form.assemblyNumber?.trim()||!form.assemblyName?.trim()} style={{ ...css.btn.primary, opacity:(!form.assemblyNumber?.trim()||!form.assemblyName?.trim())?0.4:1 }}>Save</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 const TabDrawings = ({ order, onChange, canEdit, user }) => {
   const [modal, setModal] = useState(null); const [form, setForm] = useState({}); const [expandRev, setExpandRev] = useState(null);
   const [importModal, setImportModal] = useState(false); const [importRows, setImportRows] = useState([]); const [importErr, setImportErr] = useState(""); const [importMode, setImportMode] = useState("append");
@@ -5792,7 +6026,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
               <span style={{ fontSize:12, color:T.textMid }}>{pDrawings.length} drawing(s) · {(pDrawings.reduce((s,d)=>s+(d.totalWt||0),0)/1000).toFixed(2)} T</span>
             </div>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead><tr>{["Pri","Drawing No","Title","Qty","Unit Wt","Total Wt","Rev","Drg Date","Received","PO Line","File","Status","Revisions",""].map(h=><th key={h} style={{ padding:"7px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
+              <thead><tr>{["Pri","Drawing No","Title","Qty","Unit Wt","Total Wt","Rev","Drg Date","Received","PO Line","Assembly Group","File","Status","Revisions",""].map(h=><th key={h} style={{ padding:"7px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap" }}>{h}</th>)}</tr></thead>
               <tbody>
                 {pDrawings.map((d,i)=>(
                   <>
@@ -5807,19 +6041,42 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, color:T.textMid, whiteSpace:"nowrap" }}>{fmt.date(d.drawingDate)}</td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, color:d.receivedDate?T.green:T.amber, whiteSpace:"nowrap" }}>{d.receivedDate?fmt.date(d.receivedDate):"⏳ Pending"}</td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:11, textAlign:"center", color:d.poLineItem?T.text:T.textLow }}>{d.poLineItem||"—"}</td>
+                      <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>
+                        {canEdit ? (
+                          <select value={d.assemblyGroup||""} onChange={e=>{
+                            const newAsmGroup = e.target.value;
+                            const newDrawings = drawings.map(dd=>dd.id===d.id?{...dd,assemblyGroup:newAsmGroup}:dd);
+                            const newAssemblies = (order.assemblies||[]).map(a => {
+                              if (a.drawingsAssigned.includes(d.id) && a.id!==newAsmGroup) {
+                                return {...a, drawingsAssigned:a.drawingsAssigned.filter(x=>x!==d.id)};
+                              }
+                              if (a.id===newAsmGroup && !a.drawingsAssigned.includes(d.id)) {
+                                return {...a, drawingsAssigned:[...a.drawingsAssigned,d.id]};
+                              }
+                              return a;
+                            });
+                            onChange({...order, drawings:newDrawings, assemblies:newAssemblies});
+                          }} style={{ ...css.input, fontSize:11, padding:"2px 4px" }}>
+                            <option value="">—</option>
+                            {(order.assemblies||[]).map(a=><option key={a.id} value={a.id}>{a.assemblyName||a.assemblyNumber}</option>)}
+                          </select>
+                        ) : (
+                          <span style={{ fontSize:11, color:T.textMid }}>{(order.assemblies||[]).find(a=>a.id===d.assemblyGroup)?.assemblyName||"—"}</span>
+                        )}
+                      </td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{d.driveLink?<a href={d.driveLink} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none", background:T.greenLo, color:T.green, padding:"3px 8px" }}>View</a>:<span style={{ fontSize:11, color:T.textLow }}>—</span>}</td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={d.receivedDate?"green":"amber"}>{d.receivedDate?"Received":"Pending"}</Badge></td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{(d.revHistory||[]).length>0&&<button onClick={()=>setExpandRev(expandRev===d.id?null:d.id)} style={{ ...css.btn.ghost, fontSize:11, padding:"2px 8px", color:T.accent, border:`1px solid ${T.border}`, borderRadius:4 }}>{expandRev===d.id?"▲":"▼"} {d.revHistory.length} rev</button>}</td>
                       <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><div style={{ display:"flex", gap:6 }}>{canEdit&&<button onClick={()=>{setForm({...d});setModal("edit");}} style={{ ...css.btn.ghost, fontSize:11, padding:"3px 8px" }}>Edit</button>}{canEdit&&<button onClick={()=>{setForm({...d,oldRevNo:d.revNo,revNo:"",drawingDate:"",receivedDate:"",note:""});setModal("revise");}} style={{ ...css.btn.ghost, fontSize:11, padding:"3px 8px", color:T.amber }}>Revise</button>}</div></td>
                     </tr>
-                    {expandRev===d.id&&<tr key={`${d.id}-rev`}><td colSpan={14} style={{ padding:"0 10px 10px 40px", background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
+                    {expandRev===d.id&&<tr key={`${d.id}-rev`}><td colSpan={15} style={{ padding:"0 10px 10px 40px", background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
                       <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", padding:"8px 0 6px" }}>Revision History</div>
                       <table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Rev","Date","Note","Status"].map(h=><th key={h} style={{ padding:"4px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textLow, textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
                       <tbody>{(d.revHistory||[]).map((r,ri)=><tr key={ri} style={{ opacity:r.superseded?0.5:1 }}><td style={{ padding:"5px 10px", fontFamily:T.fontMono, fontWeight:700, color:r.superseded?T.textLow:T.green }}>{r.rev}</td><td style={{ padding:"5px 10px", color:T.textMid }}>{fmt.date(r.date)}</td><td style={{ padding:"5px 10px", color:T.text }}>{r.note}</td><td style={{ padding:"5px 10px" }}>{r.superseded?<Badge color="gray">Superseded</Badge>:<Badge color="green">Current</Badge>}</td></tr>)}</tbody></table>
                     </td></tr>}
                   </>
                 ))}
-                <tr style={{ background:T.bgInput }}><td colSpan={4} style={{ padding:"6px 10px", fontSize:11, fontWeight:700, color:T.textMid }}>Phase Total ({pDrawings.length})</td><td /><td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.accent }}>{fmt.num(pDrawings.reduce((s,d)=>s+(d.totalWt||0),0))} kg</td><td colSpan={7} /></tr>
+                <tr style={{ background:T.bgInput }}><td colSpan={4} style={{ padding:"6px 10px", fontSize:11, fontWeight:700, color:T.textMid }}>Phase Total ({pDrawings.length})</td><td /><td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.accent }}>{fmt.num(pDrawings.reduce((s,d)=>s+(d.totalWt||0),0))} kg</td><td colSpan={8} /></tr>
               </tbody>
             </table>
           </div>
@@ -6333,6 +6590,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
     {id:"transport",label:"Transport"},
     {id:"milestones",label:"Payment Milestones"},{id:"drawings",label:"Drawing Register",planningOnly:true},
     {id:"parts",label:"Drawing Part List",planningOnly:true},{id:"quality",label:"Quality",planningOnly:true},
+    {id:"assemblies",label:"Assemblies",planningOnly:true},
     {id:"finance",label:"Finance & Amendments"},
   ];
   const tabs = allTabs.filter(t=>!t.planningOnly||!isFinanceRole);
@@ -6376,6 +6634,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
       {activeTab==="drawings"   && <TabDrawings      order={localOrder} onChange={update} canEdit={canEdit} user={user} />}
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} />}
+      {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
       {cancelModal && (
@@ -6622,12 +6881,18 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
     const matLib = materials.find(m=>m.matCode===run.materialCode);
     const lots   = (run.lotsUsed||[]).map(id=>stock.find(s=>s.id===id)).filter(Boolean);
     const defLot = lots[0]||{};
+    // Find machine capabilities from releases linked to this run
+    const relForRun = (releases||[]).find(r=>(r.machineAssignments||[]).some(ma=>ma.nestingRunId===run.id)||(r.drawings||[]).some(d=>d.nestingRunId===run.id));
+    const machineId = relForRun ? ((relForRun.machineAssignments||[])[0]?.machineId||"") : "";
+    const machineObj = machineId ? (machines||[]).find(m=>m.id===machineId) : null;
+    const machineCaps = machineObj?.capabilities||[];
     setSelBarRef(barRef);
     setBarForm({
       lotId: defLot.id||"", batchNo: defLot.batchNo||"",
       cuttingBayUsed: "",
       isPlate: matLib?.isPlate||false,
       wtPerMetre: matLib?.wtPerMetre||0, wtPerM2: matLib?.wtPerM2||0,
+      machineCaps,
       parts: getRunParts(run).map(p=>({
         ...p, included:true, actualQty:p.plannedQty,
         shortReason:"", isDefective:false, defectType:"dimensional", defectReason:"",
@@ -6727,7 +6992,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
         vendorId:parentLot.vendorId||"", vendorCode:parentLot.vendorCode||"",
         vendorName:parentLot.vendorName||"",
         wtReceived:oc, wtAvailable:oc, wtAllocated:0, wtIssued:0, wtConsumed:0,
-        status:"available", bayId:parentLot.bayId||"",
+        status:"pending_offcut_verification", bayId:parentLot.bayId||"",
         poId:parentLot.poId||"", grnId:parentLot.grnId||"",
         receivedDate:confirmDate,
         mtcUploaded:parentLot.mtcUploaded||false, mtcDoc:parentLot.mtcDoc||"",
@@ -7078,6 +7343,8 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
                         style={{width:160}}>
                         <option value="dimensional">Dimensional</option>
                         <option value="surface">Surface</option>
+                        <option value="wrong_cut">Wrong Cut</option>
+                        <option value="damaged">Damaged</option>
                         <option value="other">Other</option>
                       </Sel>
                     </Field>
@@ -7085,6 +7352,15 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
                       <Input value={p.defectReason} onChange={e=>updatePart(i,"defectReason",e.target.value)}
                         placeholder="Describe the defect" style={{ minWidth:240 }} />
                     </Field>
+                  </div>
+                  <div style={{ marginBottom:8 }}>
+                    <label style={css.label}>Action Required</label>
+                    <select value={p.defectAction||""} onChange={e=>updatePart(i,"defectAction",e.target.value)} style={css.input}>
+                      <option value="">Select action...</option>
+                      <option value="scrap_recut">Scrap &amp; Re-cut</option>
+                      <option value="rectify">Rectify</option>
+                      <option value="accept_deviation">Accept Deviation</option>
+                    </select>
                   </div>
                   {repl
                     ? <div style={{ padding:"8px 12px",background:T.greenBg,border:`1px solid ${T.green}`,
@@ -7138,6 +7414,22 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
           );
         })}
 
+        {/* Sub-stage completion checkboxes */}
+        <div style={{ ...css.card, marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>SUB-STAGE COMPLETION</div>
+          {[
+            {key:"cut", label:"Parts cut", always:true},
+            {key:"bevel", label:"Bevel complete", cap:"bevel"},
+            {key:"grind", label:"Grinding / deburring complete", cap:"grind"},
+            {key:"drill", label:"Drilling complete", cap:"drill"},
+          ].filter(s=>s.always||(barForm.machineCaps||[]).includes(s.cap)).map(s=>(
+            <label key={s.key} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6, cursor:"pointer" }}>
+              <input type="checkbox" checked={!!(barForm.subStageChecks||{})[s.key]} onChange={e=>setBarForm(f=>({...f,subStageChecks:{...(f.subStageChecks||{}),[s.key]:e.target.checked}}))} style={{ width:14,height:14,accentColor:T.accent }} />
+              <span style={{ fontSize:12, color:T.text }}>{s.label}</span>
+            </label>
+          ))}
+        </div>
+
         {/* Off-cut */}
         <div style={{ ...css.card,marginBottom:20 }}>
           <label style={{ display:"flex",alignItems:"center",gap:8,cursor:"pointer",
@@ -7190,7 +7482,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
 // PRODUCTION: DRAWING ASSIGNMENT (Production Manager View)
 // ═══════════════════════════════════════════════════════════════════════════════
 const STAGE_OPTS    = [{v:"fitup",l:"Fit-Up"},{v:"welding",l:"Welding"},{v:"blasting",l:"Blasting"},{v:"painting",l:"Painting"}];
-const STAGE_SEQ_LABELS = { cutting:"Cutting", fitup:"Fit-Up", welding:"Welding", tpi_weld:"TPI Weld", blasting:"Blasting", painting:"Painting", tpi_paint:"TPI Paint", mdcc:"MDCC", dispatch:"Dispatch" };
+const STAGE_SEQ_LABELS = { cutting:"Cutting", fitup:"Fit-Up", welding:"Welding", tpi_weld:"TPI Weld", assembly:"Assembly", blasting:"Blasting", painting:"Painting", tpi_paint:"TPI Paint", mdcc:"MDCC", dispatch:"Dispatch" };
 const SUBOPS_CUT    = ["Cut","Grind","Bevel","Drill"];
 const SUBOPS_WELD   = ["SMAW","GMAW","FCAW"];
 
@@ -7684,12 +7976,21 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
     return Object.values(grps);
   };
 
+  const readyToCollect = pending.length;
+
   return (
     <div>
       <div style={{ marginBottom:20 }}>
         <div style={{ fontSize:22,fontWeight:800,color:T.text }}>My Work</div>
         <div style={{ fontSize:13,color:T.textMid }}>{user.name}</div>
       </div>
+
+      {/* Batch notification badge */}
+      {readyToCollect > 0 && (
+        <div style={{ marginBottom:12, padding:"8px 14px", background:T.greenBg, borderRadius:8, border:`1px solid ${T.green}44`, fontSize:12, color:T.green, fontWeight:600 }}>
+          ✓ {readyToCollect} part{readyToCollect!==1?"s":""} ready to collect
+        </div>
+      )}
 
       {my.length === 0 && (
         <div style={{ textAlign:"center",padding:64,color:T.textLow }}>
@@ -7845,14 +8146,43 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
             <SectionLabel title="WAITING FOR CUTTING" count={waitingDrawings.length} color={T.textLow} />
             <div style={{ display:"flex",flexDirection:"column",gap:6 }}>
               {waitingDrawings.map((d,i) => (
-                <div key={i} style={{ ...css.card,opacity:0.6,border:`1px solid ${T.border}` }}>
-                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                <div key={i} style={{ ...css.card,border:`1px solid ${T.border}` }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
                     <div>
                       <div style={{ fontWeight:700,fontSize:13,color:T.textMid,fontFamily:T.fontMono }}>{d.drawingNo||d.drawingId}</div>
-                      <div style={{ fontSize:12,color:T.textLow }}>Release: {d.releaseId} · Waiting for cutting confirmation</div>
+                      <div style={{ fontSize:12,color:T.textLow }}>Release: {d.releaseId}</div>
                     </div>
-                    <Badge color="gray">Waiting</Badge>
+                    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                      {d.assemblyGroup && <Badge color="blue">{d.assemblyGroup}</Badge>}
+                      <Badge color="gray">Waiting</Badge>
+                    </div>
                   </div>
+                  {(() => {
+                    const drgInstances = instances.filter(inst=>inst.drawingId===(d.drawingId||d.id));
+                    const total = drgInstances.length || 1;
+                    const cutCleared = drgInstances.filter(inst=>["fitup","welding","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"].includes(inst.currentStage)).length;
+                    const cuttingInProgress = drgInstances.filter(inst=>inst.currentStage==="cutting"||inst.currentStage==="cutting_qc").length;
+                    const notStarted = Math.max(0, total - cutCleared - cuttingInProgress);
+                    if (total<=1&&cutCleared===0&&cuttingInProgress===0) return null;
+                    return (
+                      <div style={{ fontSize:11, borderTop:`1px solid ${T.border}`, paddingTop:8 }}>
+                        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                          <tbody>
+                            {[
+                              {label:"Cut and QC cleared — ready to collect", val:cutCleared, color:T.green},
+                              {label:"Cutting in progress", val:cuttingInProgress, color:T.accent},
+                              {label:"Cut not started", val:notStarted, color:T.textLow},
+                            ].map(row=>(
+                              <tr key={row.label}>
+                                <td style={{ padding:"2px 0", color:T.textMid }}>{row.label}</td>
+                                <td style={{ padding:"2px 0", textAlign:"right", color:row.color, fontWeight:600 }}>{row.val}/{total}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -7870,7 +8200,7 @@ const TPI_STAGES = ["tpi_weld","tpi_paint","tpi_fitup","tpi_blast"];
 
 const STAGE_NEXT = {
   cutting:"cutting_qc", cutting_qc:"fitup", fitup:"welding", welding:"tpi_weld", tpi_weld:"blasting",
-  tpi_fitup:"welding", blasting:"painting", tpi_blast:"painting",
+  tpi_fitup:"welding", assembly:"blasting", blasting:"painting", tpi_blast:"painting",
   painting:"tpi_paint", tpi_paint:"mdcc", mdcc:"dispatch", dispatch:null,
 };
 
@@ -7885,11 +8215,12 @@ const STAGE_CHECKLISTS = {
   tpi_paint:["Paint inspection report reviewed","DFT readings within specification","Holiday test passed"],
   mdcc:     ["MTC copies attached","TPI Weld report attached","TPI Paint report attached","Dimensional report attached","Packing list attached","Test certificates attached"],
   dispatch: ["Material loaded onto vehicle","Dispatch challan prepared","Gate pass issued"],
+  assembly: ["All drawings in assembly group at Weld QC Cleared","Assembly dimensions verified per drawing","Sub-assembly fit-up acceptable","Joint preparation confirmed","Assembly marked with serial number"],
 };
 
 const SUPERVISOR_STAGES = {
-  super_admin:         ["cutting_qc","fitup","welding","tpi_fitup","tpi_weld","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"],
-  production_engineer: ["cutting_qc","fitup","welding","blasting"],
+  super_admin:         ["cutting_qc","fitup","welding","tpi_fitup","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"],
+  production_engineer: ["cutting_qc","fitup","welding","assembly","blasting"],
   blasting_engineer:   ["blasting"],
   painting_engineer:   ["painting"],
   qc_admin:            ["cutting_qc","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
@@ -7905,6 +8236,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
   const [rejectMode, setRejectMode] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [mdccRefNo, setMdccRefNo] = useState("");
+  const [dimReadings, setDimReadings] = useState({});
 
   const myStages = SUPERVISOR_STAGES[user.role] || [];
 
@@ -7942,7 +8274,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
     return (a.endDate||"") < (b.endDate||"") ? -1 : 1;
   });
 
-  const resetApproval = () => { setChecks({}); setDft(""); setDocRefs({}); setTpiForm({agency:"",reportNo:"",reportDate:"",outcome:"pass"}); setRejectMode(false); setRejectReason(""); setMdccRefNo(""); };
+  const resetApproval = () => { setChecks({}); setDft(""); setDocRefs({}); setTpiForm({agency:"",reportNo:"",reportDate:"",outcome:"pass"}); setRejectMode(false); setRejectReason(""); setMdccRefNo(""); setDimReadings({}); };
 
   const doApprove = (group, remarks) => {
     const stage = group.stage;
@@ -7952,6 +8284,14 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
     let nextStage = STAGE_NEXT[stage];
     if (stage==="fitup") {
       nextStage = (orderQuality.tpiHoldPoints||[]).includes('fit_up') ? 'tpi_fitup' : 'welding';
+    } else if (stage==="tpi_weld") {
+      const drg = orderForGroup?.drawings?.find(d=>d.id===group.drawingId);
+      nextStage = drg?.assemblyGroup ? 'assembly' : 'blasting';
+    } else if (stage==="welding") {
+      const drg = orderForGroup?.drawings?.find(d=>d.id===group.drawingId);
+      if (!((orderQuality.tpiHoldPoints||[]).includes('welding')) && drg?.assemblyGroup) {
+        nextStage = 'assembly';
+      }
     } else if (stage==="blasting") {
       nextStage = (orderQuality.tpiHoldPoints||[]).includes('blasting') ? 'tpi_blast' : 'painting';
     }
@@ -7963,6 +8303,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
       const idx = hist.findIndex(h=>h.stage===stage);
       const entry = { stage, signedOffBy:user.username, signedOffName:user.name, signedOffDate:today(),
         checklistItems:checkedItems, dftReading:dft||null, docRefs:docRefs||{}, remarks:remarks||"",
+        dimReadings: Object.keys(dimReadings).length>0 ? Object.entries(dimReadings).map(([markNo,measuredMm])=>({markNo,measuredMm:+measuredMm})) : undefined,
         ...(isTpi ? { tpiAgency:tpiForm.agency, tpiReportNo:tpiForm.reportNo, tpiReportDate:tpiForm.reportDate, tpiOutcome:tpiForm.outcome } : {}),
         ...(stage==="mdcc" ? { mdccRefNo } : {}),
       };
@@ -8192,6 +8533,23 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
             </div>
           </div>
         )}
+        {/* Blasting → Primer timer */}
+        {stage==="blasting" && (() => {
+          const blastEntry = selGD.insts[0]?.stageHistory?.find(h=>h.stage==="blasting");
+          if (!blastEntry?.signedOffDate) return null;
+          const daysSince = Math.floor((Date.now() - new Date(blastEntry.signedOffDate).getTime()) / 86400000);
+          const hoursElapsed = daysSince * 24;
+          const color = hoursElapsed >= 4 ? T.red : hoursElapsed >= 3 ? T.amber : T.green;
+          const label = hoursElapsed >= 4 ? "CRITICAL — Primer must be applied NOW" : hoursElapsed >= 3 ? "WARNING — Primer due within 1 hour" : "OK — Within primer window";
+          return (
+            <div style={{ ...css.card, marginBottom:14, border:`1px solid ${color}55`, background:color+"11" }}>
+              <div style={{ fontSize:11, fontWeight:700, color, marginBottom:4 }}>TIME TO PRIMER</div>
+              <div style={{ fontSize:13, fontWeight:700, color }}>{hoursElapsed.toFixed(1)} hours since blasting sign-off</div>
+              <div style={{ fontSize:11, color, marginTop:4 }}>{label}</div>
+              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Blast date: {blastEntry.signedOffDate} — Primer window: 4 hours max</div>
+            </div>
+          );
+        })()}
         {/* Painting DFT per coat */}
         {isPainting && (
           <div style={{...css.card,marginBottom:14}}>
@@ -8211,6 +8569,60 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
             </div>
           </div>
         )}
+        {/* Painting: dry time enforcement + holiday detection + DFT summary */}
+        {isPainting && (() => {
+          const order = orders.find(o=>o.id===selGD.orderId);
+          const paintCoats = order?.quality?.paintCoats||[];
+          // Determine current coat from stageHistory
+          const paintHistory = (selGD.insts[0]?.stageHistory||[]).filter(h=>h.stage==="painting");
+          const coatsDone = paintHistory.length;
+          const currentCoat = paintCoats[coatsDone] || null;
+          const lastCoatEntry = paintHistory[paintHistory.length-1];
+          // Dry time check
+          let dryTimeRemaining = null;
+          if (lastCoatEntry?.signedOffDate && currentCoat?.dryTime) {
+            const lastApproval = new Date(lastCoatEntry.signedOffDate).getTime();
+            const dryMs = (currentCoat.dryTime||0) * 3600000;
+            const elapsed = Date.now() - lastApproval;
+            dryTimeRemaining = Math.max(0, dryMs - elapsed) / 3600000;
+          }
+          // Total DFT
+          const allDfts = paintHistory.flatMap(h=>[1,2,3,4,5].map(i=>+h.docRefs?.[`dft${i}`]).filter(Boolean));
+          const totalAvgDft = allDfts.length ? allDfts.reduce((s,v)=>s+v,0)/allDfts.length : 0;
+          const specDft = paintCoats.reduce((s,c)=>s+(c.dft||0),0);
+          return (
+            <div style={{ ...css.card, marginBottom:14 }}>
+              {dryTimeRemaining !== null && (
+                <div style={{ marginBottom:10, padding:"8px 12px", background:dryTimeRemaining>0?T.amberBg:T.greenBg, borderRadius:6, border:`1px solid ${dryTimeRemaining>0?T.amber:T.green}44` }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:dryTimeRemaining>0?T.amber:T.green }}>
+                    {dryTimeRemaining>0?`Dry time: ${dryTimeRemaining.toFixed(1)}h remaining before next coat`:"Dry time complete — next coat can proceed"}
+                  </div>
+                </div>
+              )}
+              {currentCoat?.type==="Finish" && (
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>HOLIDAY DETECTION (Finish Coat)</div>
+                  <select value={docRefs['holidayResult']||""} onChange={e=>setDocRefs(p=>({...p,holidayResult:e.target.value}))} style={css.input}>
+                    <option value="">Select result...</option>
+                    <option value="none">None — No holidays detected</option>
+                    <option value="minor">Minor — Touched up</option>
+                    <option value="major">Major — Full recoat required</option>
+                  </select>
+                </div>
+              )}
+              {allDfts.length > 0 && (
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>TOTAL DFT SUMMARY</div>
+                  <div style={{ display:"flex", gap:16, fontSize:12 }}>
+                    <span>Avg DFT: <strong style={{ color:totalAvgDft>=specDft*0.9?T.green:T.amber }}>{totalAvgDft.toFixed(0)} µm</strong></span>
+                    <span>Spec: <strong>{specDft} µm</strong></span>
+                    <span style={{ color:totalAvgDft>=specDft?T.green:T.amber }}>{totalAvgDft>=specDft?"✓ MEETS SPEC":"⚠ BELOW SPEC"}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {/* MDCC reference number — required for MDCC approval */}
         {isMdcc && (
           <div style={{ ...css.card, marginBottom:14, border:`1px solid ${T.accent}44` }}>
@@ -8221,6 +8633,62 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, o
                 placeholder="e.g. MDCC-2026-001" style={css.input} />
               <div style={{ fontSize:11, color:T.textMid, marginTop:4 }}>Enter the MDCC dossier reference number assigned at client submission.</div>
             </div>
+          </div>
+        )}
+        {/* Assembly stage — sibling drawings status */}
+        {stage==="assembly" && (() => {
+          const orderForGroup = orders.find(o=>o.id===selGD.orderId);
+          const drg = orderForGroup?.drawings?.find(d=>d.id===selGD.drawingId);
+          const asmGroup = drg?.assemblyGroup;
+          if (!asmGroup) return null;
+          const asmDef = orderForGroup?.assemblies?.find(a=>a.id===asmGroup);
+          const siblingDrgIds = asmDef?.drawingsAssigned||[];
+          const siblingStatus = siblingDrgIds.map(drgId=>{
+            const sibDrg = orderForGroup?.drawings?.find(d=>d.id===drgId);
+            const sibInsts = instances.filter(i=>i.drawingId===drgId&&i.orderId===selGD.orderId);
+            const allAtAssembly = sibInsts.length>0 && sibInsts.every(i=>["assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"].includes(i.currentStage));
+            return { drawingId:drgId, drawingNo:sibDrg?.drawingNo||drgId, ready:allAtAssembly, count:sibInsts.length };
+          });
+          const allReady = siblingStatus.every(s=>s.ready);
+          return (
+            <div style={{ ...css.card, marginBottom:14, border:`1px solid ${allReady?T.green:T.amber}55` }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>ASSEMBLY GROUP: {asmDef?.assemblyName||asmGroup}</div>
+              {!allReady && (
+                <div style={{ marginBottom:8, padding:"6px 10px", background:T.amberBg, borderRadius:5, fontSize:11, color:T.amber }}>
+                  ⚠ Not all drawings in this assembly group have reached Weld QC Cleared. Assembly gate is blocking.
+                </div>
+              )}
+              <table style={{ width:"100%", fontSize:11, borderCollapse:"collapse" }}>
+                <thead><tr style={{ color:T.textMid }}>
+                  <th style={{ textAlign:"left", padding:"2px 8px" }}>Drawing</th>
+                  <th style={{ textAlign:"left", padding:"2px 8px" }}>Status</th>
+                </tr></thead>
+                <tbody>
+                  {siblingStatus.map(s=>(
+                    <tr key={s.drawingId} style={{ borderTop:`1px solid ${T.border}` }}>
+                      <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{s.drawingNo}</td>
+                      <td style={{ padding:"3px 8px" }}>
+                        {s.ready ? <Badge color="green">Ready</Badge> : <Badge color="amber">Not ready ({s.count} pcs at earlier stage)</Badge>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
+        {/* Dimension readings for cutting_qc */}
+        {selGD.stage==="cutting_qc" && selGD.insts.length>0 && (
+          <div style={{ ...css.card, marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>DIMENSION READINGS</div>
+            {[...new Set(selGD.insts.map(i=>i.markNo))].map(markNo=>(
+              <div key={markNo} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
+                <span style={{ fontSize:12, color:T.text, minWidth:80 }}>{markNo}</span>
+                <span style={{ fontSize:12, color:T.textMid }}>Measured length:</span>
+                <input type="number" value={dimReadings[markNo]||""} onChange={e=>setDimReadings(prev=>({...prev,[markNo]:e.target.value}))} placeholder="mm" style={{ ...css.input, width:100, fontSize:12 }} />
+                <span style={{ fontSize:11, color:T.textMid }}>mm</span>
+              </div>
+            ))}
           </div>
         )}
         {/* Rejection history */}
@@ -8831,7 +9299,7 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
           <table style={{ width:"100%", borderCollapse:"collapse", background:T.bgCard, borderRadius:8, overflow:"hidden" }}>
             <thead>
               <tr>
-                {["","Drawing No","Order","Client","Parts","Weight (kg)","Tier","Priority","Release Qty"].map(h=>(
+                {["","Drawing No","Order","Client","Parts / RM","Progress","Tier","Priority","Release Qty"].map(h=>(
                   <th key={h} style={{ padding:"8px 10px", fontSize:11, color:T.textMid, fontWeight:700, textAlign:"left", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -8842,16 +9310,19 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                 const totalKg = (drawing.parts||[]).reduce((s,p)=>s+(p.clientTotalWt||0),0);
                 const client = orders.find(o=>o.id===orderId);
                 return (
-                  <tr key={drawingId+orderId} onClick={()=>toggleDrw({drawingId,orderId,drawing,order,tier,score})}
+                  <React.Fragment key={drawingId+orderId}>
+                  <tr
                     style={{ cursor:"pointer", background:sel?`${T.accent}18`:"transparent" }}>
-                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>
+                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }} onClick={()=>toggleDrw({drawingId,orderId,drawing,order,tier,score})}>
                       <input type="checkbox" checked={sel} readOnly style={{ cursor:"pointer" }} />
                     </td>
-                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.accentHi }}>{drawing.drawingNo}</td>
+                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.accentHi, cursor:"pointer" }} onClick={()=>{const s=new Set(expandedDrg);s.has(drawingId)?s.delete(drawingId):s.add(drawingId);setExpandedDrg(s);}}>{expandedDrg.has(drawingId)?"▼":"▶"} {drawing.drawingNo}</td>
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{orderId}</td>
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{client?.clientId||""}</td>
-                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{(drawing.parts||[]).length}</td>
-                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>{totalKg.toFixed(1)}</td>
+                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>
+                      {(drawing.parts||[]).filter(p=>p.fabType==="Fabricate").length} parts — {[...new Set((drawing.parts||[]).filter(p=>p.matCode).map(p=>p.matCode.split("/").slice(-1)[0]))].slice(0,3).join(", ")||"—"}
+                    </td>
+                    <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.textMid }}>—</td>
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={TIER_COLOR[tier?.id]||"blue"}>{tier?.label||"?"}</Badge></td>
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>{PRI_BADGE(score)}</td>
                     <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>
@@ -8871,6 +9342,53 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                       })()}
                     </td>
                   </tr>
+                  {expandedDrg.has(drawingId) && (
+                    <tr key={drawingId+"_exp"} style={{ background:`${T.accent}08` }}>
+                      <td colSpan={9} style={{ padding:"10px 20px", borderBottom:`1px solid ${T.border}` }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>PARTS</div>
+                        <table style={{ width:"100%", fontSize:11, borderCollapse:"collapse", marginBottom:10 }}>
+                          <thead><tr>
+                            {["Mark No","Description","Section/Size","Qty/Unit","Total Wt","Req Ops"].map(h=><th key={h} style={{ textAlign:"left", padding:"2px 8px", color:T.textMid, fontWeight:600 }}>{h}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {(drawing.parts||[]).filter(p=>p.fabType==="Fabricate").map(p=>(
+                              <tr key={p.id} style={{ borderTop:`1px solid ${T.border}` }}>
+                                <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{p.markNo}</td>
+                                <td style={{ padding:"3px 8px" }}>{p.desc}</td>
+                                <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{p.section} {p.size}</td>
+                                <td style={{ padding:"3px 8px", textAlign:"right" }}>{p.qtyPerDrg}</td>
+                                <td style={{ padding:"3px 8px", textAlign:"right" }}>{(p.calcTotalWt||p.clientTotalWt||0).toFixed(1)} kg</td>
+                                <td style={{ padding:"3px 8px" }}>{(p.requiredOps||['Cut']).join(", ")}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>RM REQUIREMENTS</div>
+                        <table style={{ width:"100%", fontSize:11, borderCollapse:"collapse" }}>
+                          <thead><tr>
+                            {["Mat Code","Req kg","Avail kg","Status"].map(h=><th key={h} style={{ textAlign:"left", padding:"2px 8px", color:T.textMid, fontWeight:600 }}>{h}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {[...new Set((drawing.parts||[]).filter(p=>p.matCode&&p.fabType==="Fabricate").map(p=>p.matCode))].map(mc=>{
+                              const reqKg = (drawing.parts||[]).filter(p=>p.matCode===mc&&p.fabType==="Fabricate").reduce((s,p)=>s+(p.calcTotalWt||p.clientTotalWt||0),0);
+                              const availLots = (stock||[]).filter(s=>s.matCode===mc&&["available","reserved","allocated"].includes(s.status));
+                              const availKg = availLots.reduce((s,l)=>s+(l.wtAvailable||0),0);
+                              const color = availKg>=reqKg*0.9?T.green:availKg>0?T.amber:T.red;
+                              return (
+                                <tr key={mc} style={{ borderTop:`1px solid ${T.border}` }}>
+                                  <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{mc}</td>
+                                  <td style={{ padding:"3px 8px", textAlign:"right" }}>{reqKg.toFixed(1)}</td>
+                                  <td style={{ padding:"3px 8px", textAlign:"right", color }}>{availKg.toFixed(1)}</td>
+                                  <td style={{ padding:"3px 8px", color, fontWeight:600 }}>{availKg>=reqKg*0.9?"Sufficient":availKg>0?"Partial":"Missing"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -8925,9 +9443,17 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                       ))}
                       {r.lots.length>0 && <>
                         <div style={{ fontSize:11, color:T.textMid, marginTop:8, marginBottom:4 }}>Available lots:</div>
-                        {r.lots.map(l=>(
-                          <div key={l.id} style={{ fontSize:11, color:T.text }}>{l.lotNo||l.id} — {(l.wtAvailable||l.wtReceived||0).toFixed(1)} kg — <Badge color={l.status==="available"?"green":"amber"}>{l.status}</Badge></div>
-                        ))}
+                        {r.lots.map(l=>{
+                          const reservedForThisOrder = (l.reservations||[]).some(rv=>selDrawings.some(sd=>sd.orderId===rv.orderId));
+                          const reservedForOther = !reservedForThisOrder && (l.reservations||[]).length>0;
+                          return (
+                            <div key={l.id} style={{ fontSize:11, color:T.text, display:"flex", alignItems:"center", gap:6, padding:"2px 0" }}>
+                              {reservedForThisOrder&&<span style={{ fontSize:9, padding:"1px 5px", background:T.greenBg, color:T.green, borderRadius:3, border:`1px solid ${T.green}44` }}>Reserved for this order</span>}
+                              {reservedForOther&&<span style={{ fontSize:9, padding:"1px 5px", background:T.amberBg, color:T.amber, borderRadius:3, border:`1px solid ${T.amber}44` }}>Reserved for other order</span>}
+                              {l.lotNo||l.id} — {(l.wtAvailable||l.wtReceived||0).toFixed(1)} kg — <Badge color={l.status==="available"?"green":l.status==="reserved"?"amber":"blue"}>{l.status}</Badge>
+                            </div>
+                          );
+                        })}
                       </>}
                     </td>
                   </tr>
@@ -9053,6 +9579,51 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
               </div>
             )}
             {avail && <div style={{ fontSize:11, color:T.textMid, marginTop:6 }}>Cut-ahead date: <span style={{ color:T.green }}>{cutAheadDate}</span>{lateWarn&&<span style={{ color:T.amber, marginLeft:8 }}>⚠ End date is after cut-ahead date</span>}</div>}
+            {avail && asgn.machineId && (() => {
+              const mach = (machines||[]).find(m=>m.id===asgn.machineId);
+              const machCaps = mach?.capabilities||[];
+              // Collect all required ops for parts in this matCode batch
+              const allOps = new Set();
+              selDrawings.forEach(({drawing,order}) => {
+                (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.matCode===r.matCode&&p.fabType==="Fabricate").forEach(p=>{
+                  (p.requiredOps||['Cut']).forEach(op=>allOps.add(op.toLowerCase()));
+                });
+              });
+              const opToCapMap = { cut:"cut_straight", bevel:"bevel", drill:"drill", grind:"grind" };
+              const missingOps = [...allOps].filter(op=>{ const cap=opToCapMap[op]; return cap&&!machCaps.includes(cap); });
+              if (!missingOps.length) return null;
+              return (
+                <div style={{ marginTop:8, padding:"8px 12px", background:T.amberBg, borderRadius:6, border:`1px solid ${T.amber}44` }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginBottom:6 }}>
+                    ⚠ {missingOps.length} operation(s) not covered by selected machine: [{missingOps.map(o=>o.charAt(0).toUpperCase()+o.slice(1)).join(", ")}]
+                  </div>
+                  <div style={{ fontSize:11, color:T.textMid, marginBottom:8 }}>Assign secondary station for missing capabilities:</div>
+                  {missingOps.map(op=>{
+                    const capNeeded = opToCapMap[op];
+                    const secMachines = (machines||[]).filter(m=>m.active!==false&&(m.capabilities||[]).includes(capNeeded));
+                    const secAsgns = (asgn.secondaryAssignments||[]);
+                    const secEntry = secAsgns.find(s=>s.capability===op)||{capability:op,machineId:"",startDate:"",endDate:""};
+                    const updSec = (field,val) => {
+                      const newSec = [...secAsgns.filter(s=>s.capability!==op),{...secEntry,[field]:val}];
+                      updAsgn(r.matCode,"secondaryAssignments",newSec);
+                    };
+                    return (
+                      <div key={op} style={{ display:"grid", gridTemplateColumns:"100px 1fr 100px 100px", gap:8, marginBottom:6, alignItems:"end" }}>
+                        <div style={{ fontSize:11, color:T.text, fontWeight:600, paddingBottom:4 }}>{op.charAt(0).toUpperCase()+op.slice(1)}</div>
+                        <div><label style={css.label}>Machine</label>
+                          <select value={secEntry.machineId||""} onChange={e=>updSec("machineId",e.target.value)} style={{ ...css.input, fontSize:11 }}>
+                            <option value="">Select...</option>
+                            {secMachines.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}
+                          </select>
+                        </div>
+                        <div><label style={css.label}>Start</label><input type="date" value={secEntry.startDate||""} onChange={e=>updSec("startDate",e.target.value)} style={{ ...css.input, fontSize:11 }} /></div>
+                        <div><label style={css.label}>End</label><input type="date" value={secEntry.endDate||""} onChange={e=>updSec("endDate",e.target.value)} style={{ ...css.input, fontSize:11 }} /></div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         );
       })}
@@ -9292,6 +9863,584 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
   );
 };
 
+// ─── C4: Step Configuration Modal ─────────────────────────────────────────────
+const EXTRA_STEP_TYPES = ["Bending","Rolling","Galvanising","Drilling","Bevelling","Notching","Other"];
+
+const StepConfigModal = ({ drawings, orders, machines, contractors, parts, onSave, onClose }) => {
+  const DEFAULT_STEPS = ["Cutting","Welding","Blasting","Painting"];
+  const [configs, setConfigs] = useState(() => {
+    return (drawings||[]).map(d=>{
+      const order = (orders||[]).find(o=>(o.drawings||[]).find(dd=>dd.id===d.drawingId))||{};
+      const drg = (order.drawings||[]).find(dd=>dd.id===d.drawingId)||{};
+      const existingSteps = drg.productionSteps || DEFAULT_STEPS.map(s=>({name:s,type:"Internal",contractor:"",contactPerson:"",scopeOfWork:"",turnaroundDays:""}));
+      const drgParts = (parts||[]).filter(p=>p.drawingId===d.drawingId&&p.fabType==="Fabricate");
+      return { drawingId:d.drawingId, drawingNo:d.drawingNo||d.drawingId, steps:existingSteps, parts:drgParts.map(p=>({...p,ops:[...(p.requiredOps||['Cut'])]})) };
+    });
+  });
+
+  const updConfig = (dIdx, newConf) => setConfigs(prev=>prev.map((c,i)=>i===dIdx?newConf:c));
+  const addExtraStep = (dIdx, afterIdx, stepName) => {
+    const conf = configs[dIdx];
+    const newSteps = [...conf.steps];
+    newSteps.splice(afterIdx+1,0,{name:stepName,type:"Outbound",contractor:"",contactPerson:"",scopeOfWork:"",turnaroundDays:""});
+    updConfig(dIdx, {...conf,steps:newSteps});
+  };
+  const removeStep = (dIdx, stepIdx) => {
+    const conf = configs[dIdx];
+    if (DEFAULT_STEPS.includes(conf.steps[stepIdx].name)) return;
+    updConfig(dIdx, {...conf,steps:conf.steps.filter((_,i)=>i!==stepIdx)});
+  };
+
+  return (
+    <Modal title="Configure Production Steps" onClose={onClose} width={900}>
+      <div style={{ maxHeight:"70vh", overflowY:"auto" }}>
+        {configs.map((conf,dIdx)=>(
+          <div key={conf.drawingId} style={{ marginBottom:24, padding:16, background:T.bgInput, borderRadius:8 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.accentHi, marginBottom:12 }}>{conf.drawingNo}</div>
+
+            {/* Steps */}
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>PRODUCTION STEPS</div>
+              {conf.steps.map((step,sIdx)=>(
+                <div key={sIdx} style={{ marginBottom:8 }}>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", padding:"8px 12px", background:T.bg, borderRadius:6, border:`1px solid ${T.border}` }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:T.text, minWidth:80 }}>{step.name}</span>
+                    <select value={step.type} onChange={e=>{const s=[...conf.steps];s[sIdx]={...s[sIdx],type:e.target.value};updConfig(dIdx,{...conf,steps:s});}} style={{ ...css.input, fontSize:11, padding:"3px 6px", width:120 }}>
+                      <option value="Internal">Internal</option>
+                      <option value="Outbound">Outbound</option>
+                    </select>
+                    {!DEFAULT_STEPS.includes(step.name) && (
+                      <button onClick={()=>removeStep(dIdx,sIdx)} style={{ ...css.btn.sm, color:T.red, padding:"2px 8px", fontSize:10 }}>✕ Remove</button>
+                    )}
+                  </div>
+                  {step.type==="Outbound" && (
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, padding:"8px 12px", background:T.amberBg+"44", borderRadius:"0 0 6px 6px", border:`1px solid ${T.amber}44`, borderTop:"none" }}>
+                      <div><label style={css.label}>Contractor</label>
+                        <select value={step.contractor||""} onChange={e=>{const s=[...conf.steps];s[sIdx]={...s[sIdx],contractor:e.target.value};updConfig(dIdx,{...conf,steps:s});}} style={{ ...css.input, fontSize:11 }}>
+                          <option value="">Select...</option>
+                          {(contractors||[]).map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div><label style={css.label}>Contact Person</label><input value={step.contactPerson||""} onChange={e=>{const s=[...conf.steps];s[sIdx]={...s[sIdx],contactPerson:e.target.value};updConfig(dIdx,{...conf,steps:s});}} style={{ ...css.input, fontSize:11 }} /></div>
+                      <div style={{ gridColumn:"span 2" }}><label style={css.label}>Scope of Work</label><textarea value={step.scopeOfWork||""} onChange={e=>{const s=[...conf.steps];s[sIdx]={...s[sIdx],scopeOfWork:e.target.value};updConfig(dIdx,{...conf,steps:s});}} rows={2} style={{ ...css.input, resize:"vertical", fontSize:11 }} /></div>
+                      <div><label style={css.label}>Turnaround (days)</label><input type="number" value={step.turnaroundDays||""} onChange={e=>{const s=[...conf.steps];s[sIdx]={...s[sIdx],turnaroundDays:e.target.value};updConfig(dIdx,{...conf,steps:s});}} style={{ ...css.input, fontSize:11 }} /></div>
+                    </div>
+                  )}
+                  {sIdx < conf.steps.length-1 && (
+                    <div style={{ textAlign:"center", margin:"4px 0" }}>
+                      <select defaultValue="" onChange={e=>{if(e.target.value)addExtraStep(dIdx,sIdx,e.target.value);e.target.value="";}} style={{ ...css.input, fontSize:10, padding:"2px 8px", width:"auto" }}>
+                        <option value="">+ Add step after {step.name}...</option>
+                        {EXTRA_STEP_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Part operations */}
+            {conf.parts.length>0 && (
+              <div>
+                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>PART OPERATIONS</div>
+                <table style={{ width:"100%", fontSize:11, borderCollapse:"collapse" }}>
+                  <thead><tr style={{ color:T.textMid }}>
+                    <TH>Mark No</TH><TH>Description</TH>
+                    {["Cut","Bevel","Drill","Grind"].map(op=><TH key={op}>{op}</TH>)}
+                  </tr></thead>
+                  <tbody>
+                    {conf.parts.map((p,pIdx)=>(
+                      <tr key={p.id} style={{ borderTop:`1px solid ${T.border}` }}>
+                        <TD mono>{p.markNo}</TD>
+                        <TD>{p.desc}</TD>
+                        {["Cut","Bevel","Drill","Grind"].map(op=>(
+                          <TD key={op}>
+                            <input type="checkbox" checked={(p.ops||[]).includes(op)} onChange={e=>{
+                              const newParts=[...conf.parts];const curOps=p.ops||[];
+                              newParts[pIdx]={...p,ops:e.target.checked?[...curOps,op]:curOps.filter(o=>o!==op)};
+                              updConfig(dIdx,{...conf,parts:newParts});
+                            }} style={{ accentColor:T.accent }} />
+                          </TD>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+        <button onClick={onClose} style={css.btn.secondary}>Cancel</button>
+        <button onClick={()=>onSave(configs)} style={css.btn.primary}>Save Steps</button>
+      </div>
+    </Modal>
+  );
+};
+
+// ─── C3: Cross-Order Production Drawing Register ──────────────────────────────
+const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, onBack }) => {
+  const [filterOrder, setFilterOrder] = useState("");
+  const [filterAssembly, setFilterAssembly] = useState("");
+  const [filterStage, setFilterStage] = useState("");
+  const [filterContractor, setFilterContractor] = useState("");
+  const [excludeMissingRM, setExcludeMissingRM] = useState(false);
+  const [criticalFirst, setCriticalFirst] = useState(false);
+  const [expanded, setExpanded] = useState(new Set());
+  const [selected, setSelected] = useState(new Set());
+  const [stepConfigModal, setStepConfigModal] = useState(false);
+
+  // Derive drawing list from all orders
+  const allDrawings = [];
+  (orders||[]).forEach(o => {
+    (o.drawings||[]).filter(d=>d.receivedDate).forEach(d => {
+      const parts = (o.parts||[]).filter(p=>p.drawingId===d.id&&p.fabType==="Fabricate");
+      const totalParts = parts.length * (d.qty||1);
+      const cutInsts = (instances||[]).filter(i=>i.drawingId===d.id&&i.orderId===o.id&&["cutting_qc","fitup","welding","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"].includes(i.currentStage));
+      const matCodes = [...new Set(parts.map(p=>p.matCode).filter(Boolean))];
+      const rmCoverage = matCodes.map(mc=>{
+        const totalKg = parts.filter(p=>p.matCode===mc).reduce((s,p)=>s+(p.calcTotalWt||p.clientTotalWt||0),0);
+        const availKg = (stock||[]).filter(s=>(s.matCode===mc||s.itemCode?.startsWith(mc))&&["available","reserved","allocated"].includes(s.status)).reduce((a,s)=>a+(s.wtAvailable||0),0);
+        return { mc, totalKg, availKg, ok:availKg>=totalKg*0.9 };
+      });
+      const hasRM = rmCoverage.every(r=>r.availKg>0);
+      const asmGroup = (o.assemblies||[]).find(a=>a.id===d.assemblyGroup);
+      const allInsts = (instances||[]).filter(i=>i.drawingId===d.id&&i.orderId===o.id);
+      const latestStage = allInsts.length>0 ? allInsts.reduce((s,i)=>{
+        const stages=["cutting","cutting_qc","fitup","welding","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"];
+        return stages.indexOf(i.currentStage)>stages.indexOf(s)?i.currentStage:s;
+      },"cutting") : "not_started";
+      const rel = (releases||[]).find(r=>(r.drawings||[]).includes(d.id)&&r.orderId===o.id);
+      const conName = rel?.contractorName||"";
+      allDrawings.push({ drawingId:d.id, drawingNo:d.drawingNo, title:d.title, orderId:o.id, orderRef:o.id, clientId:o.clientId, assemblyGroup:d.assemblyGroup||"", assemblyName:asmGroup?.assemblyName||"", tier:d.priority<=1?"Critical":"Standard", priority:d.priority||1, totalParts, cutParts:cutInsts.length, matCodes, rmCoverage, hasRM, latestStage, parts, contractorName:conName, endDate:o.endDate||"" });
+    });
+  });
+
+  let filtered = allDrawings;
+  if (filterOrder) filtered = filtered.filter(d=>d.orderId===filterOrder);
+  if (filterAssembly) filtered = filtered.filter(d=>d.assemblyGroup===filterAssembly);
+  if (filterStage) filtered = filtered.filter(d=>d.latestStage===filterStage);
+  if (filterContractor) filtered = filtered.filter(d=>d.contractorName===filterContractor);
+  if (excludeMissingRM) filtered = filtered.filter(d=>d.hasRM);
+  if (criticalFirst) filtered = [...filtered].sort((a,b)=>a.priority-b.priority);
+
+  const allAssemblies = [];
+  (orders||[]).forEach(o=>(o.assemblies||[]).forEach(a=>allAssemblies.push({...a,orderId:o.id})));
+  const allContractors = [...new Set((releases||[]).map(r=>r.contractorName).filter(Boolean))];
+
+  const toggleExpand = (key) => {
+    const s = new Set(expanded);
+    s.has(key)?s.delete(key):s.add(key);
+    setExpanded(s);
+  };
+  const toggleSelect = (key) => {
+    const s = new Set(selected);
+    s.has(key)?s.delete(key):s.add(key);
+    setSelected(s);
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:20 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Dashboard</button>
+        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Cross-Order Drawing Register</div>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
+        <select value={filterOrder} onChange={e=>setFilterOrder(e.target.value)} style={{ ...css.input, width:180 }}>
+          <option value="">All Orders</option>
+          {(orders||[]).filter(o=>o.status==="active").map(o=><option key={o.id} value={o.id}>{o.id}</option>)}
+        </select>
+        <select value={filterAssembly} onChange={e=>setFilterAssembly(e.target.value)} style={{ ...css.input, width:180 }}>
+          <option value="">All Assemblies</option>
+          {allAssemblies.map(a=><option key={a.id} value={a.id}>{a.assemblyName||a.assemblyNumber}</option>)}
+        </select>
+        <select value={filterStage} onChange={e=>setFilterStage(e.target.value)} style={{ ...css.input, width:150 }}>
+          <option value="">All Stages</option>
+          {["not_started","cutting","cutting_qc","fitup","welding","blasting","painting","mdcc","dispatch"].map(s=><option key={s} value={s}>{s.replace("_"," ")}</option>)}
+        </select>
+        <select value={filterContractor} onChange={e=>setFilterContractor(e.target.value)} style={{ ...css.input, width:160 }}>
+          <option value="">All Contractors</option>
+          {allContractors.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.text, cursor:"pointer" }}>
+          <input type="checkbox" checked={excludeMissingRM} onChange={e=>setExcludeMissingRM(e.target.checked)} style={{ accentColor:T.accent }} />
+          Exclude Missing RM
+        </label>
+        <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.text, cursor:"pointer" }}>
+          <input type="checkbox" checked={criticalFirst} onChange={e=>setCriticalFirst(e.target.checked)} style={{ accentColor:T.accent }} />
+          Critical First
+        </label>
+      </div>
+
+      {/* Action bar */}
+      {selected.size>0 && (
+        <div style={{ display:"flex", gap:8, marginBottom:12, padding:"10px 14px", background:T.accent+"22", borderRadius:8, alignItems:"center" }}>
+          <span style={{ fontSize:12, color:T.accent, fontWeight:600 }}>{selected.size} drawing(s) selected</span>
+          <button style={css.btn.primary} onClick={()=>setStepConfigModal(true)}>Configure Steps</button>
+          <button style={{ ...css.btn.secondary, color:T.amber }} onClick={()=>{}}>Reserve Stock</button>
+          <button style={{ ...css.btn.ghost }} onClick={()=>setSelected(new Set())}>Clear</button>
+        </div>
+      )}
+
+      {/* Table */}
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+          <thead>
+            <tr>
+              <TH></TH>
+              <TH>Drawing No</TH><TH>Order</TH><TH>Client</TH><TH>Assembly Group</TH>
+              <TH>Tier</TH><TH>Priority</TH><TH>Parts Cut/Total</TH>
+              <TH>RM Types</TH><TH>Stage</TH><TH>Status</TH>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length===0&&<tr><td colSpan={11} style={{ padding:32,textAlign:"center",color:T.textLow }}>No drawings found</td></tr>}
+            {filtered.map(d=>{
+              const key = `${d.drawingId}/${d.orderId}`;
+              const isExp = expanded.has(key);
+              const isSel = selected.has(key);
+              const rmOk = d.rmCoverage.every(r=>r.availKg>=r.totalKg*0.9);
+              const rmPartial = !rmOk && d.rmCoverage.some(r=>r.availKg>0);
+              const rmColor = rmOk?T.green:rmPartial?T.amber:T.red;
+              return (
+                <React.Fragment key={key}>
+                  <tr style={{ background:isSel?`${T.accent}22`:isExp?`${T.accent}11`:"transparent", borderBottom:`1px solid ${T.border}`, cursor:"pointer" }}>
+                    <TD onClick={e=>{e.stopPropagation();toggleSelect(key);}}>
+                      <input type="checkbox" checked={isSel} onChange={()=>{}} style={{ accentColor:T.accent }} />
+                    </TD>
+                    <TD onClick={()=>toggleExpand(key)} mono>{d.drawingNo}</TD>
+                    <TD onClick={()=>toggleExpand(key)}><Badge color="blue">{d.orderId}</Badge></TD>
+                    <TD onClick={()=>toggleExpand(key)}>{d.clientId}</TD>
+                    <TD onClick={()=>toggleExpand(key)}>{d.assemblyName||<span style={{color:T.textLow}}>—</span>}</TD>
+                    <TD onClick={()=>toggleExpand(key)}><Badge color={d.tier==="Critical"?"red":"gray"}>{d.tier}</Badge></TD>
+                    <TD onClick={()=>toggleExpand(key)} mono>{d.priority}</TD>
+                    <TD onClick={()=>toggleExpand(key)} mono>{d.cutParts}/{d.totalParts}</TD>
+                    <TD onClick={()=>toggleExpand(key)}>
+                      <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                        {d.matCodes.map(mc=>{
+                          const r = d.rmCoverage.find(x=>x.mc===mc);
+                          const c = r?.availKg>=r?.totalKg*0.9?T.green:r?.availKg>0?T.amber:T.red;
+                          return <span key={mc} style={{ fontSize:10, padding:"1px 5px", borderRadius:3, background:c+"22", color:c, border:`1px solid ${c}44` }}>{mc.split("/").slice(-1)[0]}</span>;
+                        })}
+                      </div>
+                    </TD>
+                    <TD onClick={()=>toggleExpand(key)}><Badge color="gray">{d.latestStage.replace("_"," ")}</Badge></TD>
+                    <TD onClick={()=>toggleExpand(key)}>
+                      <span style={{ width:8, height:8, borderRadius:"50%", display:"inline-block", background:rmColor, marginRight:4 }}></span>
+                      {rmOk?"RM OK":rmPartial?"Partial":d.latestStage==="not_started"?"Not Started":"In Progress"}
+                    </TD>
+                  </tr>
+                  {isExp && (
+                    <tr style={{ background:`${T.accent}08` }}>
+                      <td colSpan={11} style={{ padding:"12px 16px" }}>
+                        {/* Section A: Part status */}
+                        <div style={{ marginBottom:12 }}>
+                          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>PARTS</div>
+                          <table style={{ width:"100%", fontSize:11, borderCollapse:"collapse" }}>
+                            <thead><tr style={{ color:T.textMid }}>
+                              <th style={{ textAlign:"left", padding:"2px 8px" }}>Mark No</th>
+                              <th style={{ textAlign:"left", padding:"2px 8px" }}>Description</th>
+                              <th style={{ textAlign:"left", padding:"2px 8px" }}>Section/Size</th>
+                              <th style={{ textAlign:"right", padding:"2px 8px" }}>Qty</th>
+                              <th style={{ textAlign:"left", padding:"2px 8px" }}>Stage</th>
+                            </tr></thead>
+                            <tbody>
+                              {d.parts.map(p=>{
+                                const pInsts = (instances||[]).filter(i=>i.markNo===p.markNo&&i.drawingId===d.drawingId&&i.orderId===d.orderId);
+                                const stage = pInsts.length>0?pInsts[0].currentStage:"not_started";
+                                return (
+                                  <tr key={p.id} style={{ borderTop:`1px solid ${T.border}` }}>
+                                    <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{p.markNo}</td>
+                                    <td style={{ padding:"3px 8px" }}>{p.desc}</td>
+                                    <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{p.section} {p.size}</td>
+                                    <td style={{ padding:"3px 8px", textAlign:"right" }}>{p.qtyPerDrg}</td>
+                                    <td style={{ padding:"3px 8px" }}><Badge color="gray">{stage.replace("_"," ")}</Badge></td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        {/* Section B: RM status */}
+                        <div>
+                          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>RM STATUS</div>
+                          <table style={{ width:"100%", fontSize:11, borderCollapse:"collapse" }}>
+                            <thead><tr style={{ color:T.textMid }}>
+                              <th style={{ textAlign:"left", padding:"2px 8px" }}>Mat Code</th>
+                              <th style={{ textAlign:"right", padding:"2px 8px" }}>Req kg</th>
+                              <th style={{ textAlign:"right", padding:"2px 8px" }}>Avail kg</th>
+                              <th style={{ textAlign:"left", padding:"2px 8px" }}>Status</th>
+                            </tr></thead>
+                            <tbody>
+                              {d.rmCoverage.map(r=>(
+                                <tr key={r.mc} style={{ borderTop:`1px solid ${T.border}` }}>
+                                  <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{r.mc}</td>
+                                  <td style={{ padding:"3px 8px", textAlign:"right" }}>{fmt.num(r.totalKg)}</td>
+                                  <td style={{ padding:"3px 8px", textAlign:"right", color:r.availKg>=r.totalKg*0.9?T.green:T.amber }}>{fmt.num(r.availKg)}</td>
+                                  <td style={{ padding:"3px 8px" }}>
+                                    <span style={{ color:r.availKg>=r.totalKg*0.9?T.green:r.availKg>0?T.amber:T.red, fontWeight:600, fontSize:11 }}>
+                                      {r.availKg>=r.totalKg*0.9?"Sufficient":r.availKg>0?"Partial":"Missing"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {stepConfigModal && (
+        <StepConfigModal
+          drawings={[...selected].map(k=>{const [drawingId,orderId]=k.split("/");return {drawingId,orderId};})}
+          orders={orders}
+          machines={[]}
+          contractors={contractors}
+          parts={(orders||[]).flatMap(o=>o.parts||[])}
+          onSave={(configs)=>{
+            setStepConfigModal(false);
+          }}
+          onClose={()=>setStepConfigModal(false)}
+        />
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QC ADMIN SCREEN
+// ═══════════════════════════════════════════════════════════════════════════════
+const QC_PROCESS_TYPES = ['Cutting QC','Weld QC','Blast QC','Paint QC','Assembly QC'];
+const STAGE_TO_PROCESS = {
+  cutting_qc:'Cutting QC', welding:'Weld QC', tpi_weld:'Weld QC',
+  blasting:'Blast QC', tpi_blast:'Blast QC',
+  painting:'Paint QC', tpi_paint:'Paint QC',
+  assembly:'Assembly QC',
+};
+
+const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog }) => {
+  const [tab, setTab] = useState("pending");
+  const [ruleModal, setRuleModal] = useState(null);
+  const [ruleForm, setRuleForm] = useState({});
+  const [overrideModal, setOverrideModal] = useState(null);
+  const [overrideInst, setOverrideInst] = useState(null);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overrideEngineer, setOverrideEngineer] = useState("");
+
+  const canEdit = ["super_admin","qc_admin"].includes(user.role);
+  const engineers = USERS.filter(u=>["production_engineer","qc_admin","super_admin"].includes(u.role)&&u.active);
+
+  // Pending jobs — instances at pending_supervisor
+  const pendingJobs = instances.filter(i=>i.currentStatus==="pending_supervisor");
+
+  // Get process type from stage
+  const getProcessType = (stage) => STAGE_TO_PROCESS[stage]||"";
+
+  // Auto-assign based on qcRules
+  const getAssignedEngineer = (stage) => {
+    const proc = getProcessType(stage);
+    const rule = qcRules.find(r=>r.processType===proc);
+    return rule ? (engineers.find(u=>u.id===rule.assignedEngineerId)||null) : null;
+  };
+
+  const doOverride = () => {
+    if (!overrideReason.trim()||!overrideEngineer) return;
+    const inst = overrideInst;
+    setInstances(prev=>prev.map(i=>i.instanceId===inst.instanceId?{...i,assignedEngineer:overrideEngineer}:i));
+    setOverrideLog(prev=>[...prev,{
+      instanceId:inst.instanceId, markNo:inst.markNo, drawingId:inst.drawingId,
+      overriddenBy:user.username, overriddenAt:today(), reason:overrideReason.trim(),
+      assignedTo:overrideEngineer
+    }]);
+    setOverrideModal(null); setOverrideInst(null); setOverrideReason(""); setOverrideEngineer("");
+  };
+
+  const saveRule = () => {
+    if (!ruleForm.processType||!ruleForm.assignedEngineerId) return;
+    const newRule = { id:ruleForm.id||`QCR-${Date.now()}`, processType:ruleForm.processType, assignedEngineerId:ruleForm.assignedEngineerId };
+    if (ruleModal==="add") {
+      setQcRules(prev=>[...prev.filter(r=>r.processType!==newRule.processType), newRule]);
+    } else {
+      setQcRules(prev=>prev.map(r=>r.id===newRule.id?newRule:r));
+    }
+    setRuleModal(null); setRuleForm({});
+  };
+
+  const deleteRule = (id) => setQcRules(prev=>prev.filter(r=>r.id!==id));
+
+  const tabs = [
+    {id:"pending",label:`Pending Jobs (${pendingJobs.length})`},
+    {id:"rules",label:"Assignment Rules"},
+    {id:"log",label:`Override Log (${overrideLog.length})`},
+  ];
+
+  return (
+    <div>
+      <div style={{ fontSize:20, fontWeight:800, color:T.text, marginBottom:16 }}>QC Admin — Assignment</div>
+      <TabBar2 tabs={tabs} active={tab} onChange={setTab} />
+
+      {tab==="pending" && (
+        <div>
+          {pendingJobs.length===0 && (
+            <div style={{ textAlign:"center", padding:48, color:T.textLow }}>No pending QC jobs.</div>
+          )}
+          <div style={{ overflowX:"auto" }}>
+            {pendingJobs.length>0 && (
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead><tr>
+                  {["Mark No","Drawing","Order","Stage","Process Type","Assigned Engineer","Time in Queue","Priority","Action"].map(h=>(
+                    <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:700, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {pendingJobs.map(i=>{
+                    const order = orders.find(o=>o.id===i.orderId);
+                    const proc = getProcessType(i.currentStage);
+                    const assignedEng = i.assignedEngineer ? engineers.find(u=>u.id===i.assignedEngineer) : getAssignedEngineer(i.currentStage);
+                    const lastHistEntry = (i.stageHistory||[]).slice(-1)[0];
+                    const markedDate = lastHistEntry?.markedDoneDate||"";
+                    const daysSince = markedDate ? Math.floor((Date.now()-new Date(markedDate).getTime())/86400000) : "?";
+                    const isUrgent = order?.endDate && order.endDate < today();
+                    return (
+                      <tr key={i.instanceId} style={{ borderBottom:`1px solid ${T.border}`, background:isUrgent?T.redBg:"transparent" }}>
+                        <td style={{ padding:"7px 10px", fontFamily:T.fontMono, fontWeight:700 }}>{i.markNo}</td>
+                        <td style={{ padding:"7px 10px" }}>{i.drawingNo||i.drawingId}</td>
+                        <td style={{ padding:"7px 10px" }}>{i.orderId}</td>
+                        <td style={{ padding:"7px 10px" }}><Badge color="blue">{(i.currentStage||"").replace("_"," ")}</Badge></td>
+                        <td style={{ padding:"7px 10px" }}>{proc||"—"}</td>
+                        <td style={{ padding:"7px 10px", color:assignedEng?T.green:T.amber }}>{assignedEng?.name||"Unassigned"}</td>
+                        <td style={{ padding:"7px 10px", color:T.textMid }}>{daysSince} day{daysSince!==1?"s":""}</td>
+                        <td style={{ padding:"7px 10px" }}>{isUrgent?<Badge color="red">Overdue</Badge>:<Badge color="gray">Normal</Badge>}</td>
+                        <td style={{ padding:"7px 10px" }}>
+                          {canEdit && (
+                            <button onClick={()=>{setOverrideInst(i);setOverrideEngineer(i.assignedEngineer||"");setOverrideReason("");setOverrideModal(true);}} style={css.btn.sm}>Reassign</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab==="rules" && (
+        <div>
+          {canEdit && (
+            <div style={{ marginBottom:14 }}>
+              <button onClick={()=>{setRuleForm({});setRuleModal("add");}} style={css.btn.primary}>+ Add Rule</button>
+            </div>
+          )}
+          {qcRules.length===0 && <div style={{ color:T.textLow, fontSize:12 }}>No assignment rules. Add a rule to auto-assign engineers to QC stages.</div>}
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead><tr>
+              {["Process Type","Assigned Engineer","Action"].map(h=>(
+                <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:700, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {qcRules.map(r=>{
+                const eng = engineers.find(u=>u.id===r.assignedEngineerId);
+                return (
+                  <tr key={r.id} style={{ borderBottom:`1px solid ${T.border}` }}>
+                    <td style={{ padding:"7px 10px" }}><Badge color="blue">{r.processType}</Badge></td>
+                    <td style={{ padding:"7px 10px" }}>{eng?.name||r.assignedEngineerId}</td>
+                    <td style={{ padding:"7px 10px", display:"flex", gap:6 }}>
+                      {canEdit&&<button onClick={()=>{setRuleForm({...r});setRuleModal("edit");}} style={css.btn.sm}>Edit</button>}
+                      {canEdit&&<button onClick={()=>deleteRule(r.id)} style={{ ...css.btn.sm,color:T.red }}>Delete</button>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab==="log" && (
+        <div>
+          {overrideLog.length===0 && <div style={{ color:T.textLow, fontSize:12 }}>No override log entries.</div>}
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead><tr>
+              {["Date","Mark No","Drawing","Assigned To","Override By","Reason"].map(h=>(
+                <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:700, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {overrideLog.map((entry,i)=>(
+                <tr key={i} style={{ borderBottom:`1px solid ${T.border}` }}>
+                  <td style={{ padding:"7px 10px" }}>{entry.overriddenAt}</td>
+                  <td style={{ padding:"7px 10px", fontFamily:T.fontMono }}>{entry.markNo}</td>
+                  <td style={{ padding:"7px 10px" }}>{entry.drawingId}</td>
+                  <td style={{ padding:"7px 10px" }}>{engineers.find(u=>u.id===entry.assignedTo)?.name||entry.assignedTo}</td>
+                  <td style={{ padding:"7px 10px" }}>{entry.overriddenBy}</td>
+                  <td style={{ padding:"7px 10px" }}>{entry.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Rule Modal */}
+      {ruleModal && (
+        <Modal title={ruleModal==="add"?"Add Assignment Rule":"Edit Assignment Rule"} onClose={()=>{setRuleModal(null);setRuleForm({});}}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <div><label style={css.label}>Process Type *</label>
+              <select value={ruleForm.processType||""} onChange={e=>setRuleForm(f=>({...f,processType:e.target.value}))} style={css.input}>
+                <option value="">Select...</option>
+                {QC_PROCESS_TYPES.map(p=><option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div><label style={css.label}>Assigned Engineer *</label>
+              <select value={ruleForm.assignedEngineerId||""} onChange={e=>setRuleForm(f=>({...f,assignedEngineerId:e.target.value}))} style={css.input}>
+                <option value="">Select...</option>
+                {engineers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+            <button onClick={()=>{setRuleModal(null);setRuleForm({});}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={saveRule} disabled={!ruleForm.processType||!ruleForm.assignedEngineerId} style={{ ...css.btn.primary, opacity:(!ruleForm.processType||!ruleForm.assignedEngineerId)?0.4:1 }}>Save Rule</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Override Modal */}
+      {overrideModal && overrideInst && (
+        <Modal title={`Reassign — ${overrideInst.markNo}`} onClose={()=>{setOverrideModal(null);setOverrideInst(null);setOverrideReason("");}}>
+          <div style={{ marginBottom:12 }}>
+            <label style={css.label}>Assign To *</label>
+            <select value={overrideEngineer} onChange={e=>setOverrideEngineer(e.target.value)} style={css.input}>
+              <option value="">Select engineer...</option>
+              {engineers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={css.label}>Reason *</label>
+            <textarea value={overrideReason} onChange={e=>setOverrideReason(e.target.value)} rows={3} placeholder="State reason for reassignment..." style={{ ...css.input, resize:"vertical", width:"100%" }} />
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+            <button onClick={()=>{setOverrideModal(null);setOverrideInst(null);setOverrideReason("");}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={doOverride} disabled={!overrideReason.trim()||!overrideEngineer} style={{ ...css.btn.primary, opacity:(!overrideReason.trim()||!overrideEngineer)?0.4:1 }}>Confirm Reassignment</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -9335,6 +10484,11 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
   if (view==="outbound") return (
     <OutboundProcessing user={user} instances={instances} setInstances={setInstances}
       orders={orders} vendors={vendors||[]} onBack={()=>setView("dashboard")} />
+  );
+
+  // ── Drawing Register view ──
+  if (view==="register") return (
+    <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} onBack={()=>setView("dashboard")} />
   );
 
   // ── Progress grid view ──
@@ -9476,6 +10630,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
         {canAssign&&<button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("assignments");}} style={css.btn.secondary}>📋 Assignment</button>}
         <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={css.btn.secondary}>📊 Progress Grid</button>
         {canAssign&&<button onClick={()=>setView("outbound")} style={css.btn.secondary}>🔄 Outbound</button>}
+        <button onClick={()=>setView("register")} style={css.btn.secondary}>📋 Drawing Register</button>
         {(SUPERVISOR_STAGES[user.role]||[]).length>0&&(
           <button onClick={()=>setView("approvals")} style={{ ...css.btn.amber,position:"relative" }}>
             🔍 Approval Queue
@@ -9680,6 +10835,8 @@ const STOCK_LOT_OVERRIDES = {
 };
 const migrateStockLots = (lots, materials) => {
   return lots.map(lot => {
+    // Ensure reservations array exists
+    if (!lot.reservations) lot = { ...lot, reservations: [] };
     // Targeted override takes highest priority
     const override = STOCK_LOT_OVERRIDES[lot.lotNo];
     if (override != null && Math.abs((lot.wtReceived||0) - override) > 1) {
@@ -9730,10 +10887,15 @@ export default function App() {
       const loaded = JSON.parse(s);
       return loaded.map(o => {
         const base = { drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, transport:{transportScope:'per_dispatch',preferredTransporter:'',vehicleType:'',distanceKm:0,freightEstimate:0,insurance:false,odc:false,nightRestriction:false,policeEscort:false,specialReqs:'',freightBilling:'dispatch_line',clientTransporter:'',clientVehicleContact:'',loadingInstructions:''}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o };
-        // Migrate drawings missing poLineItem
-        base.drawings = (base.drawings||[]).map(d =>
-          d.poLineItem != null ? d : { ...d, poLineItem:0 }
-        );
+        // Migrate drawings missing poLineItem / assemblyGroup
+        base.drawings = (base.drawings||[]).map(d => ({
+          ...d,
+          ...(d.poLineItem == null ? { poLineItem:0 } : {}),
+          ...(d.assemblyGroup == null ? { assemblyGroup:'' } : {}),
+        }));
+        // Migrate order-level assembly fields
+        if (base.assemblyInspectionRequired == null) base.assemblyInspectionRequired = false;
+        if (!base.assemblies) base.assemblies = [];
         // Migrate parts missing matCode / requiredOps / drawingLineItem
         const drgCounters = {};
         base.parts = (base.parts||[]).map(p => {
@@ -9765,6 +10927,8 @@ export default function App() {
   const [approvedMakes, setApprovedMakes] = useState(APPROVED_MAKES_LIBRARY);
   const [machines, setMachines]         = useState(MACHINES_SEED);
   const [releases, setReleases]         = useState([]);
+  const [qcRules, setQcRules]           = useState([]);
+  const [overrideLog, setOverrideLog]   = useState([]);
   const [issueRequests, setIssueRequests] = useState([]);
   const [productionStandards, setProductionStandards] = useState({
     tiers: [
@@ -9806,6 +10970,7 @@ export default function App() {
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
+      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
