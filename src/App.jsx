@@ -906,6 +906,31 @@ const buildItemCode = (l) => {
   if (l.isPlate) return (l.sheetLength&&l.sheetWidth) ? `${l.matCode}/${l.sheetLength}X${l.sheetWidth}` : l.matCode;
   return l.stdLength ? `${l.matCode}/${l.stdLength}` : l.matCode;
 };
+// Per-bar weight for GRN qty-received field (user enters bars/pcs).
+// For MT-unit POs: use library wtPerMetre × bar length if available.
+// Returns 0 when unable to compute — forces weighbridge manual entry.
+const calcGrnWtPU = (pl, materials) => {
+  if (!pl) return 0;
+  const unit = (pl.unit||'MT').toUpperCase();
+  if (unit==='MT'||unit==='T') {
+    const len = pl.length||pl.stdLength||0;
+    if (!pl.isPlate && pl.wtPerMetre && len>0) return (len/1000)*pl.wtPerMetre;
+    // No length stored — try library
+    if (!pl.isPlate && materials) {
+      const lib = materials.find(m=>
+        (m.sectionType||'').toLowerCase()===(pl.sectionType||'').toLowerCase()&&
+        normSz(m.size)===normSz(pl.size||'')&&
+        (m.grade||'').toLowerCase()===(pl.grade||'').toLowerCase()
+      );
+      if (lib?.wtPerMetre && len>0) return (len/1000)*lib.wtPerMetre;
+    }
+    return 0; // cannot determine per-bar weight — user enters weighbridge
+  }
+  // Non-MT units (KG, Pcs, NOS): weight per piece from calcPoLineWt
+  const plWt = calcPoLineWt(pl);
+  const plQty = +(pl.qtyOrdered||pl.qty||0);
+  return plQty>0 ? plWt/plQty : 0;
+};
 const calcPoLineWt = (l) => {
   const unit = (l.unit||"MT").toUpperCase();
   if (unit==="MT"||unit==="T") return (l.qty||0)*1000;
@@ -3640,12 +3665,12 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
               <div>
                 <div style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr 1fr", gap:8, alignItems:"end", marginBottom:6 }}>
                   <Field label="PO Line Ref">
-                    <Sel value={l.poLineId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===e.target.value); const plWt=pl?calcPoLineWt(pl):0; const plQty=pl?+(pl.qtyOrdered||pl.qty||0):0; const wtPU=plQty>0?plWt/plQty:0; const cw=n[i].qtyReceived>0&&wtPU>0?Math.round(n[i].qtyReceived*wtPU):plWt; n[i]={...n[i],poLineId:e.target.value,materialDesc:pl?.itemCode||pl?.matCode||`${pl?.sectionType||pl?.section||""} ${pl?.size||""}`.trim(),calculatedWt:Math.round(cw),actualWt:Math.round(cw),wtReceived:Math.round(cw),variance:0}; return {...f,lines:n}; })}>
+                    <Sel value={l.poLineId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===e.target.value); const wtPU=calcGrnWtPU(pl,materials); const cw=n[i].qtyReceived>0&&wtPU>0?Math.round(n[i].qtyReceived*wtPU):0; n[i]={...n[i],poLineId:e.target.value,materialDesc:pl?.itemCode||pl?.matCode||`${pl?.sectionType||pl?.section||""} ${pl?.size||""}`.trim(),calculatedWt:Math.round(cw),actualWt:Math.round(cw),wtReceived:Math.round(cw),variance:0}; return {...f,lines:n}; })}>
                       <option value="">Select PO line...</option>
                       {po.lines?.map(pl=><option key={pl.id} value={pl.id}>{pl.id} — {pl.itemCode||pl.matCode||`${pl.sectionType||pl.section||""} ${pl.size||""}`.trim()} (Bal: {fmt.num((pl.wtOrdered||0)-(pl.wtReceived||0))} kg)</option>)}
                     </Sel>
                   </Field>
-                  <Field label="Qty Received"><Input type="number" value={l.qtyReceived||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===n[i].poLineId); const plWt=pl?calcPoLineWt(pl):0; const plQty=pl?+(pl.qtyOrdered||pl.qty||0):0; const wtPU=plQty>0?plWt/plQty:0; const qr=+e.target.value; const cw=wtPU>0?Math.round(qr*wtPU):0; n[i]={...n[i],qtyReceived:qr,calculatedWt:cw,actualWt:cw,wtReceived:cw,variance:0}; return {...f,lines:n}; })} placeholder="Units" /></Field>
+                  <Field label="Qty Received"><Input type="number" value={l.qtyReceived||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===n[i].poLineId); const wtPU=calcGrnWtPU(pl,materials); const qr=+e.target.value; const cw=wtPU>0?Math.round(qr*wtPU):0; n[i]={...n[i],qtyReceived:qr,calculatedWt:cw,actualWt:cw,wtReceived:cw,variance:0}; return {...f,lines:n}; })} placeholder="Bars / Pcs" /></Field>
                   <Field label="Calc Wt (kg)"><Input value={l.calculatedWt||""} readOnly style={{opacity:0.6,cursor:"default",fontFamily:T.fontMono,fontSize:12}} /></Field>
                   <Field label="Weighbridge (kg)"><Input type="number" value={l.actualWt||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const aw=+e.target.value; const vr=Math.round(aw-(n[i].calculatedWt||0)); n[i]={...n[i],actualWt:aw,wtReceived:aw,variance:vr}; return {...f,lines:n}; })} placeholder={`Calc: ${l.calculatedWt||0}`} /></Field>
                 </div>
@@ -9595,15 +9620,22 @@ const migratePOLines = (pos, materials) => {
 };
 
 // ─── STARTUP MIGRATION: GRN LINE WEIGHTS ─────────────────────────────────────
-// Fixes GRN lines where actualWt === qtyReceived (unit mix-up — should be kg
-// not MT). Recalculates using library wtPerMetre and updates po.lines[i].wtReceived.
+// Fixes two known GRN weight bugs:
+// (a) actualWt === qtyReceived — qty saved as kg instead of computing from bars
+// (b) actualWt === qtyReceived * 1000 — MT×1000 unit bug (bars treated as MT qty)
+// Recalculates using library wtPerMetre + bar length stored on PO line.
 const migrateGRNLines = (pos, materials) => {
   return pos.map(po => {
     const grns = (po.grns||[]).map(grn => ({
       ...grn,
       lines: (grn.lines||[]).map(gl => {
-        const looksWrong = (gl.actualWt||0) === (gl.qtyReceived||0) && (gl.qtyReceived||0) < 100;
-        if (!looksWrong) return gl;
+        const qty = gl.qtyReceived||0;
+        const awt = gl.actualWt||0;
+        // Bug (a): actualWt was saved as bare count (no weight calculation at all)
+        const bugA = awt === qty && qty > 0 && qty < 100;
+        // Bug (b): actualWt = qty * 1000 — MT unit factor applied to bar count
+        const bugB = qty > 0 && qty < 200 && Math.abs(awt - qty * 1000) < 1;
+        if (!bugA && !bugB) return gl;
 
         const poLine = (po.lines||[]).find(l => l.id === gl.poLineId);
         if (!poLine) return gl;
@@ -9615,11 +9647,11 @@ const migrateGRNLines = (pos, materials) => {
         );
         if (!libMatch || !libMatch.wtPerMetre) return gl;
 
-        const length = poLine.length;
-        if (!length) return gl;
-        const actualWt = Math.round(gl.qtyReceived * (length / 1000) * libMatch.wtPerMetre * 100) / 100;
+        // Use PO line bar length, fall back to 12 000 mm (standard structural length)
+        const length = poLine.length || 12000;
+        const actualWt = Math.round(qty * (length / 1000) * libMatch.wtPerMetre * 100) / 100;
 
-        return { ...gl, actualWt, calculatedWt: actualWt, variance: 0, wtSource: 'grn-migrated' };
+        return { ...gl, actualWt, calculatedWt: actualWt, wtReceived: actualWt, variance: 0, wtSource: 'grn-migrated' };
       })
     }));
 
@@ -9637,6 +9669,44 @@ const migrateGRNLines = (pos, materials) => {
   });
 };
 
+// ─── STARTUP MIGRATION: STOCK LOT WEIGHTS ────────────────────────────────────
+// Fixes stock lots saved with wrong weights from GRN bugs:
+// (b) wtReceived === qtyReceived * 1000  — MT×1000 unit bug
+// Also applies targeted overrides for specific known-bad lots.
+const STOCK_LOT_OVERRIDES = {
+  'LOT-2026-005': 337.68,   // RHS 100x50x4 E250 — 6 bars × 12 m × 4.69 kg/m
+  // LOT-2026-006 is correct (1 524 kg)
+  'LOT-2026-007': 1397.76,  // ISA 75x75x8 E250 — 13 bars × 12 m × 8.96 kg/m
+};
+const migrateStockLots = (lots, materials) => {
+  return lots.map(lot => {
+    // Targeted override takes highest priority
+    const override = STOCK_LOT_OVERRIDES[lot.lotNo];
+    if (override != null && Math.abs((lot.wtReceived||0) - override) > 1) {
+      const alreadyAllocated = (lot.wtAllocated||0) + (lot.wtIssued||0) + (lot.wtConsumed||0);
+      const newAvail = Math.max(0, override - alreadyAllocated);
+      return { ...lot, wtReceived: override, wtAvailable: newAvail, actualWt: override, calculatedWt: override, wtSource: 'lot-corrected' };
+    }
+    // General fix: MT×1000 bug — section lots where wtReceived = qtyReceived * 1000
+    const qty = lot.qtyReceived||0;
+    if (!lot.isPlate && qty > 0 && qty < 200 && Math.abs((lot.wtReceived||0) - qty * 1000) < 1) {
+      const libMatch = (materials||[]).find(m =>
+        (m.sectionType||'').toLowerCase() === (lot.sectionType||'').toLowerCase() &&
+        normSz(m.size) === normSz(lot.size||'') &&
+        (m.grade||'').toLowerCase() === (lot.grade||'').toLowerCase()
+      );
+      if (libMatch?.wtPerMetre) {
+        const length = lot.length || 12000;
+        const corrected = Math.round(qty * (length / 1000) * libMatch.wtPerMetre * 100) / 100;
+        const alreadyAllocated = (lot.wtAllocated||0) + (lot.wtIssued||0) + (lot.wtConsumed||0);
+        const newAvail = Math.max(0, corrected - alreadyAllocated);
+        return { ...lot, wtReceived: corrected, wtAvailable: newAvail, actualWt: corrected, calculatedWt: corrected, wtSource: 'lot-corrected' };
+      }
+    }
+    return lot;
+  });
+};
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
@@ -9645,11 +9715,10 @@ export default function App() {
   const [purchaseReqs, setPurchaseReqs] = useState(() => { try { const s=localStorage.getItem('structo_purchaseReqs'); return s?JSON.parse(s):INIT_PURCHASE_REQS; } catch { return INIT_PURCHASE_REQS; } });
   const [pos, setPos]                   = useState(() => { try { const s=localStorage.getItem('structo_pos'); if (s) { const loaded=JSON.parse(s); return migrateGRNLines(migratePOLines(loaded, MATERIALS_LIBRARY), MATERIALS_LIBRARY); } return INIT_POS; } catch { return INIT_POS; } });
   const [stock, setStock]               = useState(() => {
-    const ORPHANED_LOT_IDS = ['LOT-2026-005','LOT-2026-006','LOT-2026-007'];
     try {
       const s = localStorage.getItem('structo_stock');
       const loaded = s ? JSON.parse(s) : INIT_STOCK;
-      return loaded.filter(lot => !ORPHANED_LOT_IDS.includes(lot.lotNo));
+      return migrateStockLots(loaded, MATERIALS_LIBRARY);
     } catch { return INIT_STOCK; }
   });
   const [nestingRuns, setNestingRuns]   = useState(INIT_NESTING_RUNS);
