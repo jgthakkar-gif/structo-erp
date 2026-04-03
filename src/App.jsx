@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import * as XLSX from 'xlsx';
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const T = {
@@ -2190,7 +2191,7 @@ const qcStatusBadge   = { approved:"green", pending:"gray", failed:"red", hold:"
 // ═══════════════════════════════════════════════════════════════════════════════
 // MRP MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materials, nestingRuns, setNestingRuns }) => {
+const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches }) => {
   const [view, setView] = useState("overview");
   const [expand, setExpand] = useState({});
   const [nestModal, setNestModal] = useState(null);
@@ -2201,6 +2202,14 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   const [runForm, setRunForm] = useState({});
   const [rejectModal, setRejectModal] = useState(null); // prId
   const [rejectReason, setRejectReason] = useState("");
+  // Import state
+  const [nestImportRows, setNestImportRows] = useState([]);
+  const [nestImportError, setNestImportError] = useState("");
+  const [nestImportReady, setNestImportReady] = useState(false);
+  const nestImportFileRef = useRef(null);
+  // Batch drill-down
+  const [expandedBatch, setExpandedBatch] = useState(null); // batchId
+  const [expandedLot, setExpandedLot] = useState(null); // lotId
   // nestSelDrgs: { "orderId|drawingId": bool } — absent key means selected (true)
   const [nestSelDrgs, setNestSelDrgs] = useState({});
   const [nestExportSel, setNestExportSel] = useState(null); // Set<drawingId> passed to export
@@ -2274,9 +2283,120 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   }, {});
   const matList = Object.values(matAgg);
 
+  const handleNestFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setNestImportError(""); setNestImportRows([]); setNestImportReady(false);
+    try {
+      const buf = await file.arrayBuffer();
+      let rows = [];
+      if (file.name.toLowerCase().endsWith(".csv")) {
+        const text = new TextDecoder().decode(buf);
+        const clean = (text.charCodeAt(0)===0xFEFF?text.slice(1):text).replace(/\r\n/g,"\n").replace(/\r/g,"\n");
+        const lines = clean.split("\n").filter(l=>l.trim());
+        if (lines.length < 2) { setNestImportError("File has no data rows"); return; }
+        const hdrs = lines[0].split(",").map(h=>h.trim().toLowerCase().replace(/[^a-z0-9 %]/g,"").trim());
+        rows = lines.slice(1).map(line=>{
+          const vals = line.split(",").map(v=>v.trim().replace(/^"|"$/g,""));
+          const obj = {};
+          hdrs.forEach((h,i)=>{ obj[h]=vals[i]||""; });
+          return obj;
+        });
+      } else {
+        const wb = XLSX.read(buf, {type:"array"});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, {defval:""});
+        rows = raw.map(r=>{
+          const norm = {};
+          Object.entries(r).forEach(([k,v])=>{ norm[k.toLowerCase().trim().replace(/[^a-z0-9 %]/g,"").trim()]=String(v||"").trim(); });
+          return norm;
+        });
+      }
+      if (rows.length === 0) { setNestImportError("No rows found in file"); return; }
+      // Validate required columns
+      const firstRow = rows[0];
+      const keyOf = (...candidates) => candidates.find(c => c in firstRow) || null;
+      const matKey = keyOf("material code","matcode","material_code","mat code");
+      if (!matKey) { setNestImportError("Column 'Material Code' not found. Expected: Mark No, Drawing No, Sheet No, Sheet Dim (LxW), Material Code, Parts on Sheet, Utilisation %"); return; }
+      setNestImportRows(rows);
+      setNestImportReady(true);
+    } catch(err) {
+      setNestImportError("Parse error: " + err.message);
+    }
+  };
+
   const handleNestImport = () => {
-    showToast("Nesting import saved — draft purchase requirements updated", "green");
+    if (!nestImportReady || nestImportRows.length === 0) return;
+    const yr = new Date().getFullYear();
+    let maxPln = 0;
+    (nestingBatches||[]).forEach(b=>{
+      const m=(b.id||"").match(/^NEST-PLN-(\d{4})-(\d+)$/);
+      if(m&&+m[1]===yr) maxPln=Math.max(maxPln,+m[2]);
+    });
+    const batchId = `NEST-PLN-${yr}-${String(maxPln+1).padStart(3,"0")}`;
+
+    // Helper: get column value with fallback keys
+    const col = (row, ...candidates) => {
+      for (const c of candidates) { if (c in row && row[c]!=="") return row[c]; }
+      return "";
+    };
+
+    // Group rows by Material Code → sheets
+    const lotsMap = {};
+    nestImportRows.forEach(row=>{
+      const matCode = col(row,"material code","matcode","material_code","mat code");
+      const sheetNo = col(row,"sheet no","sheet_no","sheetno","sheet number");
+      const sheetDim = col(row,"sheet dim lxw","sheet dim","sheetdim","sheet_dim","dims","dimensions","lxw");
+      const markNo   = col(row,"mark no","mark_no","markno","mark number","part");
+      const utilisPctStr = col(row,"utilisation %","utilisation","utilization %","utilization");
+      const utilisPct = parseFloat(utilisPctStr)||0;
+      if (!matCode) return;
+      if (!lotsMap[matCode]) lotsMap[matCode] = { matCode, sheets:{}, allParts:[] };
+      const sheetKey = `${sheetNo}||${sheetDim}`;
+      if (!lotsMap[matCode].sheets[sheetKey]) {
+        lotsMap[matCode].sheets[sheetKey] = { sheetNo, sheetDim, parts:[], utilisPct };
+      }
+      if (markNo && !lotsMap[matCode].sheets[sheetKey].parts.includes(markNo)) {
+        lotsMap[matCode].sheets[sheetKey].parts.push(markNo);
+      }
+      if (markNo && !lotsMap[matCode].allParts.includes(markNo)) {
+        lotsMap[matCode].allParts.push(markNo);
+      }
+    });
+
+    // Build lot records with RM Unit IDs
+    const lots = Object.values(lotsMap).map(lot=>{
+      const sheetArr = Object.values(lot.sheets);
+      const total = sheetArr.length;
+      const sheetsWithIds = sheetArr.map((s,i)=>{
+        // RM Unit ID: [matCode]/[LxW]/[n-of-total]
+        // e.g. PLATE/E250/12mm/2500x1250/1-4
+        const rmUnitId = `${lot.matCode}/${s.sheetDim||"?"}/` + `${i+1}-${total}`;
+        return { sheetNo:s.sheetNo, sheetDim:s.sheetDim, utilisPct:s.utilisPct, parts:[...s.parts], rmUnitId };
+      });
+      const safeId = lot.matCode.replace(/[^a-zA-Z0-9]/g,"-");
+      return {
+        lotId: `${batchId}-${safeId}`,
+        matCode: lot.matCode,
+        sheets: sheetsWithIds,
+        parts: lot.allParts
+      };
+    });
+
+    const batch = {
+      id: batchId,
+      createdAt: today(),
+      createdBy: user.name,
+      status: "Planned",
+      lots
+    };
+    setNestingBatches(prev=>[...(prev||[]), batch]);
     setNestModal(null);
+    setNestImportRows([]); setNestImportReady(false); setNestImportError("");
+    if (nestImportFileRef.current) nestImportFileRef.current.value = "";
+    const totalSheets = lots.reduce((s,l)=>s+l.sheets.length,0);
+    const totalRmUnits = totalSheets;
+    showToast(`Batch ${batchId} created — ${lots.length} lots, ${totalSheets} sheets, ${totalRmUnits} RM units`, "green");
   };
 
   if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} />;
@@ -2552,44 +2672,70 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
 
       {/* Nesting Import Modal */}
       {nestModal==="import" && (
-        <Modal title="Import Nesting Results — Stage 1 (Preliminary)" onClose={()=>setNestModal(null)} width={700}>
+        <Modal title="Import Nesting Results" onClose={()=>{setNestModal(null);setNestImportRows([]);setNestImportReady(false);setNestImportError("");}} width={720}>
           <InfoBanner color="blue">
-            Upload the completed nesting Excel (Sheet 4) with qty to order, order unit, weight to order, source, and remarks per material line. Approved makes are auto-populated from Quality tab.
+            Upload your nesting software output (.xlsx or .csv). Expected columns: <strong>Mark No, Drawing No, Sheet No, Sheet Dim (LxW), Material Code, Parts on Sheet, Utilisation %</strong>
           </InfoBanner>
-          <div style={{ ...css.card, background:T.bg, marginBottom:14 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:10, textTransform:"uppercase" }}>Sheet 4 Preview — Import Format</div>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-              <thead><tr>
-                {["Section","Size","Wt Required (kg)","Qty to Order","Order Unit","Wt to Order (kg)","Extra (kg)","Source","Remarks"].map(h=>(
-                  <th key={h} style={{ padding:"5px 8px", textAlign:"left", fontSize:10, fontWeight:700, color:T.amber, textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {matList.slice(0,5).map((m,i)=>(
-                  <tr key={i}>
-                    <td style={{ padding:"5px 8px", color:T.text, borderBottom:`1px solid ${T.border}` }}>{m.section}</td>
-                    <td style={{ padding:"5px 8px", color:T.text, borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono }}>{m.size}</td>
-                    <td style={{ padding:"5px 8px", color:T.gold, borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono }}>{fmt.num(Math.round(m.wtRequired))}</td>
-                    <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}><Input type="number" style={{ width:80, padding:"3px 6px", fontSize:11 }} placeholder="0" value={nestForm[`qty_${i}`]||""} onChange={e=>setNestForm(f=>({...f,[`qty_${i}`]:e.target.value}))} /></td>
-                    <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}>
-                      <Sel style={{ width:60, padding:"3px 6px", fontSize:11 }}><option>MT</option><option>KG</option></Sel>
-                    </td>
-                    <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}><Input type="number" style={{ width:90, padding:"3px 6px", fontSize:11 }} /></td>
-                    <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}`, color:T.textLow }}>auto</td>
-                    <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}>
-                      <Sel style={{ width:90, padding:"3px 6px", fontSize:11 }}><option>Procure</option><option>Stock</option></Sel>
-                    </td>
-                    <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}><Input style={{ width:100, padding:"3px 6px", fontSize:11 }} placeholder="remarks..." /></td>
-                  </tr>
-                ))}
-                {matList.length>5 && <tr><td colSpan={9} style={{ padding:"5px 8px", color:T.textLow, fontStyle:"italic" }}>...{matList.length-5} more lines</td></tr>}
-              </tbody>
-            </table>
+          <div style={{ ...css.card, marginBottom:14 }}>
+            <label style={css.label}>Nesting Results File (.xlsx or .csv)</label>
+            <input ref={nestImportFileRef} type="file" accept=".xlsx,.csv"
+              onChange={handleNestFileChange}
+              style={{ color:T.text, fontSize:12, marginTop:4 }} />
+            {nestImportError && (
+              <div style={{ marginTop:8, padding:"8px 12px", borderRadius:6, fontSize:12, background:T.redBg, border:`1px solid ${T.redLo}`, color:T.red }}>
+                ✗ {nestImportError}
+              </div>
+            )}
           </div>
-          <InfoBanner color="amber">In production this would be a full Excel file upload. This preview shows the format. Save will create draft purchase requirements.</InfoBanner>
+          {nestImportReady && nestImportRows.length > 0 && (
+            <div style={{ ...css.card, marginBottom:14, background:T.greenBg }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.green, marginBottom:8 }}>
+                ✓ {nestImportRows.length} rows parsed — ready to import
+              </div>
+              {/* Summary preview */}
+              {(() => {
+                const preview = {};
+                nestImportRows.forEach(row=>{
+                  const matCode = row["material code"]||row["matcode"]||row["material_code"]||row["mat code"]||"?";
+                  if (!preview[matCode]) preview[matCode] = { sheets:new Set(), parts:new Set() };
+                  const sheetNo = row["sheet no"]||row["sheet_no"]||"";
+                  const sheetDim = row["sheet dim lxw"]||row["sheet dim"]||row["sheetdim"]||"";
+                  if (sheetNo||sheetDim) preview[matCode].sheets.add(`${sheetNo}|${sheetDim}`);
+                  const markNo = row["mark no"]||row["mark_no"]||row["markno"]||"";
+                  if (markNo) preview[matCode].parts.add(markNo);
+                });
+                return (
+                  <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+                    <thead><tr>
+                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Material Code</th>
+                      <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Sheets</th>
+                      <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Parts</th>
+                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>RM Unit IDs preview</th>
+                    </tr></thead>
+                    <tbody>
+                      {Object.entries(preview).map(([mc,v],i)=>{
+                        const total = v.sheets.size;
+                        const sampleId = total>0 ? `${mc}/${[...v.sheets][0].split("|")[1]||"?"}/1-${total}` : `${mc}/?/1-1`;
+                        return (
+                          <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
+                            <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.text, borderBottom:`1px solid ${T.border}` }}>{mc}</td>
+                            <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:T.accent, borderBottom:`1px solid ${T.border}` }}>{total}</td>
+                            <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:T.gold, borderBottom:`1px solid ${T.border}` }}>{v.parts.size}</td>
+                            <td style={{ padding:"4px 8px", fontSize:10, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{sampleId}{total>1?` … ${mc}/${[...v.sheets][total-1].split("|")[1]||"?"}/${total}-${total}`:""}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </div>
+          )}
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
-            <button onClick={()=>setNestModal(null)} style={css.btn.secondary}>Cancel</button>
-            <button onClick={handleNestImport} style={css.btn.primary}>Save Nesting Import → Create Draft PRs</button>
+            <button onClick={()=>{setNestModal(null);setNestImportRows([]);setNestImportReady(false);setNestImportError("");}} style={css.btn.secondary}>Cancel</button>
+            <button disabled={!nestImportReady} onClick={handleNestImport} style={{ ...css.btn.primary, opacity:nestImportReady?1:0.4 }}>
+              ✓ Create Nesting Batch
+            </button>
           </div>
         </Modal>
       )}
@@ -2714,38 +2860,118 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
             <div>
               <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Nesting Runs</div>
-              <div style={{ fontSize:12, color:T.textMid }}>History of all nesting runs · Bridge tool import results</div>
+              <div style={{ fontSize:12, color:T.textMid }}>Planning batches (imported) · Production runs (DeepNest bridge)</div>
             </div>
             {["super_admin","planning_admin","floor_planner"].includes(user.role) && (
               <button onClick={()=>{setRunForm({orderIds:[],drawings:[],status:"draft"});setNewRunModal(true);}} style={css.btn.primary}>+ New Nesting Run</button>
             )}
           </div>
 
-          <div style={{ overflowX:"auto" }}>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead><tr>
-                <TH>Run ID</TH><TH>Date</TH><TH>Material Code</TH><TH>Orders</TH>
-                <TH right>Bars / Sheets</TH><TH right>Utilisation %</TH><TH right>Waste kg</TH>
-                <TH>Off-cuts</TH><TH>Status</TH><TH>DXF</TH>
-              </tr></thead>
-              <tbody>
-                {(nestingRuns||[]).length===0 && <tr><td colSpan={10} style={{ padding:32, textAlign:"center", color:T.textLow }}>No nesting runs yet</td></tr>}
-                {(nestingRuns||[]).map((r,i)=>(
-                  <tr key={r.id} style={{ background:i%2===0?"transparent":T.bg }}>
-                    <TD mono>{r.id}</TD>
-                    <TD>{fmt.date(r.runDate)}</TD>
-                    <TD mono>{r.materialCode}</TD>
-                    <TD><div style={{ display:"flex",gap:3,flexWrap:"wrap" }}>{(r.orders||[]).map(o=><Badge key={o} color="blue">{o}</Badge>)}</div></TD>
-                    <TD right mono>{r.sheetsOrBarsUsed}</TD>
-                    <TD right mono bold color={r.utilisationPct>=85?T.green:r.utilisationPct>=70?T.amber:T.red}>{r.utilisationPct?.toFixed(1)}%</TD>
-                    <TD right mono color={T.textMid}>{fmt.num(r.wasteKg)}</TD>
-                    <TD><span style={{ fontSize:11, color:T.textLow }}>{(r.offcutsCreated||[]).length>0?(r.offcutsCreated||[]).length+" lots":"—"}</span></TD>
-                    <TD><Badge color={r.status==="confirmed"?"green":r.status==="cancelled"?"red":"amber"}>{r.status}</Badge></TD>
-                    <TD>{r.dxfLink?<a href={r.dxfLink} target="_blank" rel="noreferrer" style={{ fontSize:11, color:T.accent, fontWeight:600 }}>DXF↗</a>:<span style={{ color:T.textLow }}>—</span>}</TD>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Section A: Planning Batches (from import) */}
+          <div style={{ ...css.card, marginBottom:16 }}>
+            <SectionHd title="Planning Batches" sub="Created by importing nesting software output · NEST-PLN-YYYY-NNN" />
+            {(nestingBatches||[]).length===0
+              ? <div style={{ color:T.textLow, fontSize:12, padding:12 }}>No planning batches yet. Use "Import Nesting Results" to create one.</div>
+              : (nestingBatches||[]).map((batch,bi)=>{
+                const isExpBatch = expandedBatch===batch.id;
+                const totalSheets = (batch.lots||[]).reduce((s,l)=>s+l.sheets.length,0);
+                const totalParts  = (batch.lots||[]).reduce((s,l)=>s+l.parts.length,0);
+                return (
+                  <div key={batch.id} style={{ marginBottom:4 }}>
+                    {/* Batch header row */}
+                    <div onClick={()=>setExpandedBatch(isExpBatch?null:batch.id)}
+                      style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:isExpBatch?T.bgHover:bi%2===0?"transparent":T.bg, cursor:"pointer", borderRadius:6, borderLeft:`3px solid ${T.accent}` }}>
+                      <span style={{ fontSize:12, color:T.accent }}>{isExpBatch?"▼":"▶"}</span>
+                      <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.text, fontSize:13, minWidth:180 }}>{batch.id}</span>
+                      <span style={{ fontSize:12, color:T.textMid }}>{fmt.date(batch.createdAt)}</span>
+                      <span style={{ fontSize:12, color:T.textMid }}>by {batch.createdBy}</span>
+                      <Badge color={batch.status==="Planned"?"amber":"green"}>{batch.status}</Badge>
+                      <span style={{ fontSize:12, color:T.textLow, marginLeft:"auto" }}>
+                        {(batch.lots||[]).length} lots · {totalSheets} sheets · {totalParts} parts
+                      </span>
+                    </div>
+                    {/* Batch drill-down: Lots */}
+                    {isExpBatch && (
+                      <div style={{ marginLeft:24, borderLeft:`2px solid ${T.border}`, paddingLeft:12, marginTop:4, marginBottom:8 }}>
+                        {(batch.lots||[]).map((lot,li)=>{
+                          const isExpLot = expandedLot===lot.lotId;
+                          const avgUtil = lot.sheets.length>0 ? (lot.sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/lot.sheets.length).toFixed(1) : "—";
+                          return (
+                            <div key={lot.lotId} style={{ marginBottom:4 }}>
+                              {/* Lot header */}
+                              <div onClick={()=>setExpandedLot(isExpLot?null:lot.lotId)}
+                                style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", background:isExpLot?T.bgHover:li%2===0?"transparent":T.bg, cursor:"pointer", borderRadius:4, borderLeft:`2px solid ${T.gold}` }}>
+                                <span style={{ fontSize:11, color:T.gold }}>{isExpLot?"▼":"▶"}</span>
+                                <span style={{ fontFamily:T.fontMono, fontSize:12, color:T.text, minWidth:260 }}>{lot.matCode}</span>
+                                <span style={{ fontSize:11, color:T.textMid }}>{lot.sheets.length} sheets</span>
+                                <span style={{ fontSize:11, color:T.textMid }}>{lot.parts.length} parts</span>
+                                <span style={{ fontSize:11, color:T.textLow }}>avg util: {avgUtil}%</span>
+                              </div>
+                              {/* Lot drill-down: Sheets */}
+                              {isExpLot && (
+                                <div style={{ marginLeft:20, marginTop:4, marginBottom:4 }}>
+                                  <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+                                    <thead><tr>
+                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Sheet No</th>
+                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Dimensions</th>
+                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>RM Unit ID</th>
+                                      <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Utilisation</th>
+                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Parts on Sheet</th>
+                                    </tr></thead>
+                                    <tbody>
+                                      {(lot.sheets||[]).map((sh,si)=>(
+                                        <tr key={si} style={{ background:si%2===0?"transparent":T.bg }}>
+                                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent, borderBottom:`1px solid ${T.border}` }}>{sh.sheetNo||si+1}</td>
+                                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.text, borderBottom:`1px solid ${T.border}` }}>{sh.sheetDim||"—"}</td>
+                                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono, fontSize:10, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{sh.rmUnitId}</td>
+                                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:sh.utilisPct>=85?T.green:sh.utilisPct>=70?T.amber:T.red, borderBottom:`1px solid ${T.border}` }}>{sh.utilisPct?sh.utilisPct.toFixed(1)+"%" : "—"}</td>
+                                          <td style={{ padding:"4px 8px", fontSize:10, color:T.textLow, borderBottom:`1px solid ${T.border}` }}>{(sh.parts||[]).join(", ")||"—"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            }
+          </div>
+
+          {/* Section B: Production Nesting Runs (DeepNest bridge) */}
+          <div style={{ ...css.card }}>
+            <SectionHd title="Production Nesting Runs" sub="Confirmed via DeepNest bridge · NEST-YYYY-NNN · used for cutting confirmation" />
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead><tr>
+                  <TH>Run ID</TH><TH>Date</TH><TH>Material Code</TH><TH>Orders</TH>
+                  <TH right>Bars / Sheets</TH><TH right>Utilisation %</TH><TH right>Waste kg</TH>
+                  <TH>Off-cuts</TH><TH>Status</TH><TH>DXF</TH>
+                </tr></thead>
+                <tbody>
+                  {(nestingRuns||[]).length===0 && <tr><td colSpan={10} style={{ padding:32, textAlign:"center", color:T.textLow }}>No nesting runs yet</td></tr>}
+                  {(nestingRuns||[]).map((r,i)=>(
+                    <tr key={r.id} style={{ background:i%2===0?"transparent":T.bg }}>
+                      <TD mono>{r.id}</TD>
+                      <TD>{fmt.date(r.runDate)}</TD>
+                      <TD mono>{r.materialCode}</TD>
+                      <TD><div style={{ display:"flex",gap:3,flexWrap:"wrap" }}>{(r.orders||[]).map(o=><Badge key={o} color="blue">{o}</Badge>)}</div></TD>
+                      <TD right mono>{r.sheetsOrBarsUsed}</TD>
+                      <TD right mono bold color={r.utilisationPct>=85?T.green:r.utilisationPct>=70?T.amber:T.red}>{r.utilisationPct?.toFixed(1)}%</TD>
+                      <TD right mono color={T.textMid}>{fmt.num(r.wasteKg)}</TD>
+                      <TD><span style={{ fontSize:11, color:T.textLow }}>{(r.offcutsCreated||[]).length>0?(r.offcutsCreated||[]).length+" lots":"—"}</span></TD>
+                      <TD><Badge color={r.status==="confirmed"?"green":r.status==="cancelled"?"red":"amber"}>{r.status}</Badge></TD>
+                      <TD>{r.dxfLink?<a href={r.dxfLink} target="_blank" rel="noreferrer" style={{ fontSize:11, color:T.accent, fontWeight:600 }}>DXF↗</a>:<span style={{ color:T.textLow }}>—</span>}</TD>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* New Nesting Run Modal */}
@@ -2879,6 +3105,55 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
     return acc;
   },{});
 
+  // ── Excel Download ───────────────────────────────────────────────────────────
+  const handleDownloadExcel = () => {
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Drawing Register
+    const s1 = [
+      ["Drawing No","Title","Qty","Rev","Drawing Date","Received Date","Order ID","Phase","Priority","Unit Wt (kg)","Total Wt (kg)"],
+      ...allDrawings.map(d=>[
+        d.drawingNo||"", d.title||"", d.qty||1, d.rev||"",
+        d.drawingDate||"", d.receivedDate||"",
+        d.orderId||"", d.phase||"", d.priority||"",
+        d.unitWt||0, d.totalWt||0
+      ])
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s1), "Drawing Register");
+
+    // Sheet 2: Parts List
+    const s2 = [
+      ["Mark No","Drawing No","Description","Material Code","L mm","W mm","Qty","Client Wt (kg)","Total Wt (kg)","Source","Order ID"],
+      ...allParts.map(p=>[
+        p.markNo||"", p.drawingNo||"", p.desc||"",
+        p.matCode||(`${p.section||""} ${p.grade||""} ${p.size||""}`).trim(),
+        p.length||0, p.width||0, p.qtyPerDrg||0,
+        p.clientUnitWt||0, p.clientTotalWt||0, p.source||"", p.orderId||""
+      ])
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s2), "Parts List");
+
+    // Sheet 3: Material Summary (aggregated from parts)
+    const matSumAgg = {};
+    allParts.forEach(p=>{
+      const key = p.matCode||((`${p.section||""} ${p.grade||""} ${p.size||""}`).trim())||"Unknown";
+      if (!matSumAgg[key]) matSumAgg[key]={ matCode:key, totalQty:0, totalWt:0 };
+      matSumAgg[key].totalQty += (p.qtyPerDrg||0);
+      matSumAgg[key].totalWt  += (p.clientTotalWt||0);
+    });
+    const s3 = [
+      ["Material Code","Total Qty","Total Weight (kg)"],
+      ...Object.values(matSumAgg).map(m=>[m.matCode, m.totalQty, +m.totalWt.toFixed(2)])
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s3), "Material Summary");
+
+    // Derive filename: NEST-PLN-[OrderIds]-[YYYYMMDD].xlsx
+    const orderIds = [...new Set(allDrawings.map(d=>d.orderId))];
+    const orderPart = orderIds.length===1 ? orderIds[0] : (orderIds.length<=3 ? orderIds.join("_") : "MULTI");
+    const datePart = new Date().toISOString().slice(0,10).replace(/-/g,"");
+    XLSX.writeFile(wb, `NEST-PLN-${orderPart}-${datePart}.xlsx`);
+  };
+
   return (
     <div>
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
@@ -2898,7 +3173,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
           <button key={s.id} onClick={()=>setSheet(s.id)} style={{ padding:"8px 14px", fontSize:12, fontWeight:sheet===s.id?700:400, color:sheet===s.id?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:sheet===s.id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", fontFamily:T.font, whiteSpace:"nowrap" }}>{s.label}</button>
         ))}
         <div style={{ flex:1 }} />
-        <button style={{ ...css.btn.sm, margin:"4px 0" }}>⬇ Download Excel</button>
+        <button onClick={handleDownloadExcel} style={{ ...css.btn.sm, margin:"4px 0", background:T.accent, color:"#fff", borderColor:T.accent }}>⬇ Download Excel ({allDrawings.length} drgs · {allParts.length} parts)</button>
       </div>
 
       {sheet==="S1" && (
@@ -11383,7 +11658,8 @@ export default function App() {
       return migrateStockLots(loaded, MATERIALS_LIBRARY);
     } catch { return INIT_STOCK; }
   });
-  const [nestingRuns, setNestingRuns]   = useState(INIT_NESTING_RUNS);
+  const [nestingRuns, setNestingRuns]       = useState(INIT_NESTING_RUNS);
+  const [nestingBatches, setNestingBatches] = useState([]);
   const [instances, setInstances]       = useState(INIT_INSTANCES);
   const [orders, setOrders]             = useState(() => {
     try {
@@ -11472,7 +11748,7 @@ export default function App() {
   const renderMod = () => {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
-      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
+      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
