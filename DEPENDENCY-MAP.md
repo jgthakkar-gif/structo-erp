@@ -1,7 +1,7 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 1.1 — March 2026
-# Updated: Assembly definition moved to order level
-#          Stock reservation model replaces drawing-level manual allocation
+# Version 1.4 — April 2026
+# Updated: MRP nesting export (real Excel via SheetJS) and import (file parse + batch records)
+#          nestingBatches state added; Nesting Runs tab split into PLN + BCH sections
 #
 # INSTRUCTIONS FOR CLAUDE CODE:
 # Before changing ANY field, function, or data structure,
@@ -427,35 +427,107 @@ instance.pieceMarking (boolean)
 # NESTING OBJECTS
 # ═══════════════════════════════════════════════════════════════════
 
-nestingBatch.type (NEST-PLN = preliminary | NEST-BCH = floor)
-  READS:   MRP Planning — shows PLN batches
-           Production — shows BCH batches
-           Comparison view — PLN referenced by BCH
-  WRITES:  MRP Planning (PLN), Production nesting panel (BCH)
-  IF CHANGED: Never change type after creation
+# ── Planning Batches (NEST-PLN) — created by MRP import ─────────────
+# State: nestingBatches[] in App component (useState([]))
+# Passed to: MRPModule as nestingBatches / setNestingBatches props
+#
+# Shape:
+#   { id: "NEST-PLN-2026-001",
+#     createdAt: "YYYY-MM-DD",
+#     createdBy: user.name,
+#     status: "Planned",
+#     lots: [
+#       { lotId: "NEST-PLN-2026-001-PLATE-E250-12mm",
+#         matCode: "PLATE/E250/12mm",
+#         sheets: [
+#           { sheetNo, sheetDim, utilisPct, parts:[], rmUnitId }
+#         ],
+#         parts: ["B1","B2",...]   // all unique markNos in this lot
+#       }
+#     ]
+#   }
 
-nestingBatch.parentPlanBatchId (NEST-BCH references parent NEST-PLN)
-  READS:   Comparison view — shows deviation from preliminary plan
-  WRITES:  Set when floor batch is created
-  DISPLAYS: Nesting panel comparison view
-  IF CHANGED: Never — historical reference
+nestingBatch.id (NEST-PLN-YYYY-NNN)
+  READS:   MRP Nesting Runs tab — batch header display
+           Lot lotId generation — used as prefix
+  WRITES:  handleNestImport — auto-generated from nestingBatches sequence
+  DISPLAYS: Nesting Runs tab Section A — Planning Batches
+  IF CHANGED: Never — all child lotIds would break
 
-nestingLot.rmUnitIds (array of RM Unit ID strings)
-  READS:   Machine assignment, Machine operator queue, Cutting confirmation,
-           Off-cut return, MDCC dossier
-  WRITES:  Nesting result processing — from API response or 1D calculator
-           Set automatically on nesting confirmation — not manually entered
-  DISPLAYS: Machine assignment expandable lot view, Machine operator queue card
-  TRIGGERS: Created → lot.allocations auto-created from nesting output
-             Created → lot.status changes from Reserved to Allocated
-             Created → machine assignment screen shows expandable unit rows
-  IF CHANGED: Never — if re-nesting needed, use re-nest workflow
+nestingBatch.lots[].rmUnitId (format: matCode/sheetDim/n-total)
+  *** IMPLEMENTED — generated at import time ***
+  FORMAT:  {matCode}/{sheetDim}/{n}-{total}
+           Example: PLATE/E250/12mm/2500x1250/1-4
+  READS:   Nesting Runs tab drill-down — Sheets table
+           Future: machine assignment lot detail view
+  WRITES:  handleNestImport — computed per sheet from grouping
+  DISPLAYS: Nesting Runs tab Section A → lot → sheet row
+  TRIGGERS: Created → lot detail visible in drill-down
+  IF CHANGED: Never — if re-nesting needed, create new batch
+
+nestingBatch.lots[].sheets (array per lot)
+  READS:   Nesting Runs tab — sheet drill-down rows
+  WRITES:  handleNestImport — grouped from import file rows
+  DISPLAYS: Sheet No | Dimensions | RM Unit ID | Utilisation % | Parts on Sheet
+  IF CHANGED: Never — re-import creates new batch
+
+# ── Production Nesting Runs (NEST-YYYY-NNN) — DeepNest bridge ────────
+# State: nestingRuns[] in App component — SEPARATE from nestingBatches
+# Shape: existing (runDate, materialCode, orders[], sheetsOrBarsUsed,
+#                  utilisationPct, wasteKg, offcutsCreated[], dxfLink, status, parts[])
+
+nestingRun.id (NEST-YYYY-NNN)
+  READS:   CuttingConfirmation — selRun lookup
+           Machine assignment, Production register, MDCC dossier
+  WRITES:  New Nesting Run modal (MRP Nesting Runs tab)
+           ToolsModule Nesting Bridge
+           CuttingConfirmation test run creator
+  DISPLAYS: Nesting Runs tab Section B — Production Nesting Runs table
+  IF CHANGED: Never — cutting instances and allocations reference this
 
 nestingLot.sourceReservations (array of lotId + orderId that fed this nesting lot)
   READS:   Traceability — which reservations became this allocation
   WRITES:  Set automatically at nesting confirmation
   DISPLAYS: Nesting lot detail
   IF CHANGED: Never — historical record
+
+# ── Excel Export (MRPNestExport component) ────────────────────────────
+# handleDownloadExcel() — builds 3-sheet XLSX workbook via SheetJS
+
+MRPNestExport.handleDownloadExcel
+  *** IMPLEMENTED — was a non-functional stub before this session ***
+  READS:   allDrawings (filtered by selectedDrawingIds set)
+           allParts (filtered by same drawing selection)
+  WRITES:  Triggers browser file download: NEST-PLN-{orderIds}-{YYYYMMDD}.xlsx
+  SHEET 1: "Drawing Register" — Drawing No, Title, Qty, Rev, Drawing Date,
+                                 Received Date, Order ID, Phase, Priority, Wts
+  SHEET 2: "Parts List" — Mark No, Drawing No, Description, Material Code,
+                            L mm, W mm, Qty, Client Wt (kg), Total Wt (kg), Source
+  SHEET 3: "Material Summary" — Material Code, Total Qty, Total Weight (kg)
+           (aggregated from allParts, not from purchaseReqs)
+  FILENAME: NEST-PLN-{orderIds}-{YYYYMMDD}.xlsx
+            If >3 orders: NEST-PLN-MULTI-{YYYYMMDD}.xlsx
+  DEPENDENCY: import * as XLSX from 'xlsx' (line 2 of App.jsx)
+              xlsx@0.18.5 in package.json — already installed
+  IF CHANGED: Keep Sheet 1-3 column order stable — nesting software may expect it
+
+# ── Import File Parser ─────────────────────────────────────────────────
+# handleNestFileChange → handleNestImport in MRPModule
+
+nestImport.expectedColumns
+  REQUIRED: "Material Code" (or matcode / material_code / mat code)
+  OPTIONAL: Mark No, Drawing No, Sheet No, Sheet Dim (LxW), Parts on Sheet,
+            Utilisation % (or utilisation / utilization)
+  FORMAT:   .xlsx (parsed via XLSX.read) or .csv (BOM-strip + comma split)
+  COLUMN MATCHING: case-insensitive, strips non-alphanumeric chars for fallback
+  IF MISSING Material Code column: parse rejected with error message
+
+nestImport.batchCreation
+  ON SAVE: Groups rows by Material Code → one lot per unique matCode
+           Groups rows within lot by (Sheet No + Sheet Dim) → one sheet entry
+           Generates rmUnitId per sheet
+           Creates NEST-PLN-YYYY-NNN batch record → appended to nestingBatches
+  SUCCESS TOAST: "Batch {id} created — {N} lots, {M} sheets, {M} RM units"
 
 # ═══════════════════════════════════════════════════════════════════
 # MACHINE OBJECT (Masters)
@@ -624,12 +696,13 @@ Seed machines:
   Pillar Drill 1:  [drill, mark]
 
 Seed users:
-  rajesh.kumar / admin123 — Super Admin
-  vikram.singh / plan123  — Planning Admin
-  sameer.shah  / fin123   — Finance Admin
-  ajay.kadam   / machine123 — Machine Operator
+  rajesh.kumar / admin123    — Super Admin
+  vikram.singh / plan123     — Planning Admin
+  sameer.shah  / fin123      — Finance Admin
+  ajay.kadam   / machine123  — Machine Operator
   krishna.fab  / contractor123 — Contractor
   mohan.das    — Store Admin (verify password in seed data)
+  arjun.qc / qc123           — QC User (filtered SupervisorQueue by assignedEngineer)
 
 Materials Library:
   528 entries in src/materials_library_complete.js
@@ -694,6 +767,35 @@ PRODUCTION MODULE:
   [ ] EOD prompt to contractor at 5pm if no update
   [ ] Production engineer flagged next morning for missing EOD updates
 
+MRP MODULE — NESTING EXPORT:
+  [ ] "Export Nesting Sheets" button goes to MRPNestExport view
+  [ ] Per-drawing checkboxes in overview tab select/deselect drawings for export
+  [ ] Selection count shown when not all drawings selected
+  [ ] MRPNestExport: "Download Excel" button triggers file download (not a stub)
+  [ ] Downloaded file is named NEST-PLN-{orderId}-{YYYYMMDD}.xlsx
+  [ ] Excel file has 3 sheets: Drawing Register, Parts List, Material Summary
+  [ ] Only selected drawings appear in Sheet 1 and Sheet 2
+  [ ] Material Summary aggregates from parts (not purchaseReqs)
+
+MRP MODULE — NESTING IMPORT:
+  [ ] "Import Nesting Results" button opens modal with real file picker
+  [ ] File picker accepts .xlsx and .csv
+  [ ] Uploading a valid file shows parse-preview table (matCode, sheets, parts, RM Unit IDs)
+  [ ] Missing Material Code column shows clear error message
+  [ ] "Create Nesting Batch" button disabled until file parsed successfully
+  [ ] On import: batch record NEST-PLN-YYYY-NNN created in nestingBatches state
+  [ ] Success toast shows: lot count, sheet count, RM unit count
+  [ ] Nesting Runs tab Section A shows new batch with expand arrow
+
+MRP MODULE — NESTING RUNS TAB:
+  [ ] Tab has two sections: "Planning Batches" and "Production Nesting Runs"
+  [ ] Section A empty state message when no batches yet
+  [ ] Section A: click batch row to expand → shows lots
+  [ ] Section A: click lot row to expand → shows sheets table
+  [ ] Sheets table columns: Sheet No, Dimensions, RM Unit ID, Utilisation %, Parts on Sheet
+  [ ] Utilisation % colour coded: green ≥85%, amber ≥70%, red <70%
+  [ ] Section B: existing DeepNest bridge table unchanged
+
 MASTERS MODULE:
   [ ] Machine capabilities save correctly
   [ ] Materials Library 528 entries, search works
@@ -734,6 +836,10 @@ KEY DESIGN DECISIONS RECORDED HERE:
   - QC is ALWAYS automatic after every machine operation — cannot be removed from flow
   - EOD contractor update is a CONVENTION (production engineer enforces) — not a system block
   - 1D bar nesting built IN ERP — no external API needed
-  - Plate nesting uses Nesting Center API — REST API, Python/JS client
+  - Plate nesting: MRP module exports/imports XLSX locally via SheetJS — NO external API
+    (Previous note about "Nesting Center API" was forward-looking spec — NOT implemented)
+  - nestingBatches (NEST-PLN) and nestingRuns (NEST-YYYY-NNN) are SEPARATE state arrays
+    PLN = planning batches from nesting software import → shown in Nesting Runs tab Section A
+    BCH = production runs from DeepNest bridge → shown in Nesting Runs tab Section B
 
-Last updated: March 2026 — Session 4 Phase 3 (gap fill) — v1.3
+Last updated: April 2026 — Session 4 MRP nesting export/import — v1.4
