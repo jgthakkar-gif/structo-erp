@@ -901,6 +901,14 @@ const fmt = {
   initials: (n) => n.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(),
 };
 const today = () => new Date().toISOString().slice(0,10);
+// Returns the coat array for a given quality object.
+// Reads paintSpecs[0].coats first (new format), falls back to legacy paintCoats.
+// Production code uses this until per-drawing spec selection is implemented.
+const getPaintCoats = (quality) => {
+  const q = quality || {};
+  if (q.paintSpecs?.length) return q.paintSpecs[0].coats || [];
+  return q.paintCoats || [];
+};
 const calcWtOrdered = (qty, unit) => (unit||"MT")==="MT" ? (qty||0)*1000 : (qty||0);
 const buildMatCode = (sectionType, matType, grade, size) =>
   [sectionType, matType, grade, size].map(s=>(s||"").toUpperCase()).join("/");
@@ -1998,7 +2006,7 @@ const getCriticalityScore = (drawing, order, productionStandards) => {
   const today          = new Date();
   const dispatch       = new Date(order.endDate);
   const daysRemaining  = Math.max(0,(dispatch-today)/(1000*60*60*24));
-  const coatCount      = Math.max(1,order.quality?.paintCoats?.length||1);
+  const coatCount      = Math.max(1,getPaintCoats(order.quality).length||1);
   const hoursNeeded    = tier.cutting+tier.fitup+tier.welding+tier.blasting+(tier.paintPerCoat*coatCount);
   const tpiBuffer      = order.quality?.tpiRequired ? 3 : 0;
   const workingDaysNeeded = (hoursNeeded/8)+tpiBuffer;
@@ -7044,7 +7052,8 @@ const VendorTagInput = ({ value, onChange, vendors, disabled }) => {
 };
 
 const TabQuality = ({ order, onChange, canEdit, vendors }) => {
-  const [activeQ, setActiveQ] = useState("rm_makes");
+  const [activeQ, setActiveQ]       = useState("rm_makes");
+  const [activeSpec, setActiveSpec] = useState(0);
   const q = order.quality||{};
   const updQ = (k,v) => onChange({...order,quality:{...q,[k]:v}});
   const qtabs = [{id:"rm_makes",label:"RM Approved Makes"},{id:"paint",label:"Paint Spec"},{id:"weld",label:"Weld Spec"},{id:"tpi",label:"TPI"},{id:"dispatch",label:"Dispatch Spec"},{id:"mdcc",label:"MDCC Dossier"}];
@@ -7077,10 +7086,143 @@ const TabQuality = ({ order, onChange, canEdit, vendors }) => {
           </div>
         ))}
       </div>}
-      {activeQ==="paint"&&<div>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}><div style={{ fontSize:14, fontWeight:700, color:T.text }}>Paint Specification</div>{canEdit&&<button onClick={()=>updQ("paintCoats",[...(q.paintCoats||[]),{coatNo:(q.paintCoats||[]).length+1,type:"Primer",dft:50,make:"",product:"",dryTime:8,remarks:""}])} style={css.btn.primary}>+ Add Coat</button>}</div>
-        {(q.paintCoats||[]).map((c,i)=><div key={i} style={{ ...css.card, marginBottom:8 }}><div style={{ display:"flex", gap:8, marginBottom:12 }}><Badge color={c.type==="Primer"?"blue":c.type==="MIO"?"amber":"green"}>Coat {c.coatNo} — {c.type}</Badge><span style={{ fontSize:12, color:T.textMid }}>DFT: {c.dft}μm · Dry: {c.dryTime}h</span></div><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr auto", gap:10, alignItems:"end" }}><div><div style={css.label}>Type</div><select value={c.type||"Primer"} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],type:e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input}><option>Primer</option><option>MIO</option><option>Finish</option><option>Intermediate</option></select></div><div><div style={css.label}>DFT (μm)</div><input type="number" value={c.dft||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],dft:+e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Make</div><input value={c.make||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],make:e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Product</div><input value={c.product||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],product:e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Dry Time (h)</div><input type="number" value={c.dryTime||""} onChange={e=>{ const n=[...q.paintCoats]; n[i]={...n[i],dryTime:+e.target.value}; updQ("paintCoats",n); }} disabled={!canEdit} style={css.input} /></div>{canEdit&&<button onClick={()=>updQ("paintCoats",q.paintCoats.filter((_,j)=>j!==i))} style={{ ...css.btn.ghost, color:T.red }}>✕</button>}</div></div>)}
-      </div>}
+      {activeQ==="paint"&&(()=>{
+        // Migrate legacy paintCoats → paintSpecs on first render
+        const paintSpecs = q.paintSpecs
+          ? q.paintSpecs
+          : (q.paintCoats?.length ? [{specLabel:"A", coats:q.paintCoats}] : []);
+
+        const updSpecs = (newSpecs) => onChange({...order, quality:{...q, paintSpecs:newSpecs}});
+
+        const ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        const nextLabel = ALPHA[paintSpecs.length] || String(paintSpecs.length+1);
+
+        const selIdx  = Math.min(activeSpec, Math.max(0, paintSpecs.length-1));
+        const selSpec = paintSpecs[selIdx] || null;
+
+        const updSpec = (patch) => {
+          updSpecs(paintSpecs.map((s,i)=>i===selIdx?{...s,...patch}:s));
+        };
+        const addCoat = () => {
+          const coats = selSpec?.coats||[];
+          updSpec({coats:[...coats,{coatNo:coats.length+1,type:"Primer",dft:50,make:"",product:"",dryTime:8,remarks:""}]});
+        };
+        const updCoat = (ci,patch) => {
+          updSpec({coats:(selSpec.coats||[]).map((c,j)=>j===ci?{...c,...patch}:c)});
+        };
+        const removeCoat = (ci) => {
+          updSpec({coats:(selSpec.coats||[]).filter((_,j)=>j!==ci)});
+        };
+        const removeSpec = () => {
+          const n = paintSpecs.filter((_,i)=>i!==selIdx);
+          updSpecs(n);
+          setActiveSpec(Math.max(0, selIdx-1));
+        };
+
+        return (
+          <div>
+            {/* Spec selector tabs */}
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+              {paintSpecs.map((ps,i)=>(
+                <button key={i} onClick={()=>setActiveSpec(i)}
+                  style={{ padding:"6px 16px", fontSize:12, fontWeight:selIdx===i?700:400,
+                    color:selIdx===i?T.accent:T.textMid,
+                    background:selIdx===i?T.bgHover:"transparent",
+                    border:`1px solid ${selIdx===i?T.accent:T.border}`,
+                    borderRadius:6, cursor:"pointer", fontFamily:T.font }}>
+                  Paint Spec {ps.specLabel||ALPHA[i]||i+1}
+                  {(ps.coats||[]).length>0 && (
+                    <span style={{ marginLeft:6, fontSize:10, color:T.textLow }}>
+                      {(ps.coats||[]).length} coat{(ps.coats||[]).length!==1?"s":""}
+                      {" · "}{(ps.coats||[]).reduce((s,c)=>s+(c.dft||0),0)} µm
+                    </span>
+                  )}
+                </button>
+              ))}
+              {canEdit && (
+                <button onClick={()=>{ updSpecs([...paintSpecs,{specLabel:nextLabel,coats:[]}]); setActiveSpec(paintSpecs.length); }}
+                  style={{ ...css.btn.secondary, fontSize:12, padding:"6px 12px" }}>
+                  + Add Spec
+                </button>
+              )}
+              {paintSpecs.length===0 && !canEdit && (
+                <span style={{ fontSize:12, color:T.textLow }}>No paint specifications defined</span>
+              )}
+            </div>
+
+            {selSpec && (
+              <div style={css.card}>
+                {/* Spec label + summary + delete */}
+                <div style={{ display:"flex", gap:12, alignItems:"flex-end", marginBottom:16, flexWrap:"wrap" }}>
+                  <div>
+                    <label style={css.label}>Spec Label</label>
+                    <input value={selSpec.specLabel||""} disabled={!canEdit}
+                      onChange={e=>updSpec({specLabel:e.target.value})}
+                      style={{ ...css.input, width:220 }}
+                      placeholder="e.g. A, Standard, External, RAL7035" />
+                  </div>
+                  <div style={{ fontSize:12, color:T.textMid, paddingBottom:8 }}>
+                    {(selSpec.coats||[]).length} coat{(selSpec.coats||[]).length!==1?"s":""}&ensp;·&ensp;
+                    Total DFT: <strong style={{ color:T.gold }}>{(selSpec.coats||[]).reduce((s,c)=>s+(c.dft||0),0)} µm</strong>
+                  </div>
+                  <div style={{ marginLeft:"auto", display:"flex", gap:8, alignItems:"flex-end", paddingBottom:2 }}>
+                    {canEdit && (
+                      <button onClick={addCoat} style={css.btn.primary}>+ Add Coat</button>
+                    )}
+                    {canEdit && paintSpecs.length>1 && (
+                      <button onClick={removeSpec}
+                        style={{ ...css.btn.ghost, color:T.red }}>Delete Spec</button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Coat rows */}
+                {(selSpec.coats||[]).length===0
+                  ? <div style={{ fontSize:12, color:T.textLow, padding:"12px 0" }}>No coats defined yet — click + Add Coat</div>
+                  : (selSpec.coats||[]).map((c,ci)=>(
+                    <div key={ci} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
+                      <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+                        <Badge color={c.type==="Primer"?"blue":c.type==="MIO"?"amber":"green"}>
+                          Coat {c.coatNo||ci+1} — {c.type}
+                        </Badge>
+                        <span style={{ fontSize:12, color:T.textMid }}>DFT: {c.dft}µm · Dry: {c.dryTime}h</span>
+                      </div>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr auto", gap:10, alignItems:"end" }}>
+                        <div><div style={css.label}>Type</div>
+                          <select value={c.type||"Primer"} disabled={!canEdit}
+                            onChange={e=>updCoat(ci,{type:e.target.value})} style={css.input}>
+                            <option>Primer</option><option>MIO</option><option>Finish</option><option>Intermediate</option>
+                          </select>
+                        </div>
+                        <div><div style={css.label}>DFT (µm)</div>
+                          <input type="number" value={c.dft||""} disabled={!canEdit}
+                            onChange={e=>updCoat(ci,{dft:+e.target.value})} style={css.input} />
+                        </div>
+                        <div><div style={css.label}>Make</div>
+                          <input value={c.make||""} disabled={!canEdit}
+                            onChange={e=>updCoat(ci,{make:e.target.value})} style={css.input} />
+                        </div>
+                        <div><div style={css.label}>Product</div>
+                          <input value={c.product||""} disabled={!canEdit}
+                            onChange={e=>updCoat(ci,{product:e.target.value})} style={css.input} />
+                        </div>
+                        <div><div style={css.label}>Dry Time (h)</div>
+                          <input type="number" value={c.dryTime||""} disabled={!canEdit}
+                            onChange={e=>updCoat(ci,{dryTime:+e.target.value})} style={css.input} />
+                        </div>
+                        {canEdit && (
+                          <button onClick={()=>removeCoat(ci)}
+                            style={{ ...css.btn.ghost, color:T.red }}>✕</button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {activeQ==="weld"&&<div style={{ ...css.card }}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Process</label><select value={q.weldSpec?.process||"SMAW"} onChange={e=>updQ("weldSpec",{...q.weldSpec,process:e.target.value})} disabled={!canEdit} style={css.input}><option>SMAW</option><option>GMAW</option><option>FCAW</option><option>SAW</option></select></div><div><label style={css.label}>Electrode Type</label><input value={q.weldSpec?.electrodeType||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,electrodeType:e.target.value})} disabled={!canEdit} style={css.input} placeholder="E7018" /></div><div><label style={css.label}>Grade</label><input value={q.weldSpec?.grade||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,grade:e.target.value})} disabled={!canEdit} style={css.input} /></div><div><label style={css.label}>Make</label><input value={q.weldSpec?.make||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,make:e.target.value})} disabled={!canEdit} style={css.input} placeholder="Lincoln Electric..." /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Remarks</label><input value={q.weldSpec?.remarks||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,remarks:e.target.value})} disabled={!canEdit} style={css.input} /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>WPS/WPQ Document</label><div style={{ display:"flex", gap:8 }}><input value={q.wpsDoc||""} onChange={e=>updQ("wpsDoc",e.target.value)} disabled={!canEdit} style={{ ...css.input, flex:1 }} placeholder="Drive link..." />{q.wpsDoc&&<a href={q.wpsDoc} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none" }}>View</a>}</div><div style={{ fontSize:11, color:T.red, marginTop:4 }}>⚠ Critical — required for TPI inspection</div></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Welding sequence / distortion control notes (optional)</label><textarea value={q.weldSpec?.weldingSequence||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,weldingSequence:e.target.value})} disabled={!canEdit} rows={3} placeholder="e.g. Weld base plates before flange plates. Alternate sides on long members. Back-step on plates over 300mm." style={{ ...css.input, width:"100%", resize:"vertical", fontFamily:T.font }} /></div></div></div>}
       {activeQ==="tpi"&&<div style={{ ...css.card }}><div style={{ marginBottom:12 }}><div style={css.label}>TPI Required</div><div style={{ display:"flex", gap:12 }}><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===true} onChange={()=>updQ("tpiRequired",true)} disabled={!canEdit} /><span style={{ color:T.text }}>Yes</span></label><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===false} onChange={()=>updQ("tpiRequired",false)} disabled={!canEdit} /><span style={{ color:T.text }}>No</span></label></div></div>{q.tpiRequired&&<div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>TPI Agency</label><select value={q.tpiAgencyId||""} onChange={e=>{ const a=TPI_AGENCIES.find(t=>t.id===e.target.value); updQ("tpiAgencyId",e.target.value); updQ("tpiAgencyName",a?.name||""); }} disabled={!canEdit} style={css.input}><option value="">Select...</option>{TPI_AGENCIES.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></div><div><div style={css.label}>Hold Points</div><div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>{[["rm_inspection","RM Inspection"],["fit_up","Fit-Up"],["welding","Welding"],["blasting","Blasting"],["painting","Painting"]].map(([hp,label])=><label key={hp} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={(q.tpiHoldPoints||[]).includes(hp)} disabled={!canEdit} onChange={e=>{ const pts=q.tpiHoldPoints||[]; updQ("tpiHoldPoints",e.target.checked?[...pts,hp]:pts.filter(p=>p!==hp)); }} /><span style={{ fontSize:12, color:T.text }}>{label}</span></label>)}</div></div></div>}</div>}
       {activeQ==="dispatch"&&<div style={{ ...css.card }}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Packing Type</label><select value={q.dispatchSpec?.packingType||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,packingType:e.target.value})} disabled={!canEdit} style={css.input}><option value="">Select...</option><option>Shrink wrap only</option><option>Wooden rafters + shrink wrap</option><option>Wooden box</option><option>Custom</option></select></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Remarks</label><textarea value={q.dispatchSpec?.remarks||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,remarks:e.target.value})} disabled={!canEdit} style={{ ...css.input, minHeight:60, resize:"vertical" }} /></div></div></div>}
@@ -9251,7 +9393,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
         {/* Painting: dry time enforcement + holiday detection + DFT summary */}
         {isPainting && (() => {
           const order = orders.find(o=>o.id===selGD.orderId);
-          const paintCoats = order?.quality?.paintCoats||[];
+          const paintCoats = getPaintCoats(order?.quality);
           // Determine current coat from stageHistory
           const paintHistory = (selGD.insts[0]?.stageHistory||[]).filter(h=>h.stage==="painting");
           const coatsDone = paintHistory.length;
@@ -9305,7 +9447,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
         {/* Painting: per-coat DFT summary table */}
         {isPainting && (() => {
           const paintOrder = orders.find(o=>o.id===selGD.orderId);
-          const paintSpec = paintOrder?.quality?.paintCoats||[];
+          const paintSpec = getPaintCoats(paintOrder?.quality);
           if (paintSpec.length === 0) return null;
           const history = selGD.insts[0]?.stageHistory||[];
           const coatApprovals = paintSpec.map((coat,i)=>{
