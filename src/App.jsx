@@ -2205,13 +2205,57 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
   // Group purchase reqs by order → drawing
+  // Compute requirements from order.parts (received drawings only) rather than
+  // relying on purchaseReqs records, which don't exist for new orders.
   const byOrder = orders.map(o => {
-    const reqs = purchaseReqs.filter(r=>r.orderId===o.id);
+    const allDrgs = o.drawings||[];
+    const recvDrgs = allDrgs.filter(d=>d.receivedDate);
+    const recvDrgIds = new Set(recvDrgs.map(d=>d.id));
+    const recvDrgNos = new Set(recvDrgs.map(d=>d.drawingNo));
+
+    // Build computed requirements from parts
+    const agg = {};
+    (o.parts||[])
+      .filter(p => p.fabType==="Fabricate" && (p.source==="Procure" || !p.source))
+      .forEach(p => {
+        // Resolve the drawing — fall back to drawingNo match when drawingId is blank
+        const drg = p.drawingId
+          ? allDrgs.find(d=>d.id===p.drawingId)
+          : allDrgs.find(d=>d.drawingNo===p.drawingNo);
+        // Only include parts from drawings with a received date
+        if (!drg?.receivedDate) return;
+        // Group by drawing + matCode (or section/grade/size)
+        const matKey = p.matCode || `${p.matType}|${p.grade}|${p.section}|${p.size}`;
+        const key = `${drg.id}|${matKey}`;
+        if (!agg[key]) {
+          // Merge with existing purchaseReqs record if one exists
+          const pr = purchaseReqs.find(r =>
+            r.orderId===o.id && r.drawingId===drg.id &&
+            r.section===p.section && r.size===p.size && r.grade===p.grade
+          );
+          agg[key] = {
+            id: pr?.id||null,
+            drawingNo: drg.drawingNo,
+            drawingId: drg.id,
+            matType: p.matType||'MS',
+            grade: p.grade||'',
+            section: p.section||'',
+            size: p.size||'',
+            wtRequired: 0,
+            approvedMakes: pr?.approvedMakes||'',
+            status: pr?.status||'pending',
+            rejectReason: pr?.rejectReason||''
+          };
+        }
+        // clientTotalWt is weight per drawing unit; multiply by drawing.qty for order total
+        agg[key].wtRequired += (p.clientTotalWt||p.calcTotalWt||0) * (drg.qty||1);
+      });
+
+    const reqs = Object.values(agg).filter(r=>r.wtRequired>0);
     const totalWtReq = reqs.reduce((s,r)=>s+(r.wtRequired||0),0);
     const totalProcured = reqs.filter(r=>r.status==="approved"||r.status==="po_raised").reduce((s,r)=>s+(r.wtRequired||0),0);
-    const drawings = o.drawings.filter(d=>d.receivedDate);
-    const totalDrgWt = drawings.reduce((s,d)=>s+(d.totalWt||0),0);
-    return { order:o, reqs, totalWtReq, totalProcured, drawings, totalDrgWt };
+    const totalDrgWt = recvDrgs.reduce((s,d)=>s+(d.totalWt||0),0);
+    return { order:o, reqs, totalWtReq, totalProcured, drawings:recvDrgs, totalDrgWt };
   });
 
   // Material aggregation for export preview
@@ -2232,17 +2276,25 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} />;
 
   // ── Material Requirements computation (View 2) ───────────────────────────
+  // Only include parts from drawings with receivedDate (same rule as byOrder overview).
+  // Multiply by drawing.qty — clientTotalWt is per-drawing-unit, not order total.
   const filtOrders = matReqFilter==="all" ? orders : orders.filter(o=>o.id===matReqFilter);
   const fabAgg = {};
   filtOrders.forEach(o => {
-    o.parts.filter(p=>p.fabType==="Fabricate"&&p.source==="Procure").forEach(p => {
+    const recvDrgMap = {};
+    (o.drawings||[]).filter(d=>d.receivedDate).forEach(d=>{ recvDrgMap[d.id]=d; });
+    (o.parts||[]).filter(p=>p.fabType==="Fabricate"&&(p.source==="Procure"||!p.source)).forEach(p => {
+      // Resolve drawing — fall back to drawingNo if drawingId is blank
+      const drg = p.drawingId ? recvDrgMap[p.drawingId]
+        : Object.values(recvDrgMap).find(d=>d.drawingNo===p.drawingNo);
+      if (!drg) return; // skip pending drawings
       const key = p.matCode || buildMatCode(p.section,p.matType,p.grade,p.size);
       if (!fabAgg[key]) {
         const lib = (materials||[]).find(m=>m.matCode===key||(m.sectionType===p.section&&m.size.toLowerCase()===(p.size||"").toLowerCase()&&m.grade.toLowerCase()===(p.grade||"").toLowerCase()));
         const pr = purchaseReqs.find(r=>r.section===p.section&&r.size===p.size&&r.grade===p.grade);
         fabAgg[key] = { matCode:key, section:p.section, size:p.size, grade:p.grade, matType:p.matType, orders:[], wtRequired:0, lib, prStatus:pr?.status||"none" };
       }
-      fabAgg[key].wtRequired += (p.calcTotalWt||p.clientTotalWt||0);
+      fabAgg[key].wtRequired += (p.calcTotalWt||p.clientTotalWt||0) * (drg.qty||1);
       if (!fabAgg[key].orders.includes(o.id)) fabAgg[key].orders.push(o.id);
     });
   });
@@ -2253,16 +2305,24 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   });
   const boAgg = {};
   filtOrders.forEach(o => {
-    o.parts.filter(p=>p.fabType==="Bought Out"&&p.source==="Procure").forEach(p => {
+    const recvDrgMap2 = {};
+    (o.drawings||[]).filter(d=>d.receivedDate).forEach(d=>{ recvDrgMap2[d.id]=d; });
+    (o.parts||[]).filter(p=>p.fabType==="Bought Out"&&(p.source==="Procure"||!p.source)).forEach(p => {
+      const drg = p.drawingId ? recvDrgMap2[p.drawingId]
+        : Object.values(recvDrgMap2).find(d=>d.drawingNo===p.drawingNo);
+      if (!drg) return;
       const key = `${p.desc}|${p.size}`;
       if (!boAgg[key]) boAgg[key] = { desc:p.desc, size:p.size, grade:p.grade, orders:[], totalPcs:0, unitWt:p.clientUnitWt||0, totalWt:0 };
-      boAgg[key].totalPcs += (p.qtyPerDrg||0);
-      boAgg[key].totalWt += (p.calcTotalWt||p.clientTotalWt||0);
+      boAgg[key].totalPcs += (p.qtyPerDrg||0) * (drg.qty||1);
+      boAgg[key].totalWt += (p.calcTotalWt||p.clientTotalWt||0) * (drg.qty||1);
       if (!boAgg[key].orders.includes(o.id)) boAgg[key].orders.push(o.id);
     });
   });
   const boList = Object.values(boAgg);
-  const csParts = filtOrders.flatMap(o=>o.parts.filter(p=>p.source==="Client Supply").map(p=>({...p,orderId:o.id})));
+  const csParts = filtOrders.flatMap(o=>{
+    const recvIds = new Set((o.drawings||[]).filter(d=>d.receivedDate).map(d=>d.id));
+    return (o.parts||[]).filter(p=>p.source==="Client Supply"&&(p.drawingId?recvIds.has(p.drawingId):true)).map(p=>({...p,orderId:o.id}));
+  });
 
   return (
     <div>
@@ -2351,17 +2411,18 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
                   </tr></thead>
                   <tbody>
                     {reqs.map((r,i) => (
-                      <tr key={r.id} style={{ background:i%2===0?"transparent":T.bg }}>
+                      <tr key={r.id||`calc-${i}`} style={{ background:i%2===0?"transparent":T.bg }}>
                         <TD mono>{r.drawingNo}</TD>
                         <TD>{r.matType}</TD>
                         <TD mono>{r.grade}</TD>
                         <TD>{r.section}</TD>
                         <TD mono>{r.size}</TD>
                         <TD right mono bold color={T.gold}>{fmt.num(r.wtRequired)}</TD>
-                        <TD><span style={{ fontSize:11, color:T.textMid }}>{r.approvedMakes}</span></TD>
+                        <TD><span style={{ fontSize:11, color:T.textMid }}>{r.approvedMakes||'—'}</span></TD>
                         <TD><Badge color={r.status==="approved"?"green":r.status==="po_raised"?"blue":r.status==="rejected"?"red":"gray"}>{r.status}</Badge></TD>
                         {PERMISSIONS[user.role]?.canApprove && <TD>
-                          {r.status!=="approved"&&r.status!=="po_raised"&&r.status!=="rejected"&&(
+                          {/* Approve/Reject only available when a purchaseReqs record exists (r.id set) */}
+                          {r.id && r.status!=="approved"&&r.status!=="po_raised"&&r.status!=="rejected"&&(
                             <div style={{ display:"flex", gap:4 }}>
                               <button onClick={()=>setPurchaseReqs(prev=>prev.map(pr=>pr.id===r.id?{...pr,status:"approved"}:pr))} style={{ ...css.btn.sm, background:T.greenLo, color:T.green, border:`1px solid ${T.green}` }}>Approve</button>
                               <button onClick={()=>{ setRejectModal(r.id); setRejectReason(""); }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Reject</button>
