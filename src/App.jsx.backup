@@ -7223,7 +7223,100 @@ const TabQuality = ({ order, onChange, canEdit, vendors }) => {
           </div>
         );
       })()}
-      {activeQ==="weld"&&<div style={{ ...css.card }}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Process</label><select value={q.weldSpec?.process||"SMAW"} onChange={e=>updQ("weldSpec",{...q.weldSpec,process:e.target.value})} disabled={!canEdit} style={css.input}><option>SMAW</option><option>GMAW</option><option>FCAW</option><option>SAW</option></select></div><div><label style={css.label}>Electrode Type</label><input value={q.weldSpec?.electrodeType||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,electrodeType:e.target.value})} disabled={!canEdit} style={css.input} placeholder="E7018" /></div><div><label style={css.label}>Grade</label><input value={q.weldSpec?.grade||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,grade:e.target.value})} disabled={!canEdit} style={css.input} /></div><div><label style={css.label}>Make</label><input value={q.weldSpec?.make||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,make:e.target.value})} disabled={!canEdit} style={css.input} placeholder="Lincoln Electric..." /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Remarks</label><input value={q.weldSpec?.remarks||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,remarks:e.target.value})} disabled={!canEdit} style={css.input} /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>WPS/WPQ Document</label><div style={{ display:"flex", gap:8 }}><input value={q.wpsDoc||""} onChange={e=>updQ("wpsDoc",e.target.value)} disabled={!canEdit} style={{ ...css.input, flex:1 }} placeholder="Drive link..." />{q.wpsDoc&&<a href={q.wpsDoc} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none" }}>View</a>}</div><div style={{ fontSize:11, color:T.red, marginTop:4 }}>⚠ Critical — required for TPI inspection</div></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Welding sequence / distortion control notes (optional)</label><textarea value={q.weldSpec?.weldingSequence||""} onChange={e=>updQ("weldSpec",{...q.weldSpec,weldingSequence:e.target.value})} disabled={!canEdit} rows={3} placeholder="e.g. Weld base plates before flange plates. Alternate sides on long members. Back-step on plates over 300mm." style={{ ...css.input, width:"100%", resize:"vertical", fontFamily:T.font }} /></div></div></div>}
+      {activeQ==="weld"&&(()=>{
+        // Migration: derive weldSpecs from legacy single weldSpec object
+        const weldSpecs = q.weldSpecs || (q.weldSpec
+          ? [{ process:q.weldSpec.process||"SMAW", electrodeOrWire:q.weldSpec.electrodeType||"",
+               grade:q.weldSpec.grade||"", approvedMake:q.weldSpec.make||"",
+               notes:q.weldSpec.remarks||"" }]
+          : []);
+        // weldingSequence is order-level (migrate from legacy weldSpec.weldingSequence)
+        const weldingSeq = q.weldingSequence ?? q.weldSpec?.weldingSequence ?? "";
+
+        const updSpecs = (ns) => onChange({...order, quality:{...q, weldSpecs:ns}});
+        const updSpec  = (i,patch) => updSpecs(weldSpecs.map((s,j)=>j===i?{...s,...patch}:s));
+        const addSpec  = () => updSpecs([...weldSpecs,{process:"SMAW",electrodeOrWire:"",grade:"",approvedMake:"",notes:""}]);
+        const delSpec  = (i) => updSpecs(weldSpecs.filter((_,j)=>j!==i));
+        const updSeq   = (v) => onChange({...order, quality:{...q, weldingSequence:v}});
+
+        const PROCESSES = ["SMAW","MIG (GMAW)","SAW","FCAW","TIG (GTAW)","Other"];
+
+        return (
+          <div>
+            {/* WPS/WPQ — order level */}
+            <div style={{ ...css.card, marginBottom:14 }}>
+              <label style={css.label}>WPS / WPQ Document</label>
+              <div style={{ display:"flex", gap:8, marginTop:4 }}>
+                <input value={q.wpsDoc||""} onChange={e=>updQ("wpsDoc",e.target.value)}
+                  disabled={!canEdit} style={{ ...css.input, flex:1 }} placeholder="Drive link..." />
+                {q.wpsDoc && <a href={q.wpsDoc} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none" }}>View</a>}
+              </div>
+              <div style={{ fontSize:11, color:T.red, marginTop:4 }}>⚠ Critical — required for TPI inspection</div>
+            </div>
+
+            {/* Weld Specs list */}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Weld Specifications</div>
+              {canEdit && <button onClick={addSpec} style={css.btn.primary}>+ Add Weld Spec</button>}
+            </div>
+            {weldSpecs.length===0 && !canEdit && (
+              <div style={{ fontSize:12, color:T.textLow, padding:"12px 0" }}>No weld specifications defined</div>
+            )}
+            {weldSpecs.map((ws,i)=>(
+              <div key={i} style={{ ...css.card, marginBottom:10, background:T.bg }}>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr auto", gap:12, alignItems:"end" }}>
+                  <div>
+                    <label style={css.label}>Process</label>
+                    <select value={ws.process||"SMAW"} disabled={!canEdit}
+                      onChange={e=>updSpec(i,{process:e.target.value})} style={css.input}>
+                      {PROCESSES.map(p=><option key={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={css.label}>Electrode / Wire</label>
+                    <input value={ws.electrodeOrWire||""} disabled={!canEdit}
+                      onChange={e=>updSpec(i,{electrodeOrWire:e.target.value})}
+                      style={css.input} placeholder="E7018 / ER70S-6…" />
+                  </div>
+                  <div>
+                    <label style={css.label}>Grade</label>
+                    <input value={ws.grade||""} disabled={!canEdit}
+                      onChange={e=>updSpec(i,{grade:e.target.value})}
+                      style={css.input} placeholder="E250 / E350…" />
+                  </div>
+                  <div>
+                    <label style={css.label}>Approved Make</label>
+                    <input value={ws.approvedMake||""} disabled={!canEdit}
+                      onChange={e=>updSpec(i,{approvedMake:e.target.value})}
+                      style={css.input} placeholder="ESAB / Lincoln / D&H…" />
+                  </div>
+                  {canEdit && (
+                    <button onClick={()=>delSpec(i)} disabled={weldSpecs.length<=1}
+                      title={weldSpecs.length<=1?"Cannot delete the only spec":"Remove this spec"}
+                      style={{ ...css.btn.ghost, color:T.red, opacity:weldSpecs.length<=1?0.3:1,
+                               cursor:weldSpecs.length<=1?"not-allowed":"pointer" }}>✕</button>
+                  )}
+                  <div style={{ gridColumn:"span 4" }}>
+                    <label style={css.label}>Notes (optional)</label>
+                    <input value={ws.notes||""} disabled={!canEdit}
+                      onChange={e=>updSpec(i,{notes:e.target.value})}
+                      style={css.input} placeholder="e.g. Preheat required for plates >12mm…" />
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* Welding sequence — order level */}
+            <div style={{ ...css.card, marginTop:8 }}>
+              <label style={css.label}>Welding sequence / distortion control notes (optional)</label>
+              <textarea value={weldingSeq} disabled={!canEdit}
+                onChange={e=>updSeq(e.target.value)} rows={3}
+                placeholder="e.g. Weld base plates before flange plates. Alternate sides on long members. Back-step on plates over 300mm."
+                style={{ ...css.input, width:"100%", resize:"vertical", fontFamily:T.font, marginTop:4 }} />
+            </div>
+          </div>
+        );
+      })()}
       {activeQ==="tpi"&&<div style={{ ...css.card }}><div style={{ marginBottom:12 }}><div style={css.label}>TPI Required</div><div style={{ display:"flex", gap:12 }}><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===true} onChange={()=>updQ("tpiRequired",true)} disabled={!canEdit} /><span style={{ color:T.text }}>Yes</span></label><label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}><input type="radio" checked={q.tpiRequired===false} onChange={()=>updQ("tpiRequired",false)} disabled={!canEdit} /><span style={{ color:T.text }}>No</span></label></div></div>{q.tpiRequired&&<div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>TPI Agency</label><select value={q.tpiAgencyId||""} onChange={e=>{ const a=TPI_AGENCIES.find(t=>t.id===e.target.value); updQ("tpiAgencyId",e.target.value); updQ("tpiAgencyName",a?.name||""); }} disabled={!canEdit} style={css.input}><option value="">Select...</option>{TPI_AGENCIES.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></div><div><div style={css.label}>Hold Points</div><div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>{[["rm_inspection","RM Inspection"],["fit_up","Fit-Up"],["welding","Welding"],["blasting","Blasting"],["painting","Painting"]].map(([hp,label])=><label key={hp} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}><input type="checkbox" checked={(q.tpiHoldPoints||[]).includes(hp)} disabled={!canEdit} onChange={e=>{ const pts=q.tpiHoldPoints||[]; updQ("tpiHoldPoints",e.target.checked?[...pts,hp]:pts.filter(p=>p!==hp)); }} /><span style={{ fontSize:12, color:T.text }}>{label}</span></label>)}</div></div></div>}</div>}
       {activeQ==="dispatch"&&<div style={{ ...css.card }}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Packing Type</label><select value={q.dispatchSpec?.packingType||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,packingType:e.target.value})} disabled={!canEdit} style={css.input}><option value="">Select...</option><option>Shrink wrap only</option><option>Wooden rafters + shrink wrap</option><option>Wooden box</option><option>Custom</option></select></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Remarks</label><textarea value={q.dispatchSpec?.remarks||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,remarks:e.target.value})} disabled={!canEdit} style={{ ...css.input, minHeight:60, resize:"vertical" }} /></div></div></div>}
       {activeQ==="mdcc"&&<div>
@@ -8992,7 +9085,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
         pinnedEngineerId:i.pinnedEngineerId||null, isPinned:!!i.pinnedEngineerId,
         markedDoneDate: (i.stageHistory||[]).slice(-1)[0]?.markedDoneDate||"",
         batchNo:i.batchNo||"", insts:[], rejCount:0,
-        weldingSequence: ord?.quality?.weldSpec?.weldingSequence||"",
+        weldingSequence: ord?.quality?.weldingSequence || ord?.quality?.weldSpec?.weldingSequence || "",
         endDate: ord?.endDate||"9999-99-99",
         assignedEngineer: i.assignedEngineer||null,
       };
