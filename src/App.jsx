@@ -2201,8 +2201,13 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   const [runForm, setRunForm] = useState({});
   const [rejectModal, setRejectModal] = useState(null); // prId
   const [rejectReason, setRejectReason] = useState("");
+  // nestSelDrgs: { "orderId|drawingId": bool } — absent key means selected (true)
+  const [nestSelDrgs, setNestSelDrgs] = useState({});
+  const [nestExportSel, setNestExportSel] = useState(null); // Set<drawingId> passed to export
 
   const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
+  const isDrgSel = (orderId, drgId) => nestSelDrgs[`${orderId}|${drgId}`] ?? true;
+  const toggleDrg = (orderId, drgId) => setNestSelDrgs(prev => ({...prev, [`${orderId}|${drgId}`]: !isDrgSel(orderId, drgId)}));
 
   // Group purchase reqs by order → drawing
   // Compute requirements from order.parts (received drawings only) rather than
@@ -2257,6 +2262,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
     const totalDrgWt = recvDrgs.reduce((s,d)=>s+(d.totalWt||0),0);
     return { order:o, reqs, totalWtReq, totalProcured, drawings:recvDrgs, totalDrgWt };
   });
+  const selDrgCount = byOrder.reduce((n,{order:o,drawings}) => n + drawings.filter(d=>isDrgSel(o.id,d.id)).length, 0);
 
   // Material aggregation for export preview
   const matAgg = purchaseReqs.reduce((acc,r) => {
@@ -2273,7 +2279,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
     setNestModal(null);
   };
 
-  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} />;
+  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} />;
 
   // ── Material Requirements computation (View 2) ───────────────────────────
   // Only include parts from drawings with receivedDate (same rule as byOrder overview).
@@ -2367,8 +2373,22 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
         </InfoBanner>
       )}
 
-      <div style={{ display:"flex", gap:8, marginBottom:18 }}>
-        <button onClick={()=>setView("nest_export")} style={css.btn.primary}>📤 Export Nesting Sheets (Stage 1)</button>
+      <div style={{ display:"flex", gap:8, marginBottom:18, alignItems:"center" }}>
+        <button onClick={()=>{
+          const sel = new Set();
+          byOrder.forEach(({order:o,drawings})=>{
+            drawings.forEach(d=>{ if(isDrgSel(o.id,d.id)) sel.add(d.id); });
+          });
+          setNestExportSel(sel);
+          setView("nest_export");
+        }} style={css.btn.primary}>
+          📤 Export Nesting Sheets (Stage 1)
+        </button>
+        {selDrgCount < byOrder.reduce((n,{drawings})=>n+drawings.length,0) && (
+          <span style={{fontSize:12,color:T.amber}}>
+            {selDrgCount} of {byOrder.reduce((n,{drawings})=>n+drawings.length,0)} drawings selected
+          </span>
+        )}
         <button onClick={()=>setNestModal("import")} style={css.btn.amber}>📥 Import Nesting Results</button>
       </div>
 
@@ -2400,46 +2420,104 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
 
           {expand[order.id] && (
             <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
-              {/* Material requirements table */}
-              <div style={{ fontSize:12, fontWeight:700, color:T.textMid, textTransform:"uppercase", marginBottom:8 }}>Material Requirements ({reqs.length} lines)</div>
-              <div style={{ overflowX:"auto" }}>
-                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                  <thead><tr>
-                    <TH>Drawing No</TH><TH>Mat Type</TH><TH>Grade</TH><TH>Section</TH><TH>Size</TH>
-                    <TH right>Wt Req (kg)</TH><TH>Approved Makes</TH><TH>Status</TH>
-                    {PERMISSIONS[user.role]?.canApprove && <TH>Action</TH>}
-                  </tr></thead>
-                  <tbody>
-                    {reqs.map((r,i) => (
-                      <tr key={r.id||`calc-${i}`} style={{ background:i%2===0?"transparent":T.bg }}>
-                        <TD mono>{r.drawingNo}</TD>
-                        <TD>{r.matType}</TD>
-                        <TD mono>{r.grade}</TD>
-                        <TD>{r.section}</TD>
-                        <TD mono>{r.size}</TD>
-                        <TD right mono bold color={T.gold}>{fmt.num(r.wtRequired)}</TD>
-                        <TD><span style={{ fontSize:11, color:T.textMid }}>{r.approvedMakes||'—'}</span></TD>
-                        <TD><Badge color={r.status==="approved"?"green":r.status==="po_raised"?"blue":r.status==="rejected"?"red":"gray"}>{r.status}</Badge></TD>
-                        {PERMISSIONS[user.role]?.canApprove && <TD>
-                          {/* Approve/Reject only available when a purchaseReqs record exists (r.id set) */}
-                          {r.id && r.status!=="approved"&&r.status!=="po_raised"&&r.status!=="rejected"&&(
-                            <div style={{ display:"flex", gap:4 }}>
-                              <button onClick={()=>setPurchaseReqs(prev=>prev.map(pr=>pr.id===r.id?{...pr,status:"approved"}:pr))} style={{ ...css.btn.sm, background:T.greenLo, color:T.green, border:`1px solid ${T.green}` }}>Approve</button>
-                              <button onClick={()=>{ setRejectModal(r.id); setRejectReason(""); }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Reject</button>
-                            </div>
-                          )}
-                          {r.status==="rejected"&&<span style={{ fontSize:11, color:T.textMid, fontStyle:"italic" }}>{r.rejectReason||""}</span>}
-                        </TD>}
-                      </tr>
-                    ))}
-                    <tr style={{ background:T.bgInput }}>
-                      <td colSpan={5} style={{ padding:"6px 10px", fontWeight:700, fontSize:12, color:T.textMid }}>Total</td>
-                      <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.gold }}>{fmt.num(reqs.reduce((s,r)=>s+(r.wtRequired||0),0))} kg</td>
-                      <td colSpan={PERMISSIONS[user.role]?.canApprove?3:2}/>
-                    </tr>
-                  </tbody>
-                </table>
+              {/* Material requirements table — grouped by drawing with nesting selection checkbox */}
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.textMid, textTransform:"uppercase" }}>
+                  Material Requirements ({reqs.length} lines · {drawings.length} drawings)
+                </div>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={()=>drawings.forEach(d=>setNestSelDrgs(p=>({...p,[`${order.id}|${d.id}`]:true})))}
+                    style={{...css.btn.sm,fontSize:11}}>Select All</button>
+                  <button onClick={()=>drawings.forEach(d=>setNestSelDrgs(p=>({...p,[`${order.id}|${d.id}`]:false})))}
+                    style={{...css.btn.sm,fontSize:11}}>Deselect All</button>
+                </div>
               </div>
+              {reqs.length === 0
+                ? <div style={{ color:T.textLow, fontSize:12, padding:"8px 0" }}>No fabrication material requirements found for received drawings.</div>
+                : <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                    <thead><tr>
+                      <TH style={{width:32}}>Nest</TH>
+                      <TH>Mat Type</TH><TH>Grade</TH><TH>Section</TH><TH>Size</TH>
+                      <TH right>Wt Req (kg)</TH><TH>Approved Makes</TH><TH>Status</TH>
+                      {PERMISSIONS[user.role]?.canApprove && <TH>Action</TH>}
+                    </tr></thead>
+                    <tbody>
+                      {/* Group rows by drawing */}
+                      {Object.values(reqs.reduce((acc,r)=>{
+                        const k = r.drawingId||r.drawingNo;
+                        if(!acc[k]) acc[k]={drawingId:r.drawingId,drawingNo:r.drawingNo,rows:[]};
+                        acc[k].rows.push(r); return acc;
+                      },{})).map(({drawingId:dId,drawingNo:dNo,rows})=>{
+                        const sel = isDrgSel(order.id, dId);
+                        const drgWt = rows.reduce((s,r)=>s+(r.wtRequired||0),0);
+                        return (
+                          <React.Fragment key={dId||dNo}>
+                            {/* Drawing header row */}
+                            <tr style={{ background:T.bgInput }}>
+                              <td style={{ padding:"5px 8px", verticalAlign:"middle" }}>
+                                <input type="checkbox" checked={sel}
+                                  onChange={()=>toggleDrg(order.id, dId)}
+                                  title={sel?"Deselect from nesting export":"Include in nesting export"} />
+                              </td>
+                              <td colSpan={4} style={{ padding:"5px 8px", fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:sel?T.accent:T.textLow }}>
+                                {dNo}
+                              </td>
+                              <td style={{ padding:"5px 8px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, fontSize:12, color:sel?T.gold:T.textLow }}>
+                                {fmt.num(drgWt)} kg
+                              </td>
+                              <td colSpan={PERMISSIONS[user.role]?.canApprove?3:2} style={{ padding:"5px 8px" }}>
+                                {!sel && <span style={{ fontSize:11, color:T.textLow, fontStyle:"italic" }}>excluded from export</span>}
+                              </td>
+                            </tr>
+                            {/* Material lines for this drawing */}
+                            {rows.map((r,i)=>(
+                              <tr key={r.id||`calc-${i}`} style={{ opacity:sel?1:0.4, background:i%2===0?"transparent":T.bg }}>
+                                <td style={{ padding:"4px 8px" }} />
+                                <TD>{r.matType}</TD>
+                                <TD mono>{r.grade}</TD>
+                                <TD>{r.section}</TD>
+                                <TD mono>{r.size}</TD>
+                                <TD right mono bold color={T.gold}>{fmt.num(r.wtRequired)}</TD>
+                                <TD><span style={{ fontSize:11, color:T.textMid }}>{r.approvedMakes||'—'}</span></TD>
+                                <TD><Badge color={r.status==="approved"?"green":r.status==="po_raised"?"blue":r.status==="rejected"?"red":"gray"}>{r.status}</Badge></TD>
+                                {PERMISSIONS[user.role]?.canApprove && <TD>
+                                  {r.id && r.status!=="approved"&&r.status!=="po_raised"&&r.status!=="rejected"&&(
+                                    <div style={{ display:"flex", gap:4 }}>
+                                      <button onClick={()=>setPurchaseReqs(prev=>prev.map(pr=>pr.id===r.id?{...pr,status:"approved"}:pr))} style={{ ...css.btn.sm, background:T.greenLo, color:T.green, border:`1px solid ${T.green}` }}>Approve</button>
+                                      <button onClick={()=>{ setRejectModal(r.id); setRejectReason(""); }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Reject</button>
+                                    </div>
+                                  )}
+                                  {r.status==="rejected"&&<span style={{ fontSize:11, color:T.textMid, fontStyle:"italic" }}>{r.rejectReason||""}</span>}
+                                </TD>}
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                      {/* Grand total */}
+                      <tr style={{ background:T.bgInput }}>
+                        <td colSpan={5} style={{ padding:"6px 10px", fontWeight:700, fontSize:12, color:T.textMid }}>Total (all drawings)</td>
+                        <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.gold }}>{fmt.num(reqs.reduce((s,r)=>s+(r.wtRequired||0),0))} kg</td>
+                        <td colSpan={PERMISSIONS[user.role]?.canApprove?3:2}/>
+                      </tr>
+                      {/* Selected total */}
+                      {(() => {
+                        const selWt = reqs.filter(r=>isDrgSel(order.id,r.drawingId)).reduce((s,r)=>s+(r.wtRequired||0),0);
+                        const totalWt = reqs.reduce((s,r)=>s+(r.wtRequired||0),0);
+                        if (selWt === totalWt) return null;
+                        return (
+                          <tr style={{ background:T.greenBg }}>
+                            <td colSpan={5} style={{ padding:"6px 10px", fontWeight:700, fontSize:12, color:T.green }}>Selected for export</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.num(selWt)} kg</td>
+                            <td colSpan={PERMISSIONS[user.role]?.canApprove?3:2}/>
+                          </tr>
+                        );
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
+              }
             </div>
           )}
         </div>
@@ -2759,7 +2837,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
 };
 
 // ─── MRP NESTING EXPORT VIEW ─────────────────────────────────────────────────
-const MRPNestExport = ({ onBack, purchaseReqs, stock, orders }) => {
+const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds }) => {
   const [sheet, setSheet] = useState("S1");
   const sheets = [
     { id:"S1", label:"Sheet 1 — Drawing Register" },
@@ -2768,9 +2846,30 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders }) => {
     { id:"S4", label:"Sheet 4 — Material Summary" },
   ];
 
-  // Flatten all drawings
-  const allDrawings = orders.flatMap(o=>o.drawings.filter(d=>d.receivedDate).map(d=>({...d,orderId:o.id,orderDesc:o.projectDesc})));
-  const allParts = orders.flatMap(o=>o.parts.filter(p=>p.source==="Procure"||p.source==="Stock").map(p=>({...p,orderId:o.id})));
+  // Filter to selected drawings (selectedDrawingIds=null means all received drawings)
+  const selIds = selectedDrawingIds; // Set<drawingId> or null
+  const allDrawings = orders.flatMap(o=>
+    o.drawings
+      .filter(d=>d.receivedDate && (!selIds || selIds.has(d.id)))
+      .map(d=>({...d,orderId:o.id,orderDesc:o.projectDesc}))
+  );
+  // Parts: filter by drawing selection; fall back to drawingNo match for blank drawingId
+  const allParts = orders.flatMap(o => {
+    const selDrgIds = new Set(
+      (o.drawings||[])
+        .filter(d=>d.receivedDate && (!selIds || selIds.has(d.id)))
+        .map(d=>d.id)
+    );
+    const selDrgNos = new Set(
+      (o.drawings||[])
+        .filter(d=>d.receivedDate && (!selIds || selIds.has(d.id)))
+        .map(d=>d.drawingNo)
+    );
+    return (o.parts||[])
+      .filter(p => (p.source==="Procure"||p.source==="Stock") &&
+        (p.drawingId ? selDrgIds.has(p.drawingId) : selDrgNos.has(p.drawingNo)))
+      .map(p=>({...p,orderId:o.id}));
+  });
 
   // Material summary for Sheet 4
   const matAgg = purchaseReqs.reduce((acc,r) => {
@@ -2789,6 +2888,11 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders }) => {
       <InfoBanner color="blue">
         Export these 4 sheets to your nesting software. Sheet 4 is the purchase input — only fill Qty to Order, Order Unit, Weight to Order, Source, Remarks on Sheet 4 and import back.
       </InfoBanner>
+      {selIds && (
+        <InfoBanner color="green">
+          ✓ Exporting <strong>{allDrawings.length} selected drawing{allDrawings.length!==1?'s':''}</strong> ({allParts.length} parts). Deselected drawings are excluded.
+        </InfoBanner>
+      )}
       <div style={{ display:"flex", gap:2, marginBottom:16, borderBottom:`1px solid ${T.border}` }}>
         {sheets.map(s=>(
           <button key={s.id} onClick={()=>setSheet(s.id)} style={{ padding:"8px 14px", fontSize:12, fontWeight:sheet===s.id?700:400, color:sheet===s.id?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:sheet===s.id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", fontFamily:T.font, whiteSpace:"nowrap" }}>{s.label}</button>
