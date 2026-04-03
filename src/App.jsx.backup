@@ -6943,7 +6943,107 @@ const TabParts = ({ order, onChange, canEdit, materials, stock }) => {
     </div>
   );
 };
-const TabQuality = ({ order, onChange, canEdit }) => {
+// ─── VENDOR TAG INPUT ─────────────────────────────────────────────────────────
+// Multi-select tag input backed by Masters → Vendors list.
+// value: comma-separated string ("JSW Steel, SAIL")
+// vendors: array from Masters (each has .name)
+const VendorTagInput = ({ value, onChange, vendors, disabled }) => {
+  const [query, setQuery]   = useState("");
+  const [open, setOpen]     = useState(false);
+  const containerRef        = useRef(null);
+
+  const tags = value ? value.split(",").map(s => s.trim()).filter(Boolean) : [];
+  const vendorNames = (vendors||[]).map(v => v.name).filter(Boolean);
+  const suggestions = vendorNames.filter(n =>
+    n.toLowerCase().includes(query.toLowerCase()) && !tags.includes(n)
+  );
+  const customAllowed = query.trim() && !tags.includes(query.trim()) && !vendorNames.includes(query.trim());
+
+  const addTag = (name) => {
+    const t = name.trim();
+    if (!t || tags.includes(t)) { setQuery(""); setOpen(false); return; }
+    onChange([...tags, t].join(", "));
+    setQuery(""); setOpen(false);
+  };
+  const removeTag = (tag) => onChange(tags.filter(t => t !== tag).join(", "));
+
+  useEffect(() => {
+    const handler = e => { if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  if (disabled) {
+    return (
+      <div style={{ display:"flex", gap:4, flexWrap:"wrap", minHeight:32, padding:"4px 0" }}>
+        {tags.length > 0
+          ? tags.map(t => <Badge key={t} color="green">{t}</Badge>)
+          : <span style={{ color:T.textLow, fontSize:12 }}>—</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} style={{ position:"relative" }}>
+      <div
+        onClick={() => setOpen(true)}
+        style={{ ...css.input, display:"flex", flexWrap:"wrap", gap:4, padding:"4px 8px",
+                 minHeight:36, cursor:"text", alignItems:"center", height:"auto" }}>
+        {tags.map(t => (
+          <span key={t} style={{ display:"inline-flex", alignItems:"center", gap:3,
+            background:T.greenBg, border:`1px solid ${T.green}`,
+            borderRadius:4, padding:"1px 6px", fontSize:11, color:T.green }}>
+            {t}
+            <button onMouseDown={e => { e.preventDefault(); e.stopPropagation(); removeTag(t); }}
+              style={{ background:"none", border:"none", cursor:"pointer",
+                       color:T.green, fontSize:11, padding:0, lineHeight:1 }}>✕</button>
+          </span>
+        ))}
+        <input
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onKeyDown={e => {
+            if (e.key === "Enter" && query.trim()) { e.preventDefault(); addTag(query); }
+            if (e.key === "Backspace" && !query && tags.length) removeTag(tags[tags.length - 1]);
+          }}
+          placeholder={tags.length === 0 ? "Type to search or add vendor…" : ""}
+          style={{ background:"transparent", border:"none", outline:"none",
+                   fontSize:12, color:T.text, fontFamily:T.font, minWidth:140, flex:1 }}
+        />
+      </div>
+      {open && (suggestions.length > 0 || customAllowed) && (
+        <div style={{ position:"absolute", top:"100%", left:0, right:0, zIndex:1200,
+          background:T.bgCard, border:`1px solid ${T.borderHi}`, borderRadius:6,
+          marginTop:2, boxShadow:"0 4px 16px rgba(0,0,0,0.5)", maxHeight:200, overflowY:"auto" }}>
+          {suggestions.map(n => (
+            <div key={n} onMouseDown={e => { e.preventDefault(); addTag(n); }}
+              style={{ padding:"8px 12px", cursor:"pointer", fontSize:12,
+                       color:T.text, borderBottom:`1px solid ${T.border}` }}
+              onMouseEnter={e => { e.currentTarget.style.background = T.bgHover; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              {n}
+            </div>
+          ))}
+          {customAllowed && (
+            <div onMouseDown={e => { e.preventDefault(); addTag(query); }}
+              style={{ padding:"8px 12px", cursor:"pointer", fontSize:12,
+                       color:T.amber, borderBottom:`1px solid ${T.border}` }}
+              onMouseEnter={e => { e.currentTarget.style.background = T.bgHover; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+              + Add "<strong>{query.trim()}</strong>"
+              <span style={{ fontSize:10, color:T.textLow, marginLeft:6 }}>
+                (not in Masters — add vendor for consistent tracking)
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const TabQuality = ({ order, onChange, canEdit, vendors }) => {
   const [activeQ, setActiveQ] = useState("rm_makes");
   const q = order.quality||{};
   const updQ = (k,v) => onChange({...order,quality:{...q,[k]:v}});
@@ -6954,7 +7054,28 @@ const TabQuality = ({ order, onChange, canEdit }) => {
       {activeQ==="rm_makes"&&<div>
         <div style={{ ...css.card, background:T.amberBg, border:`1px solid ${T.amber}`, marginBottom:14, fontSize:12, color:T.amber }}>Per-order approved makes override global library defaults. These will appear in MRP export for purchase manager reference.</div>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}><div style={{ fontSize:14, fontWeight:700, color:T.text }}>RM Approved Makes</div>{canEdit&&<button onClick={()=>updQ("approvedMakes",[...(q.approvedMakes||[]),{id:`QAM-${Date.now()}`,matType:"",makes:"",remarks:""}])} style={css.btn.primary}>+ Add</button>}</div>
-        {(q.approvedMakes||[]).map((m,i)=><div key={m.id} style={{ ...css.card, marginBottom:8, display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:12, alignItems:"center" }}><div><div style={css.label}>Material Type</div><input value={m.matType||""} onChange={e=>{ const n=[...q.approvedMakes]; n[i]={...n[i],matType:e.target.value}; updQ("approvedMakes",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Approved Makes</div><input value={m.makes||""} onChange={e=>{ const n=[...q.approvedMakes]; n[i]={...n[i],makes:e.target.value}; updQ("approvedMakes",n); }} disabled={!canEdit} style={css.input} /></div><div><div style={css.label}>Remarks</div><input value={m.remarks||""} onChange={e=>{ const n=[...q.approvedMakes]; n[i]={...n[i],remarks:e.target.value}; updQ("approvedMakes",n); }} disabled={!canEdit} style={css.input} /></div>{canEdit&&<button onClick={()=>updQ("approvedMakes",q.approvedMakes.filter((_,j)=>j!==i))} style={{ ...css.btn.ghost, color:T.red, marginTop:14 }}>✕</button>}</div>)}
+        {(q.approvedMakes||[]).map((m,i)=>(
+          <div key={m.id} style={{ ...css.card, marginBottom:8, display:"grid", gridTemplateColumns:"1fr 2fr 1fr auto", gap:12, alignItems:"start" }}>
+            <div>
+              <div style={css.label}>Material Type</div>
+              <input value={m.matType||""} onChange={e=>{ const n=[...q.approvedMakes]; n[i]={...n[i],matType:e.target.value}; updQ("approvedMakes",n); }} disabled={!canEdit} style={css.input} />
+            </div>
+            <div>
+              <div style={css.label}>Approved Makes</div>
+              <VendorTagInput
+                value={m.makes||""}
+                onChange={v=>{ const n=[...q.approvedMakes]; n[i]={...n[i],makes:v}; updQ("approvedMakes",n); }}
+                vendors={vendors}
+                disabled={!canEdit}
+              />
+            </div>
+            <div>
+              <div style={css.label}>Remarks</div>
+              <input value={m.remarks||""} onChange={e=>{ const n=[...q.approvedMakes]; n[i]={...n[i],remarks:e.target.value}; updQ("approvedMakes",n); }} disabled={!canEdit} style={css.input} />
+            </div>
+            {canEdit&&<button onClick={()=>updQ("approvedMakes",q.approvedMakes.filter((_,j)=>j!==i))} style={{ ...css.btn.ghost, color:T.red, marginTop:18 }}>✕</button>}
+          </div>
+        ))}
       </div>}
       {activeQ==="paint"&&<div>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}><div style={{ fontSize:14, fontWeight:700, color:T.text }}>Paint Specification</div>{canEdit&&<button onClick={()=>updQ("paintCoats",[...(q.paintCoats||[]),{coatNo:(q.paintCoats||[]).length+1,type:"Primer",dft:50,make:"",product:"",dryTime:8,remarks:""}])} style={css.btn.primary}>+ Add Coat</button>}</div>
@@ -7006,7 +7127,7 @@ const TabFinance = ({ order, onChange, canEdit }) => {
     </div>
   );
 };
-const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock }) => {
+const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors }) => {
   const [activeTab, setActiveTab] = useState("basic");
   const [localOrder, setLocalOrder] = useState(order);
   const [dirty, setDirty] = useState(false);
@@ -7077,7 +7198,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock })
       {activeTab==="milestones" && <TabMilestones    order={localOrder} onChange={update} canEdit={canEditFinance} />}
       {activeTab==="drawings"   && <TabDrawings      order={localOrder} onChange={update} canEdit={canEdit} user={user} />}
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
-      {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} />}
+      {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
@@ -7187,10 +7308,10 @@ const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
     </div>
   );
 };
-const OrdersModule = ({ user, orders, setOrders, clients, materials, stock }) => {
+const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors }) => {
   const [selected, setSelected] = useState(null);
   const saveOrder = (updated) => { setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o)); setSelected(updated); };
-  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} />;
+  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} />;
   return <OrdersList orders={orders} onOpen={setSelected} user={user} clients={clients} onAddOrder={o=>setOrders(prev=>[...prev,o])} />;
 };
 
@@ -11753,7 +11874,7 @@ export default function App() {
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
-      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} />;
+      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
