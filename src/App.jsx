@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import * as XLSX from 'xlsx';
 import * as msal from "@azure/msal-browser";
 
-// ─── NESTING CENTER — MSAL AUTH ───────────────────────────────────────────────
-// Authority: OIDC v2.0 endpoint format (without legacy /tfp/ prefix)
+// ─── NESTING CENTER — MSAL AUTH (redirect-only, no popup) ────────────────────
 const _msalConfig = {
   auth: {
     clientId: "14bc1c96-d677-4a08-8a07-68725b6bd732",
@@ -27,12 +26,19 @@ async function _getMsalInstance() {
   return _msalInstance;
 }
 
-// Handle redirect return on page load (fires once, stores result for getToken to consume)
+// Runs once on page load — processes any redirect return from B2C login.
+// Clears the #state= hash that MSAL leaves in the URL.
 (async () => {
   try {
     const inst = await _getMsalInstance();
     const result = await inst.handleRedirectPromise();
-    if (result) _msalRedirectResult = result;
+    if (result) {
+      _msalRedirectResult = result;
+      // Clean up MSAL's #state= hash from the URL bar
+      if (window.location.hash) {
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      }
+    }
   } catch(e) {
     console.warn("MSAL handleRedirectPromise error:", e);
   } finally {
@@ -47,11 +53,13 @@ async function _awaitRedirectHandled() {
   });
 }
 
-// Returns access token. Throws with .msalErrorCode on failure.
+// Returns access token via silent flow only. No popup ever.
+// If silent fails → initiates redirect and throws {isMsalRedirect:true} so the
+// caller can show "Redirecting…" and let the page navigate away.
 async function getNestingToken() {
   await _awaitRedirectHandled();
 
-  // Consume redirect result if available (returned from acquireTokenRedirect flow)
+  // Consume token from a completed redirect login
   if (_msalRedirectResult) {
     const token = _msalRedirectResult.accessToken;
     _msalRedirectResult = null;
@@ -64,27 +72,29 @@ async function getNestingToken() {
     try {
       const r = await inst.acquireTokenSilent({ scopes: _nestingScopes, account: accounts[0] });
       return r.accessToken;
-    } catch (_) { /* fall through to interactive */ }
+    } catch (_) { /* session expired — fall through to redirect */ }
   }
 
-  // Try popup first
-  try {
-    const r = await inst.acquireTokenPopup({ scopes: _nestingScopes });
-    return r.accessToken;
-  } catch (popupErr) {
-    const code = popupErr.errorCode || popupErr.name || "unknown";
-    // Attach structured info for UI to display
-    const err = new Error(`[${code}] ${popupErr.errorMessage || popupErr.message || ""}`);
-    err.msalErrorCode = code;
-    err.isMsalError = true;
-    throw err;
-  }
+  // No popup. Initiate redirect — page will navigate away to B2C login.
+  inst.acquireTokenRedirect({ scopes: _nestingScopes }).catch(e =>
+    console.error("MSAL acquireTokenRedirect error:", e)
+  );
+  // Throw so the caller can show a "Redirecting…" message and stop processing
+  const err = new Error("Nesting Center login required. Redirecting to login page…");
+  err.msalErrorCode = "redirect_initiated";
+  err.isMsalRedirect = true;
+  throw err;
 }
 
-// Initiates a full-page redirect login (call from UI button)
+// Called from UI "Login with Nesting Center" button (explicit login before run)
 async function initiateNestingRedirect() {
   const inst = await _getMsalInstance();
   await inst.acquireTokenRedirect({ scopes: _nestingScopes });
+}
+
+// True if a redirect login just completed (user was sent back from B2C)
+function nestingJustLoggedIn() {
+  return !!_msalRedirectResult;
 }
 
 // ─── NESTING CENTER — API SERVICE ─────────────────────────────────────────────
@@ -3577,11 +3587,12 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
             return tok;
           } catch(authErr) {
             const code = authErr.msalErrorCode || authErr.name || "unknown";
-            setNestMsalError(`${code}: ${authErr.message||""}`);
-            if (!firstAuthDone) {
-              setNestAuthMsg("Nesting Center session expired — logging in again…");
+            if (authErr.isMsalRedirect) {
+              // Page is about to navigate away — surface message, stop run
+              setNestAuthMsg("Redirecting to Nesting Center login… Page will reload after authentication. Click Run Nesting again after login.");
+              throw authErr;
             }
-            // Re-throw so runNestingJob surfaces it as a group error
+            setNestMsalError(`${code}: ${authErr.message||""}`);
             throw authErr;
           }
         };
@@ -3594,6 +3605,11 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
         setNestAuthMsg("");
         setNestResults(prev=>({...prev,[mc]:{ result, partsOrder: input.Context.Problem.Parts }}));
       } catch(e) {
+        if (e.isMsalRedirect) {
+          // Page is navigating away — stop the loop, don't mark remaining groups as errored
+          setNestRunState("redirect_pending");
+          return;
+        }
         const msg = e.isMsalError
           ? `Auth failed [${e.msalErrorCode||"?"}] — ${e.message}`
           : (e.message||"Unknown error");
@@ -3928,44 +3944,56 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
             <div style={{ ...css.card, marginBottom:16 }}>
               <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Section B — Run Controls</div>
 
-              {/* MSAL error display */}
-              {nestMsalError && (
-                <div style={{ background:T.redBg, border:`1px solid ${T.red}`, borderRadius:6, padding:"8px 12px", marginBottom:12, fontSize:12 }}>
-                  <div style={{ color:T.red, fontWeight:700, marginBottom:4 }}>Nesting Center auth error</div>
-                  <div style={{ fontFamily:T.fontMono, color:T.red, wordBreak:"break-all" }}>{nestMsalError}</div>
-                  <div style={{ marginTop:8, display:"flex", gap:8 }}>
-                    <button onClick={()=>initiateNestingRedirect()} style={{ ...css.btn.sm, background:T.accent, color:"#fff", borderColor:T.accent }}>
-                      Try full-page redirect login
-                    </button>
-                    <button onClick={()=>{ setNestMsalError(""); setNestShowManualToken(true); }} style={{ ...css.btn.sm }}>
-                      Paste token manually
-                    </button>
+              {/* Redirect-pending banner (page about to navigate away) */}
+              {nestRunState==="redirect_pending" && (
+                <div style={{ background:"#0D1E3A", border:`1px solid ${T.accent}`, borderRadius:6, padding:"10px 14px", marginBottom:12, fontSize:12 }}>
+                  <div style={{ color:T.accentHi, fontWeight:700, marginBottom:4 }}>Nesting Center login required</div>
+                  <div style={{ color:T.textMid }}>
+                    Redirecting to B2C login page… After you log in you will be brought back here automatically.
+                    Then click <strong style={{ color:T.text }}>Run Nesting</strong> again to continue.
                   </div>
                 </div>
               )}
 
-              {/* Manual token paste */}
-              {nestShowManualToken && (
-                <div style={{ background:T.amberBg, border:`1px solid ${T.amber}`, borderRadius:6, padding:"10px 14px", marginBottom:12 }}>
-                  <div style={{ fontSize:12, color:T.amber, fontWeight:700, marginBottom:6 }}>Manual Bearer Token (testing bypass)</div>
-                  <div style={{ fontSize:11, color:T.textMid, marginBottom:8 }}>
-                    Paste a token obtained from the Python script or another source. The token will be used directly, bypassing MSAL.
-                  </div>
-                  <textarea
-                    value={nestManualToken}
-                    onChange={e=>setNestManualToken(e.target.value)}
-                    placeholder="eyJ0eXAiOiJKV1QiLCJhbGci..."
-                    rows={3}
-                    style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.borderHi}`, borderRadius:4, padding:"6px 8px", color:T.text, fontSize:11, fontFamily:T.fontMono, resize:"vertical", boxSizing:"border-box" }}
-                  />
-                  <div style={{ marginTop:6, display:"flex", gap:8, alignItems:"center" }}>
-                    {nestManualToken.trim() && <Badge color="green">Token set — MSAL will be bypassed</Badge>}
-                    {nestManualToken.trim() && (
-                      <button onClick={()=>{ setNestManualToken(""); setNestShowManualToken(false); }} style={{ ...css.btn.ghost, fontSize:11, color:T.red, padding:"2px 8px" }}>Clear token</button>
-                    )}
-                  </div>
+              {/* MSAL error display */}
+              {nestMsalError && (
+                <div style={{ background:T.redBg, border:`1px solid ${T.red}`, borderRadius:6, padding:"8px 12px", marginBottom:12, fontSize:12 }}>
+                  <div style={{ color:T.red, fontWeight:700, marginBottom:4 }}>Auth error — use token bypass below</div>
+                  <div style={{ fontFamily:T.fontMono, color:T.red, wordBreak:"break-all", marginBottom:6 }}>{nestMsalError}</div>
+                  <button onClick={()=>{ setNestMsalError(""); setNestShowManualToken(true); }} style={{ ...css.btn.sm }}>
+                    Dismiss and paste token manually
+                  </button>
                 </div>
               )}
+
+              {/* Manual token paste — always available */}
+              <div style={{ background:T.amberBg, border:`1px solid ${nestManualToken.trim()?T.green:T.amber}`, borderRadius:6, padding:"10px 14px", marginBottom:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                  <div style={{ fontSize:12, color:nestManualToken.trim()?T.green:T.amber, fontWeight:700 }}>
+                    {nestManualToken.trim() ? "✓ Token set — MSAL bypassed" : "Login not working? Paste token manually"}
+                  </div>
+                  <button onClick={()=>setNestShowManualToken(v=>!v)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:T.textMid, fontFamily:T.font, padding:0 }}>
+                    {nestShowManualToken ? "▲ hide" : "▼ show"}
+                  </button>
+                </div>
+                {nestShowManualToken && (
+                  <>
+                    <div style={{ fontSize:11, color:T.textMid, marginBottom:8 }}>
+                      Run the Python script → copy the Bearer token → paste below. The token bypasses MSAL entirely.
+                    </div>
+                    <textarea
+                      value={nestManualToken}
+                      onChange={e=>setNestManualToken(e.target.value)}
+                      placeholder="eyJ0eXAiOiJKV1QiLCJhbGci..."
+                      rows={3}
+                      style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.borderHi}`, borderRadius:4, padding:"6px 8px", color:T.text, fontSize:11, fontFamily:T.fontMono, resize:"vertical", boxSizing:"border-box" }}
+                    />
+                    {nestManualToken.trim() && (
+                      <button onClick={()=>setNestManualToken("")} style={{ ...css.btn.ghost, fontSize:11, color:T.red, padding:"2px 8px", marginTop:4 }}>Clear token</button>
+                    )}
+                  </>
+                )}
+              </div>
 
               <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
                 <div>
@@ -3984,19 +4012,19 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
                   <label style={css.label}>Batch ID (auto)</label>
                   <div style={{ fontFamily:T.fontMono, fontSize:13, color:T.accent, padding:"6px 0" }}>{genBatchId()}</div>
                 </div>
-                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                  <button
-                    onClick={handleRunNesting}
-                    disabled={nestRunState==="running" || (nestGroups||[]).filter(g=>g.checked).length===0}
-                    style={{ ...css.btn.primary, background:nestManualToken.trim()?T.amber:T.green, borderColor:nestManualToken.trim()?T.amber:T.green, opacity:(nestRunState==="running"||(nestGroups||[]).filter(g=>g.checked).length===0)?0.4:1 }}
-                  >
-                    {nestRunState==="running" ? "Running…" : `▶ Run Nesting (${(nestGroups||[]).filter(g=>g.checked).length} group${(nestGroups||[]).filter(g=>g.checked).length!==1?"s":""})`}
-                  </button>
-                  {!nestShowManualToken && !nestMsalError && (
-                    <button onClick={()=>setNestShowManualToken(true)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:T.textLow, textDecoration:"underline", textAlign:"left", fontFamily:T.font, padding:0 }}>
-                      Paste token manually
+                <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                  {!nestManualToken.trim() && nestRunState!=="redirect_pending" && (
+                    <button onClick={()=>initiateNestingRedirect()} style={{ ...css.btn.sm, background:T.accent, color:"#fff", borderColor:T.accent }}>
+                      Login with Nesting Center
                     </button>
                   )}
+                  <button
+                    onClick={handleRunNesting}
+                    disabled={nestRunState==="running" || nestRunState==="redirect_pending" || (nestGroups||[]).filter(g=>g.checked).length===0}
+                    style={{ ...css.btn.primary, background:nestManualToken.trim()?T.amber:T.green, borderColor:nestManualToken.trim()?T.amber:T.green, opacity:(nestRunState==="running"||nestRunState==="redirect_pending"||(nestGroups||[]).filter(g=>g.checked).length===0)?0.4:1 }}
+                  >
+                    {nestRunState==="running" ? "Running…" : nestRunState==="redirect_pending" ? "Waiting for login…" : `▶ Run Nesting (${(nestGroups||[]).filter(g=>g.checked).length} group${(nestGroups||[]).filter(g=>g.checked).length!==1?"s":""})`}
+                  </button>
                 </div>
               </div>
             </div>
