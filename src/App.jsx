@@ -1,5 +1,230 @@
 import React, { useState, useEffect, useRef } from "react";
 import * as XLSX from 'xlsx';
+import * as msal from "@azure/msal-browser";
+
+// ─── NESTING CENTER — MSAL AUTH ───────────────────────────────────────────────
+const _msalConfig = {
+  auth: {
+    clientId: "14bc1c96-d677-4a08-8a07-68725b6bd732",
+    authority: "https://starsoftonline.b2clogin.com/tfp/starsoftonline.onmicrosoft.com/B2C_1_Sign",
+    knownAuthorities: ["starsoftonline.b2clogin.com"],
+    redirectUri: window.location.origin,
+  },
+  cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false }
+};
+const _nestingScopes = ["https://starsoftonline.onmicrosoft.com/81588f52-db64-40bd-8096-e75159abdd9a/NestingCenter"];
+let _msalInstance = null;
+
+async function _getMsalInstance() {
+  if (!_msalInstance) {
+    _msalInstance = new msal.PublicClientApplication(_msalConfig);
+    await _msalInstance.initialize();
+  }
+  return _msalInstance;
+}
+
+async function getNestingToken() {
+  const inst = await _getMsalInstance();
+  const accounts = inst.getAllAccounts();
+  if (accounts.length > 0) {
+    try {
+      const r = await inst.acquireTokenSilent({ scopes: _nestingScopes, account: accounts[0] });
+      return r.accessToken;
+    } catch (_) { /* fall through */ }
+  }
+  const r = await inst.acquireTokenPopup({ scopes: _nestingScopes });
+  return r.accessToken;
+}
+
+// ─── NESTING CENTER — API SERVICE ─────────────────────────────────────────────
+const NESTING_BASE = "https://api-nesting.nestingcenter.com/nesting";
+
+async function _nestFetch(token, path, method = "GET", body = null) {
+  const opts = {
+    method,
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(`${NESTING_BASE}${path}`, opts);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Nesting API ${method} ${path} → ${res.status}: ${txt}`);
+  }
+  if (method === "DELETE") return null;
+  return res.json();
+}
+
+async function nestingStart(token, inputJson) {
+  const data = await _nestFetch(token, "/start", "POST", inputJson);
+  return data.JobId;
+}
+
+async function nestingPoll(token, jobId) {
+  return _nestFetch(token, `/${jobId}`);
+}
+
+async function nestingResult(token, jobId, version) {
+  return _nestFetch(token, `/${jobId}/result/${version}`);
+}
+
+async function nestingDelete(token, jobId) {
+  await _nestFetch(token, `/${jobId}`, "DELETE").catch(() => {});
+}
+
+// Orchestrator: start → poll 5s → get result → delete → return result
+// onProgress(pct 0-100, message)
+async function runNestingJob(inputJson, onProgress, getToken) {
+  let token = await getToken();
+  const jobId = await nestingStart(token, inputJson);
+  onProgress(5, `Job ${jobId} started…`);
+  const pollStart = Date.now();
+
+  while (true) {
+    await new Promise(r => setTimeout(r, 5000));
+    let status;
+    try {
+      token = await getToken(); // re-auth silently; if expired shows "logging in again"
+      status = await nestingPoll(token, jobId);
+    } catch (e) {
+      throw Object.assign(e, { jobId });
+    }
+    const elapsed = ((Date.now() - pollStart) / 1000).toFixed(1);
+    const pct = Math.min(90, 5 + Math.floor(elapsed / 0.2));
+    onProgress(pct, `Polling ${jobId} — ${elapsed}s`);
+
+    if (status.StateString === "Stopped") {
+      onProgress(95, "Fetching result…");
+      // Use latest ResultVersion (highest integer in status.Results array or fallback 1)
+      let latestVersion = 1;
+      if (Array.isArray(status.Results) && status.Results.length > 0) {
+        latestVersion = Math.max(...status.Results.map(r => r.ResultVersion || 0));
+      }
+      const result = await nestingResult(token, jobId, latestVersion);
+      await nestingDelete(token, jobId);
+      onProgress(100, "Complete");
+      return result;
+    }
+  }
+}
+
+// ─── NESTING CENTER — DXF FETCH HELPER ────────────────────────────────────────
+// Tries to fetch a DXF file URL and return base64 string, or null on failure.
+// Handles Google Drive share links by converting to direct download URL.
+async function fetchDxfBase64(url) {
+  if (!url) return null;
+  try {
+    let fetchUrl = url;
+    // Convert Google Drive view links to direct download
+    const driveMatch = url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
+    if (driveMatch) {
+      fetchUrl = `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
+    }
+    const res = await fetch(fetchUrl, { mode: "cors" });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  } catch (_) {
+    return null;
+  }
+}
+
+// ─── NESTING CENTER — BUILD INPUT ─────────────────────────────────────────────
+// sectionType: string from part.section ("PLATE","ISA","ISMB",etc.)
+// plateTypes: set of section strings considered plates
+const PLATE_SECTIONS = new Set(["PLATE","PLATES","PL","FLAT PLATE","CHECKER PLATE"]);
+
+function isPlateSection(section) {
+  return PLATE_SECTIONS.has((section||"").toUpperCase().trim());
+}
+
+// Build the API input JSON for one matCode group.
+// parts: [{ markNo, length, width, qtyPerDrg, partLink, section, ... }]
+// rawMaterials: [{ length, width, qty, name }] — sheets for plates, bars for sections
+// machineName: string
+// batchId: string
+// dxfMap: { markNo: base64string|null } — pre-fetched DXF content
+async function buildNestingInput(parts, rawMaterials, machineName, batchId, dxfMap = {}) {
+  const isPlate = parts.length > 0 && isPlateSection(parts[0].section);
+
+  // Deduplicate parts by markNo — API wants unique Names, Quantity = total across drawings
+  const partMap = {};
+  parts.forEach(p => {
+    if (!partMap[p.markNo]) partMap[p.markNo] = { ...p, totalQty: 0 };
+    partMap[p.markNo].totalQty += (p.qtyPerDrg || 0);
+  });
+  const uniqueParts = Object.values(partMap);
+
+  // Check if any part has a valid DXF
+  const hasDxfParts = uniqueParts.some(p => dxfMap[p.markNo]);
+
+  const apiParts = uniqueParts.map(p => {
+    const b64 = dxfMap[p.markNo];
+    if (b64) {
+      return {
+        Name: p.markNo,
+        DxfProfile: b64,
+        Quantity: p.totalQty
+      };
+    }
+    return {
+      Name: p.markNo,
+      RectangularShape: {
+        Length: isPlate ? (p.length || 100) : (p.length || 100),
+        Width:  isPlate ? (p.width  || 100) : 100
+      },
+      Quantity: p.totalQty
+    };
+  });
+
+  let settings;
+  if (isPlate) {
+    settings = {
+      DistancePartPart: 5,
+      DistancePartRawPlate: 5,
+      RotationControl: hasDxfParts ? "Free" : "Fixed90",
+      MirrorControl: "Never",
+      NestingInHoles: false
+    };
+  } else {
+    // Sections/bars: use width=100 trick
+    settings = {
+      DistancePartPart: 5,
+      DistancePartRawPlate: 0,
+      RotationControl: "Never",
+      MirrorControl: "Never",
+      NestingInHoles: false
+    };
+  }
+
+  const apiRawPlates = rawMaterials.map((rm, i) => ({
+    Name: rm.name || `Sheet${i+1}`,
+    RectangularShape: {
+      Length: rm.length,
+      Width:  isPlate ? rm.width : 100
+    },
+    Quantity: rm.qty || 1
+  }));
+
+  const stopJson = hasDxfParts
+    ? { SmartStop: true, Timeout: 60000 }
+    : { AllPartsNested: true, SmartStop: true, Timeout: 10000 };
+
+  return {
+    Context: {
+      Settings: settings,
+      Problem: {
+        Parts: apiParts,
+        RawPlates: apiRawPlates
+      }
+    },
+    InputName: batchId,
+    MachineNameClient: machineName || "PLASMA-1",
+    StopJson: stopJson
+  };
+}
 
 // ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
 const T = {
@@ -2199,7 +2424,7 @@ const qcStatusBadge   = { approved:"green", pending:"gray", failed:"red", hold:"
 // ═══════════════════════════════════════════════════════════════════════════════
 // MRP MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches }) => {
+const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines }) => {
   const [view, setView] = useState("overview");
   const [expand, setExpand] = useState({});
   const [nestModal, setNestModal] = useState(null);
@@ -2407,7 +2632,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
     showToast(`Batch ${batchId} created — ${lots.length} lots, ${totalSheets} sheets, ${totalRmUnits} RM units`, "green");
   };
 
-  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} />;
+  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} machines={machines||[]} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} user={user} />;
 
   // ── Material Requirements computation (View 2) ───────────────────────────
   // Only include parts from drawings with receivedDate (same rule as byOrder overview).
@@ -3071,14 +3296,29 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
 };
 
 // ─── MRP NESTING EXPORT VIEW ─────────────────────────────────────────────────
-const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds }) => {
+const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds, machines, nestingBatches, setNestingBatches, user }) => {
   const [sheet, setSheet] = useState("S1");
   const sheets = [
     { id:"S1", label:"Sheet 1 — Drawing Register" },
     { id:"S2", label:"Sheet 2 — Drawing Part List" },
     { id:"S3", label:"Sheet 3 — Available Stock" },
     { id:"S4", label:"Sheet 4 — Material Summary" },
+    { id:"S5", label:"Sheet 5 — Run API Nesting ★" },
   ];
+
+  // ── Sheet 5 state ────────────────────────────────────────────────────────
+  // nestGroups: array of { matCode, section, size, grade, parts[], rawMats[], checked, isPlate }
+  const [nestGroups, setNestGroups] = useState(null); // null = not yet built
+  const [nestMachine, setNestMachine] = useState("");
+  const [nestRunState, setNestRunState] = useState("idle"); // idle | running | done | error
+  const [nestProgress, setNestProgress] = useState({}); // matCode → { pct, msg }
+  const [nestResults, setNestResults] = useState({}); // matCode → API result object
+  const [nestErrors, setNestErrors] = useState({}); // matCode → error string
+  const [nestDxfMap, setNestDxfMap] = useState({}); // matCode → { markNo: base64|null }
+  const [nestDxfStatus, setNestDxfStatus] = useState({}); // matCode → { total, fetched, failed }
+  const [nestConfirmed, setNestConfirmed] = useState(false);
+  const [nestBatchId, setNestBatchId] = useState("");
+  const [nestAuthMsg, setNestAuthMsg] = useState("");
 
   // Filter to selected drawings (selectedDrawingIds=null means all received drawings)
   const selIds = selectedDrawingIds; // Set<drawingId> or null
@@ -3162,6 +3402,231 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
     XLSX.writeFile(wb, `NEST-PLN-${orderPart}-${datePart}.xlsx`);
   };
 
+  // ── Sheet 5 helpers ──────────────────────────────────────────────────────────
+
+  // Generate next NEST-PLN batch ID
+  const genBatchId = () => {
+    const yr = new Date().getFullYear();
+    let max = 0;
+    (nestingBatches||[]).forEach(b=>{
+      const m=(b.id||"").match(/^NEST-PLN-(\d{4})-(\d+)$/);
+      if(m&&+m[1]===yr) max=Math.max(max,+m[2]);
+    });
+    return `NEST-PLN-${yr}-${String(max+1).padStart(3,"0")}`;
+  };
+
+  // Default raw material configs per section type
+  const defaultRawMats = (section) => {
+    if (isPlateSection(section)) {
+      return [
+        { name:"Sheet A", length:2500, width:1250, qty:10 },
+        { name:"Sheet B", length:6000, width:1500, qty:5  },
+        { name:"Sheet C", length:3000, width:1500, qty:5  },
+      ];
+    }
+    return [
+      { name:"Bar 6m",  length:6000,  width:100, qty:20 },
+      { name:"Bar 12m", length:12000, width:100, qty:10 },
+    ];
+  };
+
+  // Build nest groups from allParts — called when user first opens Sheet 5
+  const buildNestGroups = () => {
+    const gMap = {};
+    allParts.filter(p=>p.fabType==="Fabricate"&&(p.source==="Procure"||p.source==="Stock")).forEach(p=>{
+      const key = p.matCode || `${p.section}|${p.grade}|${p.size}`;
+      if (!gMap[key]) {
+        gMap[key] = {
+          matCode: key,
+          section: p.section||"",
+          size: p.size||"",
+          grade: p.grade||"",
+          isPlate: isPlateSection(p.section),
+          parts: [],
+          rawMats: defaultRawMats(p.section||""),
+          checked: true,
+          expanded: false,
+        };
+      }
+      // Deduplicate by markNo — accumulate qty
+      const existing = gMap[key].parts.find(x=>x.markNo===p.markNo);
+      if (existing) {
+        existing.qtyPerDrg += (p.qtyPerDrg||0);
+      } else {
+        gMap[key].parts.push({ markNo:p.markNo, desc:p.desc, length:p.length||0, width:p.width||0, qtyPerDrg:p.qtyPerDrg||0, partLink:p.partLink||"", section:p.section||"" });
+      }
+    });
+    return Object.values(gMap);
+  };
+
+  const updateGroup = (matCode, updater) =>
+    setNestGroups(prev => prev.map(g => g.matCode===matCode ? {...g, ...updater(g)} : g));
+
+  const updateRawMat = (matCode, idx, field, val) =>
+    updateGroup(matCode, g => {
+      const rm = g.rawMats.map((r,i)=>i===idx?{...r,[field]:val}:r);
+      return { rawMats: rm };
+    });
+
+  const addRawMat = (matCode, isPlate) =>
+    updateGroup(matCode, g => ({
+      rawMats: [...g.rawMats, isPlate ? { name:`Sheet ${g.rawMats.length+1}`, length:2500, width:1250, qty:5 } : { name:`Bar ${g.rawMats.length+1}`, length:6000, width:100, qty:10 }]
+    }));
+
+  const removeRawMat = (matCode, idx) =>
+    updateGroup(matCode, g => ({ rawMats: g.rawMats.filter((_,i)=>i!==idx) }));
+
+  // Main run handler
+  const handleRunNesting = async () => {
+    const checkedGroups = (nestGroups||[]).filter(g=>g.checked);
+    if (checkedGroups.length === 0) return;
+    const batchId = genBatchId();
+    setNestBatchId(batchId);
+    setNestRunState("running");
+    setNestProgress({});
+    setNestResults({});
+    setNestErrors({});
+    setNestAuthMsg("");
+
+    const machine = nestMachine || (machines||[]).find(m=>m.type==="Cutting")?.name || "PLASMA-1";
+
+    for (const group of checkedGroups) {
+      const mc = group.matCode;
+      // Step 1: fetch DXF files for this group's parts
+      const partsWithLinks = group.parts.filter(p=>p.partLink);
+      setNestProgress(prev=>({...prev, [mc]:{pct:2, msg:`Fetching ${partsWithLinks.length} DXF file(s)…`}}));
+      const dxfMap = {};
+      let fetched = 0, failed = 0;
+      for (const p of partsWithLinks) {
+        const b64 = await fetchDxfBase64(p.partLink);
+        if (b64) { dxfMap[p.markNo] = b64; fetched++; }
+        else { failed++; }
+      }
+      setNestDxfStatus(prev=>({...prev,[mc]:{total:partsWithLinks.length,fetched,failed}}));
+      setNestDxfMap(prev=>({...prev,[mc]:dxfMap}));
+
+      // Step 2: build input + run
+      try {
+        const input = await buildNestingInput(group.parts, group.rawMats, machine, batchId, dxfMap);
+        setNestProgress(prev=>({...prev,[mc]:{pct:5,msg:"Authenticating with Nesting Center…"}}));
+
+        let retried = false;
+        const getToken = async () => {
+          const inst = await _getMsalInstance();
+          const accounts = inst.getAllAccounts();
+          if (accounts.length > 0) {
+            try {
+              const r = await inst.acquireTokenSilent({ scopes:_nestingScopes, account:accounts[0] });
+              return r.accessToken;
+            } catch(_){}
+          }
+          if (retried) {
+            setNestAuthMsg("Nesting Center session expired — logging in again…");
+          }
+          retried = true;
+          const r = await inst.acquireTokenPopup({ scopes:_nestingScopes });
+          setNestAuthMsg("");
+          return r.accessToken;
+        };
+
+        const result = await runNestingJob(
+          input,
+          (pct, msg) => setNestProgress(prev=>({...prev,[mc]:{pct,msg}})),
+          getToken
+        );
+        setNestResults(prev=>({...prev,[mc]:{ result, partsOrder: input.Context.Problem.Parts }}));
+      } catch(e) {
+        setNestErrors(prev=>({...prev,[mc]:e.message||"Unknown error"}));
+      }
+    }
+    setNestRunState("done");
+  };
+
+  // Derive batch lots from results and save to nestingBatches
+  const handleConfirmBatch = () => {
+    const batchId = nestBatchId || genBatchId();
+    const checkedGroups = (nestGroups||[]).filter(g=>g.checked);
+    const lots = checkedGroups.map(group => {
+      const mc = group.matCode;
+      const res = nestResults[mc];
+      if (!res) return null;
+      const { result, partsOrder } = res;
+      const rawPlatesNested = result?.Result?.RawPlatesNested || [];
+      const totalSheets = rawPlatesNested.length;
+      const np = result?.Result?.NP ?? 0;
+      const scrapPct = result?.Result?.Scrap ?? 0;
+
+      const sheets = rawPlatesNested.map((rp, idx) => {
+        const rm = group.rawMats[rp.RawPlateIndex] || group.rawMats[0] || {};
+        const sheetDim = group.isPlate ? `${rm.length}×${rm.width}` : `${rm.length}mm`;
+        const parts = (rp.PartsNested||[]).reduce((acc, pn) => {
+          const p = partsOrder?.[pn.PartIndex];
+          if (p) {
+            const qty = pn.Quantity ?? 1;
+            const existing = acc.find(a=>a.markNo===p.Name);
+            if (existing) existing.qty += qty;
+            else acc.push({ markNo: p.Name, qty });
+          }
+          return acc;
+        }, []);
+        const rmUnitId = `${mc}/${sheetDim}/${idx+1}-${totalSheets}`;
+        return { sheetNo: idx+1, sheetDim, utilisPct: rp.LengthUsed != null ? +((1 - rp.Scrap)*100).toFixed(1) : np, parts, rmUnitId };
+      });
+
+      const safeId = mc.replace(/[^a-zA-Z0-9]/g,"-");
+      return {
+        lotId: `${batchId}-${safeId}`,
+        matCode: mc,
+        sheets,
+        parts: sheets.flatMap(s=>s.parts.map(p=>p.markNo)).filter((v,i,a)=>a.indexOf(v)===i),
+        npPct: +np.toFixed(1),
+        scrapPct: +scrapPct.toFixed(1),
+      };
+    }).filter(Boolean);
+
+    const yr = new Date().getFullYear();
+    let maxPln = 0;
+    (nestingBatches||[]).forEach(b=>{
+      const m=(b.id||"").match(/^NEST-PLN-(\d{4})-(\d+)$/);
+      if(m&&+m[1]===yr) maxPln=Math.max(maxPln,+m[2]);
+    });
+    const finalId = batchId || `NEST-PLN-${yr}-${String(maxPln+1).padStart(3,"0")}`;
+
+    const batch = {
+      id: finalId,
+      createdAt: new Date().toISOString().slice(0,10),
+      createdBy: user?.name||"",
+      status: "Planned",
+      source: "api",
+      apiJobs: [],
+      lots,
+    };
+    setNestingBatches(prev=>[...(prev||[]), batch]);
+    setNestConfirmed(true);
+  };
+
+  // Derive procurement summary from results (for Sheet 4 pre-fill)
+  const nestProcurement = {};
+  Object.entries(nestResults).forEach(([mc, res]) => {
+    const rp = res.result?.Result?.RawPlatesNested || [];
+    const group = (nestGroups||[]).find(g=>g.matCode===mc);
+    if (!group) return;
+    // Count sheets per raw material type
+    const rmCounts = {};
+    rp.forEach(r => {
+      const rmIdx = r.RawPlateIndex;
+      rmCounts[rmIdx] = (rmCounts[rmIdx]||0) + 1;
+    });
+    const lines = Object.entries(rmCounts).map(([rmIdx, count]) => {
+      const rm = group.rawMats[+rmIdx];
+      if (!rm) return null;
+      return group.isPlate
+        ? `${count} sheet${count>1?"s":""} of ${rm.length}×${rm.width}`
+        : `${count} bar${count>1?"s":""} of ${rm.length}mm`;
+    }).filter(Boolean);
+    nestProcurement[mc] = lines.join(", ");
+  });
+
   return (
     <div>
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
@@ -3239,7 +3704,10 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
 
       {sheet==="S4" && (
         <div style={{ overflowX:"auto" }}>
-          <InfoBanner color="amber">Sheet 4 — fill the yellow columns in the downloaded Excel file. Import back to create draft purchase requirements.</InfoBanner>
+          {Object.keys(nestProcurement).length > 0
+            ? <InfoBanner color="green">Nesting run complete — Qty to Order pre-filled from API results. Review and download Excel to finalise.</InfoBanner>
+            : <InfoBanner color="amber">Sheet 4 — fill the yellow columns in the downloaded Excel file. Import back to create draft purchase requirements. Run Sheet 5 API nesting first to auto-fill Qty to Order.</InfoBanner>
+          }
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
             <thead><tr>
               <TH>Mat Type</TH><TH>Grade</TH><TH>Section</TH><TH>Size</TH><TH right>Wt Required (kg)</TH><TH right>Wt Required (T)</TH>
@@ -3250,20 +3718,299 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
               <th style={{ padding:"7px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.amber, textTransform:"uppercase", borderBottom:`2px solid ${T.borderHi}`, background:T.amberBg }}>Remarks ▶</th>
               <TH>Approved Makes (auto)</TH>
             </tr></thead>
-            <tbody>{Object.values(matAgg).map((m,i)=>(
-              <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
-                <TD>{m.matType}</TD><TD mono>{m.grade}</TD><TD>{m.section}</TD><TD mono>{m.size}</TD>
-                <TD right mono bold color={T.gold}>{fmt.num(Math.round(m.wtRequired))}</TD>
-                <TD right mono color={T.accent}>{(m.wtRequired/1000).toFixed(3)}</TD>
-                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
-                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
-                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
-                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
-                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
-                <TD><span style={{ fontSize:11, color:T.textMid }}>{m.approvedMakes}</span></TD>
-              </tr>
-            ))}</tbody>
+            <tbody>{Object.values(matAgg).map((m,i)=>{
+              const procFill = nestProcurement[m.matType&&m.grade&&m.section&&m.size ? Object.keys(nestProcurement).find(k=>k.includes(m.size)&&k.includes(m.grade)) : null];
+              return (
+                <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
+                  <TD>{m.matType}</TD><TD mono>{m.grade}</TD><TD>{m.section}</TD><TD mono>{m.size}</TD>
+                  <TD right mono bold color={T.gold}>{fmt.num(Math.round(m.wtRequired))}</TD>
+                  <TD right mono color={T.accent}>{(m.wtRequired/1000).toFixed(3)}</TD>
+                  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:procFill?T.greenBg:T.amberBg }}>
+                    {procFill ? <span style={{ color:T.green, fontSize:11, fontWeight:600 }}>{procFill}</span> : <span style={{ color:T.amber, fontSize:11 }}>— fill —</span>}
+                  </td>
+                  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
+                  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
+                  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
+                  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, background:T.amberBg }}><span style={{ color:T.amber, fontSize:11 }}>— fill —</span></td>
+                  <TD><span style={{ fontSize:11, color:T.textMid }}>{m.approvedMakes}</span></TD>
+                </tr>
+              );
+            })}</tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── SHEET 5: API NESTING ───────────────────────────────────────────── */}
+      {sheet==="S5" && (
+        <div>
+          {/* Auth message */}
+          {nestAuthMsg && (
+            <InfoBanner color="amber">{nestAuthMsg}</InfoBanner>
+          )}
+
+          {/* Confirmed banner */}
+          {nestConfirmed && (
+            <InfoBanner color="green">
+              ✓ Batch <strong>{nestBatchId}</strong> saved to Nesting Runs. View in MRP → Nesting Runs tab.
+            </InfoBanner>
+          )}
+
+          {/* Section A: Material Groups */}
+          <div style={{ marginBottom:16 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Section A — Material Groups</div>
+              {!nestGroups && (
+                <button onClick={()=>setNestGroups(buildNestGroups())} style={{ ...css.btn.sm, background:T.accent, color:"#fff", borderColor:T.accent }}>
+                  Load Groups ({allParts.filter(p=>p.fabType==="Fabricate"&&(p.source==="Procure"||p.source==="Stock")).length} parts)
+                </button>
+              )}
+              {nestGroups && <span style={{ fontSize:12, color:T.textMid }}>{nestGroups.length} material group{nestGroups.length!==1?"s":""} · {nestGroups.filter(g=>g.checked).length} selected</span>}
+            </div>
+
+            {nestGroups && nestGroups.map(group => {
+              const mc = group.matCode;
+              const dxfCount = group.parts.filter(p=>p.partLink).length;
+              const noDxfCount = group.parts.length - dxfCount;
+              const dxfStat = nestDxfStatus[mc];
+              return (
+                <div key={mc} style={{ ...css.card, marginBottom:8, borderColor: group.checked ? T.borderHi : T.border, opacity: group.checked ? 1 : 0.5 }}>
+                  {/* Group header */}
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom: group.expanded ? 12 : 0 }}>
+                    <input type="checkbox" checked={group.checked} onChange={e=>updateGroup(mc,()=>({checked:e.target.checked}))} />
+                    <div style={{ flex:1 }}>
+                      <span style={{ fontWeight:700, color:T.text, fontSize:13 }}>{mc}</span>
+                      <span style={{ marginLeft:10, fontSize:11, color:T.textMid }}>
+                        {group.isPlate ? "Plate" : "Section"} · {group.parts.length} unique parts · {group.parts.reduce((s,p)=>s+(p.qtyPerDrg||0),0)} total pcs
+                      </span>
+                    </div>
+                    {/* DXF indicator */}
+                    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                      {dxfCount > 0 && <Badge color="green">{dxfCount} DXF linked</Badge>}
+                      {noDxfCount > 0 && <Badge color="gray">{noDxfCount} rect approx</Badge>}
+                      {dxfStat && dxfStat.failed > 0 && <Badge color="amber">{dxfStat.failed} DXF fetch failed</Badge>}
+                    </div>
+                    {noDxfCount > 0 && dxfCount > 0 && (
+                      <span style={{ fontSize:10, color:T.amber }}>⚠ {noDxfCount} part{noDxfCount>1?"s":""} have no DXF — rectangular approx used</span>
+                    )}
+                    {noDxfCount > 0 && dxfCount === 0 && group.isPlate && (
+                      <span style={{ fontSize:10, color:T.amber }}>⚠ {noDxfCount} part{noDxfCount>1?"s":""} have no DXF — rectangular approximation, may overestimate sheet count</span>
+                    )}
+                    <button onClick={()=>updateGroup(mc,g=>({expanded:!g.expanded}))} style={{ ...css.btn.ghost, padding:"2px 8px", fontSize:11, color:T.textMid }}>
+                      {group.expanded ? "▲ Collapse" : "▼ Configure"}
+                    </button>
+                  </div>
+
+                  {/* Expanded: raw material config */}
+                  {group.expanded && (
+                    <div>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>
+                        {group.isPlate ? "Plate / Sheet Sizes" : "Bar Lengths"} — enter available raw material for nesting
+                      </div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, marginBottom:8 }}>
+                        <thead><tr>
+                          <TH>Name</TH>
+                          <TH right>{group.isPlate?"Length (mm)":"Length (mm)"}</TH>
+                          {group.isPlate && <TH right>Width (mm)</TH>}
+                          <TH right>Qty Available</TH>
+                          <TH></TH>
+                        </tr></thead>
+                        <tbody>{group.rawMats.map((rm,idx)=>(
+                          <tr key={idx} style={{ background:idx%2===0?"transparent":T.bg }}>
+                            <td style={{ padding:"4px 8px", borderBottom:`1px solid ${T.border}` }}>
+                              <input value={rm.name} onChange={e=>updateRawMat(mc,idx,"name",e.target.value)} style={{ background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 6px", color:T.text, fontSize:12, width:100, fontFamily:T.font }} />
+                            </td>
+                            <td style={{ padding:"4px 8px", borderBottom:`1px solid ${T.border}` }}>
+                              <input type="number" value={rm.length} onChange={e=>updateRawMat(mc,idx,"length",+e.target.value)} style={{ background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 6px", color:T.text, fontSize:12, width:80, fontFamily:T.fontMono }} />
+                            </td>
+                            {group.isPlate && (
+                              <td style={{ padding:"4px 8px", borderBottom:`1px solid ${T.border}` }}>
+                                <input type="number" value={rm.width} onChange={e=>updateRawMat(mc,idx,"width",+e.target.value)} style={{ background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 6px", color:T.text, fontSize:12, width:80, fontFamily:T.fontMono }} />
+                              </td>
+                            )}
+                            <td style={{ padding:"4px 8px", borderBottom:`1px solid ${T.border}` }}>
+                              <input type="number" value={rm.qty} onChange={e=>updateRawMat(mc,idx,"qty",+e.target.value)} style={{ background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 6px", color:T.text, fontSize:12, width:60, fontFamily:T.fontMono }} />
+                            </td>
+                            <td style={{ padding:"4px 8px", borderBottom:`1px solid ${T.border}` }}>
+                              <button onClick={()=>removeRawMat(mc,idx)} style={{ ...css.btn.ghost, padding:"1px 6px", fontSize:11, color:T.red }}>✕</button>
+                            </td>
+                          </tr>
+                        ))}</tbody>
+                      </table>
+                      <button onClick={()=>addRawMat(mc,group.isPlate)} style={{ ...css.btn.ghost, fontSize:11, padding:"3px 10px", color:T.accent }}>+ Add {group.isPlate?"Sheet Size":"Bar Length"}</button>
+
+                      {/* Parts list */}
+                      <div style={{ marginTop:12, fontSize:12, fontWeight:700, color:T.textMid, marginBottom:6 }}>Parts in this group</div>
+                      <div style={{ overflowX:"auto", maxHeight:160, overflowY:"auto" }}>
+                        <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+                          <thead><tr><TH>Mark No</TH><TH>Description</TH><TH right>L (mm)</TH>{group.isPlate&&<TH right>W (mm)</TH>}<TH right>Qty</TH><TH>DXF</TH></tr></thead>
+                          <tbody>{group.parts.map((p,i)=>(
+                            <tr key={p.markNo} style={{ background:i%2===0?"transparent":T.bg }}>
+                              <TD mono bold>{p.markNo}</TD><TD>{p.desc}</TD><TD right mono>{p.length||"—"}</TD>
+                              {group.isPlate && <TD right mono>{p.width||"—"}</TD>}
+                              <TD right mono>{p.qtyPerDrg}</TD>
+                              <td style={{ padding:"4px 8px", borderBottom:`1px solid ${T.border}` }}>
+                                {p.partLink ? <Badge color="green">DXF ✓</Badge> : <Badge color="gray">rect</Badge>}
+                              </td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Section B: Run Controls */}
+          {nestGroups && nestRunState !== "done" && (
+            <div style={{ ...css.card, marginBottom:16 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Section B — Run Controls</div>
+              <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
+                <div>
+                  <label style={css.label}>Machine (Nesting Center)</label>
+                  <select value={nestMachine} onChange={e=>setNestMachine(e.target.value)} style={{ background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:6, padding:"6px 10px", color:T.text, fontSize:13, fontFamily:T.font }}>
+                    <option value="">— Select machine —</option>
+                    {(machines||[]).filter(m=>m.type==="Cutting"&&m.active).map(m=>(
+                      <option key={m.id} value={m.name}>{m.name}</option>
+                    ))}
+                    {(machines||[]).filter(m=>m.type==="Cutting"&&m.active).length===0 && (
+                      <option value="PLASMA-1">PLASMA-1 (default)</option>
+                    )}
+                  </select>
+                </div>
+                <div>
+                  <label style={css.label}>Batch ID (auto)</label>
+                  <div style={{ fontFamily:T.fontMono, fontSize:13, color:T.accent, padding:"6px 0" }}>{genBatchId()}</div>
+                </div>
+                <button
+                  onClick={handleRunNesting}
+                  disabled={nestRunState==="running" || (nestGroups||[]).filter(g=>g.checked).length===0}
+                  style={{ ...css.btn.primary, background:T.green, borderColor:T.green, opacity:(nestRunState==="running"||(nestGroups||[]).filter(g=>g.checked).length===0)?0.4:1 }}
+                >
+                  {nestRunState==="running" ? "Running…" : `▶ Run Nesting (${(nestGroups||[]).filter(g=>g.checked).length} group${(nestGroups||[]).filter(g=>g.checked).length!==1?"s":""})`}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Section C: Progress */}
+          {nestRunState==="running" && (
+            <div style={{ ...css.card, marginBottom:16 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Section C — Progress</div>
+              {(nestGroups||[]).filter(g=>g.checked).map(group=>{
+                const mc = group.matCode;
+                const prog = nestProgress[mc];
+                const err = nestErrors[mc];
+                return (
+                  <div key={mc} style={{ marginBottom:12 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:4 }}>
+                      <span style={{ color:T.text, fontWeight:600 }}>{mc}</span>
+                      <span style={{ color:err?T.red:T.textMid, fontFamily:T.fontMono }}>{err ? `Error: ${err}` : (prog?.msg || "Queued…")}</span>
+                    </div>
+                    <div style={{ height:6, background:T.border, borderRadius:3, overflow:"hidden" }}>
+                      <div style={{ height:"100%", width:`${prog?.pct||0}%`, background:err?T.red:T.green, borderRadius:3, transition:"width 0.5s" }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Section D: Results */}
+          {nestRunState==="done" && Object.keys(nestResults).length > 0 && (
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Section D — Results</div>
+              {Object.entries(nestResults).map(([mc, res])=>{
+                const group = (nestGroups||[]).find(g=>g.matCode===mc);
+                const rp = res.result?.Result?.RawPlatesNested || [];
+                const np = res.result?.Result?.NP ?? 0;
+                const scrap = res.result?.Result?.Scrap ?? 0;
+                const totalSheets = rp.length;
+                const partsOrder = res.partsOrder || [];
+                const err = nestErrors[mc];
+                return (
+                  <div key={mc} style={{ ...css.card, marginBottom:10 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
+                      <span style={{ fontWeight:700, fontSize:13, color:T.text }}>{mc}</span>
+                      {err ? (
+                        <Badge color="red">Error</Badge>
+                      ) : (
+                        <>
+                          <Badge color="green">{totalSheets} sheet{totalSheets!==1?"s":""}</Badge>
+                          <Badge color="blue">{(np*100).toFixed(1)}% utilisation</Badge>
+                          <Badge color="amber">{(scrap*100).toFixed(1)}% scrap</Badge>
+                        </>
+                      )}
+                    </div>
+                    {err && <div style={{ fontSize:12, color:T.red }}>{err}</div>}
+                    {!err && rp.map((sheet, idx)=>{
+                      const rm = group?.rawMats[sheet.RawPlateIndex] || group?.rawMats[0] || {};
+                      const sheetDim = group?.isPlate ? `${rm.length}×${rm.width}` : `${rm.length}mm`;
+                      const rmUnitId = `${mc}/${sheetDim}/${idx+1}-${totalSheets}`;
+                      const sheetUtil = sheet.Scrap != null ? ((1-sheet.Scrap)*100).toFixed(1) : "—";
+                      // Build parts with qty
+                      const partsOnSheet = (sheet.PartsNested||[]).reduce((acc,pn)=>{
+                        const p = partsOrder[pn.PartIndex];
+                        if(p){ const qty=pn.Quantity??1; const ex=acc.find(a=>a.markNo===p.Name); if(ex)ex.qty+=qty; else acc.push({markNo:p.Name,qty}); }
+                        return acc;
+                      },[]);
+                      return (
+                        <div key={idx} style={{ background:T.bg, borderRadius:6, padding:"8px 12px", marginBottom:6, fontSize:12 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                            <span style={{ fontFamily:T.fontMono, fontSize:10, color:T.textMid }}>{rmUnitId}</span>
+                            <span style={{ color:T.textMid }}>·</span>
+                            <span style={{ color:T.text }}>Sheet {idx+1} ({sheetDim})</span>
+                            <span style={{ color:T.textMid }}>·</span>
+                            <span style={{ color:T.green }}>{sheetUtil}% utilised</span>
+                            <span style={{ color:T.textMid }}>·</span>
+                            <span style={{ color:T.textMid }}>{partsOnSheet.length} part type{partsOnSheet.length!==1?"s":""}</span>
+                          </div>
+                          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                            {partsOnSheet.map(p=>(
+                              <span key={p.markNo} style={{ background:T.bgCard, borderRadius:4, padding:"2px 7px", fontSize:11, fontFamily:T.fontMono, color:T.text }}>
+                                {p.markNo} ×{p.qty}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Section D: Errors */}
+          {nestRunState==="done" && Object.keys(nestErrors).length > 0 && Object.keys(nestResults).length === 0 && (
+            <div style={{ ...css.card, marginBottom:16 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.red, marginBottom:8 }}>All groups failed</div>
+              {Object.entries(nestErrors).map(([mc,err])=>(
+                <div key={mc} style={{ fontSize:12, color:T.red, marginBottom:4 }}><strong>{mc}:</strong> {err}</div>
+              ))}
+            </div>
+          )}
+
+          {/* Section E: Confirm */}
+          {nestRunState==="done" && Object.keys(nestResults).length > 0 && !nestConfirmed && (
+            <div style={{ ...css.card, background:T.greenBg, borderColor:T.green }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.green, marginBottom:8 }}>Section E — Confirm &amp; Save</div>
+              <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
+                Saving will create batch <strong style={{ color:T.text }}>{nestBatchId}</strong> with {Object.keys(nestResults).length} material lot{Object.keys(nestResults).length!==1?"s":""}. This will also pre-fill Sheet 4 procurement quantities.
+              </div>
+              <button onClick={handleConfirmBatch} style={{ ...css.btn.primary, background:T.green, borderColor:T.green }}>
+                ✓ Confirm &amp; Save Batch {nestBatchId}
+              </button>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!nestGroups && (
+            <InfoBanner color="blue">
+              Click "Load Groups" to analyse the selected drawings and build material groups for API nesting. Each group will be sent as a separate nesting job.
+            </InfoBanner>
+          )}
         </div>
       )}
     </div>
@@ -12150,7 +12897,7 @@ export default function App() {
   const renderMod = () => {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
-      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} />;
+      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
