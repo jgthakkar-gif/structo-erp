@@ -98,7 +98,9 @@ function nestingJustLoggedIn() {
 }
 
 // ─── NESTING CENTER — API SERVICE ─────────────────────────────────────────────
-const NESTING_BASE = "https://api-nesting.nestingcenter.com/nesting";
+// In dev: Vite proxy forwards /nesting-api → https://api-nesting.nestingcenter.com/nesting
+// (avoids CORS — browser talks to localhost, Vite relays server-side)
+const NESTING_BASE = "/nesting-api";
 
 async function _nestFetch(token, path, method = "GET", body = null) {
   const opts = {
