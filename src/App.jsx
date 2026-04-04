@@ -3,17 +3,21 @@ import * as XLSX from 'xlsx';
 import * as msal from "@azure/msal-browser";
 
 // ─── NESTING CENTER — MSAL AUTH ───────────────────────────────────────────────
+// Authority: OIDC v2.0 endpoint format (without legacy /tfp/ prefix)
 const _msalConfig = {
   auth: {
     clientId: "14bc1c96-d677-4a08-8a07-68725b6bd732",
-    authority: "https://starsoftonline.b2clogin.com/tfp/starsoftonline.onmicrosoft.com/B2C_1_Sign",
+    authority: "https://starsoftonline.b2clogin.com/starsoftonline.onmicrosoft.com/B2C_1_Sign/v2.0",
     knownAuthorities: ["starsoftonline.b2clogin.com"],
-    redirectUri: window.location.origin,
+    redirectUri: "http://localhost:5173",
+    postLogoutRedirectUri: "http://localhost:5173",
   },
   cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false }
 };
 const _nestingScopes = ["https://starsoftonline.onmicrosoft.com/81588f52-db64-40bd-8096-e75159abdd9a/NestingCenter"];
 let _msalInstance = null;
+let _msalRedirectResult = null;
+let _msalRedirectHandled = false;
 
 async function _getMsalInstance() {
   if (!_msalInstance) {
@@ -23,17 +27,64 @@ async function _getMsalInstance() {
   return _msalInstance;
 }
 
+// Handle redirect return on page load (fires once, stores result for getToken to consume)
+(async () => {
+  try {
+    const inst = await _getMsalInstance();
+    const result = await inst.handleRedirectPromise();
+    if (result) _msalRedirectResult = result;
+  } catch(e) {
+    console.warn("MSAL handleRedirectPromise error:", e);
+  } finally {
+    _msalRedirectHandled = true;
+  }
+})();
+
+async function _awaitRedirectHandled() {
+  if (_msalRedirectHandled) return;
+  await new Promise(resolve => {
+    const t = setInterval(() => { if (_msalRedirectHandled) { clearInterval(t); resolve(); } }, 50);
+  });
+}
+
+// Returns access token. Throws with .msalErrorCode on failure.
 async function getNestingToken() {
+  await _awaitRedirectHandled();
+
+  // Consume redirect result if available (returned from acquireTokenRedirect flow)
+  if (_msalRedirectResult) {
+    const token = _msalRedirectResult.accessToken;
+    _msalRedirectResult = null;
+    return token;
+  }
+
   const inst = await _getMsalInstance();
   const accounts = inst.getAllAccounts();
   if (accounts.length > 0) {
     try {
       const r = await inst.acquireTokenSilent({ scopes: _nestingScopes, account: accounts[0] });
       return r.accessToken;
-    } catch (_) { /* fall through */ }
+    } catch (_) { /* fall through to interactive */ }
   }
-  const r = await inst.acquireTokenPopup({ scopes: _nestingScopes });
-  return r.accessToken;
+
+  // Try popup first
+  try {
+    const r = await inst.acquireTokenPopup({ scopes: _nestingScopes });
+    return r.accessToken;
+  } catch (popupErr) {
+    const code = popupErr.errorCode || popupErr.name || "unknown";
+    // Attach structured info for UI to display
+    const err = new Error(`[${code}] ${popupErr.errorMessage || popupErr.message || ""}`);
+    err.msalErrorCode = code;
+    err.isMsalError = true;
+    throw err;
+  }
+}
+
+// Initiates a full-page redirect login (call from UI button)
+async function initiateNestingRedirect() {
+  const inst = await _getMsalInstance();
+  await inst.acquireTokenRedirect({ scopes: _nestingScopes });
 }
 
 // ─── NESTING CENTER — API SERVICE ─────────────────────────────────────────────
@@ -3319,6 +3370,9 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
   const [nestConfirmed, setNestConfirmed] = useState(false);
   const [nestBatchId, setNestBatchId] = useState("");
   const [nestAuthMsg, setNestAuthMsg] = useState("");
+  const [nestManualToken, setNestManualToken] = useState("");
+  const [nestShowManualToken, setNestShowManualToken] = useState(false);
+  const [nestMsalError, setNestMsalError] = useState(""); // last MSAL error code/message
 
   // Filter to selected drawings (selectedDrawingIds=null means all received drawings)
   const selIds = selectedDrawingIds; // Set<drawingId> or null
@@ -3487,8 +3541,11 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
     setNestResults({});
     setNestErrors({});
     setNestAuthMsg("");
+    setNestMsalError("");
 
     const machine = nestMachine || (machines||[]).find(m=>m.type==="Cutting")?.name || "PLASMA-1";
+    // Capture manual token at run start (may be blank)
+    const manualTok = nestManualToken.trim();
 
     for (const group of checkedGroups) {
       const mc = group.matCode;
@@ -3510,23 +3567,23 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
         const input = await buildNestingInput(group.parts, group.rawMats, machine, batchId, dxfMap);
         setNestProgress(prev=>({...prev,[mc]:{pct:5,msg:"Authenticating with Nesting Center…"}}));
 
-        let retried = false;
+        // getToken: use manual token if provided, else MSAL with auto re-prompt on expiry
+        let firstAuthDone = false;
         const getToken = async () => {
-          const inst = await _getMsalInstance();
-          const accounts = inst.getAllAccounts();
-          if (accounts.length > 0) {
-            try {
-              const r = await inst.acquireTokenSilent({ scopes:_nestingScopes, account:accounts[0] });
-              return r.accessToken;
-            } catch(_){}
+          if (manualTok) return manualTok;
+          try {
+            const tok = await getNestingToken();
+            if (!firstAuthDone) { firstAuthDone = true; setNestAuthMsg(""); }
+            return tok;
+          } catch(authErr) {
+            const code = authErr.msalErrorCode || authErr.name || "unknown";
+            setNestMsalError(`${code}: ${authErr.message||""}`);
+            if (!firstAuthDone) {
+              setNestAuthMsg("Nesting Center session expired — logging in again…");
+            }
+            // Re-throw so runNestingJob surfaces it as a group error
+            throw authErr;
           }
-          if (retried) {
-            setNestAuthMsg("Nesting Center session expired — logging in again…");
-          }
-          retried = true;
-          const r = await inst.acquireTokenPopup({ scopes:_nestingScopes });
-          setNestAuthMsg("");
-          return r.accessToken;
         };
 
         const result = await runNestingJob(
@@ -3534,9 +3591,13 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
           (pct, msg) => setNestProgress(prev=>({...prev,[mc]:{pct,msg}})),
           getToken
         );
+        setNestAuthMsg("");
         setNestResults(prev=>({...prev,[mc]:{ result, partsOrder: input.Context.Problem.Parts }}));
       } catch(e) {
-        setNestErrors(prev=>({...prev,[mc]:e.message||"Unknown error"}));
+        const msg = e.isMsalError
+          ? `Auth failed [${e.msalErrorCode||"?"}] — ${e.message}`
+          : (e.message||"Unknown error");
+        setNestErrors(prev=>({...prev,[mc]:msg}));
       }
     }
     setNestRunState("done");
@@ -3866,6 +3927,46 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
           {nestGroups && nestRunState !== "done" && (
             <div style={{ ...css.card, marginBottom:16 }}>
               <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Section B — Run Controls</div>
+
+              {/* MSAL error display */}
+              {nestMsalError && (
+                <div style={{ background:T.redBg, border:`1px solid ${T.red}`, borderRadius:6, padding:"8px 12px", marginBottom:12, fontSize:12 }}>
+                  <div style={{ color:T.red, fontWeight:700, marginBottom:4 }}>Nesting Center auth error</div>
+                  <div style={{ fontFamily:T.fontMono, color:T.red, wordBreak:"break-all" }}>{nestMsalError}</div>
+                  <div style={{ marginTop:8, display:"flex", gap:8 }}>
+                    <button onClick={()=>initiateNestingRedirect()} style={{ ...css.btn.sm, background:T.accent, color:"#fff", borderColor:T.accent }}>
+                      Try full-page redirect login
+                    </button>
+                    <button onClick={()=>{ setNestMsalError(""); setNestShowManualToken(true); }} style={{ ...css.btn.sm }}>
+                      Paste token manually
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Manual token paste */}
+              {nestShowManualToken && (
+                <div style={{ background:T.amberBg, border:`1px solid ${T.amber}`, borderRadius:6, padding:"10px 14px", marginBottom:12 }}>
+                  <div style={{ fontSize:12, color:T.amber, fontWeight:700, marginBottom:6 }}>Manual Bearer Token (testing bypass)</div>
+                  <div style={{ fontSize:11, color:T.textMid, marginBottom:8 }}>
+                    Paste a token obtained from the Python script or another source. The token will be used directly, bypassing MSAL.
+                  </div>
+                  <textarea
+                    value={nestManualToken}
+                    onChange={e=>setNestManualToken(e.target.value)}
+                    placeholder="eyJ0eXAiOiJKV1QiLCJhbGci..."
+                    rows={3}
+                    style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.borderHi}`, borderRadius:4, padding:"6px 8px", color:T.text, fontSize:11, fontFamily:T.fontMono, resize:"vertical", boxSizing:"border-box" }}
+                  />
+                  <div style={{ marginTop:6, display:"flex", gap:8, alignItems:"center" }}>
+                    {nestManualToken.trim() && <Badge color="green">Token set — MSAL will be bypassed</Badge>}
+                    {nestManualToken.trim() && (
+                      <button onClick={()=>{ setNestManualToken(""); setNestShowManualToken(false); }} style={{ ...css.btn.ghost, fontSize:11, color:T.red, padding:"2px 8px" }}>Clear token</button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
                 <div>
                   <label style={css.label}>Machine (Nesting Center)</label>
@@ -3883,13 +3984,20 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
                   <label style={css.label}>Batch ID (auto)</label>
                   <div style={{ fontFamily:T.fontMono, fontSize:13, color:T.accent, padding:"6px 0" }}>{genBatchId()}</div>
                 </div>
-                <button
-                  onClick={handleRunNesting}
-                  disabled={nestRunState==="running" || (nestGroups||[]).filter(g=>g.checked).length===0}
-                  style={{ ...css.btn.primary, background:T.green, borderColor:T.green, opacity:(nestRunState==="running"||(nestGroups||[]).filter(g=>g.checked).length===0)?0.4:1 }}
-                >
-                  {nestRunState==="running" ? "Running…" : `▶ Run Nesting (${(nestGroups||[]).filter(g=>g.checked).length} group${(nestGroups||[]).filter(g=>g.checked).length!==1?"s":""})`}
-                </button>
+                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  <button
+                    onClick={handleRunNesting}
+                    disabled={nestRunState==="running" || (nestGroups||[]).filter(g=>g.checked).length===0}
+                    style={{ ...css.btn.primary, background:nestManualToken.trim()?T.amber:T.green, borderColor:nestManualToken.trim()?T.amber:T.green, opacity:(nestRunState==="running"||(nestGroups||[]).filter(g=>g.checked).length===0)?0.4:1 }}
+                  >
+                    {nestRunState==="running" ? "Running…" : `▶ Run Nesting (${(nestGroups||[]).filter(g=>g.checked).length} group${(nestGroups||[]).filter(g=>g.checked).length!==1?"s":""})`}
+                  </button>
+                  {!nestShowManualToken && !nestMsalError && (
+                    <button onClick={()=>setNestShowManualToken(true)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:10, color:T.textLow, textDecoration:"underline", textAlign:"left", fontFamily:T.font, padding:0 }}>
+                      Paste token manually
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
