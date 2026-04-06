@@ -1310,6 +1310,9 @@ const PO_LINE_COLS = [
 
 const normalize = s => (s||'').toLowerCase().split('x').map(seg => /^\d+\.0$/.test(seg) ? seg.replace('.0','') : seg).join('x');
 
+// Normalize matCode for fuzzy comparison: lowercase + strip trailing "mm" (e.g. "PLATE/MS/E250/8MM" → "plate/ms/e250/8")
+const normMatCode = mc => (mc||"").toLowerCase().replace(/mm$/, "");
+
 const parsePOLineCSV = (text, materials) => {
   const clean = (text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
   const lines = clean.split("\n").map(l =>
@@ -11244,10 +11247,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       });
     });
     const rows = Object.values(byMat).map(row => {
-      const availLots = stock.filter(s=>
-        (s.matCode===row.matCode||(s.sectionType||s.section)===row.section)&&
-        (s.status==="available"||s.status==="qc_hold"||s.status==="reserved"||s.status==="partially_reserved")
-      );
+      const availLots = stock.filter(s=>{
+        // Primary: normalized matCode match (handles MM-suffix and case differences)
+        // Fallback: sectionType match only for lots with no matCode set
+        const sNorm = normMatCode(s.matCode), rNorm = normMatCode(row.matCode);
+        const matMatch = (sNorm && rNorm) ? sNorm===rNorm
+          : (!s.matCode && (s.sectionType||s.section||"").toUpperCase()===(row.section||"").toUpperCase());
+        return matMatch && (s.status==="available"||s.status==="qc_hold"||s.status==="reserved"||s.status==="partially_reserved");
+      });
       const availKg = availLots.reduce((s,l)=>(s+(l.wtAvailable||l.wtReceived||0)),0);
       let status = "Not in stock — raise PO";
       if (availKg >= row.requiredKg && row.requiredKg > 0) status = "Sufficient";
@@ -11796,10 +11803,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                         (l.status==='reserved'||l.status==='partially_reserved') &&
                         ((l.reservedFor===pid)||(l.reservations||[]).some(rv=>rv.orderId===pid))
                       );
-                      const avail = r.lots.filter(l => l.status==='available');
+                      const avail   = r.lots.filter(l => l.status==='available');
+                      const qcHold  = r.lots.filter(l => l.status==='qc_hold');
                       return [
                         ...forThis.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg) — Reserved for this order ✓</option>),
                         ...avail.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg) — Available</option>),
+                        ...qcHold.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtReceived||0).toFixed(0)} kg) — QC Pending</option>),
                       ];
                     })()}
                   </select>
