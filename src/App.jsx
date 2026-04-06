@@ -11073,8 +11073,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const buildProductionSteps = (drawing, order, machAsgnSnap, contAsgnSnap, confirmedOpsSnap) => {
     const q = order.quality || {};
     const tpiHolds = new Set(q.tpiHoldPoints || []);
-    const paintSpecs = q.paintSpecs || [];
-    const allCoats = paintSpecs.flatMap(s => s.coats || []);
+    const allCoats = getPaintCoats(order.quality); // reuse existing utility
     const ca = contAsgnSnap[drawing.id] || {};
     const contractorId = ca.contractorId || "";
 
@@ -11112,9 +11111,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   };
 
   // ── Step 1 helpers ──
-  const activeReleaseDrawingIds = new Set(
-    releases.filter(r=>r.status==="in_progress").flatMap(r=>(r.drawings||[]).map(d=>d.drawingId).filter(Boolean))
+  // Build Map(drawingId → releaseId) once — O(n) — avoids O(n×m) per-drawing scan below
+  const activeReleaseDrawingMap = new Map(
+    releases.filter(r=>r.status==="in_progress").flatMap(r=>
+      (r.drawings||[]).filter(d=>d.drawingId).map(d=>[d.drawingId, r.id])
+    )
   );
+  const activeReleaseDrawingIds = new Set(activeReleaseDrawingMap.keys());
+
   const allEligible = orders.flatMap(order =>
     (order.drawings||[]).filter(d=>d.receivedDate && !activeReleaseDrawingIds.has(d.id))
       .map(d=>({ drawingId:d.id, orderId:order.id, drawing:d, order }))
@@ -11137,11 +11141,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   );
   const alreadyReleasedDrawings = orders.flatMap(order =>
     (order.drawings||[]).filter(d=>d.receivedDate && activeReleaseDrawingIds.has(d.id))
-      .map(d=>{
-        const releaseId = (releases||[]).filter(r=>r.status==="in_progress")
-          .find(r=>(r.drawings||[]).some(rd=>rd.drawingId===d.id))?.id||"";
-        return { drawing:d, order, releaseId };
-      })
+      .map(d=>({ drawing:d, order, releaseId: activeReleaseDrawingMap.get(d.id)||"" }))
   );
 
   const toggleDrw = key => setSelDrawings(prev => {
@@ -11654,6 +11654,15 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const Step4 = () => {
     const todayISO   = new Date().toISOString().slice(0,10);
     const twoDaysISO = new Date(Date.now()+2*864e5).toISOString().slice(0,10);
+    const missingMachine = rmPicture.filter(r=>r.status!=="Not in stock — raise PO").some(r=>!(machineAsgn[r.matCode]?.machineId));
+    // Pre-group fabricate parts by matCode once — avoids O(matCodes × drawings × parts) inside the map below
+    const partsByMatCode = {};
+    selDrawings.forEach(({drawing, order}) => {
+      (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").forEach(p => {
+        if (!partsByMatCode[p.matCode]) partsByMatCode[p.matCode] = [];
+        partsByMatCode[p.matCode].push({p, drawingNo:drawing.drawingNo});
+      });
+    });
     return (
     <div>
       <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 4 — Assign Machines</div>
@@ -11748,10 +11757,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             })()}
           {/* FIX 2: Required Ops per part — editable checkboxes */}
           {avail && (() => {
-            const batchParts = selDrawings.flatMap(({drawing, order}) =>
-              (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.matCode===r.matCode&&p.fabType==="Fabricate")
-                .map(p=>({p, drawingNo:drawing.drawingNo}))
-            );
+            const batchParts = partsByMatCode[r.matCode] || [];
             if (!batchParts.length) return null;
             const ALL_OPS = ['Cut','Bevel','Drill','Grind'];
             return (
@@ -11785,18 +11791,15 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         </div>
         );
       })}
-      {/* FIX 6: Validate machine assigned for available materials before proceeding */}
-      {(() => {
+      {missingMachine && (() => {
         const unassigned = rmPicture.filter(r=>r.status!=="Not in stock — raise PO"&&!(machineAsgn[r.matCode]?.machineId));
-        return unassigned.length > 0 ? (
-          <InfoBanner color="amber">Assign a machine for: {unassigned.map(r=>r.matCode).join(", ")} before continuing.</InfoBanner>
-        ) : null;
+        return <InfoBanner color="amber">Assign a machine for: {unassigned.map(r=>r.matCode).join(", ")} before continuing.</InfoBanner>;
       })()}
       <div style={{ marginTop:16, display:"flex", gap:8 }}>
         <button onClick={()=>setStep(3)} style={css.btn.ghost}>← Back</button>
         <button onClick={()=>setStep(5)}
-          disabled={rmPicture.filter(r=>r.status!=="Not in stock — raise PO").some(r=>!(machineAsgn[r.matCode]?.machineId))}
-          style={rmPicture.filter(r=>r.status!=="Not in stock — raise PO").some(r=>!(machineAsgn[r.matCode]?.machineId))?{...css.btn.primary,opacity:0.45,cursor:"not-allowed"}:css.btn.primary}>
+          disabled={missingMachine}
+          style={missingMachine?{...css.btn.primary,opacity:0.45,cursor:"not-allowed"}:css.btn.primary}>
           Next: Assign Contractors →
         </button>
       </div>
@@ -11810,7 +11813,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     {id:"blasting",label:"Blasting"},{id:"painting",label:"Painting"},
   ];
 
-  const Step5 = () => (
+  const Step5 = () => {
+    const missingContractor = selDrawings.some(({drawingId}) => {
+      const ca = contAsgn[drawingId] || {};
+      return (ca.stages||[]).some(s=>['fitup','welding'].includes(s)) && !ca.contractorId;
+    });
+    return (
     <div>
       <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 5 — Assign Contractors</div>
       <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>Assign contractors to each drawing and optionally pin a production engineer.</div>
@@ -11856,26 +11864,24 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           </div>
         );
       })}
-      {(() => {
+      {missingContractor && (() => {
         const missing = selDrawings.filter(({drawingId}) => {
           const ca = contAsgn[drawingId] || {};
-          const stages = ca.stages || [];
-          return stages.some(s=>['fitup','welding'].includes(s)) && !ca.contractorId;
+          return (ca.stages||[]).some(s=>['fitup','welding'].includes(s)) && !ca.contractorId;
         });
-        return missing.length > 0 ? (
-          <InfoBanner color="amber">Contractor required for fit-up/welding drawings: {missing.map(s=>s.drawing?.drawingNo||s.drawingId).join(", ")}</InfoBanner>
-        ) : null;
+        return <InfoBanner color="amber">Contractor required for fit-up/welding drawings: {missing.map(s=>s.drawing?.drawingNo||s.drawingId).join(", ")}</InfoBanner>;
       })()}
       <div style={{ marginTop:16, display:"flex", gap:8 }}>
         <button onClick={()=>setStep(4)} style={css.btn.ghost}>← Back</button>
         <button onClick={confirm}
-          disabled={selDrawings.some(({drawingId}) => { const ca=contAsgn[drawingId]||{}; return (ca.stages||[]).some(s=>['fitup','welding'].includes(s))&&!ca.contractorId; })}
-          style={selDrawings.some(({drawingId}) => { const ca=contAsgn[drawingId]||{}; return (ca.stages||[]).some(s=>['fitup','welding'].includes(s))&&!ca.contractorId; })?{...css.btn.green,opacity:0.45,cursor:"not-allowed"}:css.btn.green}>
+          disabled={missingContractor}
+          style={missingContractor?{...css.btn.green,opacity:0.45,cursor:"not-allowed"}:css.btn.green}>
           ✓ Create Release
         </button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div>
