@@ -11046,7 +11046,7 @@ const PRI_BADGE = score => {
 
 const TIER_COLOR = { simple:"blue", medium:"green", complex:"amber", heavy:"red" };
 
-const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, contractors, releases, setReleases, productionStandards, instances, onBack }) => {
+const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, onBack }) => {
   const today = () => new Date().toISOString().slice(0,10);
   const [step, setStep] = useState(1);
 
@@ -11062,24 +11062,87 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
   const [addedSugg, setAddedSugg] = useState({});
   const [expandedDrg, setExpandedDrg] = useState(new Set());
 
-  // Step 4 — machine assignments
-  const [machineAsgn, setMachineAsgn] = useState({}); // {matCode: {machineId,lotId,startDate,endDate}}
+  // Step 4 — machine assignments + confirmed required ops
+  const [machineAsgn, setMachineAsgn] = useState({}); // {matCode: {machineId,lotId,startDate,endDate,secondaryAssignments}}
+  const [confirmedOps, setConfirmedOps] = useState({}); // {partId: string[]} — binding ops confirmed in Step 4
 
   // Step 5 — contractor assignments
   const [contAsgn, setContAsgn] = useState({}); // {drawingId: {contractorId,stages:[],pinnedEngineerId}}
 
+  // ── buildProductionSteps — generates the full stage sequence for a drawing ──
+  const buildProductionSteps = (drawing, order, machAsgnSnap, contAsgnSnap, confirmedOpsSnap) => {
+    const q = order.quality || {};
+    const tpiHolds = new Set(q.tpiHoldPoints || []);
+    const paintSpecs = q.paintSpecs || [];
+    const allCoats = paintSpecs.flatMap(s => s.coats || []);
+    const ca = contAsgnSnap[drawing.id] || {};
+    const contractorId = ca.contractorId || "";
+
+    // machineId: first matCode for this drawing
+    const drawingMatCodes = (order.parts || [])
+      .filter(p => p.drawingId === drawing.id && p.fabType === "Fabricate")
+      .map(p => p.matCode).filter(Boolean);
+    const machineId = drawingMatCodes.length > 0
+      ? (machAsgnSnap[drawingMatCodes[0]]?.machineId || "") : "";
+
+    // confirmed ops across all parts in this drawing
+    const drawingParts = (order.parts || []).filter(p => p.drawingId === drawing.id && p.fabType === "Fabricate");
+    const allOps = new Set(drawingParts.flatMap(p => confirmedOpsSnap[p.id] || p.requiredOps || ['Cut']));
+    const secOps = [...allOps].filter(op => op !== 'Cut');
+
+    const steps = [];
+    steps.push({ stage:'nesting',     status:'pending', completedAt:null, completedBy:null });
+    steps.push({ stage:'cutting',     status:'pending', machineId, operatorId:null, rmUnits:[], completedAt:null });
+    steps.push({ stage:'cutting_qc',  status:'pending', completedAt:null, completedBy:null });
+    if (secOps.length > 0)
+      steps.push({ stage:'secondary_ops', status:'pending', ops:secOps, completedAt:null });
+    steps.push({ stage:'fit_up',  status:'pending', contractorId, tpiRequired:tpiHolds.has('fit_up'),  tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    steps.push({ stage:'welding', status:'pending', contractorId, tpiRequired:tpiHolds.has('welding'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    steps.push({ stage:'blasting',status:'pending', contractorId:"",  tpiRequired:tpiHolds.has('blasting'),tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    if (allCoats.length > 0) {
+      allCoats.forEach((coat, i) => {
+        steps.push({ stage:`paint_coat_${i+1}`, status:'pending', coatName:coat.type||`Coat ${i+1}`, contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+      });
+    } else {
+      steps.push({ stage:'paint_coat_1', status:'pending', coatName:'Paint', contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    }
+    steps.push({ stage:'mdcc',     status:'pending', appliedAt:null, receivedAt:null });
+    steps.push({ stage:'dispatch', status:'pending', completedAt:null });
+    return steps;
+  };
+
   // ── Step 1 helpers ──
   const activeReleaseDrawingIds = new Set(
-    releases.filter(r=>r.status==="in_progress").flatMap(r=>r.drawings.map(d=>d.drawingId))
+    releases.filter(r=>r.status==="in_progress").flatMap(r=>(r.drawings||[]).map(d=>d.drawingId).filter(Boolean))
   );
   const allEligible = orders.flatMap(order =>
     (order.drawings||[]).filter(d=>d.receivedDate && !activeReleaseDrawingIds.has(d.id))
       .map(d=>({ drawingId:d.id, orderId:order.id, drawing:d, order }))
-  ).map(e=>({
-    ...e,
-    tier: productionStandards ? getAssemblyTier(e.drawing, productionStandards) : {id:"simple",label:"Simple"},
-    score: productionStandards ? getCriticalityScore(e.drawing, e.order, productionStandards) : 999,
-  })).sort((a,b)=>a.score-b.score);
+  ).map(e=>{
+    let tier = {id:"simple",label:"Simple"};
+    let score = 999;
+    try {
+      if (productionStandards) {
+        tier  = getAssemblyTier(e.drawing, productionStandards);
+        score = getCriticalityScore(e.drawing, e.order, productionStandards);
+      }
+    } catch {}
+    return { ...e, tier, score };
+  }).sort((a,b)=>a.score-b.score);
+
+  // Drawings excluded from eligibility — shown read-only in Step 1 for diagnostics
+  const noDateDrawings = orders.flatMap(order =>
+    (order.drawings||[]).filter(d=>!d.receivedDate)
+      .map(d=>({ drawing:d, order }))
+  );
+  const alreadyReleasedDrawings = orders.flatMap(order =>
+    (order.drawings||[]).filter(d=>d.receivedDate && activeReleaseDrawingIds.has(d.id))
+      .map(d=>{
+        const releaseId = (releases||[]).filter(r=>r.status==="in_progress")
+          .find(r=>(r.drawings||[]).some(rd=>rd.drawingId===d.id))?.id||"";
+        return { drawing:d, order, releaseId };
+      })
+  );
 
   const toggleDrw = key => setSelDrawings(prev => {
     const exists = prev.find(s=>s.drawingId===key.drawingId&&s.orderId===key.orderId);
@@ -11212,29 +11275,66 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
     const seq  = releases.length + 1;
     const yr   = new Date().getFullYear();
     const id   = `PR-${yr}-${String(seq).padStart(3,"0")}`;
+    const machAsgnSnap = machineAsgn;
+    const contAsgnSnap = contAsgn;
+    const confirmedOpsSnap = confirmedOps;
+
+    // FIX 1: Write productionSteps to each drawing.
+    // FIX 2: Write confirmed requiredOps back to part records.
+    setOrders(prevOrders => prevOrders.map(ord => {
+      const affected = selDrawings.filter(s => s.orderId === ord.id);
+      if (!affected.length) return ord;
+      const updatedParts = (ord.parts || []).map(p => {
+        const ops = confirmedOpsSnap[p.id];
+        return ops ? { ...p, requiredOps: ops } : p;
+      });
+      const updatedDrawings = (ord.drawings || []).map(drg => {
+        const sel = affected.find(s => s.drawingId === drg.id);
+        if (!sel) return drg;
+        const steps = buildProductionSteps(drg, ord, machAsgnSnap, contAsgnSnap, confirmedOpsSnap);
+        return { ...drg, productionSteps: steps };
+      });
+      return { ...ord, parts: updatedParts, drawings: updatedDrawings };
+    }));
+
+    // FIX 3: Mark assigned stock lots as 'allocated'.
+    const assignedLotIds = new Set(Object.values(machineAsgn).map(a => a.lotId).filter(Boolean));
+    if (assignedLotIds.size > 0)
+      setStock(prevStock => prevStock.map(lot =>
+        assignedLotIds.has(lot.id) ? { ...lot, status: 'allocated' } : lot
+      ));
+
+    // FIX 4: Contractor stages persisted via ca.stages in drawingsPayload.
     const drawingsPayload = selDrawings.map(({drawing, order, tier, score}) => {
-      const ca = contAsgn[drawing.id]||{};
+      const ca = contAsgnSnap[drawing.id] || {};
       return {
         drawingId: drawing.id, drawingNo: drawing.drawingNo, orderId: order.id, orderNo: order.id,
-        contractorId: ca.contractorId||"", contractorName: (contractors||[]).find(c=>c.id===ca.contractorId)?.name||"",
-        stages: ca.stages||[], pinnedEngineerId: ca.pinnedEngineerId||"",
-        pinnedEngineerName: ca.pinnedEngineerId ? (USERS.find(u=>u.id===ca.pinnedEngineerId)?.name||"") : "",
-        tier: tier?.id||"simple", criticalityScore: score,
+        contractorId: ca.contractorId || "",
+        contractorName: (contractors || []).find(c => c.id === ca.contractorId)?.name || "",
+        stages: ca.stages || [],
+        pinnedEngineerId: ca.pinnedEngineerId || "",
+        pinnedEngineerName: ca.pinnedEngineerId ? (USERS.find(u => u.id === ca.pinnedEngineerId)?.name || "") : "",
+        tier: tier?.id || "simple", criticalityScore: score,
       };
     });
+    // FIX 5: Include secondaryAssignments in machine payload.
     const machinePayload = Object.entries(machineAsgn).map(([matCode, a]) => ({
       id: `MA-${id}-${matCode}`, matCode,
-      machineId: a.machineId||"", machineName: (machines||[]).find(m=>m.id===a.machineId)?.name||"",
-      lotId: a.lotId||"", startDate: a.startDate||"", endDate: a.endDate||"",
-      assignedBy: user.username, status:"pending",
+      machineId: a.machineId || "",
+      machineName: (machines || []).find(m => m.id === a.machineId)?.name || "",
+      lotId: a.lotId || "",
+      startDate: a.startDate || "",
+      endDate: a.endDate || "",
+      secondaryAssignments: a.secondaryAssignments || [],
+      assignedBy: user.username, status: "pending",
     }));
-    const rmPayload = rmPicture.map(r=>({
+    const rmPayload = rmPicture.map(r => ({
       matCode: r.matCode, requiredKg: r.requiredKg, requiredM: r.requiredM,
       availableKg: r.availableKg, status: r.status,
-      lots: r.lots.map(l=>l.id),
+      lots: r.lots.map(l => l.id),
     }));
-    setReleases(prev=>[...prev,{
-      id, releaseDate: today(), createdBy: user.username, status:"in_progress",
+    setReleases(prev => [...prev, {
+      id, releaseDate: today(), createdBy: user.username, status: "in_progress",
       drawings: drawingsPayload, machineAssignments: machinePayload, rmPicture: rmPayload,
     }]);
     onBack();
@@ -11345,6 +11445,33 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {/* Drawings already in an active release — explain exclusion */}
+      {alreadyReleasedDrawings.length > 0 && (
+        <div style={{ marginTop:14 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>EXCLUDED — ALREADY IN ACTIVE RELEASE</div>
+          {alreadyReleasedDrawings.map(({drawing, order, releaseId})=>(
+            <div key={drawing.id} style={{ display:"flex", gap:8, alignItems:"center", padding:"5px 8px", background:T.bgInput, borderRadius:4, marginBottom:4, fontSize:11, opacity:0.65 }}>
+              <span style={{ fontFamily:T.fontMono, color:T.accentHi, minWidth:120 }}>{drawing.drawingNo}</span>
+              <span style={{ color:T.textMid }}>{order.id}</span>
+              {releaseId && <Badge color="blue">{releaseId}</Badge>}
+              <span style={{ color:T.amber }}>Complete or cancel that release first</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Drawings pending receipt — explain exclusion */}
+      {noDateDrawings.length > 0 && (
+        <div style={{ marginTop:14 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>EXCLUDED — NO RECEIVED DATE (set in Orders → Drawing Register)</div>
+          {noDateDrawings.map(({drawing, order})=>(
+            <div key={drawing.id} style={{ display:"flex", gap:8, alignItems:"center", padding:"5px 8px", background:T.bgInput, borderRadius:4, marginBottom:4, fontSize:11, opacity:0.5 }}>
+              <span style={{ fontFamily:T.fontMono, color:T.accentHi, minWidth:120 }}>{drawing.drawingNo}</span>
+              <span style={{ color:T.textMid }}>{order.id}</span>
+              <Badge color="amber">Pending receipt</Badge>
+            </div>
+          ))}
         </div>
       )}
       <div style={{ marginTop:16, display:"flex", gap:8, alignItems:"center" }}>
@@ -11619,12 +11746,59 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                 </div>
               );
             })()}
-          </div>
+          {/* FIX 2: Required Ops per part — editable checkboxes */}
+          {avail && (() => {
+            const batchParts = selDrawings.flatMap(({drawing, order}) =>
+              (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.matCode===r.matCode&&p.fabType==="Fabricate")
+                .map(p=>({p, drawingNo:drawing.drawingNo}))
+            );
+            if (!batchParts.length) return null;
+            const ALL_OPS = ['Cut','Bevel','Drill','Grind'];
+            return (
+              <div style={{ marginTop:12, borderTop:`1px solid ${T.border}`, paddingTop:10 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>REQUIRED OPS PER PART</div>
+                {batchParts.map(({p, drawingNo}) => {
+                  const ops = confirmedOps[p.id] || p.requiredOps || ['Cut'];
+                  return (
+                    <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:6, fontSize:11, flexWrap:"wrap" }}>
+                      <span style={{ fontFamily:T.fontMono, color:T.accentHi, minWidth:80 }}>{p.markNo}</span>
+                      <span style={{ color:T.textLow, minWidth:60, fontSize:10 }}>{drawingNo}</span>
+                      <span style={{ color:T.textMid, minWidth:120 }}>{p.description||""}</span>
+                      {ALL_OPS.map(op => {
+                        const checked = ops.includes(op);
+                        return (
+                          <label key={op} style={{ display:"flex", alignItems:"center", gap:3, cursor:"pointer", color:checked?T.accent:T.textLow }}>
+                            <input type="checkbox" checked={checked} onChange={e=>{
+                              const newOps = e.target.checked ? [...new Set([...ops,op])] : ops.filter(x=>x!==op);
+                              setConfirmedOps(prev=>({...prev,[p.id]:newOps}));
+                            }} />
+                            {op}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
         );
       })}
+      {/* FIX 6: Validate machine assigned for available materials before proceeding */}
+      {(() => {
+        const unassigned = rmPicture.filter(r=>r.status!=="Not in stock — raise PO"&&!(machineAsgn[r.matCode]?.machineId));
+        return unassigned.length > 0 ? (
+          <InfoBanner color="amber">Assign a machine for: {unassigned.map(r=>r.matCode).join(", ")} before continuing.</InfoBanner>
+        ) : null;
+      })()}
       <div style={{ marginTop:16, display:"flex", gap:8 }}>
         <button onClick={()=>setStep(3)} style={css.btn.ghost}>← Back</button>
-        <button onClick={()=>setStep(5)} style={css.btn.primary}>Next: Assign Contractors →</button>
+        <button onClick={()=>setStep(5)}
+          disabled={rmPicture.filter(r=>r.status!=="Not in stock — raise PO").some(r=>!(machineAsgn[r.matCode]?.machineId))}
+          style={rmPicture.filter(r=>r.status!=="Not in stock — raise PO").some(r=>!(machineAsgn[r.matCode]?.machineId))?{...css.btn.primary,opacity:0.45,cursor:"not-allowed"}:css.btn.primary}>
+          Next: Assign Contractors →
+        </button>
       </div>
     </div>
     );
@@ -11682,9 +11856,23 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
           </div>
         );
       })}
+      {(() => {
+        const missing = selDrawings.filter(({drawingId}) => {
+          const ca = contAsgn[drawingId] || {};
+          const stages = ca.stages || [];
+          return stages.some(s=>['fitup','welding'].includes(s)) && !ca.contractorId;
+        });
+        return missing.length > 0 ? (
+          <InfoBanner color="amber">Contractor required for fit-up/welding drawings: {missing.map(s=>s.drawing?.drawingNo||s.drawingId).join(", ")}</InfoBanner>
+        ) : null;
+      })()}
       <div style={{ marginTop:16, display:"flex", gap:8 }}>
         <button onClick={()=>setStep(4)} style={css.btn.ghost}>← Back</button>
-        <button onClick={confirm} style={css.btn.green}>✓ Create Release</button>
+        <button onClick={confirm}
+          disabled={selDrawings.some(({drawingId}) => { const ca=contAsgn[drawingId]||{}; return (ca.stages||[]).some(s=>['fitup','welding'].includes(s))&&!ca.contractorId; })}
+          style={selDrawings.some(({drawingId}) => { const ca=contAsgn[drawingId]||{}; return (ca.stages||[]).some(s=>['fitup','welding'].includes(s))&&!ca.contractorId; })?{...css.btn.green,opacity:0.45,cursor:"not-allowed"}:css.btn.green}>
+          ✓ Create Release
+        </button>
       </div>
     </div>
   );
@@ -12511,7 +12699,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const ProductionModule = ({ user, instances, setInstances, orders, stock, setStock,
+const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, machines, contractors, materials, vendors, tpiAgencies,
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests }) => {
   const [view, setView]           = useState("dashboard");
@@ -12536,7 +12724,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
 
   // ── Release creation wizard ──
   if (view==="release_new") return (
-    <ProductionReleaseWizard user={user} orders={orders} stock={stock} materials={materials||[]}
+    <ProductionReleaseWizard user={user} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} materials={materials||[]}
       machines={machines} contractors={contractors} releases={releases||[]} setReleases={setReleases}
       productionStandards={productionStandards} instances={instances||[]} onBack={()=>setView("dashboard")} />
   );
@@ -13041,7 +13229,7 @@ export default function App() {
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
