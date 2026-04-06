@@ -12304,9 +12304,10 @@ const DSC_STAGE_LABELS = {
   mdcc:'MDCC', dispatch:'Dispatch',
 };
 
-const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, releases, instances, machines, contractors, onBack }) => {
+const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, releases, instances, machines, contractors, nestingBatches, onBack }) => {
   const [expandedStage, setExpandedStage]   = useState(null);
-  const [expandedLots, setExpandedLots]     = useState(new Set());
+  const [expandedMcRow, setExpandedMcRow]   = useState(null);   // matCode string or null
+  const [expandedRmUnits, setExpandedRmUnits] = useState(new Set()); // Set of rmUnitId
   const [reworkModal, setReworkModal]       = useState(null); // { partId, markNo }
   const [reworkReason, setReworkReason]     = useState("");
   const [reworkDecision, setReworkDecision] = useState("rework");
@@ -12499,8 +12500,8 @@ const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, rel
         <div style={secBody}>
           {rmRows.length===0 && <div style={{color:T.textLow,fontSize:12}}>No fabricate parts requiring RM for this drawing.</div>}
           {rmRows.length>0 && (
-            <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr 1.5fr", gap:6, padding:"0 0 4px", borderBottom:`1px solid ${T.border}` }}>
-              {["MAT CODE","RM UNITS","RECEIVED","QC STATUS","TPI","RESERVED","LOCATION"].map(h=>(
+            <div style={{ display:"grid", gridTemplateColumns:"20px 2fr 1fr 1fr 1fr 1fr 1fr 1.5fr", gap:6, padding:"0 0 4px", borderBottom:`1px solid ${T.border}` }}>
+              {["","MAT CODE","RM UNITS","RECEIVED","QC STATUS","TPI","RESERVED","LOCATION"].map(h=>(
                 <div key={h} style={{fontSize:10,color:T.textLow,fontWeight:700}}>{h}</div>
               ))}
             </div>
@@ -12509,16 +12510,29 @@ const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, rel
             const qcC = r.qcStatus==="approved"?T.green:r.qcStatus==="partial"?T.amber:r.qcStatus==="none"?T.red:T.amber;
             const qcL = r.qcStatus==="approved"?"✅ Approved":r.qcStatus==="partial"?"⚡ Partial":r.qcStatus==="none"?"❌ None":"⏳ Pending";
             const reservedKg = r.lots.filter(l=>["reserved","partially_reserved","allocated","issued"].includes(l.status)).reduce((s,l)=>s+(l.wtReceived||0),0);
+            const isRowExp = expandedMcRow === r.mc;
+            const toggleRow = () => setExpandedMcRow(p => p===r.mc ? null : r.mc);
+
+            // Nesting batch data for this matCode
+            const nestBatchLot = (nestingBatches||[]).flatMap(b=>b.lots||[]).find(l=>l.matCode===r.mc);
+            const nestSheets   = nestBatchLot?.sheets||[];
+            const drgMarkNos   = new Set(drawingParts.map(p=>p.markNo));
+            const relevantSheets = nestSheets.filter(sh=>(sh.parts||[]).some(p=>drgMarkNos.has(p.markNo)));
+
             return (
               <div key={r.mc}>
-                <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr 1fr 1fr 1.5fr", gap:6, alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${T.border}44` }}>
+                {/* ── Clickable row ── */}
+                <div
+                  onClick={toggleRow}
+                  style={{ display:"grid", gridTemplateColumns:"20px 2fr 1fr 1fr 1fr 1fr 1fr 1.5fr", gap:6, alignItems:"center",
+                    padding:"8px 0", borderBottom:`1px solid ${T.border}44`, cursor:"pointer",
+                    background:isRowExp?`${T.accent}08`:"transparent" }}>
+                  <div style={{fontSize:10,color:T.textMid,userSelect:"none"}}>{isRowExp?"▼":"▶"}</div>
                   <div style={{fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>{r.mc}</div>
-                  <div>
+                  <div style={{fontSize:11,color:T.textMid}}>
                     {r.lots.length>0
-                      ? <button onClick={()=>setExpandedLots(s=>{const n=new Set(s);n.has(r.mc)?n.delete(r.mc):n.add(r.mc);return n;})} style={{...css.btn.sm,fontSize:10,padding:"1px 6px"}}>
-                          {r.lots.length} lot{r.lots.length!==1?"s":""} {expandedLots.has(r.mc)?"▲":"▼"}
-                        </button>
-                      : <span style={{fontSize:11,color:T.textLow}}>No lot assigned</span>}
+                      ? `${r.lots.length} lot${r.lots.length!==1?"s":""}`
+                      : <span style={{color:T.textLow}}>No lot</span>}
                   </div>
                   <div style={{fontSize:11,color:r.receivedKg>0?T.text:T.textLow}}>{r.receivedKg.toFixed(0)} kg</div>
                   <div style={{fontSize:11,color:qcC,fontWeight:600}}>{qcL}</div>
@@ -12526,16 +12540,104 @@ const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, rel
                   <div style={{fontSize:11,color:reservedKg>0?T.green:T.textLow}}>{reservedKg.toFixed(0)} kg</div>
                   <div style={{fontSize:11,color:T.textMid}}>{r.location}</div>
                 </div>
-                {expandedLots.has(r.mc) && r.lots.length>0 && (
-                  <div style={{padding:"6px 0 6px 12px",background:`${T.accent}06`,borderBottom:`1px solid ${T.border}44`}}>
-                    {r.lots.map(l=>(
-                      <div key={l.id} style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr 1fr",gap:8,padding:"3px 0",fontSize:11}}>
-                        <span style={{fontFamily:T.fontMono,color:T.accentHi}}>{l.lotNo||l.id}</span>
-                        <span style={{color:T.textMid}}>{l.sectionType} {l.size}</span>
-                        <span style={{color:T.textMid}}>{(l.wtReceived||0).toFixed(1)} kg</span>
-                        <Badge color={l.status==="available"?"green":["reserved","partially_reserved"].includes(l.status)?"amber":l.status==="allocated"?"blue":"gray"}>{l.status.replace("_"," ")}</Badge>
+
+                {/* ── Expanded panel ── */}
+                {isRowExp && (
+                  <div style={{padding:"10px 12px 12px 28px",background:`${T.accent}06`,borderBottom:`1px solid ${T.border}44`}}>
+                    {/* Case 1: no lot assigned */}
+                    {r.lots.length===0 && (
+                      <div style={{fontSize:11,color:T.textLow,fontStyle:"italic"}}>
+                        No lot assigned yet — pending Release Wizard or floor nesting
                       </div>
-                    ))}
+                    )}
+
+                    {/* Case 2: lot assigned, no nesting batch */}
+                    {r.lots.length>0 && relevantSheets.length===0 && (() => {
+                      const l = r.assignedLot || r.lots[0];
+                      return (
+                        <div>
+                          <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6}}>LOT DETAILS</div>
+                          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,fontSize:11,marginBottom:8}}>
+                            <div><span style={{color:T.textLow}}>Lot ID </span><span style={{fontFamily:T.fontMono,color:T.accentHi}}>{l.lotNo||l.id}</span></div>
+                            <div><span style={{color:T.textLow}}>Total weight </span><span style={{color:T.text}}>{(l.wtReceived||0).toFixed(0)} kg</span></div>
+                            <div><span style={{color:T.textLow}}>Status </span><Badge color={["reserved","partially_reserved"].includes(l.status)?"amber":l.status==="allocated"?"blue":l.status==="available"?"green":"gray"}>{l.status.replace("_"," ")}</Badge></div>
+                            <div><span style={{color:T.textLow}}>Bay </span><span style={{color:T.text}}>{l.bayId||"—"}</span></div>
+                          </div>
+                          <div style={{fontSize:11,color:T.amber,fontStyle:"italic"}}>
+                            RM units pending — floor nesting not yet run
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Case 3: nesting batch with RM units */}
+                    {relevantSheets.length>0 && (
+                      <div>
+                        <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6}}>RM UNITS ({relevantSheets.length})</div>
+                        <div style={{display:"grid",gridTemplateColumns:"20px 2fr 1.5fr 1fr 1.5fr",gap:6,padding:"3px 0",borderBottom:`1px solid ${T.border}66`,marginBottom:4}}>
+                          {["","RM Unit ID","Dimensions","Parts","Cut Status"].map((h,i)=>(
+                            <div key={i} style={{fontSize:9,color:T.textLow,fontWeight:700}}>{h}</div>
+                          ))}
+                        </div>
+                        {relevantSheets.map(sh => {
+                          const shParts = (sh.parts||[]).filter(p=>drgMarkNos.has(p.markNo));
+                          const totalQty = shParts.reduce((s,p)=>s+(p.qty||1),0);
+                          const cutQty   = shParts.filter(p=>{
+                            const ps = partsStatus.find(x=>x.markNo===p.markNo);
+                            return !!ps?.cutAt;
+                          }).reduce((s,p)=>s+(p.qty||1),0);
+                          const isUnitExp = expandedRmUnits.has(sh.rmUnitId||sh.sheetNo);
+                          const toggleUnit = (e) => {
+                            e.stopPropagation();
+                            const uid = sh.rmUnitId||sh.sheetNo;
+                            setExpandedRmUnits(prev=>{ const n=new Set(prev); n.has(uid)?n.delete(uid):n.add(uid); return n; });
+                          };
+                          return (
+                            <div key={sh.rmUnitId||sh.sheetNo}>
+                              <div onClick={toggleUnit} style={{display:"grid",gridTemplateColumns:"20px 2fr 1.5fr 1fr 1.5fr",gap:6,padding:"5px 0",borderBottom:`1px solid ${T.border}33`,cursor:"pointer",alignItems:"center"}}>
+                                <div style={{fontSize:10,color:T.textMid}}>{isUnitExp?"▼":"▶"}</div>
+                                <div style={{fontFamily:T.fontMono,fontSize:10,color:T.accentHi}}>{sh.rmUnitId||`Sheet ${sh.sheetNo}`}</div>
+                                <div style={{fontSize:10,color:T.textMid}}>{sh.sheetDim||"—"}</div>
+                                <div style={{fontSize:10,color:T.text}}>{shParts.length} parts</div>
+                                <div style={{fontSize:10,color:cutQty>=totalQty&&totalQty>0?T.green:cutQty>0?T.amber:T.textMid}}>
+                                  {cutQty}/{totalQty} cut
+                                </div>
+                              </div>
+                              {isUnitExp && (
+                                <div style={{paddingLeft:24,paddingBottom:6,background:`${T.bg}88`}}>
+                                  <table style={{width:"100%",fontSize:10,borderCollapse:"collapse",marginTop:4}}>
+                                    <thead>
+                                      <tr style={{color:T.textLow}}>
+                                        <th style={{textAlign:"left",padding:"2px 6px"}}>Mark No</th>
+                                        <th style={{textAlign:"right",padding:"2px 6px"}}>Qty</th>
+                                        <th style={{textAlign:"left",padding:"2px 6px"}}>Drawing No</th>
+                                        <th style={{textAlign:"left",padding:"2px 6px"}}>Order</th>
+                                        <th style={{textAlign:"center",padding:"2px 6px"}}>Cut</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {shParts.map(pt=>{
+                                        const ps = partsStatus.find(x=>x.markNo===pt.markNo);
+                                        const cutDone = !!ps?.cutAt;
+                                        return (
+                                          <tr key={pt.markNo} style={{borderTop:`1px solid ${T.border}33`}}>
+                                            <td style={{padding:"3px 6px",fontFamily:T.fontMono,color:T.accentHi}}>{pt.markNo}</td>
+                                            <td style={{padding:"3px 6px",textAlign:"right",color:T.text}}>{pt.qty||1} pcs</td>
+                                            <td style={{padding:"3px 6px",fontFamily:T.fontMono,color:T.textMid}}>{drawing.drawingNo}</td>
+                                            <td style={{padding:"3px 6px",color:T.textMid}}>{order.id}</td>
+                                            <td style={{padding:"3px 6px",textAlign:"center"}}>{cutDone?<span style={{color:T.green}}>✅</span>:<span style={{color:T.textLow}}>⏳</span>}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -12647,26 +12749,60 @@ const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, rel
             <>
               <div style={{display:"flex",overflowX:"auto",paddingBottom:8,alignItems:"flex-start"}}>
                 {steps.map((s,i) => {
-                  const sc   = colFor(s.status);
-                  const si   = iconFor(s.status);
-                  const isExp = expandedStage===i;
+                  const isBlocked   = !!(s.tpiRequired && s.tpiOfferedAt && !s.tpiDoneAt);
+                  const nodeState   = isBlocked ? 'blocked'
+                    : s.status==='completed' ? 'completed'
+                    : i===currentStepIdx      ? 'in_progress'
+                    : 'pending';
+                  const nc = nodeState==='completed'?T.green:nodeState==='in_progress'?T.amber:nodeState==='blocked'?T.red:T.textLow;
+                  const ni = nodeState==='completed'?'✓':nodeState==='in_progress'?'⬤':nodeState==='blocked'?'⏸':'○';
+                  const sz = nodeState==='in_progress'?36:30;
+                  const prevLine = i>0&&steps[i-1].status==='completed'?T.green:T.border;
+                  const nextLine = s.status==='completed'?T.green:T.border;
+                  const isExp    = expandedStage===i;
+                  const tpiWaitDays = s.tpiOfferedAt
+                    ? Math.max(0,Math.floor((Date.now()-new Date(s.tpiOfferedAt).getTime())/86400000))
+                    : 0;
+                  const completionLabel = s.completedAt ? (()=>{
+                    const d=new Date(s.completedAt);
+                    return `${d.getDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]}`;
+                  })() : null;
                   return (
-                    <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",minWidth:72,flexShrink:0}}>
+                    <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",minWidth:80,flexShrink:0}}>
                       <div style={{display:"flex",alignItems:"center",width:"100%"}}>
-                        {i>0 && <div style={{flex:1,height:2,background:steps[i-1].status==="completed"?T.green:T.border}} />}
+                        {i>0 && <div style={{flex:1,height:2,background:prevLine}} />}
                         <button
                           onClick={()=>setExpandedStage(isExp?null:i)}
-                          title={`${DSC_STAGE_LABELS[s.stage]||s.stage} — ${s.status}`}
-                          style={{width:30,height:30,borderRadius:"50%",border:`2px solid ${sc}`,background:s.status==="completed"?`${sc}33`:"transparent",color:sc,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontWeight:isExp?800:400}}>
-                          {si}
+                          title={`${DSC_STAGE_LABELS[s.stage]||s.stage} — ${nodeState}`}
+                          style={{width:sz,height:sz,borderRadius:"50%",border:`2px solid ${nc}`,
+                            background:nodeState==='completed'?`${nc}33`:nodeState==='in_progress'?`${nc}18`:'transparent',
+                            color:nc,fontSize:nodeState==='completed'?14:12,fontWeight:700,cursor:"pointer",
+                            display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+                            boxShadow:nodeState==='in_progress'?`0 0 8px ${nc}55`:'none'}}>
+                          {ni}
                         </button>
-                        {i<steps.length-1 && <div style={{flex:1,height:2,background:s.status==="completed"?T.green:T.border}} />}
+                        {i<steps.length-1 && <div style={{flex:1,height:2,background:nextLine}} />}
                       </div>
-                      <div style={{fontSize:9,color:sc,marginTop:4,textAlign:"center",maxWidth:68,lineHeight:1.2,fontWeight:s.status==="in_progress"?700:400}}>
+                      <div style={{fontSize:9,color:nc,marginTop:4,textAlign:"center",maxWidth:76,lineHeight:1.2,fontWeight:nodeState==='in_progress'?700:400}}>
                         {DSC_STAGE_LABELS[s.stage]||s.stage.replace(/_/g," ")}
                       </div>
-                      {s.completedAt && <div style={{fontSize:8,color:T.textLow,marginTop:1}}>{s.completedAt.slice(5,10)}</div>}
-                      {s.tpiRequired && <div style={{fontSize:8,color:s.tpiDoneAt?T.green:s.tpiOfferedAt?T.amber:T.textLow,marginTop:1}}>{s.tpiDoneAt?"TPI✅":s.tpiOfferedAt?"TPI⚡":"TPI⏳"}</div>}
+                      {nodeState==='completed'&&completionLabel&&(
+                        <div style={{fontSize:8,color:T.green,marginTop:1}}>{completionLabel}</div>
+                      )}
+                      {nodeState==='in_progress'&&(
+                        <div style={{fontSize:8,color:T.amber,marginTop:1,fontWeight:700}}>Day {Math.max(1,daysAtStage+1)}</div>
+                      )}
+                      {nodeState==='blocked'&&(
+                        <div style={{fontSize:8,color:T.red,marginTop:1}}>TPI {tpiWaitDays}d wait</div>
+                      )}
+                      {s.tpiRequired===true&&(
+                        <div style={{fontSize:8,color:s.tpiDoneAt?T.green:s.tpiOfferedAt?T.amber:T.textLow,marginTop:1}}>
+                          {s.tpiDoneAt?"TPI ✓":s.tpiOfferedAt?"TPI ⚡":"TPI ⏳"}
+                        </div>
+                      )}
+                      {s.tpiRequired===false&&(
+                        <div style={{fontSize:8,color:T.textLow,marginTop:1}}>TPI N/A</div>
+                      )}
                     </div>
                   );
                 })}
@@ -13440,7 +13576,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 // PRODUCTION MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
-                            nestingRuns, setNestingRuns, machines, contractors, materials, vendors, tpiAgencies,
+                            nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests }) => {
   const [view, setView]           = useState("dashboard");
   const [selOrderId, setSelOrderId]   = useState("");
@@ -13495,7 +13631,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
     if (statusOrder && statusDrawing) return (
       <DrawingStatusCard user={user} drawing={statusDrawing} order={statusOrder} stock={stock} orders={orders}
         setOrders={setOrders} releases={releases||[]} instances={instances} machines={machines||[]}
-        contractors={contractors||[]} onBack={()=>{ setView("register"); setSelStatusDrawing(null); }} />
+        contractors={contractors||[]} nestingBatches={nestingBatches||[]}
+        onBack={()=>{ setView("register"); setSelStatusDrawing(null); }} />
     );
     return <div style={{ padding:32, color:T.textLow }}>Drawing not found. <button style={css.btn.ghost} onClick={()=>setView("register")}>← Back</button></div>;
   }
@@ -13983,7 +14120,7 @@ export default function App() {
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
