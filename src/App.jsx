@@ -4340,7 +4340,18 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
         const maxLot=prev.reduce((m,s)=>{ const mt=s.lotNo?.match(/^LOT-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
-        return [...prev,...rawLots.map((lot,i)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+i+1).padStart(3,"0")}`}))];
+        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+idx+1).padStart(3,"0")}`}));
+        const coveredOrders = po.coveredOrders||[];
+        const finalLots = numberedLots.map(lot => {
+          if (!coveredOrders.length) return lot;
+          const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
+          const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
+          const reservations = allocs.length
+            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
+            : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          return {...lot, reservations, pendingReservations:true};
+        });
+        return [...prev, ...finalLots];
       });
     }
     showToast("GRN saved — materials pending RM QC inspection");
@@ -4372,7 +4383,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
           <input type="checkbox" checked={showCancelled} onChange={e=>setShowCancelled(e.target.checked)} />
           Show cancelled
         </label>
-        {canEdit && <button onClick={()=>{setForm({servedOrders:[],lines:[],poDate:today()});setModal("new_po");}} style={css.btn.primary}>+ New PO</button>}
+        {canEdit && <button onClick={()=>{setForm({servedOrders:[],coveredOrders:[],includesStock:false,lines:[],poDate:today()});setModal("new_po");}} style={css.btn.primary}>+ New PO</button>}
       </div>
 
       {pos.filter(po => showCancelled || po.status !== "cancelled").map(po => {
@@ -4435,6 +4446,23 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
                     <span style={{ fontSize:12, color:T.text }}>{o.id}</span>
                   </label>
                 ))}
+              </div>
+            </Field>
+            <Field label="Orders Covered">
+              <div>
+                <div style={{ fontSize:11, color:T.textMid, marginBottom:6 }}>Material earmarked for these orders — enables GRN auto-reservation</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {orders.filter(o=>o.status==="Active").slice(0,5).map(o=>(
+                    <label key={o.id} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
+                      <input type="checkbox" checked={(form.coveredOrders||[]).includes(o.id)} onChange={e=>setForm(f=>({...f,coveredOrders:e.target.checked?[...(f.coveredOrders||[]),o.id]:(f.coveredOrders||[]).filter(x=>x!==o.id)}))} />
+                      <span style={{ fontSize:12, color:T.text }}>{o.id}</span>
+                    </label>
+                  ))}
+                  <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
+                    <input type="checkbox" checked={!!form.includesStock} onChange={e=>setForm(f=>({...f,includesStock:e.target.checked}))} />
+                    <span style={{ fontSize:12, color:T.textMid }}>Stock (general)</span>
+                  </label>
+                </div>
               </div>
             </Field>
             <Field label="Remarks"><Input value={form.remarks||""} onChange={e=>setForm(f=>({...f,remarks:e.target.value}))} /></Field>
@@ -4595,6 +4623,39 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
         </div>
       );
     })()}
+    {/* MRP Order Allocation */}
+    {(form.coveredOrders||[]).length>0 && l.matCode && (() => {
+      const totalKg = l.wtOrdered>0?l.wtOrdered:l.wtRequired||0;
+      if (!totalKg) return null;
+      const totalDemand = (form.coveredOrders||[]).reduce((s,oid)=>{
+        const ord=orders.find(o=>o.id===oid);
+        return s+(ord?(ord.parts||[]).filter(p=>p.matCode===l.matCode&&(p.fabType||"").toLowerCase()==="fabricate").reduce((ss,p)=>ss+(p.clientTotalWt||0),0):0);
+      },0)||1;
+      const suggested = (form.coveredOrders||[]).map(oid=>{
+        const ord=orders.find(o=>o.id===oid);
+        const reqKg=ord?(ord.parts||[]).filter(p=>p.matCode===l.matCode&&(p.fabType||"").toLowerCase()==="fabricate").reduce((ss,p)=>ss+(p.clientTotalWt||0),0):0;
+        return {orderId:oid, kg:Math.round(totalKg*(reqKg/totalDemand)*10)/10, unit:l.unit||"MT"};
+      });
+      const allocs = ((l.orderAllocations||[]).length===suggested.length)?l.orderAllocations:suggested;
+      return (
+        <div style={{ marginTop:8, padding:"8px 12px", background:`${T.accent}11`, border:`1px solid ${T.accent}33`, borderRadius:6 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.accent, marginBottom:6 }}>MRP Allocation — {l.matCode} ({totalKg.toFixed(0)} kg total)</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
+            {allocs.map((a,ai)=>(
+              <div key={a.orderId} style={{ background:T.bgCard, borderRadius:4, padding:"6px 10px", minWidth:110 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:T.accentHi }}>{a.orderId}</div>
+                <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4 }}>
+                  <input type="number" step="0.1" value={a.kg} style={{ ...css.input, fontSize:11, padding:"2px 6px", width:70 }}
+                    onChange={e=>setForm(f=>{const ls=[...f.lines];const na=[...allocs];na[ai]={...na[ai],kg:+e.target.value||0};ls[i]={...ls[i],orderAllocations:na};return {...f,lines:ls};})} />
+                  <span style={{ fontSize:10, color:T.textMid }}>kg</span>
+                </div>
+              </div>
+            ))}
+            <button onClick={()=>setForm(f=>{const ls=[...f.lines];ls[i]={...ls[i],orderAllocations:suggested};return {...f,lines:ls};})} style={{ ...css.btn.sm, alignSelf:"flex-end" }}>⟳ Reset</button>
+          </div>
+        </div>
+      );
+    })()}
     {/* Row 5: Delivery + Remarks */}
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8 }}>
       <Field label="Expected Delivery"><Input type="date" value={l.expectedDelivery||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],expectedDelivery:e.target.value}; return {...f,lines:n}; })} /></Field>
@@ -4748,7 +4809,18 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
         const maxLot=prev.reduce((m,s)=>{ const mt=s.lotNo?.match(/^LOT-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
-        return [...prev,...rawLots.map((lot,i)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+i+1).padStart(3,"0")}`}))];
+        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+idx+1).padStart(3,"0")}`}));
+        const coveredOrders = po.coveredOrders||[];
+        const finalLots = numberedLots.map(lot => {
+          if (!coveredOrders.length) return lot;
+          const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
+          const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
+          const reservations = allocs.length
+            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
+            : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          return {...lot, reservations, pendingReservations:true};
+        });
+        return [...prev, ...finalLots];
       });
     }
     showToast("GRN saved — materials added to RM QC queue");
@@ -5140,7 +5212,10 @@ const RMQCModule = ({ user, stock, setStock }) => {
 
   const doClientInsp = (lotId, result, remarks) => {
     setStock(prev=>prev.map(s=>s.id===lotId?{...s,clientInspStatus:result,clientInspRemarks:remarks,clientInspDate:today(),
-      status:(result==="approved"&&s.rmQcStatus==="approved")?"available":"qc_hold"}:s));
+      pendingReservations:false,
+      status:(result==="approved"&&s.rmQcStatus==="approved")
+        ? ((s.reservations||[]).length>1 ? "partially_reserved" : (s.reservations||[]).length===1 ? "reserved" : "available")
+        : "qc_hold"}:s));
     showToast(result==="approved"?"Client Inspection Passed — material added to available stock ✓":"Client inspection result saved");
     setModal(null);
   };
@@ -5406,7 +5481,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     return ms && mq;
   });
 
-  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber" };
+  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber", partially_reserved:"amber" };
   const openModal = (m,lot) => { setModal(m); setActiveLot(lot); setMForm({}); };
   const closeModal = () => { setModal(null); setActiveLot(null); setMForm({}); };
 
@@ -11171,7 +11246,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     const rows = Object.values(byMat).map(row => {
       const availLots = stock.filter(s=>
         (s.matCode===row.matCode||(s.sectionType||s.section)===row.section)&&
-        (s.status==="available"||s.status==="qc_hold")
+        (s.status==="available"||s.status==="qc_hold"||s.status==="reserved"||s.status==="partially_reserved")
       );
       const availKg = availLots.reduce((s,l)=>(s+(l.wtAvailable||l.wtReceived||0)),0);
       let status = "Not in stock — raise PO";
@@ -11297,12 +11372,31 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       return { ...ord, parts: updatedParts, drawings: updatedDrawings };
     }));
 
-    // FIX 3: Mark assigned stock lots as 'allocated'.
-    const assignedLotIds = new Set(Object.values(machineAsgn).map(a => a.lotId).filter(Boolean));
-    if (assignedLotIds.size > 0)
-      setStock(prevStock => prevStock.map(lot =>
-        assignedLotIds.has(lot.id) ? { ...lot, status: 'allocated' } : lot
-      ));
+    // FIX 3: Mark assigned stock lots as 'reserved' (hard allocation happens later at NEST-BCH nesting stage).
+    const matCodeOrderMap = {};
+    selDrawings.forEach(({order, drawing}) => {
+      (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").forEach(p => {
+        if (!matCodeOrderMap[p.matCode]) matCodeOrderMap[p.matCode] = order.id;
+      });
+    });
+    const lotReservationMap = {};
+    Object.entries(machineAsgn).forEach(([matCode, a]) => {
+      if (a.lotId) lotReservationMap[a.lotId] = matCodeOrderMap[matCode] || selDrawings[0]?.orderId || "";
+    });
+    if (Object.keys(lotReservationMap).length > 0)
+      setStock(prevStock => prevStock.map(lot => {
+        const orderId = lotReservationMap[lot.id];
+        if (!orderId) return lot;
+        return {
+          ...lot, status: 'reserved',
+          reservedFor: orderId,
+          reservedAt: today(),
+          releaseId: id,
+          reservations: [...(lot.reservations||[]), {
+            orderId, reservedAt: today(), source: 'release_wizard', releaseId: id
+          }]
+        };
+      }));
 
     // FIX 4: Contractor stages persisted via ca.stages in drawingsPayload.
     const drawingsPayload = selDrawings.map(({drawing, order, tier, score}) => {
@@ -11696,7 +11790,18 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   <label style={css.label}>Lot</label>
                   <select value={asgn.lotId||""} onChange={e=>updAsgn(r.matCode,"lotId",e.target.value)} style={css.input}>
                     <option value="">Select lot...</option>
-                    {r.lots.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg)</option>)}
+                    {(() => {
+                      const pid = r.drawings[0]?.orderId;
+                      const forThis = r.lots.filter(l =>
+                        (l.status==='reserved'||l.status==='partially_reserved') &&
+                        ((l.reservedFor===pid)||(l.reservations||[]).some(rv=>rv.orderId===pid))
+                      );
+                      const avail = r.lots.filter(l => l.status==='available');
+                      return [
+                        ...forThis.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg) — Reserved for this order ✓</option>),
+                        ...avail.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg) — Available</option>),
+                      ];
+                    })()}
                   </select>
                 </div>
                 <div>
