@@ -2662,7 +2662,229 @@ const WeldersMaster = ({ user, welders, setWelders, contractors }) => {
   );
 };
 
-const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders }) => {
+// ─── DEV TOOLS MASTER ─────────────────────────────────────────────────────────
+const DevToolsMaster = ({ user, setInstances, setReleases, setNestingRuns, setOrders, setMod }) => {
+  const [resetConfirm, setResetConfirm] = useState("");
+  const [lastLoaded, setLastLoaded] = useState(null);
+
+  const T_ORDER_ID = "SF-2026-6273";
+  const T_DRG_ID   = "DRG-TEST-001";
+  const T_DRG_NO   = "JB01329-0104";
+
+  const baseOrder = {
+    id:T_ORDER_ID, status:"active", clientId:"CLT-001",
+    description:"Structural Frame — Dev Test", orderDate:"2026-04-01", endDate:"2026-08-31",
+    projectDesc:"", clientPoNo:"TEST-PO-001",
+    drawings:[{ id:T_DRG_ID, drawingNo:T_DRG_NO, description:"Main Frame Assembly", qty:2, unit:"nos",
+      driveLink:"", assemblyGroup:"", poLineItem:1, drawingLineItem:"DL-001", status:"received", productionSteps:[] }],
+    parts:[
+      { markNo:"CA2101_2", drawingId:T_DRG_ID, drawingNo:T_DRG_NO, desc:"Top Chord L100×100×8",
+        matCode:"ISA/MS/E250/100x100x8", length:3500, width:100, qty:2, unit:"nos",
+        fabType:"Fabricate", source:"Procure", requiredOps:["Cut","Drill"], sectionType:"ISA" },
+      { markNo:"CA2101_3", drawingId:T_DRG_ID, drawingNo:T_DRG_NO, desc:"Bottom Chord L100×100×8",
+        matCode:"ISA/MS/E250/100x100x8", length:4200, width:100, qty:2, unit:"nos",
+        fabType:"Fabricate", source:"Procure", requiredOps:["Cut","Bevel"], sectionType:"ISA" },
+    ],
+    quality:{ tpiRequired:false, tpiHoldPoints:[], approvedMakes:["Berger","Asian Paints"], grade:"E250",
+      weldSpec:{ process:"SMAW", electrode:"E7018", weldingSequence:"Sequence A→B→C" },
+      paintCoats:[
+        { name:"Primer", type:"Primer", dft:50, dryTime:4, product:"Zinc Phosphate EP Primer", color:"Red Oxide" },
+        { name:"Finish", type:"Finish", dft:50, dryTime:8, product:"Polyurethane Topcoat", color:"RAL 7040" },
+      ], mdccDocs:[] },
+    milestones:[], shippingAddresses:[], amendments:[],
+    transport:{ transportScope:"per_dispatch", preferredTransporter:"", vehicleType:"", distanceKm:0, freightEstimate:0, insurance:false, odc:false, nightRestriction:false, policeEscort:false, specialReqs:"", freightBilling:"dispatch_line", clientTransporter:"", clientVehicleContact:"", loadingInstructions:"" },
+    assemblyInspectionRequired:false, assemblies:[], progressMarkers:{},
+  };
+
+  const baseRelease = {
+    id:"REL-TEST-001", status:"in_progress", releaseDate:"2026-04-07", releasedBy:"rajesh.kumar",
+    drawings:[{ drawingId:T_DRG_ID, orderId:T_ORDER_ID, contractorId:"CON-001", contractorName:"Krishna Fabricators", pinnedEngineerId:"", pinnedEngineerName:"" }],
+    machineAssignments:[{ id:"MA-TEST-001", machineId:"MCH-001", machineName:"Plasma Cutter 1", matCode:"ISA/MS/E250/100x100x8", lotId:"STK-001", nestingRunId:"NEST-TEST-001", startDate:"2026-04-07", endDate:"2026-04-08", cuttingStarted:true, cuttingComplete:true }],
+  };
+  const baseNestingRun = {
+    id:"NEST-TEST-001", runDate:"2026-04-07", runBy:"vikram.singh", materialCode:"ISA/MS/E250/100x100x8",
+    orders:[T_ORDER_ID], drawings:[T_DRG_ID], lotsUsed:["STK-001"], sheetsOrBarsUsed:2,
+    utilisationPct:82, wasteKg:15, offcutsCreated:[], dxfLink:"", status:"confirmed", parts:[],
+  };
+
+  const mk = (id, markNo, desc, stage, status, extras={}) => ({
+    instanceId:id, orderId:T_ORDER_ID, drawingId:T_DRG_ID, drawingNo:T_DRG_NO, markNo, desc,
+    matCode:"ISA/MS/E250/100x100x8", batchNo:"TEST-BCH-001", nestingRunId:"NEST-TEST-001",
+    currentStage:stage, currentStatus:status, subOpsRequired:["Cut"], subOpsCompleted:["cut"],
+    assignedContractorId:"CON-001", assignedContractorName:"Krishna Fabricators",
+    qualityConcernFlag:false, rejectionCount:0, stageHistory:[], ...extras,
+  });
+
+  // Common stageHistory snapshots
+  const hCutQc  = { stage:"cutting_qc",  signedOffBy:"rajesh.kumar", signedOffName:"Rajesh Kumar", signedOffDate:"2026-04-07", checklistItems:[], cuttingQcApprovedAt:"2026-04-07T08:00:00.000Z" };
+  const hFitup  = { stage:"fitup",       signedOffBy:"rajesh.kumar", signedOffName:"Rajesh Kumar", signedOffDate:"2026-04-07", checklistItems:[] };
+  const hWeld   = { stage:"welding",     signedOffBy:"rajesh.kumar", signedOffName:"Rajesh Kumar", signedOffDate:"2026-04-07", checklistItems:[], weldingDetails:{ welderId:"WLD-001", welderName:"Ramesh Kumar", wpsUsed:"WPS-001 IS 2062 E250", completedAt:"2026-04-07T10:00:00.000Z" }, ndtDetails:{ required:false } };
+  const hBlast5 = { stage:"blasting",    signedOffBy:"rajesh.kumar", signedOffName:"Rajesh Kumar", signedOffDate:new Date(Date.now()-5*3600000).toISOString().slice(0,10), checklistItems:[], blastingCompletedAt:new Date(Date.now()-5*3600000).toISOString() };
+
+  const SCENARIOS = [
+    {
+      label:"Scenario 1 — Drawing at Cutting Stage",
+      desc:"Parts CA2101_2 and CA2101_3 pending Cutting QC sign-off → Supervisor Queue",
+      color:"#6366f1", targetView:"approvals",
+      order: baseOrder,
+      instances:[
+        mk("INST-SC1-001","CA2101_2","Top Chord L100×100×8","cutting_qc","pending_supervisor",{ subOpsRequired:["Cut","Drill"] }),
+        mk("INST-SC1-002","CA2101_3","Bottom Chord L100×100×8","cutting_qc","pending_supervisor",{ subOpsRequired:["Cut","Bevel"] }),
+      ],
+    },
+    {
+      label:"Scenario 2 — Drawing at Welding Stage",
+      desc:"Cutting QC cleared. Parts at welding pending supervisor approval → Supervisor Queue",
+      color:"#f59e0b", targetView:"approvals",
+      order: baseOrder,
+      instances:[
+        mk("INST-SC2-001","CA2101_2","Top Chord L100×100×8","welding","pending_supervisor",{ stageHistory:[hCutQc,hFitup] }),
+        mk("INST-SC2-002","CA2101_3","Bottom Chord L100×100×8","welding","pending_supervisor",{ stageHistory:[hCutQc,hFitup] }),
+      ],
+    },
+    {
+      label:"Scenario 3 — Blasting Done 5 Hours Ago",
+      desc:"Parts at painting stage. blastingCompletedAt = 5h ago (>4h red timer) → Supervisor Queue",
+      color:"#ef4444", targetView:"approvals",
+      order: baseOrder,
+      instances:[
+        mk("INST-SC3-001","CA2101_2","Top Chord L100×100×8","painting","pending_supervisor",{
+          blastingCompletedAt:new Date(Date.now()-5*3600000).toISOString(),
+          stageHistory:[hCutQc,hFitup,hWeld,hBlast5],
+        }),
+        mk("INST-SC3-002","CA2101_3","Bottom Chord L100×100×8","painting","pending_supervisor",{
+          blastingCompletedAt:new Date(Date.now()-5*3600000).toISOString(),
+          stageHistory:[hCutQc,hFitup,hWeld,hBlast5],
+        }),
+      ],
+    },
+    {
+      label:"Scenario 4 — Paint Coat 1 Done 10 Hours Ago",
+      desc:"Primer coat approved 10h ago. Dry time 4h passed → ready for finish coat. Supervisor Queue",
+      color:"#22c55e", targetView:"approvals",
+      order: baseOrder,
+      instances:[
+        mk("INST-SC4-001","CA2101_2","Top Chord L100×100×8","painting","pending_supervisor",{
+          blastingCompletedAt:new Date(Date.now()-11*3600000).toISOString(),
+          stageHistory:[hCutQc,hFitup,hWeld,
+            { stage:"blasting", signedOffBy:"rajesh.kumar", signedOffDate:"2026-04-07", checklistItems:[], blastingCompletedAt:new Date(Date.now()-11*3600000).toISOString() },
+            { stage:"painting", signedOffBy:"rajesh.kumar", signedOffName:"Rajesh Kumar",
+              signedOffDate:new Date(Date.now()-10*3600000).toISOString().slice(0,10),
+              appliedAt:new Date(Date.now()-10*3600000).toISOString(), coatIndex:0, checklistItems:[],
+              dftReading:"62", dftReadingsDetailed:[{ value:62, location:"Web", takenAt:new Date(Date.now()-10*3600000).toISOString(), takenBy:"rajesh.kumar" },{ value:58, location:"Flange", takenAt:new Date(Date.now()-10*3600000).toISOString(), takenBy:"rajesh.kumar" }] },
+          ],
+        }),
+        mk("INST-SC4-002","CA2101_3","Bottom Chord L100×100×8","painting","pending_supervisor",{
+          blastingCompletedAt:new Date(Date.now()-11*3600000).toISOString(),
+          stageHistory:[hCutQc,hFitup,hWeld,
+            { stage:"blasting", signedOffBy:"rajesh.kumar", signedOffDate:"2026-04-07", checklistItems:[], blastingCompletedAt:new Date(Date.now()-11*3600000).toISOString() },
+            { stage:"painting", signedOffBy:"rajesh.kumar", signedOffName:"Rajesh Kumar",
+              signedOffDate:new Date(Date.now()-10*3600000).toISOString().slice(0,10),
+              appliedAt:new Date(Date.now()-10*3600000).toISOString(), coatIndex:0, checklistItems:[],
+              dftReading:"60", dftReadingsDetailed:[{ value:60, location:"Web", takenAt:new Date(Date.now()-10*3600000).toISOString(), takenBy:"rajesh.kumar" }] },
+          ],
+        }),
+      ],
+    },
+    {
+      label:"Scenario 5 — Assembly Group Ready",
+      desc:"Two drawings both at assembly stage. Gate should show all siblings ready → Supervisor Queue",
+      color:"#8b5cf6", targetView:"approvals",
+      order:{
+        ...baseOrder, assemblyInspectionRequired:true,
+        assemblies:[{ id:"ASM-001", assemblyNumber:"ASM-001", assemblyName:"Main Frame Group",
+          drawingsAssigned:["DRG-TEST-A01","DRG-TEST-A02"], tpiRequired:false, clientContact:"", expectedInspectionDate:"", notes:"" }],
+        drawings:[
+          { id:"DRG-TEST-A01", drawingNo:T_DRG_NO+"A", description:"Sub-Assembly A", qty:1, unit:"nos", driveLink:"", assemblyGroup:"ASM-001", poLineItem:1, drawingLineItem:"DL-001", status:"received", productionSteps:[] },
+          { id:"DRG-TEST-A02", drawingNo:T_DRG_NO+"B", description:"Sub-Assembly B", qty:1, unit:"nos", driveLink:"", assemblyGroup:"ASM-001", poLineItem:2, drawingLineItem:"DL-002", status:"received", productionSteps:[] },
+        ],
+      },
+      instances:[
+        mk("INST-SC5-001","CA2101_2","Top Chord","assembly","pending_supervisor",{ drawingId:"DRG-TEST-A01", drawingNo:T_DRG_NO+"A", stageHistory:[hCutQc,hFitup,hWeld] }),
+        mk("INST-SC5-002","CA2101_3","Bottom Chord","assembly","pending_supervisor",{ drawingId:"DRG-TEST-A02", drawingNo:T_DRG_NO+"B", stageHistory:[hCutQc,hFitup,hWeld] }),
+      ],
+    },
+    {
+      label:"Scenario 6 — Part Needs Secondary Ops",
+      desc:"Parts at secondary_ops with Drill+Bevel pending. Visible in Machine Operator Queue (log in as machine_operator)",
+      color:"#06b6d4", targetView:"dashboard",
+      order: baseOrder,
+      instances:[
+        mk("INST-SC6-001","CA2101_2","Top Chord (Drill+Bevel pending)","secondary_ops","pending_secondary",{ subOpsRequired:["Cut","Drill","Bevel"], subOpsCompleted:["cut"] }),
+        mk("INST-SC6-002","CA2101_3","Bottom Chord (Bevel pending)","secondary_ops","pending_secondary",{ subOpsRequired:["Cut","Bevel"], subOpsCompleted:["cut"] }),
+      ],
+    },
+  ];
+
+  const loadScenario = (sc) => {
+    setOrders(prev=>[...prev.filter(o=>o.id!==T_ORDER_ID), sc.order]);
+    setNestingRuns(prev=>[...prev.filter(r=>r.id!=="NEST-TEST-001"), baseNestingRun]);
+    setReleases([baseRelease]);
+    setInstances(sc.instances);
+    setLastLoaded(sc.label);
+    sessionStorage.setItem('dev_target_view', sc.targetView);
+    setMod("production");
+  };
+
+  const resetToSeed = () => {
+    if (resetConfirm!=="RESET") return;
+    ['structo_orders','structo_clients','structo_vendors','structo_pos','structo_stock','structo_purchaseReqs','structo_company'].forEach(k=>localStorage.removeItem(k));
+    window.location.reload();
+  };
+
+  return (
+    <div>
+      <div style={{ background:"#7c3aed22", border:"1px solid #7c3aed55", borderRadius:8, padding:"10px 16px", marginBottom:20, fontSize:12 }}>
+        <div style={{ fontWeight:800, color:"#a78bfa", marginBottom:4 }}>⚙ DEV TOOLS — super_admin only</div>
+        <div style={{ color:T.textMid }}>Loads test scenarios directly into React state (SF-2026-6273 / JB01329-0104) and navigates to the relevant screen. Data is in-memory only — not persisted to localStorage. Browser reload resets all in-memory state.</div>
+      </div>
+
+      <div style={{ marginBottom:24 }}>
+        <div style={{ fontWeight:700, fontSize:13, color:T.text, marginBottom:12 }}>TEST SCENARIOS</div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {SCENARIOS.map((sc,i)=>(
+            <div key={i} style={{ ...css.card, borderLeft:`4px solid ${sc.color}`, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:16 }}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:700, fontSize:13, color:sc.color, marginBottom:2 }}>{sc.label}</div>
+                <div style={{ fontSize:12, color:T.textMid }}>{sc.desc}</div>
+              </div>
+              <button onClick={()=>loadScenario(sc)} style={{ ...css.btn.primary, background:sc.color, border:"none", whiteSpace:"nowrap", flexShrink:0 }}>
+                Load &amp; Navigate →
+              </button>
+            </div>
+          ))}
+        </div>
+        {lastLoaded && (
+          <div style={{ marginTop:12, padding:"8px 14px", background:T.greenBg, border:`1px solid ${T.green}44`, borderRadius:6, fontSize:12, color:T.green }}>
+            ✓ Loaded: {lastLoaded} — navigating to production module
+          </div>
+        )}
+      </div>
+
+      <div style={{ ...css.card, border:`1px solid ${T.red}44`, marginBottom:20 }}>
+        <div style={{ fontWeight:700, fontSize:13, color:T.red, marginBottom:8 }}>RESET TO SEED DATA</div>
+        <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>Clears all localStorage and reloads from seed data. In-memory state (instances, releases, nesting runs) also resets. <strong style={{ color:T.red }}>This cannot be undone.</strong></div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <input value={resetConfirm} onChange={e=>setResetConfirm(e.target.value)}
+            placeholder="Type RESET to confirm" style={{ ...css.input, width:220, borderColor:resetConfirm==="RESET"?T.red:T.border }} />
+          <button onClick={resetToSeed} disabled={resetConfirm!=="RESET"}
+            style={{ ...css.btn.danger, opacity:resetConfirm==="RESET"?1:0.4 }}>Reset to Seed Data</button>
+        </div>
+      </div>
+
+      <div style={{ fontSize:11, color:T.textLow, lineHeight:"1.8" }}>
+        <div style={{ fontWeight:700, marginBottom:4, color:T.textMid }}>Usage notes:</div>
+        <div>• Scenario 6 instances appear in Machine Operator Queue — log in as a machine_operator user to see them</div>
+        <div>• Each load replaces the test order SF-2026-6273 and all instances — existing real orders are preserved</div>
+        <div>• Blast timer ⚙ control: visible to super_admin in Supervisor Queue when stage = Blasting</div>
+        <div>• Coat applied time ⚙ control: visible to super_admin in Supervisor Queue when stage = Painting</div>
+        <div>• Browser reload clears all in-memory state (instances, releases) — localStorage persists until Reset</div>
+      </div>
+    </div>
+  );
+};
+
+const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders, setMod, setInstances, setReleases, setNestingRuns }) => {
   const tabs = [
     { id:"company",     label:"Company Details",     show: user.role==="super_admin" },
     { id:"prodstd",     label:"Production Standards", show: ["super_admin","planning_admin"].includes(user.role) },
@@ -2677,6 +2899,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
     { id:"makes",       label:"Approved Makes"    },
     { id:"machines",    label:"Machines",          show: user.role==="super_admin" },
     { id:"users",       label:"Users",             show: user.role==="super_admin" },
+    { id:"devtools",    label:"⚙ Dev Tools",       show: user.role==="super_admin" },
   ].filter(t=>t.show!==false);
   const [activeTab, setActiveTab] = useState("clients");
   return (
@@ -2701,6 +2924,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       {activeTab==="makes"       && <ApprovedMakesMaster user={user} approvedMakes={approvedMakes} />}
       {activeTab==="machines"    && <MachinesMaster    user={user} machines={machines} setMachines={setMachines} />}
       {activeTab==="users"       && <UsersMaster       user={user} />}
+      {activeTab==="devtools"    && <DevToolsMaster    user={user} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} setOrders={setOrders} setMod={setMod} />}
     </div>
   );
 };
@@ -10621,6 +10845,8 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
   const [dimReadings, setDimReadings] = useState({});
   const [localChecks, setLocalChecks] = useState({});
   const [weldingForm, setWeldingForm] = useState({ welderId:"", welderName:"", wpsUsed:"", ndtRequired:false, ndtTypes:[], ndtAgency:"", ndtReport:"", ndtResult:"pass", ndtDate:"", ndtFailReason:"" });
+  const [devBlastHours, setDevBlastHours] = useState("3");
+  const [devCoatHours, setDevCoatHours]   = useState("4");
   const [cuttingMeasurements, setCuttingMeasurements] = useState({}); // {[markNo]: {actualL:"", actualW:"", failReason:""}}
   const [dftReadings, setDftReadings] = useState([]); // [{value:"", location:""}]
   const [now, setNow] = useState(Date.now());
@@ -11204,6 +11430,23 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
             </div>
           );
         })()}
+        {/* DEV: Blast time setter — super_admin only */}
+        {stage==="blasting" && user.role==="super_admin" && (
+          <div style={{...css.card,marginBottom:14,border:"1px solid #7c3aed55",background:"#7c3aed0a",padding:"10px 14px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:8}}>⚙ DEV — Set blastingCompletedAt</div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <select value={devBlastHours} onChange={e=>setDevBlastHours(e.target.value)} style={{...css.input,width:130}}>
+                {["1","2","3","3.5","4","5"].map(h=><option key={h} value={h}>{h}h ago</option>)}
+              </select>
+              <button onClick={()=>{
+                const ts = new Date(Date.now()-parseFloat(devBlastHours)*3600000).toISOString();
+                const ids = selGD.insts.map(i=>i.instanceId);
+                setInstances(prev=>prev.map(i=>ids.includes(i.instanceId)?{...i,blastingCompletedAt:ts}:i));
+              }} style={{...css.btn.ghost,fontSize:12,color:"#a78bfa",borderColor:"#7c3aed55"}}>Set</button>
+              <span style={{fontSize:11,color:T.textLow}}>Sets instance.blastingCompletedAt for painting stage timer</span>
+            </div>
+          </div>
+        )}
         {/* Time to primer warning — shown on painting stage */}
         {isPainting && (() => {
           const inst0 = selGD.insts[0];
@@ -11243,6 +11486,30 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
             </div>
           );
         })()}
+        {/* DEV: Coat applied time setter — super_admin only */}
+        {isPainting && user.role==="super_admin" && (
+          <div style={{...css.card,marginBottom:10,border:"1px solid #7c3aed55",background:"#7c3aed0a",padding:"10px 14px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:8}}>⚙ DEV — Set last coat appliedAt</div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <select value={devCoatHours} onChange={e=>setDevCoatHours(e.target.value)} style={{...css.input,width:140}}>
+                {["1","4","8","12","24","36"].map(h=><option key={h} value={h}>{h}h ago</option>)}
+              </select>
+              <button onClick={()=>{
+                const ts = new Date(Date.now()-parseFloat(devCoatHours)*3600000).toISOString();
+                const ids = selGD.insts.map(i=>i.instanceId);
+                setInstances(prev=>prev.map(i=>{
+                  if (!ids.includes(i.instanceId)) return i;
+                  const hist = [...(i.stageHistory||[])];
+                  let lastPaintIdx = -1;
+                  for (let j=hist.length-1; j>=0; j--) { if (hist[j].stage==="painting") { lastPaintIdx=j; break; } }
+                  if (lastPaintIdx>=0) hist[lastPaintIdx]={...hist[lastPaintIdx],appliedAt:ts};
+                  return {...i,stageHistory:hist};
+                }));
+              }} style={{...css.btn.ghost,fontSize:12,color:"#a78bfa",borderColor:"#7c3aed55"}}>Set</button>
+              <span style={{fontSize:11,color:T.textLow}}>Sets last painting stageHistory entry's appliedAt for dry time countdown</span>
+            </div>
+          </div>
+        )}
         {/* Painting DFT per coat */}
         {isPainting && (
           <div style={{...css.card,marginBottom:14}}>
@@ -14532,7 +14799,11 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders }) => {
-  const [view, setView]           = useState("dashboard");
+  const [view, setView]           = useState(() => {
+    const forced = sessionStorage.getItem('dev_target_view');
+    if (forced) { sessionStorage.removeItem('dev_target_view'); return forced; }
+    return "dashboard";
+  });
   const [selOrderId, setSelOrderId]   = useState("");
   const [selDrawingId, setSelDrawingId] = useState("");
   const [selStatusDrawing, setSelStatusDrawing] = useState(null); // {drawingId, orderId}
@@ -15096,7 +15367,7 @@ export default function App() {
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
-      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} />;
+      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} />;
       default:          return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
     }
   };
