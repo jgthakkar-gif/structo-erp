@@ -1,5 +1,6 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 1.6 — April 2026
+# Version 1.7 — April 2026
+# Session 4 Phase 3 — D1-D6, E2, Welder Register
 # Updated: Release Wizard (productionSteps, requiredOps binding, lot reservation fix)
 #          PO smart allocation (coveredOrders, includesStock, orderAllocations)
 #          GRN auto-reservation (lot.reservations extended, partially_reserved status)
@@ -10,6 +11,14 @@
 #          FIX: lot.pendingReservations REMOVED — was redundant with lot.reservations[]
 #          FIX: instance.subOpsCompleted created with ["cut"] only (not all reqOps)
 #          FIX: confirmBar now reads requiredOps from order parts; pending_secondary routing
+#          D1: cutting_qc form — L×W dimensional table + tolerance pass/fail + ref links
+#          D2: defect actions rework/writeoff/use_as_is + instance routing
+#          D3: fitup checklist 11 items + ref links + 5-dim measurement table
+#          D4: welder dropdown from Masters + full NDT (UT/RT/PT/MT) + hard gate
+#          D5: blastingCompletedAt ISO timestamp + live HH:MM:SS timer + PE override
+#          D6: dftReadings[] per coat + holiday instrument/voltage/result + dry time countdown
+#          E2: assembly_hold gate — simultaneous sibling advancement when last weld done
+#          Masters: Welder Register with certifications + expiry alerts
 #               covers all secondary ops beyond Cut; SecondaryOpsQueue in MachineOperatorQueue
 #
 # INSTRUCTIONS FOR CLAUDE CODE:
@@ -459,15 +468,16 @@ instance.subStageChecks ({cut:bool, bevel:bool, grind:bool, drill:bool})
         order.parts[].requiredOps at confirmBar time (not hardcoded ["cut"]).
   IF CHANGED: Update confirmBar requiredOps lookup; update SecondaryOpsQueue in MachineOperatorQueue
 
-instance.defectAction (scrap_recut | rectify | accept_deviation)
-  *** NEW FIELD — set at cutting confirmation when isDefective=true ***
-  READS:   QC Admin — defect resolution tracking
+instance.defectAction (rework | writeoff | use_as_is)
+  *** UPDATED VALUES — was scrap_recut/rectify/accept_deviation ***
+  READS:   confirmBar routing — determines instance.currentStatus after cut confirmation
+           QC Admin — defect resolution tracking
   WRITES:  Cutting confirmation bar form — defectAction select (visible when isDefective)
   DISPLAYS: Cutting confirmation, QC Admin pending jobs
-  TRIGGERS: scrap_recut → part re-enters nesting queue
-             rectify → part stays at cutting stage pending fix
-             accept_deviation → part proceeds with deviation note
-  IF CHANGED: Requires super_admin after initial save
+  TRIGGERS: rework → instance.currentStage="cutting", instance.currentStatus="rework"
+             writeoff → instance.currentStatus="writeoff", writeoffRequiresReplacement=true
+             use_as_is → instance.currentStatus="pending_pe_approval" (PE must approve)
+  IF CHANGED: Update confirmBar routing block + MachineOperatorQueue rework display
 
 stageHistory[].weldGaugeReading (number, mm — welding stage)
 stageHistory[].postWeldLength (number, mm — welding stage)
@@ -475,6 +485,63 @@ stageHistory[].postWeldLength (number, mm — welding stage)
   WRITES:  SupervisorQueue welding stage form — Measurements section
   DISPLAYS: Welding approval form, MDCC dossier
   IF CHANGED: Never edit after approved — historical QC record
+
+stageHistory[].weldingDetails ({welderId, welderName, wpsUsed, completedAt, completedBy})
+  *** NEW FIELD — recorded at welding stage approval ***
+  WRITES:  SupervisorQueue welding form — welder dropdown + WPS input
+  READS:   welder.id from welders state filtered by contractor
+  DISPLAYS: Welding approval form, MDCC dossier
+  IF CHANGED: Never edit after approved — historical QC record
+
+stageHistory[].ndtDetails ({required, types[], agency, reportLink, result, date})
+  *** NEW FIELD — recorded at welding stage approval ***
+  WRITES:  SupervisorQueue welding form — NDT section (UT/RT/PT/MT checkboxes)
+  TRIGGERS: required=true AND result='fail' → ndtGateOk=false → approve button disabled
+  DISPLAYS: Welding approval form
+  IF CHANGED: Never edit after approved — historical QC record
+
+stageHistory[].cuttingQcMeasurements ([{markNo, actualL, actualW}])
+stageHistory[].cuttingQcApprovedAt (ISO timestamp)
+stageHistory[].cuttingQcApprovedBy (userId)
+  *** NEW FIELDS — recorded at cutting_qc stage approval ***
+  WRITES:  SupervisorQueue cutting_qc form — L×W dimensional table per markNo
+  TRIGGERS: Dim fail without reason → cuttingQcGateOk=false → approve blocked
+  TOLERANCE: ±2mm (≤500mm) · ±3mm (500–2000mm) · ±5mm (>2000mm)
+  IF CHANGED: Never edit after approved — historical QC record
+
+stageHistory[].fitupQcMeasurements ([{dim, actual}])
+stageHistory[].fitupQcApprovedAt / fitupQcApprovedBy
+  *** NEW FIELDS — recorded at fitup stage approval ***
+  WRITES:  SupervisorQueue fitup form — 5-row dimension table (L/W/H/Diag1/Diag2)
+  IF CHANGED: Never edit after approved
+
+stageHistory[].appliedAt (ISO timestamp — painting stage)
+  *** NEW FIELD — dry time countdown reference ***
+  WRITES:  doApprove for painting stage — new Date().toISOString()
+  READS:   Painting stage dry time check — replaces date-only signedOffDate for accuracy
+  TRIGGERS: Enables accurate countdown (HH:MM:SS) to nextCoatAvailableAt
+  IF CHANGED: Never edit after approved
+
+stageHistory[].dftReadingsDetailed ([{value, location, takenAt, takenBy}])
+stageHistory[].dftAvg (number — average of readings)
+  *** NEW FIELDS — DFT per-reading data at painting stage ***
+  WRITES:  SupervisorQueue painting form — up to 10 DFT readings with location
+  DISPLAYS: Painting form avg/min/target panel; DFT summary table
+  IF CHANGED: Never edit after approved
+
+instance.blastingCompletedAt (ISO timestamp)
+  *** NEW FIELD — written to instance (not just stageHistory) for live timer access ***
+  WRITES:  doApprove for blasting stage
+  READS:   Painting stage live blast timer (HH:MM:SS countdown using now state)
+  TRIGGERS: >amberHours → amber warning; >redHours → red + PE override required
+  THRESHOLDS: productionStandards.blastThresholds.{amberHours:3, redHours:4}
+  IF CHANGED: Never edit after set
+
+instance.reblastWaivedBy / reblastWaivedReason / reblastWaivedAt
+  *** NEW FIELDS — PE override for blast timer red state ***
+  WRITES:  PE override button on painting stage (requires prompt for reason)
+  READS:   Painting stage blast timer — if set, shows override notice, hides override button
+  IF CHANGED: Requires super_admin override
 
 stageHistory[].dustRating (string "1"-"5" — blasting stage, ISO 8502-3)
   *** NEW FIELD — recorded at blasting stage approval ***
@@ -487,6 +554,40 @@ stageHistory[].envTemp / envRH / envDewPt / envSurfTemp (painting stage)
   WRITES:  SupervisorQueue painting stage form — Environmental Conditions section
   DISPLAYS: Painting approval form, MDCC dossier
   IF CHANGED: Never edit after approved
+
+instance.currentStatus value: "assembly_hold"
+  *** NEW STATUS — instance is at assembly stage but waiting for sibling drawings ***
+  WRITES:  doApprove for welding/tpi_weld when drawing has assemblyGroup and siblings not done
+  READS:   E2 gate: when last sibling completes welding, all assembly_hold instances released
+  DISPLAYS: SupervisorQueue assembly form — sibling status table
+  TRIGGERS: All siblings welding done → all assembly_hold instances set to in_progress
+  NOTE: Uses __assembly_hold__ sentinel in nextStage; setInstances translates to stage=assembly+status=assembly_hold
+
+# ═══════════════════════════════════════════════════════════════════
+# WELDER REGISTER (NEW MASTER)
+# ═══════════════════════════════════════════════════════════════════
+
+welders[] (App state: const [welders, setWelders] = useState(WELDERS_SEED))
+  READS:   SupervisorQueue welding form — dropdown filtered by contractorId
+           D4 welder tracking — weldingDetails.welderId resolved to welder record
+  WRITES:  Masters → Welders tab — WeldersMaster component
+  DISPLAYS: Masters Welders tab, welding sign-off cert display
+  TRIGGERS: Cert expiry ≤30 days → expiring_soon badge; <0 → expired badge + alert banner
+  IF CHANGED: Add/edit/delete via WeldersMaster; adding welders to a contractor enables dropdown in welding sign-off
+
+welder.certifications[].expiryDate
+  READS:   certStatus() fn in WeldersMaster — auto-computes valid/expiring_soon/expired
+  DISPLAYS: WeldersMaster table cert status badge; expiry alert banner
+  TRIGGERS: ≤30 days → amber badge + top-of-page alert listing affected welders
+             Expired → red badge
+  IF CHANGED: Edit via WeldersMaster modal
+
+productionStandards.blastThresholds ({amberHours:3, redHours:4})
+  *** NEW FIELD — configurable blast-to-primer window thresholds ***
+  READS:   SupervisorQueue painting stage live timer
+  WRITES:  ProductionStandardsMaster (future — currently set as default only)
+  DEFAULT: amberHours:3, redHours:4
+  IF CHANGED: Update ProductionStandardsMaster if UI editing is added
 
 instance.assignedEngineer (user.id — set by QC auto-assignment rules)
   *** NEW FIELD — set in doApprove when creating next pending_supervisor item ***

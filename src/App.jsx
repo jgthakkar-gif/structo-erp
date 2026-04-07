@@ -373,6 +373,27 @@ const CONTRACTORS = [
   { id:"CON-004", name:"Balaji Engineering",        code:"BE",  type:["fit_up","welding","cutting"], contact:"9876543213", address:"Plot 34, Amravati Road, Nagpur",   active:true, gst:"27AABCB3456D1Z9" },
 ];
 
+// ─── WELDERS ──────────────────────────────────────────────────────────────────
+const WELDERS_SEED = [
+  { id:"WLD-001", name:"Ramesh Kumar", contractorId:"CON-001", contractorName:"Krishna Fabricators",
+    certifications:[
+      { process:"SMAW", position:"3G", grade:"E250", certNo:"WC/2024/001",
+        issuedBy:"IIW India", issuedDate:"2024-01-15", expiryDate:"2026-06-14" }
+    ], wpsQualified:["WPS-001","WPS-002"], active:true },
+  { id:"WLD-002", name:"Suresh Patil", contractorId:"CON-001", contractorName:"Krishna Fabricators",
+    certifications:[
+      { process:"SMAW", position:"1G", grade:"E250", certNo:"WC/2024/002",
+        issuedBy:"IIW India", issuedDate:"2024-03-10", expiryDate:"2026-03-09" },
+      { process:"FCAW", position:"1G", grade:"E350", certNo:"WC/2024/003",
+        issuedBy:"IIW India", issuedDate:"2024-03-10", expiryDate:"2026-03-09" }
+    ], wpsQualified:["WPS-001"], active:true },
+  { id:"WLD-003", name:"Dinesh Yadav", contractorId:"CON-004", contractorName:"Balaji Engineering",
+    certifications:[
+      { process:"GTAW", position:"2G", grade:"E250", certNo:"WC/2023/018",
+        issuedBy:"BVIS India", issuedDate:"2023-11-01", expiryDate:"2025-10-31" }
+    ], wpsQualified:["WPS-003"], active:true },
+];
+
 // ─── BAYS ─────────────────────────────────────────────────────────────────────
 const BAYS_SEED = Array.from({length:25}, (_,i) => ({
   id:`BAY-${String(i+1).padStart(2,"0")}`, number:i+1, description:"", status:"available", currentLot:null, capacity:"50T", notes:"",
@@ -2439,13 +2460,216 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
 };
 
 // ─── MASTERS MODULE ───────────────────────────────────────────────────────────
-const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock }) => {
+// ─── WELDERS MASTER ───────────────────────────────────────────────────────────
+const WeldersMaster = ({ user, welders, setWelders, contractors }) => {
+  const canEdit = ["super_admin","planning_admin"].includes(user.role);
+  const today = new Date();
+  const certStatus = (expiryDate) => {
+    if (!expiryDate) return "unknown";
+    const exp = new Date(expiryDate);
+    const days = Math.floor((exp - today) / 86400000);
+    if (days < 0) return "expired";
+    if (days <= 30) return "expiring_soon";
+    return "valid";
+  };
+  const certColor = { valid:T.green, expiring_soon:T.amber, expired:T.red, unknown:T.textMid };
+  const certLabel = { valid:"Valid", expiring_soon:"Expiring Soon", expired:"Expired", unknown:"Unknown" };
+
+  const [filterCon, setFilterCon] = useState("");
+  const [modal, setModal] = useState(null); // null | {mode:'add'|'edit', welder:{...}}
+  const [form, setForm] = useState({});
+
+  const BLANK_CERT = { process:"", position:"", grade:"", certNo:"", issuedBy:"", issuedDate:"", expiryDate:"" };
+
+  const openAdd = () => {
+    setForm({ id:`WLD-${String(Date.now()).slice(-3)}`, name:"", contractorId:"", contractorName:"",
+      certifications:[{...BLANK_CERT}], wpsQualified:[], active:true, _wps:"" });
+    setModal({mode:"add"});
+  };
+  const openEdit = (w) => {
+    setForm({ ...w, _wps:(w.wpsQualified||[]).join(", ") });
+    setModal({mode:"edit"});
+  };
+  const save = () => {
+    if (!form.name?.trim() || !form.contractorId) { alert("Name and contractor required"); return; }
+    const con = (contractors||[]).find(c=>c.id===form.contractorId);
+    const wps = (form._wps||"").split(",").map(s=>s.trim()).filter(Boolean);
+    const w = { ...form, contractorName:con?.name||"", wpsQualified:wps };
+    delete w._wps;
+    if (modal.mode==="add") setWelders(prev=>[...prev, w]);
+    else setWelders(prev=>prev.map(x=>x.id===w.id?w:x));
+    setModal(null);
+  };
+  const addCert = () => setForm(f=>({...f, certifications:[...(f.certifications||[]), {...BLANK_CERT}]}));
+  const updCert = (i, field, val) => setForm(f=>{ const c=[...(f.certifications||[])]; c[i]={...c[i],[field]:val}; return {...f,certifications:c}; });
+  const remCert = (i) => setForm(f=>({ ...f, certifications:(f.certifications||[]).filter((_,j)=>j!==i) }));
+
+  const filtered = (welders||[]).filter(w=>!filterCon||w.contractorId===filterCon);
+  const expiring = (welders||[]).filter(w=>(w.certifications||[]).some(c=>certStatus(c.expiryDate)==="expiring_soon"||certStatus(c.expiryDate)==="expired"));
+
+  return (
+    <div>
+      {expiring.length>0 && (
+        <div style={{background:T.amberBg,border:`1px solid ${T.amber}`,borderRadius:6,padding:"8px 14px",marginBottom:16,fontSize:12,color:T.amber}}>
+          ⚠ {expiring.length} welder(s) have certifications expiring soon or expired: {expiring.map(w=>w.name).join(", ")}
+        </div>
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <select value={filterCon} onChange={e=>setFilterCon(e.target.value)} style={{...css.input,width:200}}>
+            <option value="">All Contractors</option>
+            {(contractors||[]).filter(c=>c.active).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        {canEdit && <button onClick={openAdd} style={css.btn.primary}>+ Add Welder</button>}
+      </div>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+        <thead>
+          <tr style={{background:T.bgInput}}>
+            {["Name","Contractor","Process / Position","Cert Status","WPS Qualified","Actions"].map(h=>(
+              <th key={h} style={{textAlign:"left",padding:"8px 12px",color:T.textMid,fontWeight:700,fontSize:11}}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map(w=>{
+            const worstStatus = (w.certifications||[]).reduce((worst,c)=>{
+              const s = certStatus(c.expiryDate);
+              if (s==="expired") return "expired";
+              if (s==="expiring_soon" && worst==="valid") return "expiring_soon";
+              return worst;
+            }, "valid");
+            return (
+              <tr key={w.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                <td style={{padding:"8px 12px",fontWeight:600,color:T.text}}>{w.name}</td>
+                <td style={{padding:"8px 12px",color:T.textMid}}>{w.contractorName}</td>
+                <td style={{padding:"8px 12px"}}>
+                  {(w.certifications||[]).map((c,i)=>(
+                    <div key={i} style={{fontSize:11,color:T.textMid}}>
+                      {c.process} {c.position} — {c.certNo}
+                      <span style={{marginLeft:6,color:certColor[certStatus(c.expiryDate)],fontSize:10}}>
+                        [exp {c.expiryDate}]
+                      </span>
+                    </div>
+                  ))}
+                </td>
+                <td style={{padding:"8px 12px"}}>
+                  <Badge color={worstStatus==="valid"?"green":worstStatus==="expiring_soon"?"amber":"red"}>
+                    {certLabel[worstStatus]}
+                  </Badge>
+                </td>
+                <td style={{padding:"8px 12px",fontFamily:T.fontMono,fontSize:11,color:T.textMid}}>
+                  {(w.wpsQualified||[]).join(", ")||"—"}
+                </td>
+                <td style={{padding:"8px 12px"}}>
+                  {canEdit && <button onClick={()=>openEdit(w)} style={{...css.btn.ghost,fontSize:11,padding:"3px 8px"}}>Edit</button>}
+                </td>
+              </tr>
+            );
+          })}
+          {filtered.length===0 && (
+            <tr><td colSpan={6} style={{padding:24,textAlign:"center",color:T.textLow}}>No welders found. Add welders to enable welder tracking in welding sign-off.</td></tr>
+          )}
+        </tbody>
+      </table>
+
+      {modal && (
+        <div style={{position:"fixed",inset:0,background:"#0009",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16}}>
+          <div style={{background:T.bgCard,borderRadius:10,padding:24,width:"100%",maxWidth:640,maxHeight:"90vh",overflowY:"auto"}}>
+            <div style={{fontSize:16,fontWeight:800,color:T.text,marginBottom:16}}>
+              {modal.mode==="add"?"Add Welder":"Edit Welder"}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <label style={css.label}>Name *</label>
+                <input value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} style={css.input} placeholder="Welder full name" />
+              </div>
+              <div>
+                <label style={css.label}>Contractor *</label>
+                <select value={form.contractorId||""} onChange={e=>setForm(f=>({...f,contractorId:e.target.value}))} style={css.input}>
+                  <option value="">Select contractor...</option>
+                  {(contractors||[]).filter(c=>c.active).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={css.label}>WPS Qualified (comma-separated)</label>
+                <input value={form._wps||""} onChange={e=>setForm(f=>({...f,_wps:e.target.value}))} style={css.input} placeholder="WPS-001, WPS-002" />
+              </div>
+              <div style={{display:"flex",alignItems:"flex-end",paddingBottom:4}}>
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
+                  <input type="checkbox" checked={!!form.active} onChange={e=>setForm(f=>({...f,active:e.target.checked}))} />
+                  <span>Active</span>
+                </label>
+              </div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontWeight:700,fontSize:13,color:T.text}}>Certifications</div>
+                <button onClick={addCert} style={{...css.btn.ghost,fontSize:11}}>+ Add Cert</button>
+              </div>
+              {(form.certifications||[]).map((c,i)=>(
+                <div key={i} style={{...css.card,marginBottom:8,padding:10}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:6}}>
+                    <div>
+                      <label style={css.label}>Process</label>
+                      <input value={c.process||""} onChange={e=>updCert(i,"process",e.target.value)} style={css.input} placeholder="SMAW/FCAW/GTAW" />
+                    </div>
+                    <div>
+                      <label style={css.label}>Position</label>
+                      <input value={c.position||""} onChange={e=>updCert(i,"position",e.target.value)} style={css.input} placeholder="1G/2G/3G" />
+                    </div>
+                    <div>
+                      <label style={css.label}>Grade</label>
+                      <input value={c.grade||""} onChange={e=>updCert(i,"grade",e.target.value)} style={css.input} placeholder="E250/E350" />
+                    </div>
+                    <div>
+                      <label style={css.label}>Cert No.</label>
+                      <input value={c.certNo||""} onChange={e=>updCert(i,"certNo",e.target.value)} style={css.input} />
+                    </div>
+                    <div>
+                      <label style={css.label}>Issued By</label>
+                      <input value={c.issuedBy||""} onChange={e=>updCert(i,"issuedBy",e.target.value)} style={css.input} placeholder="IIW India" />
+                    </div>
+                    <div>
+                      <label style={css.label}>Issued Date</label>
+                      <input type="date" value={c.issuedDate||""} onChange={e=>updCert(i,"issuedDate",e.target.value)} style={css.input} />
+                    </div>
+                    <div>
+                      <label style={css.label}>Expiry Date</label>
+                      <input type="date" value={c.expiryDate||""} onChange={e=>updCert(i,"expiryDate",e.target.value)} style={css.input} />
+                    </div>
+                    <div style={{display:"flex",alignItems:"flex-end"}}>
+                      <button onClick={()=>remCert(i)} style={{...css.btn.danger,fontSize:11,padding:"5px 10px"}}>Remove</button>
+                    </div>
+                  </div>
+                  {c.expiryDate && (
+                    <div style={{fontSize:11,color:certColor[certStatus(c.expiryDate)]}}>
+                      Status: {certLabel[certStatus(c.expiryDate)]}
+                      {certStatus(c.expiryDate)!=="valid" && ` — expires ${c.expiryDate}`}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+              <button onClick={()=>setModal(null)} style={css.btn.ghost}>Cancel</button>
+              <button onClick={save} style={css.btn.primary}>Save Welder</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders }) => {
   const tabs = [
     { id:"company",     label:"Company Details",     show: user.role==="super_admin" },
     { id:"prodstd",     label:"Production Standards", show: ["super_admin","planning_admin"].includes(user.role) },
     { id:"clients",     label:"Clients"           },
     { id:"vendors",     label:"Vendors"           },
     { id:"contractors", label:"Contractors"       },
+    { id:"welders",     label:"Welders"           },
     { id:"bays",        label:"Storage Bays"      },
     { id:"materials",   label:"Materials Library" },
     { id:"paint",       label:"Paint Library"     },
@@ -2469,6 +2693,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       {activeTab==="clients"     && <ClientsMaster     user={user} clients={clients} setClients={setClients} orders={orders} setOrders={setOrders} />}
       {activeTab==="vendors"     && <VendorsMaster     user={user} vendors={vendors} setVendors={setVendors} pos={pos} setPos={setPos} stock={stock} />}
       {activeTab==="contractors" && <ContractorsMaster user={user} contractors={contractors} />}
+      {activeTab==="welders"     && <WeldersMaster user={user} welders={welders} setWelders={setWelders} contractors={contractors} />}
       {activeTab==="bays"        && <BaysMaster        user={user} bays={bays} setBays={setBays} />}
       {activeTab==="materials"   && <MaterialsMaster   user={user} materials={materials} setMaterials={setMaterials} />}
       {activeTab==="paint"       && <PaintMaster       user={user} paint={paint} />}
@@ -9078,6 +9303,23 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
         }
       }
     });
+    // Route defective instances by defectAction
+    newInst.forEach(inst => {
+      if (inst.currentStatus === "defective") {
+        const confirmedPart = included.find(p=>p.markNo===inst.markNo&&p.drawingId===inst.drawingId);
+        const action = confirmedPart?.defectAction||"";
+        if (action === "rework") {
+          inst.currentStage = "cutting";
+          inst.currentStatus = "rework";
+        } else if (action === "writeoff") {
+          inst.currentStatus = "writeoff";
+          inst.writeoffRequiresReplacement = true;
+        } else if (action === "use_as_is") {
+          inst.currentStage = "cutting";
+          inst.currentStatus = "pending_pe_approval";
+        }
+      }
+    });
     setInstances(prev=>[...prev,...newInst]);
 
     // Update stock lot wtConsumed (sections only; plates calculated from dims)
@@ -9480,9 +9722,9 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
                     <label style={css.label}>Action Required</label>
                     <select value={p.defectAction||""} onChange={e=>updatePart(i,"defectAction",e.target.value)} style={css.input}>
                       <option value="">Select action...</option>
-                      <option value="scrap_recut">Scrap &amp; Re-cut</option>
-                      <option value="rectify">Rectify</option>
-                      <option value="accept_deviation">Accept Deviation</option>
+                      <option value="rework">Rework — send back to cutting</option>
+                      <option value="writeoff">Write-off — scrap, need replacement</option>
+                      <option value="use_as_is">Use as-is — deviation acceptable (requires PE approval)</option>
                     </select>
                   </div>
                   {repl
@@ -10345,7 +10587,7 @@ const STAGE_NEXT = {
 
 const STAGE_CHECKLISTS = {
   cutting_qc: ["Length verified (±2mm)","Width/height verified","All pieces measured","Cut face smooth","Grinding complete","No heat distortion","All parts stamped","Stamp location correct","Mark legible"],
-  fitup:    ["All parts present per drawing","Dimensions within tolerance","Alignment acceptable","Tack welds correctly placed","Overall length checked","Diagonal 1 checked","Diagonal 2 checked"],
+  fitup:    ["All parts present and piece marked","Joint gap within spec (per WPS)","Alignment correct — no angular distortion","Tack welds placed correctly","Temporary supports/cleats in place","Drawing reference checked","Dimensional check — overall length/width/height","Squareness check","Joint fit-up gap measured and within tolerance","Camber/pre-set per drawing (if specified)","Weld joint preparation adequate"],
   welding:  ["All joints welded","Visual weld quality acceptable","No undercutting or porosity visible","Spatter cleaned","Weld gauge reading noted","Post-weld length checked"],
   blasting: ["Surface grade achieved (Sa 2.5 / Sa 3)","No missed areas","Profile readings taken","Salt contamination checked","Re-marking verified"],
   tpi_fitup:["Fit-up inspection report reviewed","Dimensional check acceptable per report","Inspector sign-off obtained"],
@@ -10367,7 +10609,7 @@ const SUPERVISOR_STAGES = {
   dispatch_admin:      ["dispatch"],
 };
 
-const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, releases, machines, onBack }) => {
+const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, releases, machines, welders, productionStandards, onBack }) => {
   const [selGroup, setSelGroup]   = useState(null);
   const [checks, setChecks]       = useState({});
   const [dft, setDft]             = useState("");
@@ -10378,6 +10620,10 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
   const [mdccRefNo, setMdccRefNo] = useState("");
   const [dimReadings, setDimReadings] = useState({});
   const [localChecks, setLocalChecks] = useState({});
+  const [weldingForm, setWeldingForm] = useState({ welderId:"", welderName:"", wpsUsed:"", ndtRequired:false, ndtTypes:[], ndtAgency:"", ndtReport:"", ndtResult:"pass", ndtDate:"", ndtFailReason:"" });
+  const [cuttingMeasurements, setCuttingMeasurements] = useState({}); // {[markNo]: {actualL:"", actualW:"", failReason:""}}
+  const [dftReadings, setDftReadings] = useState([]); // [{value:"", location:""}]
+  const [now, setNow] = useState(Date.now());
 
   const myStages = SUPERVISOR_STAGES[user.role] || [];
 
@@ -10419,7 +10665,12 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
       return (a.endDate||"") < (b.endDate||"") ? -1 : 1;
     });
 
-  const resetApproval = () => { setChecks({}); setDft(""); setDocRefs({}); setTpiForm({agency:"",reportNo:"",reportDate:"",outcome:"pass"}); setRejectMode(false); setRejectReason(""); setMdccRefNo(""); setDimReadings({}); setLocalChecks({}); };
+  useEffect(()=>{
+    const id = setInterval(()=>setNow(Date.now()), 10000);
+    return ()=>clearInterval(id);
+  }, []);
+
+  const resetApproval = () => { setChecks({}); setDft(""); setDocRefs({}); setTpiForm({agency:"",reportNo:"",reportDate:"",outcome:"pass"}); setRejectMode(false); setRejectReason(""); setMdccRefNo(""); setDimReadings({}); setLocalChecks({}); setWeldingForm({welderId:"",welderName:"",wpsUsed:"",ndtRequired:false,ndtTypes:[],ndtAgency:"",ndtReport:"",ndtResult:"pass",ndtDate:"",ndtFailReason:""}); setCuttingMeasurements({}); setDftReadings([]); };
 
   const doApprove = (group, remarks) => {
     const stage = group.stage;
@@ -10429,13 +10680,27 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
     let nextStage = STAGE_NEXT[stage];
     if (stage==="fitup") {
       nextStage = (orderQuality.tpiHoldPoints||[]).includes('fit_up') ? 'tpi_fitup' : 'welding';
-    } else if (stage==="tpi_weld") {
+    } else if (stage==="tpi_weld" || stage==="welding") {
       const drg = orderForGroup?.drawings?.find(d=>d.id===group.drawingId);
-      nextStage = drg?.assemblyGroup ? 'assembly' : 'blasting';
-    } else if (stage==="welding") {
-      const drg = orderForGroup?.drawings?.find(d=>d.id===group.drawingId);
-      if (!((orderQuality.tpiHoldPoints||[]).includes('welding')) && drg?.assemblyGroup) {
-        nextStage = 'assembly';
+      const hasTpiGate = (orderQuality.tpiHoldPoints||[]).includes('welding');
+      if (stage==="welding" && hasTpiGate) {
+        // No assembly routing — TPI gate takes precedence (nextStage already set by STAGE_NEXT)
+      } else if (drg?.assemblyGroup) {
+        const asmDef = (orderForGroup?.assemblies||[]).find(a=>(a.drawingsAssigned||[]).includes(group.drawingId));
+        const siblingIds = (asmDef?.drawingsAssigned||[]).filter(id=>id!==group.drawingId);
+        const allSiblingsDone = siblingIds.every(sibId=>{
+          const sibInsts = instances.filter(i=>i.drawingId===sibId&&i.orderId===group.orderId);
+          if (!sibInsts.length) return false;
+          const pastWeld = ["assembly","assembly_hold","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"];
+          return sibInsts.every(i=>pastWeld.includes(i.currentStage)||
+            (i.currentStage==="tpi_weld"&&i.currentStatus==="completed")||
+            (i.currentStage==="welding"&&i.currentStatus==="completed"));
+        });
+        if (allSiblingsDone) {
+          nextStage = 'assembly';
+        } else {
+          nextStage = '__assembly_hold__'; // special sentinel
+        }
       }
     } else if (stage==="blasting") {
       nextStage = (orderQuality.tpiHoldPoints||[]).includes('blasting') ? 'tpi_blast' : 'painting';
@@ -10454,24 +10719,69 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
     }
     const ids = group.insts.map(i=>i.instanceId);
     const checkedItems = Object.keys(checks).filter(k=>checks[k]);
-    setInstances(prev => prev.map(i => {
-      if (!ids.includes(i.instanceId)) return i;
-      const hist = [...(i.stageHistory||[])];
-      const idx = hist.findIndex(h=>h.stage===stage);
+
+    const isAssemblyHold = nextStage === '__assembly_hold__';
+    const effectiveNextStage = isAssemblyHold ? 'assembly' : nextStage;
+
+    setInstances(prev => {
       const entry = { stage, signedOffBy:user.username, signedOffName:user.name, signedOffDate:today(),
-        checklistItems:checkedItems, dftReading:dft||null, docRefs:docRefs||{}, remarks:remarks||"",
+        checklistItems:checkedItems, dftReading:dft||null, dftReadingsDetailed: dftReadings.length>0 ? dftReadings.map(r=>({value:+r.value||0,location:r.location||"",takenAt:new Date().toISOString(),takenBy:user.username})) : undefined, dftAvg: dftReadings.length>0 ? +(dftReadings.map(r=>+r.value).filter(Boolean).reduce((s,v,_,a)=>s+v/a.length,0).toFixed(1)) : undefined, docRefs:docRefs||{}, remarks:remarks||"",
         dimReadings: Object.keys(dimReadings).length>0 ? Object.entries(dimReadings).map(([markNo,measuredMm])=>({markNo,measuredMm:+measuredMm})) : undefined,
         ...(isTpi ? { tpiAgency:tpiForm.agency, tpiReportNo:tpiForm.reportNo, tpiReportDate:tpiForm.reportDate, tpiOutcome:tpiForm.outcome } : {}),
         ...(stage==="mdcc" ? { mdccRefNo } : {}),
+        ...(stage==="welding" ? {
+          weldingDetails:{ welderId:weldingForm.welderId, welderName:weldingForm.welderName||"", wpsUsed:weldingForm.wpsUsed, completedAt:new Date().toISOString(), completedBy:user.id||user.username },
+          ndtDetails:weldingForm.ndtRequired ? { required:true, types:weldingForm.ndtTypes, agency:weldingForm.ndtAgency, reportLink:weldingForm.ndtReport, result:weldingForm.ndtResult, date:weldingForm.ndtDate } : { required:false },
+        } : {}),
+        ...(stage==="cutting_qc" ? {
+          cuttingQcMeasurements: Object.entries(cuttingMeasurements).filter(([k])=>k!=='_failReason').map(([markNo,m])=>({markNo, actualL:+m.actualL||null, actualW:+m.actualW||null})),
+          cuttingQcApprovedAt: new Date().toISOString(),
+          cuttingQcApprovedBy: user.id||user.username,
+        } : {}),
+        ...(stage==="fitup" ? {
+          fitupQcMeasurements: [['fitupLength','Overall Length'],['fitupWidth','Overall Width'],['fitupHeight','Overall Height'],['fitupDiag1','Diagonal 1'],['fitupDiag2','Diagonal 2']].filter(([k])=>docRefs[k]).map(([k,dim])=>({dim, actual:+docRefs[k]})),
+          fitupQcApprovedAt: new Date().toISOString(),
+          fitupQcApprovedBy: user.id||user.username,
+        } : {}),
+        ...(stage==="blasting" ? { blastingCompletedAt: new Date().toISOString() } : {}),
+        ...(stage==="painting" ? { appliedAt: new Date().toISOString() } : {}),
       };
-      if (idx>=0) hist[idx]={...hist[idx],...entry}; else hist.push(entry);
-      return {
-        ...i,
-        currentStage: nextStage || stage,
-        currentStatus: nextStage ? "in_progress" : "completed",
-        stageHistory: hist,
-      };
-    }));
+
+      let updated = prev.map(i => {
+        if (!ids.includes(i.instanceId)) return i;
+        const hist = [...(i.stageHistory||[])];
+        const idx = hist.findIndex(h=>h.stage===stage);
+        if (idx>=0) hist[idx]={...hist[idx],...entry}; else hist.push(entry);
+        return {
+          ...i,
+          currentStage: isAssemblyHold ? 'assembly' : (effectiveNextStage || stage),
+          currentStatus: isAssemblyHold ? 'assembly_hold' : (effectiveNextStage ? "in_progress" : "completed"),
+          stageHistory: hist,
+          ...(stage==="blasting" ? { blastingCompletedAt: entry.blastingCompletedAt } : {}),
+        };
+      });
+
+      // If advancing to assembly (not hold), also release any assembly_hold siblings
+      if (!isAssemblyHold && (stage==="tpi_weld"||stage==="welding") && effectiveNextStage==="assembly") {
+        const ord = prev.find(i=>ids.includes(i.instanceId));
+        if (ord) {
+          const orderForGrp = orders.find(o=>o.id===ord.orderId);
+          const thisDrawing = orderForGrp?.drawings?.find(d=>d.id===ord.drawingId);
+          if (thisDrawing?.assemblyGroup) {
+            const asmDef = (orderForGrp?.assemblies||[]).find(a=>(a.drawingsAssigned||[]).includes(ord.drawingId));
+            const siblingIds = (asmDef?.drawingsAssigned||[]);
+            updated = updated.map(i=>{
+              if (i.currentStage==="assembly"&&i.currentStatus==="assembly_hold"&&i.orderId===ord.orderId&&siblingIds.includes(i.drawingId)) {
+                return {...i, currentStatus:"in_progress"};
+              }
+              return i;
+            });
+          }
+        }
+      }
+
+      return updated;
+    });
     resetApproval();
     setSelGroup(null);
   };
@@ -10540,13 +10850,52 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
       : (STAGE_CHECKLISTS[stage] || []);
     const tpiDetailsOk = !isTpi || (tpiForm.agency&&tpiForm.reportNo&&tpiForm.reportDate);
     const mdccOk = !isMdcc || mdccRefNo.trim().length > 0;
-    const allChecked = checklist.every(item=>checks[item]) && tpiDetailsOk && mdccOk;
+    const ndtGateOk = stage!=="welding" || !weldingForm.ndtRequired || weldingForm.ndtResult==="pass";
+    const cuttingQcGateOk = stage!=="cutting_qc" || (() => {
+      const anyFailed = Object.entries(cuttingMeasurements).filter(([k])=>k!=='_failReason').some(([markNo,m])=>{
+        const order = orders.find(o=>o.id===selGD.orderId);
+        const part = (order?.parts||[]).find(p=>p.markNo===markNo&&p.drawingId===selGD.drawingId);
+        const getTol = (d)=>+d<=500?2:+d<=2000?3:5;
+        const lFail = part?.length&&m.actualL&&Math.abs(+m.actualL-+part.length)>getTol(part.length);
+        const wFail = part?.width&&m.actualW&&Math.abs(+m.actualW-+part.width)>getTol(part.width);
+        return lFail||wFail;
+      });
+      return !anyFailed || (cuttingMeasurements._failReason||"").trim().length>0;
+    })();
+    const holidayGateOk = stage!=="painting" || docRefs['holidayResult']!=="fail";
+    const allChecked = checklist.every(item=>checks[item]) && tpiDetailsOk && mdccOk && ndtGateOk && cuttingQcGateOk && holidayGateOk;
 
     return (
       <div>
         <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
           <button onClick={()=>{resetApproval();setSelGroup(null);}} style={css.btn.ghost}>← Approval Queue</button>
         </div>
+        {stage==="cutting_qc" && (() => {
+          const order = orders.find(o=>o.id===selGD.orderId);
+          const drg = order?.drawings?.find(d=>d.id===selGD.drawingId);
+          const part = (order?.parts||[]).find(p=>p.markNo===selGD.markNo&&p.drawingId===selGD.drawingId);
+          const matCode = part?.matCode || selGD.insts[0]?.matCode || "";
+          const approvedMakesStr = (order?.quality?.approvedMakes||[]).join(", ");
+          return (
+            <div style={{background:T.bgInput,borderRadius:6,padding:"8px 14px",marginBottom:12,fontSize:12,display:"flex",gap:16,flexWrap:"wrap"}}>
+              <span style={{color:T.textMid}}>📋 <a href="#" style={{color:T.accent}} onClick={e=>{e.preventDefault();}}>Part List</a></span>
+              {drg?.driveLink && <a href={drg.driveLink} target="_blank" rel="noreferrer" style={{color:T.accent}}>📐 Drawing</a>}
+              <span style={{color:T.textMid}}>🔩 RM: <strong style={{color:T.text}}>{matCode}</strong>{order?.quality?.grade&&` — Grade ${order.quality.grade}`}{approvedMakesStr&&` — Makes: ${approvedMakesStr}`}</span>
+            </div>
+          );
+        })()}
+        {stage==="fitup" && (() => {
+          const order = orders.find(o=>o.id===selGD.orderId);
+          const drg = order?.drawings?.find(d=>d.id===selGD.drawingId);
+          const weldSpec = order?.quality?.weldSpec||{};
+          return (
+            <div style={{background:T.bgInput,borderRadius:6,padding:"8px 14px",marginBottom:12,fontSize:12,display:"flex",gap:16,flexWrap:"wrap"}}>
+              {drg?.driveLink && <a href={drg.driveLink} target="_blank" rel="noreferrer" style={{color:T.accent}}>📐 Assembly Drawing</a>}
+              {weldSpec.process && <span style={{color:T.textMid}}>📋 Weld Spec: <strong style={{color:T.text}}>{weldSpec.process}</strong></span>}
+              <span style={{color:T.textMid}}>📏 General tolerance: ±3mm</span>
+            </div>
+          );
+        })()}
         {selGD.rejCount>=2&&(
           <div style={{ background:T.redBg,border:`1px solid ${T.red}`,borderRadius:8,padding:"10px 14px",marginBottom:14 }}>
             <div style={{ fontSize:11,fontWeight:800,color:T.red }}>⚠ QUALITY CONCERN — {selGD.rejCount} REJECTIONS ON THIS STAGE</div>
@@ -10637,15 +10986,32 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
         {/* Fitup measurements */}
         {stage==="fitup" && (
           <div style={{...css.card,marginBottom:14}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>DIMENSIONAL READINGS (mm)</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-              {[['fitupLength','Overall Length'],['fitupDiag1','Diagonal 1'],['fitupDiag2','Diagonal 2'],['fitupKeyPos','Key Position']].map(([k,l])=>(
-                <div key={k}>
-                  <label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>{l}</label>
-                  <input type="number" value={docRefs[k]||''} onChange={e=>setDocRefs(p=>({...p,[k]:e.target.value}))} placeholder="mm" style={{...css.input,width:'100%'}} />
-                </div>
-              ))}
-            </div>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>KEY DIMENSIONS (mm)</div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead>
+                <tr style={{color:T.textMid,fontSize:11}}>
+                  <th style={{textAlign:"left",padding:"3px 8px"}}>Dimension</th>
+                  <th style={{textAlign:"left",padding:"3px 8px"}}>Drawing Value</th>
+                  <th style={{textAlign:"left",padding:"3px 8px"}}>Actual</th>
+                  <th style={{textAlign:"left",padding:"3px 8px"}}>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[['fitupLength','Overall Length','—'],['fitupWidth','Overall Width','—'],['fitupHeight','Overall Height','—'],['fitupDiag1','Diagonal 1','—'],['fitupDiag2','Diagonal 2','—']].map(([k,l,target])=>{
+                  return (
+                    <tr key={k} style={{borderTop:`1px solid ${T.border}`}}>
+                      <td style={{padding:"5px 8px",color:T.textMid}}>{l}</td>
+                      <td style={{padding:"5px 8px",color:T.textLow}}>—</td>
+                      <td style={{padding:"5px 8px"}}>
+                        <input type="number" value={docRefs[k]||''} onChange={e=>setDocRefs(p=>({...p,[k]:e.target.value}))}
+                          placeholder="mm" style={{...css.input,width:90,padding:"3px 6px",fontSize:12}} />
+                      </td>
+                      <td style={{padding:"5px 8px",color:T.textMid}}>Recorded</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
         {/* Fitup: tack weld verification + piece marking + welding sequence */}
@@ -10674,45 +11040,122 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
               style={{width:'100%',background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:6,borderRadius:4,fontSize:13,resize:'vertical'}} />
           </div>
         </>}
-        {/* Welding NDT */}
-        {stage==="welding" && (
-          <div style={{...css.card,marginBottom:14}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>WELD GAUGE & NDT</div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Weld Gauge Reading (mm)</label><input type="number" value={docRefs['weldGauge']||''} onChange={e=>setDocRefs(p=>({...p,weldGauge:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Post-Weld Length (mm)</label><input type="number" value={docRefs['postWeldLength']||''} onChange={e=>setDocRefs(p=>({...p,postWeldLength:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
-            </div>
-            {/* Additional measurement inputs */}
-            <div style={{fontWeight:600,marginTop:12,marginBottom:6,fontSize:13}}>Measurements</div>
-            <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
-              <div>
-                <div style={{fontSize:12,color:'#aaa',marginBottom:3}}>Weld Gauge Reading (mm)</div>
-                <input type="number" step="0.1" placeholder="0.0"
-                  value={(localChecks||{}).weldGaugeReading||''}
-                  onChange={e=>setLocalChecks(c=>({...c,weldGaugeReading:e.target.value}))}
-                  style={{width:120,background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:'6px 8px',borderRadius:4,fontSize:13}} />
+        {/* Welding: welder tracking + enhanced NDT */}
+        {stage==="welding" && (() => {
+          const order = orders.find(o=>o.id===selGD.orderId);
+          const qual = order?.quality||{};
+          // Find contractorId from releases for this drawing
+          let contractorId = "";
+          for (const rel of releases||[]) {
+            const d = (rel.drawings||[]).find(d=>d.drawingId===selGD.drawingId&&d.orderId===selGD.orderId);
+            if (d?.contractorId) { contractorId = d.contractorId; break; }
+          }
+          const contrWelders = (welders||[]).filter(w=>w.active && (!contractorId || w.contractorId===contractorId));
+          const selWelder = contrWelders.find(w=>w.id===weldingForm.welderId);
+          const weldSpec = qual.weldSpec||{};
+          const ndtOk = !weldingForm.ndtRequired || weldingForm.ndtResult==="pass";
+          return (
+            <div style={{...css.card,marginBottom:14}}>
+              {/* Reference links */}
+              <div style={{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap",fontSize:12}}>
+                {order?.drawings?.find(d=>d.id===selGD.drawingId)?.driveLink && (
+                  <a href={order.drawings.find(d=>d.id===selGD.drawingId).driveLink} target="_blank" rel="noreferrer"
+                    style={{color:T.accent}}>📐 Drawing</a>
+                )}
+                {weldSpec.process && <span style={{color:T.textMid}}>🔧 Weld Spec: <strong style={{color:T.text}}>{weldSpec.process}</strong>{weldSpec.electrode&&` — Electrode: ${weldSpec.electrode}`}</span>}
               </div>
-              <div>
-                <div style={{fontSize:12,color:'#aaa',marginBottom:3}}>Post-Weld Length (mm)</div>
-                <input type="number" step="1" placeholder="0"
-                  value={(localChecks||{}).postWeldLength||''}
-                  onChange={e=>setLocalChecks(c=>({...c,postWeldLength:e.target.value}))}
-                  style={{width:140,background:'#1a1a2e',border:'1px solid #333',color:'#e0e0e0',padding:'6px 8px',borderRadius:4,fontSize:13}} />
+              <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:10}}>WELDER SIGN-OFF</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                <div>
+                  <label style={css.label}>Welder</label>
+                  {contrWelders.length>0 ? (
+                    <select value={weldingForm.welderId} onChange={e=>{
+                      const w=contrWelders.find(x=>x.id===e.target.value);
+                      setWeldingForm(f=>({...f,welderId:e.target.value,welderName:w?.name||""}));
+                    }} style={css.input}>
+                      <option value="">Select welder...</option>
+                      {contrWelders.map(w=><option key={w.id} value={w.id}>{w.name} ({(w.certifications||[]).map(c=>c.process).join("/")})</option>)}
+                    </select>
+                  ) : (
+                    <input value={weldingForm.welderName} onChange={e=>setWeldingForm(f=>({...f,welderName:e.target.value}))}
+                      style={css.input} placeholder="Enter welder name" />
+                  )}
+                  {contrWelders.length===0 && <div style={{fontSize:10,color:T.amber,marginTop:2}}>Add welders in Masters → Welders for dropdown selection</div>}
+                </div>
+                <div>
+                  <label style={css.label}>WPS Used</label>
+                  <input value={weldingForm.wpsUsed} onChange={e=>setWeldingForm(f=>({...f,wpsUsed:e.target.value}))}
+                    style={css.input} placeholder={weldSpec.process||"e.g. WPS-001 IS 2062 E250"} />
+                </div>
               </div>
+              {selWelder && (
+                <div style={{background:T.bgInput,borderRadius:5,padding:"6px 10px",marginBottom:10,fontSize:11}}>
+                  Cert: {selWelder.certifications.map(c=>`${c.process} ${c.position} — ${c.certNo} (exp ${c.expiryDate})`).join(" | ")}
+                </div>
+              )}
+              <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>WELD MEASUREMENTS</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                <div><label style={css.label}>Weld Gauge Reading (mm)</label><input type="number" value={docRefs['weldGauge']||''} onChange={e=>setDocRefs(p=>({...p,weldGauge:e.target.value}))} style={{...css.input,width:"100%"}} /></div>
+                <div><label style={css.label}>Post-Weld Length (mm)</label><input type="number" value={docRefs['postWeldLength']||''} onChange={e=>setDocRefs(p=>({...p,postWeldLength:e.target.value}))} style={{...css.input,width:"100%"}} /></div>
+              </div>
+              <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>NDT (NON-DESTRUCTIVE TESTING)</div>
+              <div style={{display:"flex",gap:16,marginBottom:8}}>
+                {[true,false].map(v=>(
+                  <label key={String(v)} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13}}>
+                    <input type="radio" checked={weldingForm.ndtRequired===v}
+                      onChange={()=>setWeldingForm(f=>({...f,ndtRequired:v}))} />
+                    {v?"NDT Required":"NDT Not Required"}
+                  </label>
+                ))}
+              </div>
+              {weldingForm.ndtRequired && (
+                <div>
+                  <div style={{marginBottom:8}}>
+                    <label style={css.label}>NDT Type(s)</label>
+                    <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                      {["UT","RT","PT","MT"].map(t=>(
+                        <label key={t} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13}}>
+                          <input type="checkbox" checked={(weldingForm.ndtTypes||[]).includes(t)}
+                            onChange={e=>setWeldingForm(f=>({...f,ndtTypes:e.target.checked?[...(f.ndtTypes||[]),t]:(f.ndtTypes||[]).filter(x=>x!==t)}))} />
+                          {t}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                    <div><label style={css.label}>NDT Agency</label><input value={weldingForm.ndtAgency} onChange={e=>setWeldingForm(f=>({...f,ndtAgency:e.target.value}))} style={css.input} placeholder="Agency name" /></div>
+                    <div><label style={css.label}>NDT Date</label><input type="date" value={weldingForm.ndtDate} onChange={e=>setWeldingForm(f=>({...f,ndtDate:e.target.value}))} style={css.input} /></div>
+                    <div style={{gridColumn:"span 2"}}><label style={css.label}>NDT Report Link</label><input value={weldingForm.ndtReport} onChange={e=>setWeldingForm(f=>({...f,ndtReport:e.target.value}))} style={css.input} placeholder="Drive link..." /></div>
+                  </div>
+                  <div style={{marginBottom:8}}>
+                    <label style={css.label}>NDT Result</label>
+                    <div style={{display:"flex",gap:16}}>
+                      {[["pass","Pass — Proceed"],["fail","Fail — Rework required"]].map(([v,l])=>(
+                        <label key={v} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:13}}>
+                          <input type="radio" checked={weldingForm.ndtResult===v} onChange={()=>setWeldingForm(f=>({...f,ndtResult:v}))} />
+                          <span style={{color:v==="fail"?T.red:T.text}}>{l}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  {weldingForm.ndtResult==="fail" && (
+                    <div>
+                      <label style={css.label}>Fail Reason *</label>
+                      <textarea value={weldingForm.ndtFailReason} onChange={e=>setWeldingForm(f=>({...f,ndtFailReason:e.target.value}))}
+                        rows={2} style={{...css.input,width:"100%",resize:"vertical",fontFamily:T.font}} />
+                      <div style={{fontSize:11,color:T.red,marginTop:4}}>NDT Fail — approval is blocked until result is changed to Pass or NDT is waived by Production Engineer.</div>
+                    </div>
+                  )}
+                  {!ndtOk && (
+                    <div style={{padding:"8px 12px",background:T.redBg,border:`1px solid ${T.red}44`,borderRadius:6,fontSize:12,color:T.red,marginTop:8}}>
+                      ⛔ NDT required and result is FAIL — cannot approve this stage.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-            <div style={{marginTop:8}}>
-              <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12}}>
-                <input type="checkbox" checked={!!docRefs['ndtRequired']} onChange={e=>setDocRefs(p=>({...p,ndtRequired:e.target.checked}))} />
-                <span style={{color:T.text}}>NDT Required</span>
-              </label>
-              {docRefs['ndtRequired']&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginTop:8}}>
-                <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>NDT Type(s)</label><input value={docRefs['ndtTypes']||''} onChange={e=>setDocRefs(p=>({...p,ndtTypes:e.target.value}))} placeholder="UT, MPI, RT, PT" style={{...css.input,width:'100%'}} /></div>
-                <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Result</label><select value={docRefs['ndtResult']||'Pass'} onChange={e=>setDocRefs(p=>({...p,ndtResult:e.target.value}))} style={css.input}><option>Pass</option><option>Fail</option><option>Conditional</option></select></div>
-                <div style={{gridColumn:'span 2'}}><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Report Link</label><input value={docRefs['ndtLink']||''} onChange={e=>setDocRefs(p=>({...p,ndtLink:e.target.value}))} placeholder="Drive link..." style={{...css.input,width:'100%'}} /></div>
-              </div>}
-            </div>
-          </div>
-        )}
+          );
+        })()}
         {/* Blasting profile readings */}
         {stage==="blasting" && (
           <div style={{...css.card,marginBottom:14}}>
@@ -10749,51 +11192,106 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
         )}
         {/* Blasting → Primer timer */}
         {stage==="blasting" && (() => {
-          const blastEntry = selGD.insts[0]?.stageHistory?.find(h=>h.stage==="blasting");
+          const blastEntry = (selGD.insts[0]?.stageHistory||[]).slice().reverse().find(h=>h.stage==="blasting"&&h.signedOffDate);
           if (!blastEntry?.signedOffDate) return null;
-          const daysSince = Math.floor((Date.now() - new Date(blastEntry.signedOffDate).getTime()) / 86400000);
-          const hoursElapsed = daysSince * 24;
-          const color = hoursElapsed >= 4 ? T.red : hoursElapsed >= 3 ? T.amber : T.green;
-          const label = hoursElapsed >= 4 ? "CRITICAL — Primer must be applied NOW" : hoursElapsed >= 3 ? "WARNING — Primer due within 1 hour" : "OK — Within primer window";
+          const ambTh = productionStandards?.blastThresholds?.amberHours ?? 3;
+          const redTh = productionStandards?.blastThresholds?.redHours ?? 4;
           return (
-            <div style={{ ...css.card, marginBottom:14, border:`1px solid ${color}55`, background:color+"11" }}>
-              <div style={{ fontSize:11, fontWeight:700, color, marginBottom:4 }}>TIME TO PRIMER</div>
-              <div style={{ fontSize:13, fontWeight:700, color }}>{hoursElapsed.toFixed(1)} hours since blasting sign-off</div>
-              <div style={{ fontSize:11, color, marginTop:4 }}>{label}</div>
-              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Blast date: {blastEntry.signedOffDate} — Primer window: 4 hours max</div>
+            <div style={{...css.card,marginBottom:14,border:`1px solid ${T.accent}44`,background:T.bgInput}}>
+              <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:4}}>PRIMER WINDOW REQUIREMENT</div>
+              <div style={{fontSize:12,color:T.text}}>Primer must be applied within <strong style={{color:T.amber}}>{redTh} hours</strong> of blast completion. Warning at {ambTh}h.</div>
+              <div style={{fontSize:11,color:T.textMid,marginTop:4}}>Blasting sign-off recorded — primer countdown will start on painting stage.</div>
             </div>
           );
         })()}
         {/* Time to primer warning — shown on painting stage */}
         {isPainting && (() => {
-          const blastApproval = (selGD.insts[0]?.stageHistory||[]).slice().reverse().find(h=>h.stage==='blasting'&&h.signedOffDate);
-          if (!blastApproval?.signedOffDate) return null;
-          const hrs = (Date.now() - new Date(blastApproval.signedOffDate).getTime()) / 3600000;
-          const col = hrs >= 4 ? '#ef4444' : hrs >= 3 ? '#f59e0b' : '#22c55e';
-          const msg = hrs >= 4 ? 'CRITICAL: >4h since blasting — primer application overdue!' : hrs >= 3 ? 'Warning: >3h since blasting — apply primer soon' : 'Time since blasting within limit';
+          const inst0 = selGD.insts[0];
+          const blastTs = inst0?.blastingCompletedAt || (()=>{
+            const h = (inst0?.stageHistory||[]).slice().reverse().find(h=>h.stage==='blasting'&&h.signedOffDate);
+            return h?.signedOffDate ? h.signedOffDate : null;
+          })();
+          if (!blastTs) return null;
+          const hrs = (now - new Date(blastTs).getTime()) / 3600000;
+          const ambTh = productionStandards?.blastThresholds?.amberHours ?? 3;
+          const redTh = productionStandards?.blastThresholds?.redHours ?? 4;
+          const isRed = hrs >= redTh;
+          const isAmber = !isRed && hrs >= ambTh;
+          const col = isRed ? T.red : isAmber ? T.amber : T.green;
+          const hh = Math.floor(hrs); const mm = Math.floor((hrs-hh)*60); const ss = Math.floor(((hrs-hh)*60-mm)*60);
+          const timeStr = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+          const msg = isRed ? `❌ Re-blast may be required — ${hrs.toFixed(1)}h since blasting (>${redTh}h limit)` :
+            isAmber ? `⚠ Apply primer soon — ${hrs.toFixed(1)}h elapsed (>${ambTh}h amber threshold)` :
+            `✅ Surface ready for primer — ${hrs.toFixed(1)}h elapsed`;
           return (
-            <div style={{background:col+'22',border:`1px solid ${col}`,borderRadius:6,padding:'8px 12px',marginBottom:12,color:col,fontSize:13}}>
-              ⏱ {msg} ({hrs.toFixed(1)}h elapsed)
+            <div style={{background:col+'22',border:`1px solid ${col}`,borderRadius:6,padding:'8px 12px',marginBottom:12}}>
+              <div style={{color:col,fontSize:13,fontWeight:isRed?700:500}}>{msg}</div>
+              <div style={{color:col,fontSize:20,fontFamily:T.fontMono,fontWeight:800,marginTop:4}}>⏱ {timeStr}</div>
+              {isRed && !inst0?.reblastWaivedBy && (
+                <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center"}}>
+                  <span style={{fontSize:11,color:T.red}}>Production Engineer override required to proceed without re-blast.</span>
+                  <button onClick={()=>{
+                    const reason = prompt("Enter override reason for proceeding without re-blast:");
+                    if (!reason?.trim()) return;
+                    setInstances(prev=>prev.map(i=>selGD.insts.some(si=>si.instanceId===i.instanceId)?{...i,reblastWaivedBy:user.username,reblastWaivedReason:reason,reblastWaivedAt:new Date().toISOString()}:i));
+                  }} style={{...css.btn.ghost,fontSize:11,color:T.amber,borderColor:T.amber}}>Override (PE)</button>
+                </div>
+              )}
+              {inst0?.reblastWaivedBy && (
+                <div style={{marginTop:4,fontSize:11,color:T.amber}}>Override granted by {inst0.reblastWaivedBy}</div>
+              )}
             </div>
           );
         })()}
         {/* Painting DFT per coat */}
         {isPainting && (
           <div style={{...css.card,marginBottom:14}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>PAINT BATCH & DFT READINGS</div>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>PAINT BATCH & ENVIRONMENT</div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Paint Batch No.</label><input value={docRefs['paintBatchNo']||''} onChange={e=>setDocRefs(p=>({...p,paintBatchNo:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Temp (°C)</label><input type="number" value={docRefs['envTemp']||''} onChange={e=>setDocRefs(p=>({...p,envTemp:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>RH (%)</label><input type="number" value={docRefs['envRH']||''} onChange={e=>setDocRefs(p=>({...p,envRH:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Dew Point (°C)</label><input type="number" value={docRefs['envDewPt']||''} onChange={e=>setDocRefs(p=>({...p,envDewPt:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
-              <div><label style={{fontSize:11,color:T.textMid,display:'block',marginBottom:2}}>Surface Temp (°C)</label><input type="number" value={docRefs['envSurfTemp']||''} onChange={e=>setDocRefs(p=>({...p,envSurfTemp:e.target.value}))} style={{...css.input,width:'100%'}} />{(docRefs['envSurfTemp']&&docRefs['envDewPt'])&&<div style={{fontSize:11,color:+docRefs['envSurfTemp']>=(+docRefs['envDewPt']+3)?T.green:T.red,marginTop:2}}>{+docRefs['envSurfTemp']>=(+docRefs['envDewPt']+3)?"OK (surface ≥ dew+3)":"WARNING: surface temp too low"}</div>}</div>
+              <div><label style={css.label}>Paint Batch No.</label><input value={docRefs['paintBatchNo']||''} onChange={e=>setDocRefs(p=>({...p,paintBatchNo:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={css.label}>Temp (°C)</label><input type="number" value={docRefs['envTemp']||''} onChange={e=>setDocRefs(p=>({...p,envTemp:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={css.label}>RH (%)</label><input type="number" value={docRefs['envRH']||''} onChange={e=>setDocRefs(p=>({...p,envRH:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={css.label}>Dew Point (°C)</label><input type="number" value={docRefs['envDewPt']||''} onChange={e=>setDocRefs(p=>({...p,envDewPt:e.target.value}))} style={{...css.input,width:'100%'}} /></div>
+              <div><label style={css.label}>Surface Temp (°C)</label><input type="number" value={docRefs['envSurfTemp']||''} onChange={e=>setDocRefs(p=>({...p,envSurfTemp:e.target.value}))} style={{...css.input,width:'100%'}} />
+                {(docRefs['envSurfTemp']&&docRefs['envDewPt'])&&<div style={{fontSize:11,color:+docRefs['envSurfTemp']>=(+docRefs['envDewPt']+3)?T.green:T.red,marginTop:2}}>{+docRefs['envSurfTemp']>=(+docRefs['envDewPt']+3)?"OK (surface ≥ dew+3)":"WARNING: surface temp too low"}</div>}
+              </div>
             </div>
-            <div style={{fontSize:11,color:T.textMid,marginBottom:4}}>DFT READINGS (µm) — 5 measurements</div>
-            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-              {[1,2,3,4,5].map(i=>(
-                <input key={i} type="number" value={docRefs[`dft${i}`]||''} onChange={e=>setDocRefs(p=>({...p,[`dft${i}`]:e.target.value}))} placeholder={`R${i}`} style={{...css.input,width:60}} />
-              ))}
-            </div>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6}}>DFT READINGS (µm)</div>
+            {dftReadings.map((r,i)=>(
+              <div key={i} style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}>
+                <input type="number" value={r.value||""} onChange={e=>setDftReadings(prev=>{const n=[...prev];n[i]={...n[i],value:e.target.value};return n;})}
+                  placeholder="µm" style={{...css.input,width:80}} />
+                <input value={r.location||""} onChange={e=>setDftReadings(prev=>{const n=[...prev];n[i]={...n[i],location:e.target.value};return n;})}
+                  placeholder="Location (e.g. Top flange)" style={{...css.input,flex:1}} />
+                <button onClick={()=>setDftReadings(prev=>prev.filter((_,j)=>j!==i))} style={{...css.btn.ghost,padding:"5px 8px",fontSize:11}}>✕</button>
+              </div>
+            ))}
+            {dftReadings.length<10 && (
+              <button onClick={()=>setDftReadings(prev=>[...prev,{value:"",location:""}])} style={{...css.btn.ghost,fontSize:11,marginBottom:8}}>+ Add Reading</button>
+            )}
+            {dftReadings.length>0 && (() => {
+              const vals = dftReadings.map(r=>+r.value).filter(Boolean);
+              if (!vals.length) return null;
+              const avg = vals.reduce((s,v)=>s+v,0)/vals.length;
+              const min = Math.min(...vals);
+              const order = orders.find(o=>o.id===selGD.orderId);
+              const paintCoats = getPaintCoats(order?.quality);
+              const coatsDone = (selGD.insts[0]?.stageHistory||[]).filter(h=>h.stage==="painting").length;
+              const currentCoat = paintCoats[coatsDone];
+              const target = currentCoat?.dft||0;
+              const pass = !target || avg >= target;
+              return (
+                <div style={{background:pass?T.greenBg:T.redBg,border:`1px solid ${pass?T.green:T.red}44`,borderRadius:6,padding:"8px 12px",fontSize:12}}>
+                  <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+                    <span>Avg: <strong style={{color:pass?T.green:T.red}}>{avg.toFixed(1)} µm</strong></span>
+                    <span>Min: <strong style={{color:min<(target*0.9)?T.amber:T.text}}>{min.toFixed(0)} µm</strong></span>
+                    {target>0&&<span>Target: <strong>{target} µm</strong></span>}
+                    <span style={{fontWeight:700,color:pass?T.green:T.red}}>{pass?"✅ PASS":"❌ FAIL — below target"}</span>
+                  </div>
+                  {min<(target||0)*0.9&&<div style={{color:T.amber,marginTop:4,fontSize:11}}>⚠ Min reading below 90% of target — check low spots</div>}
+                </div>
+              );
+            })()}
           </div>
         )}
         {/* Painting: dry time enforcement + holiday detection + DFT summary */}
@@ -10807,10 +11305,10 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
           const lastCoatEntry = paintHistory[paintHistory.length-1];
           // Dry time check
           let dryTimeRemaining = null;
-          if (lastCoatEntry?.signedOffDate && currentCoat?.dryTime) {
-            const lastApproval = new Date(lastCoatEntry.signedOffDate).getTime();
+          if ((lastCoatEntry?.appliedAt || lastCoatEntry?.signedOffDate) && currentCoat?.dryTime) {
+            const lastApproval = new Date(lastCoatEntry.appliedAt || lastCoatEntry.signedOffDate).getTime();
             const dryMs = (currentCoat.dryTime||0) * 3600000;
-            const elapsed = Date.now() - lastApproval;
+            const elapsed = now - lastApproval;
             dryTimeRemaining = Math.max(0, dryMs - elapsed) / 3600000;
           }
           // Total DFT
@@ -10827,14 +11325,34 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
                 </div>
               )}
               {currentCoat?.type==="Finish" && (
-                <div style={{ marginBottom:10 }}>
-                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>HOLIDAY DETECTION (Finish Coat)</div>
-                  <select value={docRefs['holidayResult']||""} onChange={e=>setDocRefs(p=>({...p,holidayResult:e.target.value}))} style={css.input}>
-                    <option value="">Select result...</option>
-                    <option value="none">None — No holidays detected</option>
-                    <option value="minor">Minor — Touched up</option>
-                    <option value="major">Major — Full recoat required</option>
-                  </select>
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>HOLIDAY DETECTION (Finish Coat)</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                    <div>
+                      <label style={css.label}>Holiday Detector Instrument</label>
+                      <input value={docRefs['holidayInstrument']||""} onChange={e=>setDocRefs(p=>({...p,holidayInstrument:e.target.value}))}
+                        style={css.input} placeholder="e.g. Elcometer 270" />
+                    </div>
+                    <div>
+                      <label style={css.label}>Test Voltage (V)</label>
+                      <input type="number" value={docRefs['holidayVoltage']||""} onChange={e=>setDocRefs(p=>({...p,holidayVoltage:e.target.value}))}
+                        style={css.input} placeholder="e.g. 67.5" />
+                    </div>
+                  </div>
+                  <label style={css.label}>Holiday Test Result</label>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {[["none","No holidays found ✅"],["repaired","Holidays found and repaired ⚠"],["fail","Holidays found — not repaired ❌ (fail)"]].map(([v,l])=>(
+                      <label key={v} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13}}>
+                        <input type="radio" checked={docRefs['holidayResult']===v} onChange={()=>setDocRefs(p=>({...p,holidayResult:v}))} />
+                        <span style={{color:v==="fail"?T.red:T.text}}>{l}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {docRefs['holidayResult']==="fail" && (
+                    <div style={{marginTop:8,padding:"8px 12px",background:T.redBg,border:`1px solid ${T.red}44`,borderRadius:6,fontSize:12,color:T.red}}>
+                      ⛔ Holiday test FAIL — approval blocked. Stage cannot advance until holidays are repaired.
+                    </div>
+                  )}
                 </div>
               )}
               {allDfts.length > 0 && (
@@ -10983,45 +11501,117 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
           );
         })()}
         {/* Dimension readings for cutting_qc */}
-        {selGD.stage==="cutting_qc" && selGD.insts.length>0 && (()=>{
-          // Derive machine capabilities from releases for this group's nestingRunId
+        {stage==="cutting_qc" && selGD.insts.length>0 && (()=>{
+          const order = orders.find(o=>o.id===selGD.orderId);
+          // Derive machine caps
           const nestingRunId = selGD.insts[0]?.nestingRunId;
-          const relForRun = nestingRunId ? (releases||[]).find(r=>(r.machineAssignments||[]).some(ma=>ma.nestingRunId===nestingRunId)||(r.drawings||[]).some(d=>d.nestingRunId===nestingRunId)) : null;
+          const relForRun = (releases||[]).find(r=>(r.machineAssignments||[]).some(ma=>ma.nestingRunId===nestingRunId));
           const machineId = relForRun ? ((relForRun.machineAssignments||[])[0]?.machineId||"") : "";
-          const machineObj = machineId ? (machines||[]).find(m=>m.id===machineId) : null;
-          const machineCaps = machineObj?.capabilities||[];
+          const machineObj = (machines||[]).find(m=>m.id===machineId);
+          const machineCaps = (machineObj?.capabilities||[]).map(c=>c.toLowerCase());
+
+          const getTolerance = (dimMm) => {
+            const d = +dimMm||0;
+            if (d<=500) return 2;
+            if (d<=2000) return 3;
+            return 5;
+          };
+          const checkPass = (drawing, actual) => {
+            if (!actual) return null;
+            const tol = getTolerance(drawing);
+            return Math.abs((+actual)-(+drawing)) <= tol;
+          };
+
+          const uniqueMarks = [...new Set(selGD.insts.map(i=>i.markNo))];
+          const anyFailed = uniqueMarks.some(markNo=>{
+            const part = (order?.parts||[]).find(p=>p.markNo===markNo&&p.drawingId===selGD.drawingId);
+            const m = cuttingMeasurements[markNo]||{};
+            const lPass = part?.length ? checkPass(part.length, m.actualL) : null;
+            const wPass = part?.width ? checkPass(part.width, m.actualW) : null;
+            return lPass===false || wPass===false;
+          });
+
           return (
-            <div style={{ ...css.card, marginBottom:14 }}>
-              <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>DIMENSION READINGS</div>
-              {[...new Set(selGD.insts.map(i=>i.markNo))].map(markNo=>(
-                <div key={markNo} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:6 }}>
-                  <span style={{ fontSize:12, color:T.text, minWidth:80 }}>{markNo}</span>
-                  <span style={{ fontSize:12, color:T.textMid }}>Measured length:</span>
-                  <input type="number" value={dimReadings[markNo]||""} onChange={e=>setDimReadings(prev=>({...prev,[markNo]:e.target.value}))} placeholder="mm" style={{ ...css.input, width:100, fontSize:12 }} />
-                  <span style={{ fontSize:11, color:T.textMid }}>mm</span>
+            <div style={{...css.card,marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:700,color:T.textMid,marginBottom:10}}>DIMENSIONAL MEASUREMENTS</div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead>
+                    <tr style={{color:T.textMid,fontSize:11}}>
+                      <th style={{textAlign:"left",padding:"4px 8px"}}>Mark No</th>
+                      <th style={{textAlign:"left",padding:"4px 8px"}}>Drawing L (mm)</th>
+                      <th style={{textAlign:"left",padding:"4px 8px"}}>Drawing W (mm)</th>
+                      <th style={{textAlign:"left",padding:"4px 8px"}}>Actual L</th>
+                      <th style={{textAlign:"left",padding:"4px 8px"}}>Actual W</th>
+                      <th style={{textAlign:"left",padding:"4px 8px"}}>Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {uniqueMarks.map(markNo=>{
+                      const part = (order?.parts||[]).find(p=>p.markNo===markNo&&p.drawingId===selGD.drawingId);
+                      const m = cuttingMeasurements[markNo]||{};
+                      const lPass = (part?.length&&m.actualL) ? checkPass(part.length, m.actualL) : null;
+                      const wPass = (part?.width&&m.actualW) ? checkPass(part.width, m.actualW) : null;
+                      const rowFailed = lPass===false || wPass===false;
+                      return (
+                        <tr key={markNo} style={{borderTop:`1px solid ${T.border}`,background:rowFailed?T.redBg:"transparent"}}>
+                          <td style={{padding:"6px 8px",fontFamily:T.fontMono,fontWeight:600,color:T.text}}>{markNo}</td>
+                          <td style={{padding:"6px 8px",color:T.textMid}}>{part?.length||"—"}</td>
+                          <td style={{padding:"6px 8px",color:T.textMid}}>{part?.width||"—"}</td>
+                          <td style={{padding:"6px 8px"}}>
+                            <input type="number" value={m.actualL||""} onChange={e=>setCuttingMeasurements(prev=>({...prev,[markNo]:{...prev[markNo],actualL:e.target.value}}))}
+                              placeholder="mm" style={{...css.input,width:80,padding:"4px 6px",fontSize:12}} />
+                          </td>
+                          <td style={{padding:"6px 8px"}}>
+                            <input type="number" value={m.actualW||""} onChange={e=>setCuttingMeasurements(prev=>({...prev,[markNo]:{...prev[markNo],actualW:e.target.value}}))}
+                              placeholder="mm" style={{...css.input,width:80,padding:"4px 6px",fontSize:12}} />
+                          </td>
+                          <td style={{padding:"6px 8px"}}>
+                            {(lPass!==null||wPass!==null) ? (
+                              <span style={{fontWeight:700,color:rowFailed?T.red:T.green}}>
+                                {rowFailed?"✗ FAIL":"✓ PASS"}
+                              </span>
+                            ) : <span style={{color:T.textLow}}>—</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {anyFailed && (
+                <div style={{marginTop:10}}>
+                  <label style={css.label}>Failure Reason (mandatory when dimensions fail) *</label>
+                  <textarea value={cuttingMeasurements._failReason||""} onChange={e=>setCuttingMeasurements(prev=>({...prev,_failReason:e.target.value}))}
+                    rows={2} placeholder="Describe dimension failure..." style={{...css.input,width:"100%",resize:"vertical",fontFamily:T.font}} />
                 </div>
-              ))}
-              {/* Conditional secondary ops checklist based on machine capabilities */}
-              {machineCaps.includes('bevel') && <>
-                <div style={{fontWeight:600,marginTop:10,marginBottom:4,fontSize:13}}>Bevel QC Items</div>
-                {['Bevel angle correct per drawing','Bevel face clean and uniform','Bevel length matches requirement'].map((item,i)=>(
-                  <label key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,cursor:'pointer'}}>
-                    <input type="checkbox" checked={!!(localChecks||{})[`bevel_${i}`]}
-                      onChange={e=>setLocalChecks(c=>({...c,[`bevel_${i}`]:e.target.checked}))} />
-                    <span style={{fontSize:13}}>{item}</span>
-                  </label>
-                ))}
-              </>}
-              {machineCaps.includes('drill') && <>
-                <div style={{fontWeight:600,marginTop:10,marginBottom:4,fontSize:13}}>Drill QC Items</div>
-                {['Hole diameter correct','Hole position per drawing','Hole perpendicularity acceptable','Burrs removed'].map((item,i)=>(
-                  <label key={i} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4,cursor:'pointer'}}>
-                    <input type="checkbox" checked={!!(localChecks||{})[`drill_${i}`]}
-                      onChange={e=>setLocalChecks(c=>({...c,[`drill_${i}`]:e.target.checked}))} />
-                    <span style={{fontSize:13}}>{item}</span>
-                  </label>
-                ))}
-              </>}
+              )}
+              <div style={{marginTop:10,fontSize:11,color:T.textMid}}>
+                Tolerance: ±2mm (≤500mm) · ±3mm (500–2000mm) · ±5mm (&gt;2000mm)
+              </div>
+              {/* Machine conditional items */}
+              {machineCaps.includes('bevel') && (
+                <div style={{marginTop:12}}>
+                  <div style={{fontWeight:700,fontSize:12,color:T.text,marginBottom:6}}>BEVEL QC ITEMS</div>
+                  {['Bevel angle correct per drawing','Bevel face clean and uniform','Bevel length matches requirement'].map((item,i)=>(
+                    <label key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,cursor:"pointer"}}>
+                      <input type="checkbox" checked={!!(localChecks||{})[`bevel_${i}`]} onChange={e=>setLocalChecks(c=>({...c,[`bevel_${i}`]:e.target.checked}))} />
+                      <span style={{fontSize:13}}>{item}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {machineCaps.includes('drill') && (
+                <div style={{marginTop:12}}>
+                  <div style={{fontWeight:700,fontSize:12,color:T.text,marginBottom:6}}>DRILL QC ITEMS</div>
+                  {['Hole diameter correct','Hole position per drawing','Hole perpendicularity acceptable','Burrs removed'].map((item,i)=>(
+                    <label key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,cursor:"pointer"}}>
+                      <input type="checkbox" checked={!!(localChecks||{})[`drill_${i}`]} onChange={e=>setLocalChecks(c=>({...c,[`drill_${i}`]:e.target.checked}))} />
+                      <span style={{fontSize:13}}>{item}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })()}
@@ -13941,7 +14531,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 // ═══════════════════════════════════════════════════════════════════════════════
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
-                            releases, setReleases, productionStandards, issueRequests, setIssueRequests }) => {
+                            releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders }) => {
   const [view, setView]           = useState("dashboard");
   const [selOrderId, setSelOrderId]   = useState("");
   const [selDrawingId, setSelDrawingId] = useState("");
@@ -13974,7 +14564,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   // ── Supervisor queue view ──
   if (view==="approvals") return (
     <SupervisorQueue user={user} instances={instances} setInstances={setInstances}
-      orders={orders} tpiAgencies={tpiAgencies||[]} releases={releases||[]} machines={machines||[]} onBack={()=>setView("dashboard")} />
+      orders={orders} tpiAgencies={tpiAgencies||[]} releases={releases||[]} machines={machines||[]} welders={welders||[]} productionStandards={productionStandards} onBack={()=>setView("dashboard")} />
   );
 
   // ── Outbound processing view ──
@@ -14447,6 +15037,7 @@ export default function App() {
   const [clients, setClients]           = useState(() => { try { const s=localStorage.getItem('structo_clients'); return s?JSON.parse(s):CLIENTS_FULL; } catch { return CLIENTS_FULL; } });
   const [vendors, setVendors]           = useState(() => { try { const s=localStorage.getItem('structo_vendors'); return s?JSON.parse(s):VENDORS; } catch { return VENDORS; } });
   const [contractors, setContractors]   = useState(CONTRACTORS);
+  const [welders, setWelders]           = useState(WELDERS_SEED);
   const [bays, setBays]                 = useState(BAYS_SEED);
   const [materials, setMaterials]       = useState(MATERIALS_LIBRARY);
   const [paint, setPaint]               = useState(PAINT_LIBRARY);
@@ -14458,6 +15049,7 @@ export default function App() {
   const [overrideLog, setOverrideLog]   = useState([]);
   const [issueRequests, setIssueRequests] = useState([]);
   const [productionStandards, setProductionStandards] = useState({
+    blastThresholds: { amberHours: 3, redHours: 4 },
     tiers: [
       { id:'simple',  label:'Simple',  maxParts:5,   maxKg:200,   cutting:4,  fitup:4,  welding:8,  blasting:2, paintPerCoat:1 },
       { id:'medium',  label:'Medium',  maxParts:10,  maxKg:800,   cutting:8,  fitup:8,  welding:16, blasting:3, paintPerCoat:2 },
@@ -14500,11 +15092,11 @@ export default function App() {
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
-      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} />;
+      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} />;
       default:          return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
     }
   };
