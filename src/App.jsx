@@ -5549,7 +5549,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     stock.forEach(s=>{ const m=(s.lotNo||"").match(/^LOT-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) maxLot=Math.max(maxLot,+m[2]); });
     const newLotNo = `LOT-${yr}-${String(maxLot+1).padStart(3,"0")}`;
     const dim = (activeLot.sectionType||activeLot.section)==="PLATE" ? (mForm.offcutDim||"") : (mForm.offcutLength||"");
-    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"pending_offcut_verification", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
+    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"pending_offcut_verification", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], reservations:[...(activeLot.reservations||[])], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
     const consumed = +(mForm.consumedWt||0);
     setStock(prev=>[...prev.map(s=>s.id!==activeLot.id?s:{ ...s, wtConsumed:(s.wtConsumed||0)+consumed, auditLog:[...(s.auditLog||[]),{action:"offcut-created",orderId:"",wt:offcutWt,by:user.name,date:today(),reason:`Off-cut → ${newLotNo}`}] }), newLot]);
     showToast(`Off-cut lot created: ${newLotNo}`); closeModal();
@@ -5747,6 +5747,66 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
                 </div>
               </div>
             ))}
+          </div>
+        );
+      })()}
+
+      {/* Reservations summary — shown when reserved filter is active */}
+      {filter==="reserved" && (() => {
+        const reservedLots = stock.filter(s=>(s.reservations||[]).length>0);
+        // Group by orderId
+        const byOrder = {};
+        reservedLots.forEach(lot=>{
+          (lot.reservations||[]).forEach(r=>{
+            if (!byOrder[r.orderId]) byOrder[r.orderId]={orderId:r.orderId,entries:[]};
+            byOrder[r.orderId].entries.push({lotNo:lot.lotNo,lotId:lot.id,matCode:lot.matCode,sectionType:lot.sectionType||lot.section,size:lot.size,kg:r.kg,reservedBy:r.reservedBy,reservedAt:r.reservedAt,lotStatus:lot.status});
+          });
+        });
+        const orderGroups = Object.values(byOrder);
+        if (orderGroups.length===0) return null;
+        return (
+          <div style={{ ...css.card, border:`1px solid ${T.amber}44`, marginBottom:16 }}>
+            <div style={{ fontSize:12, fontWeight:800, color:T.amber, marginBottom:12 }}>🔒 RESERVATIONS SUMMARY — {reservedLots.length} LOT{reservedLots.length!==1?"S":""}</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {orderGroups.map(og=>{
+                const totalKg = og.entries.reduce((s,e)=>s+e.kg,0);
+                return (
+                  <div key={og.orderId} style={{ background:T.bgInput, borderRadius:6, padding:"10px 12px" }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                      <div>
+                        <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi, fontSize:13 }}>{og.orderId}</span>
+                        <span style={{ fontSize:11, color:T.textMid, marginLeft:10 }}>{og.entries.length} lot{og.entries.length!==1?"s":""}  · {fmt.num(totalKg)} kg total reserved</span>
+                      </div>
+                    </div>
+                    <table style={{ width:"100%", fontSize:11, borderCollapse:"collapse" }}>
+                      <thead><tr>{["Lot No","Mat Code","Section / Size","Reserved kg","By","Date","Lot Status","Action"].map(h=>(
+                        <th key={h} style={{ textAlign:"left", padding:"2px 8px", color:T.textMid, fontWeight:600, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+                      ))}</tr></thead>
+                      <tbody>{og.entries.map((e,ei)=>{
+                        const lot=stock.find(s=>s.id===e.lotId);
+                        const ri=lot?(lot.reservations||[]).findIndex(r=>r.orderId===og.orderId&&r.kg===e.kg&&r.reservedAt===e.reservedAt):-1;
+                        return (
+                          <tr key={ei} style={{ borderBottom:`1px solid ${T.border}` }}>
+                            <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent }}>{e.lotNo}</td>
+                            <td style={{ padding:"4px 8px", fontFamily:T.fontMono }}>{e.matCode||"—"}</td>
+                            <td style={{ padding:"4px 8px" }}>{e.sectionType} {e.size}</td>
+                            <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.amber, fontWeight:700 }}>{fmt.num(e.kg)}</td>
+                            <td style={{ padding:"4px 8px", color:T.textMid }}>{e.reservedBy}</td>
+                            <td style={{ padding:"4px 8px", color:T.textMid }}>{e.reservedAt}</td>
+                            <td style={{ padding:"4px 8px" }}><Badge color="amber">{e.lotStatus?.replace("_"," ")}</Badge></td>
+                            <td style={{ padding:"4px 8px" }}>
+                              {(user.role==="super_admin"||user.role==="planning_admin")&&lot&&ri>=0&&(
+                                <button onClick={()=>releaseReservation(lot,ri)} style={{ ...css.btn.sm, fontSize:9, color:T.red, padding:"1px 6px" }}>Release</button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}</tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         );
       })()}
