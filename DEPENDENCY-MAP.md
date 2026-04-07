@@ -1,10 +1,16 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 1.5 — April 2026
+# Version 1.6 — April 2026
 # Updated: Release Wizard (productionSteps, requiredOps binding, lot reservation fix)
 #          PO smart allocation (coveredOrders, includesStock, orderAllocations)
 #          GRN auto-reservation (lot.reservations extended, partially_reserved status)
 #          lot.status correction: wizard now writes 'reserved' not 'allocated'
 #          Nesting integration fields documented
+#          FIX: productionSteps[].type now set (production/qc/contractor/Outbound)
+#          FIX: progressMarkers.mrp_done now readable by calcProgress in OrderProgressTracker
+#          FIX: lot.pendingReservations REMOVED — was redundant with lot.reservations[]
+#          FIX: instance.subOpsCompleted created with ["cut"] only (not all reqOps)
+#          FIX: confirmBar now reads requiredOps from order parts; pending_secondary routing
+#               covers all secondary ops beyond Cut; SecondaryOpsQueue in MachineOperatorQueue
 #
 # INSTRUCTIONS FOR CLAUDE CODE:
 # Before changing ANY field, function, or data structure,
@@ -253,7 +259,7 @@ lot.status (qc_hold | available | reserved | partially_reserved | allocated | is
     Client inspection approved (1 reservation)   → reserved
     Client inspection approved (2+ reservations) → partially_reserved
     Release Wizard confirm()  → reserved (was incorrectly 'allocated' — FIXED)
-    GRN auto-reservation set  → stays qc_hold until QC passes (pendingReservations:true)
+    GRN auto-reservation set  → stays qc_hold until QC passes (lot.reservations populated)
     Off-cut created           → pending_offcut_verification
     Store Admin verifies      → available (or reserved if parent had reservations)
     Nesting NEST-BCH confirm  → allocated (HARD LOCK — this is the only path to allocated)
@@ -265,7 +271,7 @@ lot.status (qc_hold | available | reserved | partially_reserved | allocated | is
            Off-cut verification banner — pending_offcut_verification
   WRITES:  doClientInsp — sets available/reserved/partially_reserved based on lot.reservations
            Release Wizard confirm() — sets 'reserved' (FIXED — no longer 'allocated')
-           GRN saveGRN — stays qc_hold with pendingReservations:true if coveredOrders set
+           GRN saveGRN — stays qc_hold with lot.reservations populated if coveredOrders set
            Nesting NEST-BCH — sets 'allocated'
            Store Admin issue — sets 'issued'
            Cutting — sets 'consumed'
@@ -309,7 +315,7 @@ lot.reservations (array of reservation objects)
              length === 0 → lot.status = 'available' (after QC clearance or reservation release)
              Any entry with orderId X → lot appears first in Step 4 dropdown for order X
   IF CHANGED: If reservation removed after nesting confirmed — requires super_admin
-  NOTE: Lots remain qc_hold with pendingReservations:true until client inspection passes
+  NOTE: Lots remain qc_hold with lot.reservations populated until client inspection passes
         doClientInsp is the trigger that converts pending to the final status
 
 lot.reservedFor (orderId string — single-order shortcut)
@@ -334,13 +340,11 @@ lot.releaseId (PR-YYYY-NNN — release that reserved this lot)
   IF CHANGED: Never — historical record
 
 lot.pendingReservations (boolean)
-  *** NEW FIELD — GRN auto-reservation flag until QC clearance ***
-  READS:   doClientInsp — if true, applies reservation-based status (reserved/partially_reserved)
-  WRITES:  saveGRN when po.coveredOrders is set — set to true
-           doClientInsp — set to false after status applied
-  NOTE:    While true, lot.reservations are recorded but lot.status stays qc_hold
-           After doClientInsp clears: pendingReservations=false, status becomes reserved/partially_reserved
-  IF CHANGED: Never set manually — managed by GRN and QC inspection flow
+  *** REMOVED — was redundant with lot.reservations[] ***
+  NOTE:    Previously written by saveGRN and doClientInsp. Removed as lot.reservations[]
+           already captures all reservation info. Status transitions (qc_hold → reserved/
+           partially_reserved) now handled via lot.reservations.length check only.
+  IF CHANGED: Do not re-add — use lot.reservations[] instead
 
 lot.allocations (array of {drawingId, orderId, partId, rmUnitId, kg})
   *** NOW SYSTEM-GENERATED from nesting output — not manually entered ***
@@ -448,10 +452,12 @@ instance.subStageChecks ({cut:bool, bevel:bool, grind:bool, drill:bool})
            Secondary station routing — if pending ops after cut confirmation
   WRITES:  Cutting confirmation — checkboxes driven by barForm.machineCaps
   DISPLAYS: Cutting confirmation bar form — sub-stage checklist
-  TRIGGERS: drill unchecked AND machine has drill cap → currentStatus:"pending_secondary"
-  NOTE: Only checkboxes for capabilities present on the assigned machine are shown
-        e.g. if machine has no 'drill' capability, drill checkbox is hidden
-  IF CHANGED: pending_secondary instances need routing to secondary machine assignment
+  TRIGGERS: Any requiredOp beyond 'Cut' → instance.currentStatus="pending_secondary",
+            instance.currentStage="secondary_ops" (routing logic in confirmBar)
+  NOTE: Routing now checks inst.subOpsRequired (from order part's requiredOps, not machine caps)
+        Machine caps used for QC checklist items only (D1/D2). subOpsRequired set from
+        order.parts[].requiredOps at confirmBar time (not hardcoded ["cut"]).
+  IF CHANGED: Update confirmBar requiredOps lookup; update SecondaryOpsQueue in MachineOperatorQueue
 
 instance.defectAction (scrap_recut | rectify | accept_deviation)
   *** NEW FIELD — set at cutting confirmation when isDefective=true ***
@@ -1038,7 +1044,7 @@ KEY DESIGN DECISIONS RECORDED HERE:
   - lot.reservations[] is the canonical reservation record — multiple sources can write it
   - lot.reservedFor is a convenience scalar for single-order wizard reservations only
   - 'partially_reserved' is a new status for lots split across ≥2 orders via GRN auto
-  - GRN auto-reservation: lots stay qc_hold with pendingReservations:true until QC passes
+  - GRN auto-reservation: lots stay qc_hold with lot.reservations populated until QC passes
   - doClientInsp applies the final status (reserved/partially_reserved/available) based on reservations
   - po.coveredOrders drives GRN auto-reservation; po.servedOrders is display-only (badge tag)
   - poLine.orderAllocations enables pro-rata split; fallback is equal split across coveredOrders

@@ -1470,7 +1470,7 @@ const createInstances = ({ nestingRunId, lotId, barRef, batchNo, cuttingBayUsed,
         pinnedEngineerName:     part.pinnedEngineerName||"",
         // Sub-operations
         subOpsRequired:  part.subOpsRequired || ["cut"],
-        subOpsCompleted: isDefective ? [] : (part.subOpsRequired || ["cut"]),
+        subOpsCompleted: isDefective ? [] : ["cut"],
         // Outbound processing
         outboundCount:   0,
         outboundHistory: [],
@@ -4352,7 +4352,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
           const reservations = allocs.length
             ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
             : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
-          return {...lot, reservations, pendingReservations:true};
+          return {...lot, reservations};
         });
         return [...prev, ...finalLots];
       });
@@ -4821,7 +4821,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           const reservations = allocs.length
             ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
             : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
-          return {...lot, reservations, pendingReservations:true};
+          return {...lot, reservations};
         });
         return [...prev, ...finalLots];
       });
@@ -5215,7 +5215,6 @@ const RMQCModule = ({ user, stock, setStock }) => {
 
   const doClientInsp = (lotId, result, remarks) => {
     setStock(prev=>prev.map(s=>s.id===lotId?{...s,clientInspStatus:result,clientInspRemarks:remarks,clientInspDate:today(),
-      pendingReservations:false,
       status:(result==="approved"&&s.rmQcStatus==="approved")
         ? ((s.reservations||[]).length>1 ? "partially_reserved" : (s.reservations||[]).length===1 ? "reserved" : "available")
         : "qc_hold"}:s));
@@ -8475,7 +8474,9 @@ const OrderProgressTracker = ({ order, onChange, user, pos, nestingBatches, rele
 
   const calcProgress = (stageKey) => {
     if (stageKey==='mrp_done') {
-      const ok=(pos||[]).some(p=>p.orderRef===order.id||p.orderId===order.id);
+      const markerOk = !!pm.mrp_done;
+      const posOk = (pos||[]).some(p=>p.orderRef===order.id||p.orderId===order.id);
+      const ok = markerOk || posOk;
       return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'};
     }
     if (stageKey==='rm_ordered') {
@@ -8520,7 +8521,8 @@ const OrderProgressTracker = ({ order, onChange, user, pos, nestingBatches, rele
   const canEditMarkers = ["super_admin","planning_admin"].includes(user?.role||"");
   const toggleMarker = (key) => {
     if (!canEditMarkers||!onChange) return;
-    onChange({...order, progressMarkers:{...pm,[key]:pm[key]?null:today()}});
+    const newVal = pm[key] ? null : {at:new Date().toISOString(), by:user?.id||"", byName:user?.name||""};
+    onChange({...order, progressMarkers:{...pm,[key]:newVal}});
   };
 
   const handleExport = () => {
@@ -9051,11 +9053,14 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
       batchNo:barForm.batchNo, cuttingBayUsed:barForm.cuttingBayUsed,
       confirmedParts: included.map(p=>{
         const ca = getContractorForDrawing(p.drawingId, p.orderId);
+        const ord = (orders||[]).find(o=>o.id===p.orderId);
+        const orderPart = (ord?.parts||[]).find(op=>op.markNo===p.markNo&&op.drawingId===p.drawingId);
+        const reqOps = (orderPart?.requiredOps||[]).length>0 ? orderPart.requiredOps : ['Cut'];
         return {
           markNo:p.markNo, drawingId:p.drawingId, drawingNo:p.drawingNo,
           orderId:p.orderId, desc:p.desc,
           actualQty:Math.max(1, +p.actualQty||0), totalInstances:p.plannedQty,
-          subOpsRequired:["cut"],
+          subOpsRequired: reqOps,
           isDefective:p.isDefective, defectType:p.defectType, defectReason:p.defectReason,
           contractorId:ca.contractorId||"", contractorName:ca.contractorName||"",
           pinnedEngineerId:ca.pinnedEngineerId||"", pinnedEngineerName:ca.pinnedEngineerName||"",
@@ -9063,14 +9068,16 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
       }),
       confirmedBy:user.name, confirmDate, existingInstances:instances,
     });
-    // Task 1E: pending_secondary when drill not completed but machine has drill capability
-    if (barForm.subStageChecks?.drill === false && (barForm.machineCaps||[]).includes('drill')) {
-      newInst.forEach(inst => {
-        if (inst.currentStatus === "pending_collection") {
+    // Route to secondary_ops if instance has any required op beyond 'Cut'
+    newInst.forEach(inst => {
+      if (inst.currentStatus === "pending_collection") {
+        const hasSecOps = (inst.subOpsRequired||[]).some(op => op.toLowerCase() !== 'cut');
+        if (hasSecOps) {
           inst.currentStatus = "pending_secondary";
+          inst.currentStage = "secondary_ops";
         }
-      });
-    }
+      }
+    });
     setInstances(prev=>[...prev,...newInst]);
 
     // Update stock lot wtConsumed (sections only; plates calculated from dims)
@@ -11465,23 +11472,23 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     const secOps = [...allOps].filter(op => op !== 'Cut');
 
     const steps = [];
-    steps.push({ stage:'nesting',     status:'pending', completedAt:null, completedBy:null });
-    steps.push({ stage:'cutting',     status:'pending', machineId, operatorId:null, rmUnits:[], completedAt:null });
-    steps.push({ stage:'cutting_qc',  status:'pending', completedAt:null, completedBy:null });
+    steps.push({ stage:'nesting',     type:'production', status:'pending', completedAt:null, completedBy:null });
+    steps.push({ stage:'cutting',     type:'production', status:'pending', machineId, operatorId:null, rmUnits:[], completedAt:null });
+    steps.push({ stage:'cutting_qc',  type:'qc',         status:'pending', completedAt:null, completedBy:null });
     if (secOps.length > 0)
-      steps.push({ stage:'secondary_ops', status:'pending', ops:secOps, completedAt:null });
-    steps.push({ stage:'fit_up',  status:'pending', contractorId, tpiRequired:tpiHolds.has('fit_up'),  tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
-    steps.push({ stage:'welding', status:'pending', contractorId, tpiRequired:tpiHolds.has('welding'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
-    steps.push({ stage:'blasting',status:'pending', contractorId:"",  tpiRequired:tpiHolds.has('blasting'),tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+      steps.push({ stage:'secondary_ops', type:'production', status:'pending', ops:secOps, completedAt:null });
+    steps.push({ stage:'fit_up',  type:'contractor', status:'pending', contractorId, tpiRequired:tpiHolds.has('fit_up'),  tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    steps.push({ stage:'welding', type:'contractor', status:'pending', contractorId, tpiRequired:tpiHolds.has('welding'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    steps.push({ stage:'blasting',type:'contractor', status:'pending', contractorId:"",  tpiRequired:tpiHolds.has('blasting'),tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
     if (allCoats.length > 0) {
       allCoats.forEach((coat, i) => {
-        steps.push({ stage:`paint_coat_${i+1}`, status:'pending', coatName:coat.type||`Coat ${i+1}`, contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+        steps.push({ stage:`paint_coat_${i+1}`, type:'contractor', status:'pending', coatName:coat.type||`Coat ${i+1}`, contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
       });
     } else {
-      steps.push({ stage:'paint_coat_1', status:'pending', coatName:'Paint', contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+      steps.push({ stage:'paint_coat_1', type:'contractor', status:'pending', coatName:'Paint', contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
     }
-    steps.push({ stage:'mdcc',     status:'pending', appliedAt:null, receivedAt:null });
-    steps.push({ stage:'dispatch', status:'pending', completedAt:null });
+    steps.push({ stage:'mdcc',     type:'production', status:'pending', appliedAt:null, receivedAt:null });
+    steps.push({ stage:'dispatch', type:'production', status:'pending', completedAt:null });
     return steps;
   };
 
@@ -12329,7 +12336,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 // ═══════════════════════════════════════════════════════════════════════════════
 // STEP 6: MACHINE OPERATOR QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, materials }) => {
+const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, materials, instances, setInstances }) => {
   // Get all machine assignments from all in_progress releases
   const allAssignments = releases.filter(r=>r.status==="in_progress").flatMap(r=>
     (r.machineAssignments||[]).map(a=>({...a, releaseId:r.id}))
@@ -12459,6 +12466,56 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
           </div>
         );
       })}
+
+      {/* Secondary Ops Queue */}
+      {(() => {
+        const secInst = (instances||[]).filter(i=>i.currentStage==="secondary_ops"&&i.currentStatus==="pending_secondary");
+        if (secInst.length===0) return null;
+        const confirmSecOp = (instId, op) => {
+          setInstances(prev=>prev.map(inst=>{
+            if (inst.id!==instId) return inst;
+            const done = [...(inst.subOpsCompleted||[])];
+            if (!done.includes(op)) done.push(op);
+            const remaining = (inst.subOpsRequired||[]).filter(o=>o.toLowerCase()!=='cut'&&!done.map(d=>d.toLowerCase()).includes(o.toLowerCase()));
+            const allDone = remaining.length===0;
+            return {...inst,
+              subOpsCompleted:done,
+              ...(allDone ? {currentStage:"cutting_qc",currentStatus:"pending_supervisor"} : {}),
+            };
+          }));
+        };
+        return (
+          <div style={{ marginTop:28 }}>
+            <div style={{ fontSize:16,fontWeight:800,color:T.amber,marginBottom:12 }}>Secondary Operations Queue ({secInst.length})</div>
+            {secInst.map(inst=>{
+              const pendingOps = (inst.subOpsRequired||[]).filter(op=>
+                op.toLowerCase()!=='cut' && !(inst.subOpsCompleted||[]).map(d=>d.toLowerCase()).includes(op.toLowerCase())
+              );
+              return (
+                <div key={inst.id} style={{ ...css.card, marginBottom:10, borderLeft:`4px solid ${T.amber}` }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                    <div>
+                      <div style={{ fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi }}>{inst.markNo} — {inst.drawingNo}</div>
+                      <div style={{ fontSize:11,color:T.textMid,marginTop:2 }}>{inst.desc} · {inst.id}</div>
+                    </div>
+                    <Badge color="amber">SECONDARY OPS</Badge>
+                  </div>
+                  <div style={{ fontSize:12,color:T.textMid,marginBottom:8 }}>
+                    Pending: {pendingOps.join(', ')||'None'} · Completed: {(inst.subOpsCompleted||[]).join(', ')||'—'}
+                  </div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    {pendingOps.map(op=>(
+                      <button key={op} onClick={()=>confirmSecOp(inst.id,op)} style={{ ...css.btn.green, fontSize:12 }}>
+                        ✓ Mark {op} Done
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -13894,7 +13951,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   // Contractor → own work queue only (after hooks)
   if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} />;
   // Machine operator → machine queue
-  if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} />;
+  if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} />;
   // Stage workers (blasting/painting engineers) → stage-filtered work queue
   if (["blasting_engineer","painting_engineer"].includes(user.role)) return <StageWorkerQueue user={user} instances={instances} setInstances={setInstances} />;
 
