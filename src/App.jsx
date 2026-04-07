@@ -8371,7 +8371,242 @@ const TabFinance = ({ order, onChange, canEdit }) => {
     </div>
   );
 };
-const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies }) => {
+// ─── ORDER PROGRESS TRACKER ───────────────────────────────────────────────────
+const OrderProgressTracker = ({ order, onChange, user, pos, nestingBatches, releases, instances, onBack }) => {
+  const [expandedDrg, setExpandedDrg] = useState(null);
+  const q = order.quality || {};
+  const tpiHolds = new Set(q.tpiHoldPoints || []);
+  const paintCoats = getPaintCoats(q);
+  const fabDrawings = (order.drawings || []).filter(d => !['purchase','ga'].includes(d.drawingType||''));
+  const pm = order.progressMarkers || {};
+
+  const paintStages = (paintCoats.length > 0 ? paintCoats : [{type:'Paint'}]).map((c,i) => ({
+    key:`paint_coat_${i+1}`, label:c.type||`Coat ${i+1}`, tpi:tpiHolds.has('painting')
+  }));
+
+  const stageGroups = [
+    { id:'procurement', label:'Procurement', color:T.accent,
+      stages:[
+        { key:'mrp_done',    label:'MRP Released', manual:true },
+        { key:'rm_ordered',  label:'RM Ordered',   derived:'pos' },
+        { key:'rm_received', label:'RM Received',  derived:'releases' },
+      ]
+    },
+    { id:'production', label:'Production', color:T.textMid,
+      stages:[
+        { key:'nesting',    label:'Nesting' },
+        { key:'cutting',    label:'Cutting' },
+        { key:'cutting_qc', label:'Cutting QC' },
+        { key:'fit_up',     label:'Fit-Up',   tpi:tpiHolds.has('fit_up') },
+        { key:'welding',    label:'Welding',  tpi:tpiHolds.has('welding') },
+        ...(order.assemblyInspectionRequired ? [{key:'assembly', label:'Assembly'}] : []),
+        { key:'blasting',   label:'Blasting', tpi:tpiHolds.has('blasting') },
+      ]
+    },
+    { id:'paint', label:'Paint', color:T.green, stages:paintStages },
+    { id:'completion', label:'Completion', color:T.amber,
+      stages:[
+        { key:'mdcc_applied',  label:'MDCC Applied',  manual:true },
+        { key:'mdcc_received', label:'MDCC Received', manual:true },
+        { key:'dispatch',      label:'Dispatch' },
+      ]
+    },
+  ];
+
+  const calcProgress = (stageKey) => {
+    if (stageKey==='mrp_done') {
+      const ok=(pos||[]).some(p=>p.orderRef===order.id||p.orderId===order.id);
+      return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'};
+    }
+    if (stageKey==='rm_ordered') {
+      const n=(pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id).length;
+      return {done:n,total:Math.max(n,1),pct:n>0?100:0,status:n>0?'completed':'not_started'};
+    }
+    if (stageKey==='rm_received') {
+      const rels=(releases||[]).filter(r=>r.orderId===order.id);
+      const done=rels.filter(r=>r.status==='completed').length;
+      const total=rels.length;
+      const pct=total>0?Math.round(done/total*100):0;
+      return {done,total:Math.max(total,1),pct,status:total===0?'not_started':done===total?'completed':done>0?'in_progress':'not_started'};
+    }
+    if (stageKey==='mdcc_applied') { const ok=!!pm.mdcc_applied; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
+    if (stageKey==='mdcc_received') { const ok=!!pm.mdcc_received; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
+    const relevant=fabDrawings.filter(d=>(d.productionSteps||[]).some(s=>s.stage===stageKey));
+    const total=relevant.length>0?relevant.length:fabDrawings.length;
+    if (total===0) return {done:0,total:0,pct:0,status:'not_started'};
+    const done=relevant.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stageKey)?.status==='completed').length;
+    const inProg=relevant.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stageKey)?.status==='in_progress').length;
+    const pct=Math.round(done/total*100);
+    return {done,total,pct,status:done===total?'completed':done>0||inProg>0?'in_progress':'not_started'};
+  };
+
+  const allStages = stageGroups.flatMap(g=>g.stages);
+  const completedCount = allStages.filter(s=>calcProgress(s.key).status==='completed').length;
+  const overallPct = allStages.length>0?Math.round(completedCount/allStages.length*100):0;
+
+  const endDate = order.endDate ? new Date(order.endDate) : null;
+  const daysToEnd = endDate ? Math.floor((endDate-Date.now())/86400000) : null;
+  const trackStatus = !endDate?'on_track':daysToEnd<0?'delayed':daysToEnd<14&&overallPct<60?'at_risk':'on_track';
+  const trackColor = {on_track:T.green,at_risk:T.amber,delayed:T.red}[trackStatus];
+  const trackLabel = {on_track:'On Track',at_risk:'At Risk',delayed:'Delayed'}[trackStatus];
+
+  const tpiAlerts = fabDrawings.flatMap(d=>
+    (d.productionSteps||[])
+      .filter(s=>s.tpiRequired&&s.tpiOfferedAt&&!s.tpiDoneAt)
+      .map(s=>({drawingNo:d.drawingNo,stage:s.stage,days:Math.floor((Date.now()-new Date(s.tpiOfferedAt))/86400000)}))
+      .filter(a=>a.days>=5)
+  );
+
+  const canEditMarkers = ["super_admin","planning_admin"].includes(user?.role||"");
+  const toggleMarker = (key) => {
+    if (!canEditMarkers||!onChange) return;
+    onChange({...order, progressMarkers:{...pm,[key]:pm[key]?null:today()}});
+  };
+
+  const handleExport = () => {
+    const rows=stageGroups.map(g=>`<h3>${g.label}</h3><table border="1" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px"><tr><th>Stage</th><th>Done</th><th>Total</th><th>%</th><th>Status</th></tr>${g.stages.map(s=>{const p=calcProgress(s.key);return `<tr><td>${s.label}</td><td>${p.done}</td><td>${p.total}</td><td>${p.pct}%</td><td>${p.status.replace(/_/g,' ')}</td></tr>`;}).join('')}</table>`).join('');
+    const html=`<!DOCTYPE html><html><head><title>Progress — ${order.id}</title><style>body{font-family:sans-serif;padding:32px}h2{margin-bottom:4px}p{margin:0 0 16px;color:#666}h3{margin:24px 0 8px}th{background:#f5f5f5}</style></head><body><h2>Order Progress — ${order.id}</h2><p>${order.projectDesc||''} | ${order.clientId||''} | Overall: ${overallPct}% | <strong>${trackLabel}</strong></p>${rows}</body></html>`;
+    const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+  };
+
+  return (
+    <div>
+      {onBack&&<div style={{display:"flex",gap:8,alignItems:"center",marginBottom:20}}><button onClick={onBack} style={{...css.btn.ghost,color:T.accent}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text}}>Order Progress — {order.id}</div></div>}
+
+      {/* Summary header */}
+      <div style={{...css.card,display:"flex",gap:20,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:200}}>
+          <div style={{fontSize:12,color:T.textMid,marginBottom:6}}>{order.projectDesc}</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{fontSize:32,fontWeight:800,color:T.text,fontFamily:T.fontMono}}>{overallPct}%</div>
+            <div>
+              <Badge color={trackStatus==='on_track'?'green':trackStatus==='at_risk'?'amber':'red'}>{trackLabel}</Badge>
+              {daysToEnd!==null&&<div style={{fontSize:11,color:T.textMid,marginTop:3}}>{daysToEnd<0?`${-daysToEnd}d overdue`:`${daysToEnd}d remaining`}</div>}
+            </div>
+          </div>
+          <div style={{marginTop:8,background:T.bgInput,borderRadius:4,height:6,overflow:"hidden"}}>
+            <div style={{width:`${overallPct}%`,height:"100%",background:trackColor,borderRadius:4,transition:"width 0.3s"}}/>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+          {[{v:completedCount,l:"STAGES DONE",c:T.green},{v:allStages.length,l:"TOTAL STAGES",c:T.text},{v:fabDrawings.length,l:"DRAWINGS",c:T.accent}].map(x=>(
+            <div key={x.l} style={{textAlign:"center",padding:"8px 14px",background:T.bgInput,borderRadius:6}}>
+              <div style={{fontSize:20,fontWeight:800,color:x.c,fontFamily:T.fontMono}}>{x.v}</div>
+              <div style={{fontSize:10,color:T.textMid,fontWeight:600}}>{x.l}</div>
+            </div>
+          ))}
+          <button onClick={handleExport} style={css.btn.ghost}>↗ Export</button>
+        </div>
+      </div>
+
+      {/* TPI alerts */}
+      {tpiAlerts.length>0&&(
+        <div style={{...css.card,border:`1px solid ${T.red}55`,marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:8}}>⏸ TPI WAIT ALERTS ({tpiAlerts.length})</div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            {tpiAlerts.map((a,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 10px",background:T.redBg,borderRadius:4,fontSize:12}}>
+                <span><strong>{a.drawingNo}</strong> — {a.stage.replace(/_/g,' ')}</span>
+                <Badge color="red">{a.days}d waiting</Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Stage groups */}
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {stageGroups.map(group=>(
+          <div key={group.id} style={css.card}>
+            <div style={{fontSize:11,fontWeight:800,color:group.color,marginBottom:10,letterSpacing:"0.08em"}}>{group.label.toUpperCase()}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {group.stages.map(stage=>{
+                const p=calcProgress(stage.key);
+                const sc=p.status==='completed'?T.green:p.status==='in_progress'?T.accent:T.textLow;
+                const icon=p.status==='completed'?'✓':p.status==='in_progress'?'⬤':'○';
+                return (
+                  <div key={stage.key} style={{display:"grid",gridTemplateColumns:"22px 1fr 90px 50px 80px",alignItems:"center",gap:8}}>
+                    <span style={{color:sc,fontSize:14,fontWeight:700}}>{icon}</span>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13,color:T.text}}>{stage.label}</span>
+                      {stage.tpi&&<span style={{fontSize:10,color:T.amber,fontWeight:600}}>TPI</span>}
+                      {stage.manual&&canEditMarkers&&onChange&&(
+                        <button onClick={()=>toggleMarker(stage.key)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",color:p.status==='completed'?T.green:T.textMid}}>
+                          {p.status==='completed'?'✓ Done':'Mark Done'}
+                        </button>
+                      )}
+                      {stage.manual&&p.status==='completed'&&pm[stage.key]&&(!canEditMarkers||!onChange)&&(
+                        <span style={{fontSize:10,color:T.green}}>✓ {pm[stage.key]}</span>
+                      )}
+                    </div>
+                    <div style={{background:T.bgInput,borderRadius:3,height:5,overflow:"hidden"}}>
+                      <div style={{width:`${p.pct}%`,height:"100%",background:sc,transition:"width 0.3s"}}/>
+                    </div>
+                    <div style={{textAlign:"right",fontFamily:T.fontMono,fontSize:11,color:T.textMid}}>{p.total>1?`${p.done}/${p.total}`:""}</div>
+                    <div style={{textAlign:"right",fontFamily:T.fontMono,fontSize:12,color:sc,fontWeight:700}}>{p.pct}%</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Per-drawing drill-down */}
+      {fabDrawings.length>0&&(
+        <div style={{...css.card,marginTop:14}}>
+          <div style={{fontSize:11,fontWeight:800,color:T.textMid,marginBottom:10,letterSpacing:"0.08em"}}>DRAWING DRILL-DOWN</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {fabDrawings.map(d=>{
+              const steps=d.productionSteps||[];
+              const doneSteps=steps.filter(s=>s.status==='completed').length;
+              const drgPct=steps.length>0?Math.round(doneSteps/steps.length*100):0;
+              const isExp=expandedDrg===d.id;
+              return (
+                <div key={d.id}>
+                  <div onClick={()=>setExpandedDrg(isExp?null:d.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:isExp?`${T.accent}14`:T.bgInput,borderRadius:6,cursor:"pointer"}}>
+                    <span style={{fontSize:10,color:T.textLow,width:10}}>{isExp?'▼':'▶'}</span>
+                    <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:12,minWidth:110}}>{d.drawingNo}</span>
+                    <div style={{flex:1,background:T.border,borderRadius:3,height:4,overflow:"hidden"}}>
+                      <div style={{width:`${drgPct}%`,height:"100%",background:drgPct===100?T.green:T.accent}}/>
+                    </div>
+                    <span style={{fontFamily:T.fontMono,fontSize:11,color:T.textMid,minWidth:32,textAlign:"right"}}>{drgPct}%</span>
+                    <span style={{fontSize:10,color:T.textMid,minWidth:60,textAlign:"right"}}>{doneSteps}/{steps.length} stages</span>
+                  </div>
+                  {isExp&&(
+                    <div style={{padding:"10px 14px 10px 36px",background:`${T.accent}08`,borderRadius:"0 0 6px 6px",marginTop:2}}>
+                      {steps.length===0?(
+                        <div style={{fontSize:11,color:T.textLow}}>No production steps configured yet.</div>
+                      ):(
+                        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                          {steps.map(s=>{
+                            const sc=s.status==='completed'?T.green:s.status==='in_progress'?T.accent:T.textLow;
+                            const tpiWaitDays=s.tpiRequired&&s.tpiOfferedAt&&!s.tpiDoneAt?Math.floor((Date.now()-new Date(s.tpiOfferedAt))/86400000):0;
+                            return (
+                              <div key={s.stage} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                                <span style={{color:sc,fontWeight:700,width:16}}>{s.status==='completed'?'✓':s.status==='in_progress'?'⬤':'○'}</span>
+                                <span style={{color:T.text,flex:1}}>{s.stage.replace(/_/g,' ')}</span>
+                                {s.tpiRequired&&<span style={{fontSize:10,color:T.amber,fontWeight:600}}>TPI</span>}
+                                {s.completedAt&&<span style={{fontSize:10,color:T.textMid}}>{fmt.date(s.completedAt)}</span>}
+                                {tpiWaitDays>0&&<Badge color="red">{tpiWaitDays}d TPI wait</Badge>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances }) => {
   const [activeTab, setActiveTab] = useState("basic");
   const [localOrder, setLocalOrder] = useState(order);
   const [dirty, setDirty] = useState(false);
@@ -8400,6 +8635,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
     {id:"milestones",label:"Payment Milestones"},{id:"drawings",label:"Drawing Register",planningOnly:true},
     {id:"parts",label:"Drawing Part List",planningOnly:true},{id:"quality",label:"Quality",planningOnly:true},
     {id:"assemblies",label:"Assemblies",planningOnly:true},
+    {id:"progress",label:"Progress",planningOnly:true},
     {id:"finance",label:"Finance & Amendments"},
   ];
   const tabs = allTabs.filter(t=>!t.planningOnly||!isFinanceRole);
@@ -8444,6 +8680,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} tpiAgencies={tpiAgencies||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
+      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
       {cancelModal && (
@@ -8552,10 +8789,10 @@ const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
     </div>
   );
 };
-const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies }) => {
+const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances }) => {
   const [selected, setSelected] = useState(null);
   const saveOrder = (updated) => { setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o)); setSelected(updated); };
-  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} />;
+  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />;
   return <OrdersList orders={orders} onOpen={setSelected} user={user} clients={clients} onAddOrder={o=>setOrders(prev=>[...prev,o])} />;
 };
 
@@ -13067,7 +13304,7 @@ const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, rel
 };
 
 // ─── C3: Cross-Order Production Drawing Register ──────────────────────────────
-const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, machines, onBack, onViewStatus }) => {
+const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, machines, onBack, onViewStatus, onViewProgress }) => {
   const [filterOrder, setFilterOrder] = useState("");
   const [filterAssembly, setFilterAssembly] = useState("");
   const [filterStage, setFilterStage] = useState("");
@@ -13228,6 +13465,7 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
                     </TD>
                     <TD onClick={e=>e.stopPropagation()}>
                       {onViewStatus && <button style={{ ...css.btn.ghost, fontSize:11, padding:"3px 8px" }} onClick={()=>onViewStatus(d.drawingId, d.orderId)}>View Status</button>}
+                      {onViewProgress && <button style={{ ...css.btn.ghost, fontSize:11, padding:"3px 8px" }} onClick={()=>onViewProgress(d.orderId)}>Progress</button>}
                     </TD>
                   </tr>
                   {isExp && (
@@ -13591,6 +13829,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const [selOrderId, setSelOrderId]   = useState("");
   const [selDrawingId, setSelDrawingId] = useState("");
   const [selStatusDrawing, setSelStatusDrawing] = useState(null); // {drawingId, orderId}
+  const [selProgressOrderId, setSelProgressOrderId] = useState("");
 
   // Contractor → own work queue only (after hooks)
   if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} />;
@@ -13627,10 +13866,25 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       orders={orders} vendors={vendors||[]} onBack={()=>setView("dashboard")} />
   );
 
+  // ── Order Progress view ──
+  if (view==="order_progress" && selProgressOrderId) {
+    const progOrder = orders.find(o=>o.id===selProgressOrderId);
+    if (progOrder) return (
+      <div style={{ padding:0 }}>
+        <OrderProgressTracker order={progOrder}
+          onChange={(updated)=>setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o))}
+          user={user} pos={[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances}
+          onBack={()=>{ setView("register"); setSelProgressOrderId(""); }} />
+      </div>
+    );
+    return <div style={{padding:32,color:T.textLow}}>Order not found. <button style={css.btn.ghost} onClick={()=>setView("register")}>← Back</button></div>;
+  }
+
   // ── Drawing Register view ──
   if (view==="register") return (
     <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} machines={machines||[]} onBack={()=>setView("dashboard")}
-      onViewStatus={(drawingId, orderId)=>{ setSelStatusDrawing({drawingId,orderId}); setView("drawing_status"); }} />
+      onViewStatus={(drawingId, orderId)=>{ setSelStatusDrawing({drawingId,orderId}); setView("drawing_status"); }}
+      onViewProgress={(orderId)=>{ setSelProgressOrderId(orderId); setView("order_progress"); }} />
   );
 
   // ── Drawing Status Card view ──
@@ -14128,7 +14382,7 @@ export default function App() {
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
-      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} />;
+      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;

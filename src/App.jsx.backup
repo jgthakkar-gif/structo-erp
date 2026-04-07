@@ -98,7 +98,9 @@ function nestingJustLoggedIn() {
 }
 
 // ─── NESTING CENTER — API SERVICE ─────────────────────────────────────────────
-const NESTING_BASE = "https://api-nesting.nestingcenter.com/nesting";
+// In dev: Vite proxy forwards /nesting-api → https://api-nesting.nestingcenter.com/nesting
+// (avoids CORS — browser talks to localhost, Vite relays server-side)
+const NESTING_BASE = "/nesting-api";
 
 async function _nestFetch(token, path, method = "GET", body = null) {
   const opts = {
@@ -1307,6 +1309,9 @@ const PO_LINE_COLS = [
 ];
 
 const normalize = s => (s||'').toLowerCase().split('x').map(seg => /^\d+\.0$/.test(seg) ? seg.replace('.0','') : seg).join('x');
+
+// Normalize matCode for fuzzy comparison: lowercase + strip trailing "mm" (e.g. "PLATE/MS/E250/8MM" → "plate/ms/e250/8")
+const normMatCode = mc => (mc||"").toLowerCase().replace(/mm$/, "");
 
 const parsePOLineCSV = (text, materials) => {
   const clean = (text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
@@ -4338,7 +4343,18 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
         const maxLot=prev.reduce((m,s)=>{ const mt=s.lotNo?.match(/^LOT-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
-        return [...prev,...rawLots.map((lot,i)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+i+1).padStart(3,"0")}`}))];
+        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+idx+1).padStart(3,"0")}`}));
+        const coveredOrders = po.coveredOrders||[];
+        const finalLots = numberedLots.map(lot => {
+          if (!coveredOrders.length) return lot;
+          const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
+          const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
+          const reservations = allocs.length
+            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
+            : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          return {...lot, reservations, pendingReservations:true};
+        });
+        return [...prev, ...finalLots];
       });
     }
     showToast("GRN saved — materials pending RM QC inspection");
@@ -4370,7 +4386,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
           <input type="checkbox" checked={showCancelled} onChange={e=>setShowCancelled(e.target.checked)} />
           Show cancelled
         </label>
-        {canEdit && <button onClick={()=>{setForm({servedOrders:[],lines:[],poDate:today()});setModal("new_po");}} style={css.btn.primary}>+ New PO</button>}
+        {canEdit && <button onClick={()=>{setForm({servedOrders:[],coveredOrders:[],includesStock:false,lines:[],poDate:today()});setModal("new_po");}} style={css.btn.primary}>+ New PO</button>}
       </div>
 
       {pos.filter(po => showCancelled || po.status !== "cancelled").map(po => {
@@ -4433,6 +4449,23 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
                     <span style={{ fontSize:12, color:T.text }}>{o.id}</span>
                   </label>
                 ))}
+              </div>
+            </Field>
+            <Field label="Orders Covered">
+              <div>
+                <div style={{ fontSize:11, color:T.textMid, marginBottom:6 }}>Material earmarked for these orders — enables GRN auto-reservation</div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {orders.filter(o=>o.status==="Active").slice(0,5).map(o=>(
+                    <label key={o.id} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
+                      <input type="checkbox" checked={(form.coveredOrders||[]).includes(o.id)} onChange={e=>setForm(f=>({...f,coveredOrders:e.target.checked?[...(f.coveredOrders||[]),o.id]:(f.coveredOrders||[]).filter(x=>x!==o.id)}))} />
+                      <span style={{ fontSize:12, color:T.text }}>{o.id}</span>
+                    </label>
+                  ))}
+                  <label style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
+                    <input type="checkbox" checked={!!form.includesStock} onChange={e=>setForm(f=>({...f,includesStock:e.target.checked}))} />
+                    <span style={{ fontSize:12, color:T.textMid }}>Stock (general)</span>
+                  </label>
+                </div>
               </div>
             </Field>
             <Field label="Remarks"><Input value={form.remarks||""} onChange={e=>setForm(f=>({...f,remarks:e.target.value}))} /></Field>
@@ -4593,6 +4626,39 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
         </div>
       );
     })()}
+    {/* MRP Order Allocation */}
+    {(form.coveredOrders||[]).length>0 && l.matCode && (() => {
+      const totalKg = l.wtOrdered>0?l.wtOrdered:l.wtRequired||0;
+      if (!totalKg) return null;
+      const totalDemand = (form.coveredOrders||[]).reduce((s,oid)=>{
+        const ord=orders.find(o=>o.id===oid);
+        return s+(ord?(ord.parts||[]).filter(p=>p.matCode===l.matCode&&(p.fabType||"").toLowerCase()==="fabricate").reduce((ss,p)=>ss+(p.clientTotalWt||0),0):0);
+      },0)||1;
+      const suggested = (form.coveredOrders||[]).map(oid=>{
+        const ord=orders.find(o=>o.id===oid);
+        const reqKg=ord?(ord.parts||[]).filter(p=>p.matCode===l.matCode&&(p.fabType||"").toLowerCase()==="fabricate").reduce((ss,p)=>ss+(p.clientTotalWt||0),0):0;
+        return {orderId:oid, kg:Math.round(totalKg*(reqKg/totalDemand)*10)/10, unit:l.unit||"MT"};
+      });
+      const allocs = ((l.orderAllocations||[]).length===suggested.length)?l.orderAllocations:suggested;
+      return (
+        <div style={{ marginTop:8, padding:"8px 12px", background:`${T.accent}11`, border:`1px solid ${T.accent}33`, borderRadius:6 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.accent, marginBottom:6 }}>MRP Allocation — {l.matCode} ({totalKg.toFixed(0)} kg total)</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"flex-end" }}>
+            {allocs.map((a,ai)=>(
+              <div key={a.orderId} style={{ background:T.bgCard, borderRadius:4, padding:"6px 10px", minWidth:110 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:T.accentHi }}>{a.orderId}</div>
+                <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:4 }}>
+                  <input type="number" step="0.1" value={a.kg} style={{ ...css.input, fontSize:11, padding:"2px 6px", width:70 }}
+                    onChange={e=>setForm(f=>{const ls=[...f.lines];const na=[...allocs];na[ai]={...na[ai],kg:+e.target.value||0};ls[i]={...ls[i],orderAllocations:na};return {...f,lines:ls};})} />
+                  <span style={{ fontSize:10, color:T.textMid }}>kg</span>
+                </div>
+              </div>
+            ))}
+            <button onClick={()=>setForm(f=>{const ls=[...f.lines];ls[i]={...ls[i],orderAllocations:suggested};return {...f,lines:ls};})} style={{ ...css.btn.sm, alignSelf:"flex-end" }}>⟳ Reset</button>
+          </div>
+        </div>
+      );
+    })()}
     {/* Row 5: Delivery + Remarks */}
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8 }}>
       <Field label="Expected Delivery"><Input type="date" value={l.expectedDelivery||""} onChange={e=>setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],expectedDelivery:e.target.value}; return {...f,lines:n}; })} /></Field>
@@ -4746,7 +4812,18 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
         const maxLot=prev.reduce((m,s)=>{ const mt=s.lotNo?.match(/^LOT-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
-        return [...prev,...rawLots.map((lot,i)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+i+1).padStart(3,"0")}`}))];
+        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+idx+1).padStart(3,"0")}`}));
+        const coveredOrders = po.coveredOrders||[];
+        const finalLots = numberedLots.map(lot => {
+          if (!coveredOrders.length) return lot;
+          const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
+          const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
+          const reservations = allocs.length
+            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
+            : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          return {...lot, reservations, pendingReservations:true};
+        });
+        return [...prev, ...finalLots];
       });
     }
     showToast("GRN saved — materials added to RM QC queue");
@@ -5138,7 +5215,10 @@ const RMQCModule = ({ user, stock, setStock }) => {
 
   const doClientInsp = (lotId, result, remarks) => {
     setStock(prev=>prev.map(s=>s.id===lotId?{...s,clientInspStatus:result,clientInspRemarks:remarks,clientInspDate:today(),
-      status:(result==="approved"&&s.rmQcStatus==="approved")?"available":"qc_hold"}:s));
+      pendingReservations:false,
+      status:(result==="approved"&&s.rmQcStatus==="approved")
+        ? ((s.reservations||[]).length>1 ? "partially_reserved" : (s.reservations||[]).length===1 ? "reserved" : "available")
+        : "qc_hold"}:s));
     showToast(result==="approved"?"Client Inspection Passed — material added to available stock ✓":"Client inspection result saved");
     setModal(null);
   };
@@ -5404,7 +5484,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     return ms && mq;
   });
 
-  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber" };
+  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber", partially_reserved:"amber" };
   const openModal = (m,lot) => { setModal(m); setActiveLot(lot); setMForm({}); };
   const closeModal = () => { setModal(null); setActiveLot(null); setMForm({}); };
 
@@ -8291,7 +8371,242 @@ const TabFinance = ({ order, onChange, canEdit }) => {
     </div>
   );
 };
-const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies }) => {
+// ─── ORDER PROGRESS TRACKER ───────────────────────────────────────────────────
+const OrderProgressTracker = ({ order, onChange, user, pos, nestingBatches, releases, instances, onBack }) => {
+  const [expandedDrg, setExpandedDrg] = useState(null);
+  const q = order.quality || {};
+  const tpiHolds = new Set(q.tpiHoldPoints || []);
+  const paintCoats = getPaintCoats(q);
+  const fabDrawings = (order.drawings || []).filter(d => !['purchase','ga'].includes(d.drawingType||''));
+  const pm = order.progressMarkers || {};
+
+  const paintStages = (paintCoats.length > 0 ? paintCoats : [{type:'Paint'}]).map((c,i) => ({
+    key:`paint_coat_${i+1}`, label:c.type||`Coat ${i+1}`, tpi:tpiHolds.has('painting')
+  }));
+
+  const stageGroups = [
+    { id:'procurement', label:'Procurement', color:T.accent,
+      stages:[
+        { key:'mrp_done',    label:'MRP Released', manual:true },
+        { key:'rm_ordered',  label:'RM Ordered',   derived:'pos' },
+        { key:'rm_received', label:'RM Received',  derived:'releases' },
+      ]
+    },
+    { id:'production', label:'Production', color:T.textMid,
+      stages:[
+        { key:'nesting',    label:'Nesting' },
+        { key:'cutting',    label:'Cutting' },
+        { key:'cutting_qc', label:'Cutting QC' },
+        { key:'fit_up',     label:'Fit-Up',   tpi:tpiHolds.has('fit_up') },
+        { key:'welding',    label:'Welding',  tpi:tpiHolds.has('welding') },
+        ...(order.assemblyInspectionRequired ? [{key:'assembly', label:'Assembly'}] : []),
+        { key:'blasting',   label:'Blasting', tpi:tpiHolds.has('blasting') },
+      ]
+    },
+    { id:'paint', label:'Paint', color:T.green, stages:paintStages },
+    { id:'completion', label:'Completion', color:T.amber,
+      stages:[
+        { key:'mdcc_applied',  label:'MDCC Applied',  manual:true },
+        { key:'mdcc_received', label:'MDCC Received', manual:true },
+        { key:'dispatch',      label:'Dispatch' },
+      ]
+    },
+  ];
+
+  const calcProgress = (stageKey) => {
+    if (stageKey==='mrp_done') {
+      const ok=(pos||[]).some(p=>p.orderRef===order.id||p.orderId===order.id);
+      return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'};
+    }
+    if (stageKey==='rm_ordered') {
+      const n=(pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id).length;
+      return {done:n,total:Math.max(n,1),pct:n>0?100:0,status:n>0?'completed':'not_started'};
+    }
+    if (stageKey==='rm_received') {
+      const rels=(releases||[]).filter(r=>r.orderId===order.id);
+      const done=rels.filter(r=>r.status==='completed').length;
+      const total=rels.length;
+      const pct=total>0?Math.round(done/total*100):0;
+      return {done,total:Math.max(total,1),pct,status:total===0?'not_started':done===total?'completed':done>0?'in_progress':'not_started'};
+    }
+    if (stageKey==='mdcc_applied') { const ok=!!pm.mdcc_applied; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
+    if (stageKey==='mdcc_received') { const ok=!!pm.mdcc_received; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
+    const relevant=fabDrawings.filter(d=>(d.productionSteps||[]).some(s=>s.stage===stageKey));
+    const total=relevant.length>0?relevant.length:fabDrawings.length;
+    if (total===0) return {done:0,total:0,pct:0,status:'not_started'};
+    const done=relevant.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stageKey)?.status==='completed').length;
+    const inProg=relevant.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stageKey)?.status==='in_progress').length;
+    const pct=Math.round(done/total*100);
+    return {done,total,pct,status:done===total?'completed':done>0||inProg>0?'in_progress':'not_started'};
+  };
+
+  const allStages = stageGroups.flatMap(g=>g.stages);
+  const completedCount = allStages.filter(s=>calcProgress(s.key).status==='completed').length;
+  const overallPct = allStages.length>0?Math.round(completedCount/allStages.length*100):0;
+
+  const endDate = order.endDate ? new Date(order.endDate) : null;
+  const daysToEnd = endDate ? Math.floor((endDate-Date.now())/86400000) : null;
+  const trackStatus = !endDate?'on_track':daysToEnd<0?'delayed':daysToEnd<14&&overallPct<60?'at_risk':'on_track';
+  const trackColor = {on_track:T.green,at_risk:T.amber,delayed:T.red}[trackStatus];
+  const trackLabel = {on_track:'On Track',at_risk:'At Risk',delayed:'Delayed'}[trackStatus];
+
+  const tpiAlerts = fabDrawings.flatMap(d=>
+    (d.productionSteps||[])
+      .filter(s=>s.tpiRequired&&s.tpiOfferedAt&&!s.tpiDoneAt)
+      .map(s=>({drawingNo:d.drawingNo,stage:s.stage,days:Math.floor((Date.now()-new Date(s.tpiOfferedAt))/86400000)}))
+      .filter(a=>a.days>=5)
+  );
+
+  const canEditMarkers = ["super_admin","planning_admin"].includes(user?.role||"");
+  const toggleMarker = (key) => {
+    if (!canEditMarkers||!onChange) return;
+    onChange({...order, progressMarkers:{...pm,[key]:pm[key]?null:today()}});
+  };
+
+  const handleExport = () => {
+    const rows=stageGroups.map(g=>`<h3>${g.label}</h3><table border="1" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px"><tr><th>Stage</th><th>Done</th><th>Total</th><th>%</th><th>Status</th></tr>${g.stages.map(s=>{const p=calcProgress(s.key);return `<tr><td>${s.label}</td><td>${p.done}</td><td>${p.total}</td><td>${p.pct}%</td><td>${p.status.replace(/_/g,' ')}</td></tr>`;}).join('')}</table>`).join('');
+    const html=`<!DOCTYPE html><html><head><title>Progress — ${order.id}</title><style>body{font-family:sans-serif;padding:32px}h2{margin-bottom:4px}p{margin:0 0 16px;color:#666}h3{margin:24px 0 8px}th{background:#f5f5f5}</style></head><body><h2>Order Progress — ${order.id}</h2><p>${order.projectDesc||''} | ${order.clientId||''} | Overall: ${overallPct}% | <strong>${trackLabel}</strong></p>${rows}</body></html>`;
+    const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
+  };
+
+  return (
+    <div>
+      {onBack&&<div style={{display:"flex",gap:8,alignItems:"center",marginBottom:20}}><button onClick={onBack} style={{...css.btn.ghost,color:T.accent}}>← Back</button><div style={{fontSize:18,fontWeight:800,color:T.text}}>Order Progress — {order.id}</div></div>}
+
+      {/* Summary header */}
+      <div style={{...css.card,display:"flex",gap:20,alignItems:"center",marginBottom:16,flexWrap:"wrap"}}>
+        <div style={{flex:1,minWidth:200}}>
+          <div style={{fontSize:12,color:T.textMid,marginBottom:6}}>{order.projectDesc}</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{fontSize:32,fontWeight:800,color:T.text,fontFamily:T.fontMono}}>{overallPct}%</div>
+            <div>
+              <Badge color={trackStatus==='on_track'?'green':trackStatus==='at_risk'?'amber':'red'}>{trackLabel}</Badge>
+              {daysToEnd!==null&&<div style={{fontSize:11,color:T.textMid,marginTop:3}}>{daysToEnd<0?`${-daysToEnd}d overdue`:`${daysToEnd}d remaining`}</div>}
+            </div>
+          </div>
+          <div style={{marginTop:8,background:T.bgInput,borderRadius:4,height:6,overflow:"hidden"}}>
+            <div style={{width:`${overallPct}%`,height:"100%",background:trackColor,borderRadius:4,transition:"width 0.3s"}}/>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+          {[{v:completedCount,l:"STAGES DONE",c:T.green},{v:allStages.length,l:"TOTAL STAGES",c:T.text},{v:fabDrawings.length,l:"DRAWINGS",c:T.accent}].map(x=>(
+            <div key={x.l} style={{textAlign:"center",padding:"8px 14px",background:T.bgInput,borderRadius:6}}>
+              <div style={{fontSize:20,fontWeight:800,color:x.c,fontFamily:T.fontMono}}>{x.v}</div>
+              <div style={{fontSize:10,color:T.textMid,fontWeight:600}}>{x.l}</div>
+            </div>
+          ))}
+          <button onClick={handleExport} style={css.btn.ghost}>↗ Export</button>
+        </div>
+      </div>
+
+      {/* TPI alerts */}
+      {tpiAlerts.length>0&&(
+        <div style={{...css.card,border:`1px solid ${T.red}55`,marginBottom:14}}>
+          <div style={{fontSize:12,fontWeight:800,color:T.red,marginBottom:8}}>⏸ TPI WAIT ALERTS ({tpiAlerts.length})</div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            {tpiAlerts.map((a,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 10px",background:T.redBg,borderRadius:4,fontSize:12}}>
+                <span><strong>{a.drawingNo}</strong> — {a.stage.replace(/_/g,' ')}</span>
+                <Badge color="red">{a.days}d waiting</Badge>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Stage groups */}
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {stageGroups.map(group=>(
+          <div key={group.id} style={css.card}>
+            <div style={{fontSize:11,fontWeight:800,color:group.color,marginBottom:10,letterSpacing:"0.08em"}}>{group.label.toUpperCase()}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {group.stages.map(stage=>{
+                const p=calcProgress(stage.key);
+                const sc=p.status==='completed'?T.green:p.status==='in_progress'?T.accent:T.textLow;
+                const icon=p.status==='completed'?'✓':p.status==='in_progress'?'⬤':'○';
+                return (
+                  <div key={stage.key} style={{display:"grid",gridTemplateColumns:"22px 1fr 90px 50px 80px",alignItems:"center",gap:8}}>
+                    <span style={{color:sc,fontSize:14,fontWeight:700}}>{icon}</span>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13,color:T.text}}>{stage.label}</span>
+                      {stage.tpi&&<span style={{fontSize:10,color:T.amber,fontWeight:600}}>TPI</span>}
+                      {stage.manual&&canEditMarkers&&onChange&&(
+                        <button onClick={()=>toggleMarker(stage.key)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",color:p.status==='completed'?T.green:T.textMid}}>
+                          {p.status==='completed'?'✓ Done':'Mark Done'}
+                        </button>
+                      )}
+                      {stage.manual&&p.status==='completed'&&pm[stage.key]&&(!canEditMarkers||!onChange)&&(
+                        <span style={{fontSize:10,color:T.green}}>✓ {pm[stage.key]}</span>
+                      )}
+                    </div>
+                    <div style={{background:T.bgInput,borderRadius:3,height:5,overflow:"hidden"}}>
+                      <div style={{width:`${p.pct}%`,height:"100%",background:sc,transition:"width 0.3s"}}/>
+                    </div>
+                    <div style={{textAlign:"right",fontFamily:T.fontMono,fontSize:11,color:T.textMid}}>{p.total>1?`${p.done}/${p.total}`:""}</div>
+                    <div style={{textAlign:"right",fontFamily:T.fontMono,fontSize:12,color:sc,fontWeight:700}}>{p.pct}%</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Per-drawing drill-down */}
+      {fabDrawings.length>0&&(
+        <div style={{...css.card,marginTop:14}}>
+          <div style={{fontSize:11,fontWeight:800,color:T.textMid,marginBottom:10,letterSpacing:"0.08em"}}>DRAWING DRILL-DOWN</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {fabDrawings.map(d=>{
+              const steps=d.productionSteps||[];
+              const doneSteps=steps.filter(s=>s.status==='completed').length;
+              const drgPct=steps.length>0?Math.round(doneSteps/steps.length*100):0;
+              const isExp=expandedDrg===d.id;
+              return (
+                <div key={d.id}>
+                  <div onClick={()=>setExpandedDrg(isExp?null:d.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:isExp?`${T.accent}14`:T.bgInput,borderRadius:6,cursor:"pointer"}}>
+                    <span style={{fontSize:10,color:T.textLow,width:10}}>{isExp?'▼':'▶'}</span>
+                    <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:12,minWidth:110}}>{d.drawingNo}</span>
+                    <div style={{flex:1,background:T.border,borderRadius:3,height:4,overflow:"hidden"}}>
+                      <div style={{width:`${drgPct}%`,height:"100%",background:drgPct===100?T.green:T.accent}}/>
+                    </div>
+                    <span style={{fontFamily:T.fontMono,fontSize:11,color:T.textMid,minWidth:32,textAlign:"right"}}>{drgPct}%</span>
+                    <span style={{fontSize:10,color:T.textMid,minWidth:60,textAlign:"right"}}>{doneSteps}/{steps.length} stages</span>
+                  </div>
+                  {isExp&&(
+                    <div style={{padding:"10px 14px 10px 36px",background:`${T.accent}08`,borderRadius:"0 0 6px 6px",marginTop:2}}>
+                      {steps.length===0?(
+                        <div style={{fontSize:11,color:T.textLow}}>No production steps configured yet.</div>
+                      ):(
+                        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                          {steps.map(s=>{
+                            const sc=s.status==='completed'?T.green:s.status==='in_progress'?T.accent:T.textLow;
+                            const tpiWaitDays=s.tpiRequired&&s.tpiOfferedAt&&!s.tpiDoneAt?Math.floor((Date.now()-new Date(s.tpiOfferedAt))/86400000):0;
+                            return (
+                              <div key={s.stage} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                                <span style={{color:sc,fontWeight:700,width:16}}>{s.status==='completed'?'✓':s.status==='in_progress'?'⬤':'○'}</span>
+                                <span style={{color:T.text,flex:1}}>{s.stage.replace(/_/g,' ')}</span>
+                                {s.tpiRequired&&<span style={{fontSize:10,color:T.amber,fontWeight:600}}>TPI</span>}
+                                {s.completedAt&&<span style={{fontSize:10,color:T.textMid}}>{fmt.date(s.completedAt)}</span>}
+                                {tpiWaitDays>0&&<Badge color="red">{tpiWaitDays}d TPI wait</Badge>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances }) => {
   const [activeTab, setActiveTab] = useState("basic");
   const [localOrder, setLocalOrder] = useState(order);
   const [dirty, setDirty] = useState(false);
@@ -8320,6 +8635,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
     {id:"milestones",label:"Payment Milestones"},{id:"drawings",label:"Drawing Register",planningOnly:true},
     {id:"parts",label:"Drawing Part List",planningOnly:true},{id:"quality",label:"Quality",planningOnly:true},
     {id:"assemblies",label:"Assemblies",planningOnly:true},
+    {id:"progress",label:"Progress",planningOnly:true},
     {id:"finance",label:"Finance & Amendments"},
   ];
   const tabs = allTabs.filter(t=>!t.planningOnly||!isFinanceRole);
@@ -8364,6 +8680,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} tpiAgencies={tpiAgencies||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
+      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
       {cancelModal && (
@@ -8472,10 +8789,10 @@ const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
     </div>
   );
 };
-const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies }) => {
+const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances }) => {
   const [selected, setSelected] = useState(null);
   const saveOrder = (updated) => { setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o)); setSelected(updated); };
-  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} />;
+  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />;
   return <OrdersList orders={orders} onOpen={setSelected} user={user} clients={clients} onAddOrder={o=>setOrders(prev=>[...prev,o])} />;
 };
 
@@ -11044,7 +11361,7 @@ const PRI_BADGE = score => {
 
 const TIER_COLOR = { simple:"blue", medium:"green", complex:"amber", heavy:"red" };
 
-const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, contractors, releases, setReleases, productionStandards, instances, onBack }) => {
+const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, onBack }) => {
   const today = () => new Date().toISOString().slice(0,10);
   const [step, setStep] = useState(1);
 
@@ -11060,24 +11377,87 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
   const [addedSugg, setAddedSugg] = useState({});
   const [expandedDrg, setExpandedDrg] = useState(new Set());
 
-  // Step 4 — machine assignments
-  const [machineAsgn, setMachineAsgn] = useState({}); // {matCode: {machineId,lotId,startDate,endDate}}
+  // Step 4 — machine assignments + confirmed required ops
+  const [machineAsgn, setMachineAsgn] = useState({}); // {matCode: {machineId,lotId,startDate,endDate,secondaryAssignments}}
+  const [confirmedOps, setConfirmedOps] = useState({}); // {partId: string[]} — binding ops confirmed in Step 4
 
   // Step 5 — contractor assignments
   const [contAsgn, setContAsgn] = useState({}); // {drawingId: {contractorId,stages:[],pinnedEngineerId}}
 
+  // ── buildProductionSteps — generates the full stage sequence for a drawing ──
+  const buildProductionSteps = (drawing, order, machAsgnSnap, contAsgnSnap, confirmedOpsSnap) => {
+    const q = order.quality || {};
+    const tpiHolds = new Set(q.tpiHoldPoints || []);
+    const allCoats = getPaintCoats(order.quality); // reuse existing utility
+    const ca = contAsgnSnap[drawing.id] || {};
+    const contractorId = ca.contractorId || "";
+
+    // machineId: first matCode for this drawing
+    const drawingMatCodes = (order.parts || [])
+      .filter(p => p.drawingId === drawing.id && p.fabType === "Fabricate")
+      .map(p => p.matCode).filter(Boolean);
+    const machineId = drawingMatCodes.length > 0
+      ? (machAsgnSnap[drawingMatCodes[0]]?.machineId || "") : "";
+
+    // confirmed ops across all parts in this drawing
+    const drawingParts = (order.parts || []).filter(p => p.drawingId === drawing.id && p.fabType === "Fabricate");
+    const allOps = new Set(drawingParts.flatMap(p => confirmedOpsSnap[p.id] || p.requiredOps || ['Cut']));
+    const secOps = [...allOps].filter(op => op !== 'Cut');
+
+    const steps = [];
+    steps.push({ stage:'nesting',     status:'pending', completedAt:null, completedBy:null });
+    steps.push({ stage:'cutting',     status:'pending', machineId, operatorId:null, rmUnits:[], completedAt:null });
+    steps.push({ stage:'cutting_qc',  status:'pending', completedAt:null, completedBy:null });
+    if (secOps.length > 0)
+      steps.push({ stage:'secondary_ops', status:'pending', ops:secOps, completedAt:null });
+    steps.push({ stage:'fit_up',  status:'pending', contractorId, tpiRequired:tpiHolds.has('fit_up'),  tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    steps.push({ stage:'welding', status:'pending', contractorId, tpiRequired:tpiHolds.has('welding'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    steps.push({ stage:'blasting',status:'pending', contractorId:"",  tpiRequired:tpiHolds.has('blasting'),tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    if (allCoats.length > 0) {
+      allCoats.forEach((coat, i) => {
+        steps.push({ stage:`paint_coat_${i+1}`, status:'pending', coatName:coat.type||`Coat ${i+1}`, contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+      });
+    } else {
+      steps.push({ stage:'paint_coat_1', status:'pending', coatName:'Paint', contractorId, tpiRequired:tpiHolds.has('painting'), tpiOfferedAt:null, tpiDoneAt:null, tpiIrn:null, completedAt:null });
+    }
+    steps.push({ stage:'mdcc',     status:'pending', appliedAt:null, receivedAt:null });
+    steps.push({ stage:'dispatch', status:'pending', completedAt:null });
+    return steps;
+  };
+
   // ── Step 1 helpers ──
-  const activeReleaseDrawingIds = new Set(
-    releases.filter(r=>r.status==="in_progress").flatMap(r=>r.drawings.map(d=>d.drawingId))
+  // Build Map(drawingId → releaseId) once — O(n) — avoids O(n×m) per-drawing scan below
+  const activeReleaseDrawingMap = new Map(
+    releases.filter(r=>r.status==="in_progress").flatMap(r=>
+      (r.drawings||[]).filter(d=>d.drawingId).map(d=>[d.drawingId, r.id])
+    )
   );
+  const activeReleaseDrawingIds = new Set(activeReleaseDrawingMap.keys());
+
   const allEligible = orders.flatMap(order =>
     (order.drawings||[]).filter(d=>d.receivedDate && !activeReleaseDrawingIds.has(d.id))
       .map(d=>({ drawingId:d.id, orderId:order.id, drawing:d, order }))
-  ).map(e=>({
-    ...e,
-    tier: productionStandards ? getAssemblyTier(e.drawing, productionStandards) : {id:"simple",label:"Simple"},
-    score: productionStandards ? getCriticalityScore(e.drawing, e.order, productionStandards) : 999,
-  })).sort((a,b)=>a.score-b.score);
+  ).map(e=>{
+    let tier = {id:"simple",label:"Simple"};
+    let score = 999;
+    try {
+      if (productionStandards) {
+        tier  = getAssemblyTier(e.drawing, productionStandards);
+        score = getCriticalityScore(e.drawing, e.order, productionStandards);
+      }
+    } catch {}
+    return { ...e, tier, score };
+  }).sort((a,b)=>a.score-b.score);
+
+  // Drawings excluded from eligibility — shown read-only in Step 1 for diagnostics
+  const noDateDrawings = orders.flatMap(order =>
+    (order.drawings||[]).filter(d=>!d.receivedDate)
+      .map(d=>({ drawing:d, order }))
+  );
+  const alreadyReleasedDrawings = orders.flatMap(order =>
+    (order.drawings||[]).filter(d=>d.receivedDate && activeReleaseDrawingIds.has(d.id))
+      .map(d=>({ drawing:d, order, releaseId: activeReleaseDrawingMap.get(d.id)||"" }))
+  );
 
   const toggleDrw = key => setSelDrawings(prev => {
     const exists = prev.find(s=>s.drawingId===key.drawingId&&s.orderId===key.orderId);
@@ -11104,10 +11484,14 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
       });
     });
     const rows = Object.values(byMat).map(row => {
-      const availLots = stock.filter(s=>
-        (s.matCode===row.matCode||(s.sectionType||s.section)===row.section)&&
-        (s.status==="available"||s.status==="qc_hold")
-      );
+      const availLots = stock.filter(s=>{
+        // Primary: normalized matCode match (handles MM-suffix and case differences)
+        // Fallback: sectionType match only for lots with no matCode set
+        const sNorm = normMatCode(s.matCode), rNorm = normMatCode(row.matCode);
+        const matMatch = (sNorm && rNorm) ? sNorm===rNorm
+          : (!s.matCode && (s.sectionType||s.section||"").toUpperCase()===(row.section||"").toUpperCase());
+        return matMatch && (s.status==="available"||s.status==="qc_hold"||s.status==="reserved"||s.status==="partially_reserved");
+      });
       const availKg = availLots.reduce((s,l)=>(s+(l.wtAvailable||l.wtReceived||0)),0);
       let status = "Not in stock — raise PO";
       if (availKg >= row.requiredKg && row.requiredKg > 0) status = "Sufficient";
@@ -11210,29 +11594,85 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
     const seq  = releases.length + 1;
     const yr   = new Date().getFullYear();
     const id   = `PR-${yr}-${String(seq).padStart(3,"0")}`;
+    const machAsgnSnap = machineAsgn;
+    const contAsgnSnap = contAsgn;
+    const confirmedOpsSnap = confirmedOps;
+
+    // FIX 1: Write productionSteps to each drawing.
+    // FIX 2: Write confirmed requiredOps back to part records.
+    setOrders(prevOrders => prevOrders.map(ord => {
+      const affected = selDrawings.filter(s => s.orderId === ord.id);
+      if (!affected.length) return ord;
+      const updatedParts = (ord.parts || []).map(p => {
+        const ops = confirmedOpsSnap[p.id];
+        return ops ? { ...p, requiredOps: ops } : p;
+      });
+      const updatedDrawings = (ord.drawings || []).map(drg => {
+        const sel = affected.find(s => s.drawingId === drg.id);
+        if (!sel) return drg;
+        const steps = buildProductionSteps(drg, ord, machAsgnSnap, contAsgnSnap, confirmedOpsSnap);
+        return { ...drg, productionSteps: steps };
+      });
+      return { ...ord, parts: updatedParts, drawings: updatedDrawings };
+    }));
+
+    // FIX 3: Mark assigned stock lots as 'reserved' (hard allocation happens later at NEST-BCH nesting stage).
+    const matCodeOrderMap = {};
+    selDrawings.forEach(({order, drawing}) => {
+      (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").forEach(p => {
+        if (!matCodeOrderMap[p.matCode]) matCodeOrderMap[p.matCode] = order.id;
+      });
+    });
+    const lotReservationMap = {};
+    Object.entries(machineAsgn).forEach(([matCode, a]) => {
+      if (a.lotId) lotReservationMap[a.lotId] = matCodeOrderMap[matCode] || selDrawings[0]?.orderId || "";
+    });
+    if (Object.keys(lotReservationMap).length > 0)
+      setStock(prevStock => prevStock.map(lot => {
+        const orderId = lotReservationMap[lot.id];
+        if (!orderId) return lot;
+        return {
+          ...lot, status: 'reserved',
+          reservedFor: orderId,
+          reservedAt: today(),
+          releaseId: id,
+          reservations: [...(lot.reservations||[]), {
+            orderId, reservedAt: today(), source: 'release_wizard', releaseId: id
+          }]
+        };
+      }));
+
+    // FIX 4: Contractor stages persisted via ca.stages in drawingsPayload.
     const drawingsPayload = selDrawings.map(({drawing, order, tier, score}) => {
-      const ca = contAsgn[drawing.id]||{};
+      const ca = contAsgnSnap[drawing.id] || {};
       return {
         drawingId: drawing.id, drawingNo: drawing.drawingNo, orderId: order.id, orderNo: order.id,
-        contractorId: ca.contractorId||"", contractorName: (contractors||[]).find(c=>c.id===ca.contractorId)?.name||"",
-        stages: ca.stages||[], pinnedEngineerId: ca.pinnedEngineerId||"",
-        pinnedEngineerName: ca.pinnedEngineerId ? (USERS.find(u=>u.id===ca.pinnedEngineerId)?.name||"") : "",
-        tier: tier?.id||"simple", criticalityScore: score,
+        contractorId: ca.contractorId || "",
+        contractorName: (contractors || []).find(c => c.id === ca.contractorId)?.name || "",
+        stages: ca.stages || [],
+        pinnedEngineerId: ca.pinnedEngineerId || "",
+        pinnedEngineerName: ca.pinnedEngineerId ? (USERS.find(u => u.id === ca.pinnedEngineerId)?.name || "") : "",
+        tier: tier?.id || "simple", criticalityScore: score,
       };
     });
+    // FIX 5: Include secondaryAssignments in machine payload.
     const machinePayload = Object.entries(machineAsgn).map(([matCode, a]) => ({
       id: `MA-${id}-${matCode}`, matCode,
-      machineId: a.machineId||"", machineName: (machines||[]).find(m=>m.id===a.machineId)?.name||"",
-      lotId: a.lotId||"", startDate: a.startDate||"", endDate: a.endDate||"",
-      assignedBy: user.username, status:"pending",
+      machineId: a.machineId || "",
+      machineName: (machines || []).find(m => m.id === a.machineId)?.name || "",
+      lotId: a.lotId || "",
+      startDate: a.startDate || "",
+      endDate: a.endDate || "",
+      secondaryAssignments: a.secondaryAssignments || [],
+      assignedBy: user.username, status: "pending",
     }));
-    const rmPayload = rmPicture.map(r=>({
+    const rmPayload = rmPicture.map(r => ({
       matCode: r.matCode, requiredKg: r.requiredKg, requiredM: r.requiredM,
       availableKg: r.availableKg, status: r.status,
-      lots: r.lots.map(l=>l.id),
+      lots: r.lots.map(l => l.id),
     }));
-    setReleases(prev=>[...prev,{
-      id, releaseDate: today(), createdBy: user.username, status:"in_progress",
+    setReleases(prev => [...prev, {
+      id, releaseDate: today(), createdBy: user.username, status: "in_progress",
       drawings: drawingsPayload, machineAssignments: machinePayload, rmPicture: rmPayload,
     }]);
     onBack();
@@ -11343,6 +11783,33 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
               })}
             </tbody>
           </table>
+        </div>
+      )}
+      {/* Drawings already in an active release — explain exclusion */}
+      {alreadyReleasedDrawings.length > 0 && (
+        <div style={{ marginTop:14 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>EXCLUDED — ALREADY IN ACTIVE RELEASE</div>
+          {alreadyReleasedDrawings.map(({drawing, order, releaseId})=>(
+            <div key={drawing.id} style={{ display:"flex", gap:8, alignItems:"center", padding:"5px 8px", background:T.bgInput, borderRadius:4, marginBottom:4, fontSize:11, opacity:0.65 }}>
+              <span style={{ fontFamily:T.fontMono, color:T.accentHi, minWidth:120 }}>{drawing.drawingNo}</span>
+              <span style={{ color:T.textMid }}>{order.id}</span>
+              {releaseId && <Badge color="blue">{releaseId}</Badge>}
+              <span style={{ color:T.amber }}>Complete or cancel that release first</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* Drawings pending receipt — explain exclusion */}
+      {noDateDrawings.length > 0 && (
+        <div style={{ marginTop:14 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>EXCLUDED — NO RECEIVED DATE (set in Orders → Drawing Register)</div>
+          {noDateDrawings.map(({drawing, order})=>(
+            <div key={drawing.id} style={{ display:"flex", gap:8, alignItems:"center", padding:"5px 8px", background:T.bgInput, borderRadius:4, marginBottom:4, fontSize:11, opacity:0.5 }}>
+              <span style={{ fontFamily:T.fontMono, color:T.accentHi, minWidth:120 }}>{drawing.drawingNo}</span>
+              <span style={{ color:T.textMid }}>{order.id}</span>
+              <Badge color="amber">Pending receipt</Badge>
+            </div>
+          ))}
         </div>
       )}
       <div style={{ marginTop:16, display:"flex", gap:8, alignItems:"center" }}>
@@ -11525,6 +11992,15 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
   const Step4 = () => {
     const todayISO   = new Date().toISOString().slice(0,10);
     const twoDaysISO = new Date(Date.now()+2*864e5).toISOString().slice(0,10);
+    const missingMachine = rmPicture.filter(r=>r.status!=="Not in stock — raise PO").some(r=>!(machineAsgn[r.matCode]?.machineId));
+    // Pre-group fabricate parts by matCode once — avoids O(matCodes × drawings × parts) inside the map below
+    const partsByMatCode = {};
+    selDrawings.forEach(({drawing, order}) => {
+      (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").forEach(p => {
+        if (!partsByMatCode[p.matCode]) partsByMatCode[p.matCode] = [];
+        partsByMatCode[p.matCode].push({p, drawingNo:drawing.drawingNo});
+      });
+    });
     return (
     <div>
       <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 4 — Assign Machines</div>
@@ -11558,7 +12034,20 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                   <label style={css.label}>Lot</label>
                   <select value={asgn.lotId||""} onChange={e=>updAsgn(r.matCode,"lotId",e.target.value)} style={css.input}>
                     <option value="">Select lot...</option>
-                    {r.lots.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg)</option>)}
+                    {(() => {
+                      const pid = r.drawings[0]?.orderId;
+                      const forThis = r.lots.filter(l =>
+                        (l.status==='reserved'||l.status==='partially_reserved') &&
+                        ((l.reservedFor===pid)||(l.reservations||[]).some(rv=>rv.orderId===pid))
+                      );
+                      const avail   = r.lots.filter(l => l.status==='available');
+                      const qcHold  = r.lots.filter(l => l.status==='qc_hold');
+                      return [
+                        ...forThis.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg) — Reserved for this order ✓</option>),
+                        ...avail.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtAvailable||l.wtReceived||0).toFixed(0)} kg) — Available</option>),
+                        ...qcHold.map(l=><option key={l.id} value={l.id}>{l.lotNo||l.id} ({(l.wtReceived||0).toFixed(0)} kg) — QC Pending</option>),
+                      ];
+                    })()}
                   </select>
                 </div>
                 <div>
@@ -11617,12 +12106,53 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
                 </div>
               );
             })()}
-          </div>
+          {/* FIX 2: Required Ops per part — editable checkboxes */}
+          {avail && (() => {
+            const batchParts = partsByMatCode[r.matCode] || [];
+            if (!batchParts.length) return null;
+            const ALL_OPS = ['Cut','Bevel','Drill','Grind'];
+            return (
+              <div style={{ marginTop:12, borderTop:`1px solid ${T.border}`, paddingTop:10 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>REQUIRED OPS PER PART</div>
+                {batchParts.map(({p, drawingNo}) => {
+                  const ops = confirmedOps[p.id] || p.requiredOps || ['Cut'];
+                  return (
+                    <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:6, fontSize:11, flexWrap:"wrap" }}>
+                      <span style={{ fontFamily:T.fontMono, color:T.accentHi, minWidth:80 }}>{p.markNo}</span>
+                      <span style={{ color:T.textLow, minWidth:60, fontSize:10 }}>{drawingNo}</span>
+                      <span style={{ color:T.textMid, minWidth:120 }}>{p.description||""}</span>
+                      {ALL_OPS.map(op => {
+                        const checked = ops.includes(op);
+                        return (
+                          <label key={op} style={{ display:"flex", alignItems:"center", gap:3, cursor:"pointer", color:checked?T.accent:T.textLow }}>
+                            <input type="checkbox" checked={checked} onChange={e=>{
+                              const newOps = e.target.checked ? [...new Set([...ops,op])] : ops.filter(x=>x!==op);
+                              setConfirmedOps(prev=>({...prev,[p.id]:newOps}));
+                            }} />
+                            {op}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
         );
       })}
+      {missingMachine && (() => {
+        const unassigned = rmPicture.filter(r=>r.status!=="Not in stock — raise PO"&&!(machineAsgn[r.matCode]?.machineId));
+        return <InfoBanner color="amber">Assign a machine for: {unassigned.map(r=>r.matCode).join(", ")} before continuing.</InfoBanner>;
+      })()}
       <div style={{ marginTop:16, display:"flex", gap:8 }}>
         <button onClick={()=>setStep(3)} style={css.btn.ghost}>← Back</button>
-        <button onClick={()=>setStep(5)} style={css.btn.primary}>Next: Assign Contractors →</button>
+        <button onClick={()=>setStep(5)}
+          disabled={missingMachine}
+          style={missingMachine?{...css.btn.primary,opacity:0.45,cursor:"not-allowed"}:css.btn.primary}>
+          Next: Assign Contractors →
+        </button>
       </div>
     </div>
     );
@@ -11634,7 +12164,12 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
     {id:"blasting",label:"Blasting"},{id:"painting",label:"Painting"},
   ];
 
-  const Step5 = () => (
+  const Step5 = () => {
+    const missingContractor = selDrawings.some(({drawingId}) => {
+      const ca = contAsgn[drawingId] || {};
+      return (ca.stages||[]).some(s=>['fitup','welding'].includes(s)) && !ca.contractorId;
+    });
+    return (
     <div>
       <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:4 }}>Step 5 — Assign Contractors</div>
       <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>Assign contractors to each drawing and optionally pin a production engineer.</div>
@@ -11680,12 +12215,24 @@ const ProductionReleaseWizard = ({ user, orders, stock, materials, machines, con
           </div>
         );
       })}
+      {missingContractor && (() => {
+        const missing = selDrawings.filter(({drawingId}) => {
+          const ca = contAsgn[drawingId] || {};
+          return (ca.stages||[]).some(s=>['fitup','welding'].includes(s)) && !ca.contractorId;
+        });
+        return <InfoBanner color="amber">Contractor required for fit-up/welding drawings: {missing.map(s=>s.drawing?.drawingNo||s.drawingId).join(", ")}</InfoBanner>;
+      })()}
       <div style={{ marginTop:16, display:"flex", gap:8 }}>
         <button onClick={()=>setStep(4)} style={css.btn.ghost}>← Back</button>
-        <button onClick={confirm} style={css.btn.green}>✓ Create Release</button>
+        <button onClick={confirm}
+          disabled={missingContractor}
+          style={missingContractor?{...css.btn.green,opacity:0.45,cursor:"not-allowed"}:css.btn.green}>
+          ✓ Create Release
+        </button>
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div>
@@ -11994,8 +12541,770 @@ const StepConfigModal = ({ drawings, orders, machines, contractors, parts, onSav
   );
 };
 
+// ─── Drawing Status Card ────────────────────────────────────────────────────
+const DSC_STAGE_LABELS = {
+  nesting:'Nesting', cutting:'Cutting', cutting_qc:'Cut QC', secondary_ops:'Sec Ops',
+  fit_up:'Fit-Up', tpi_fitup:'TPI Fit-Up', welding:'Welding', tpi_weld:'TPI Weld',
+  assembly:'Assembly', blasting:'Blasting', tpi_blast:'TPI Blast',
+  paint_coat_1:'Paint 1', paint_coat_2:'Paint 2', paint_coat_3:'Paint 3',
+  mdcc:'MDCC', dispatch:'Dispatch',
+};
+
+const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, releases, instances, machines, contractors, nestingBatches, onBack }) => {
+  const [expandedStage, setExpandedStage]   = useState(null);
+  const [expandedMcRow, setExpandedMcRow]   = useState(null);   // matCode string or null
+  const [expandedRmUnits, setExpandedRmUnits] = useState(new Set()); // Set of rmUnitId
+  const [reworkModal, setReworkModal]       = useState(null); // { partId, markNo }
+  const [reworkReason, setReworkReason]     = useState("");
+  const [reworkDecision, setReworkDecision] = useState("rework");
+  const [tpiModal, setTpiModal]             = useState(null); // { stageIdx, action:'done' }
+  const [tpiIrn, setTpiIrn]                 = useState("");
+  const [outboundForm, setOutboundForm]     = useState(null);
+  const [secondsAgo, setSecondsAgo]         = useState(0);
+
+  // Auto-refresh counter (state already live in React — no server fetch needed)
+  useEffect(() => {
+    const tick    = setInterval(() => setSecondsAgo(s => s + 1), 1000);
+    const refresh = setInterval(() => setSecondsAgo(0), 60000);
+    return () => { clearInterval(tick); clearInterval(refresh); };
+  }, []);
+
+  // ── Derived data ──────────────────────────────────────────────────────────
+  const rel = (releases||[]).find(r =>
+    (r.drawings||[]).some(rd => rd.drawingId === drawing.id && rd.orderId === order.id)
+  );
+  const machineAsgns = rel ? (rel.machineAssignments||[]) : [];
+
+  const drawingParts = (order.parts||[]).filter(p => p.drawingId === drawing.id && p.fabType === "Fabricate");
+  const steps = drawing.productionSteps || [];
+
+  const currentStepIdx = steps.findIndex(s => s.status !== 'completed');
+  const currentStepObj = currentStepIdx >= 0 ? steps[currentStepIdx] : steps[steps.length - 1];
+  const currentStage   = currentStepObj?.stage || "not_released";
+
+  const prevStep    = currentStepIdx > 0 ? steps[currentStepIdx - 1] : null;
+  const stageStart  = prevStep?.completedAt ? new Date(prevStep.completedAt)
+                    : rel ? new Date(rel.releaseDate) : new Date();
+  const daysAtStage = Math.max(0, Math.floor((Date.now() - stageStart.getTime()) / 86400000));
+
+  // RM rows: one per matCode required by fabricate parts of this drawing
+  const drawingMatCodes = [...new Set(drawingParts.map(p => p.matCode).filter(Boolean))];
+  const rmRows = drawingMatCodes.map(mc => {
+    const maAsgn     = machineAsgns.find(ma => ma.matCode === mc);
+    const assignedLot = maAsgn?.lotId ? (stock||[]).find(l => l.id === maAsgn.lotId) : null;
+    const linkedLots = (stock||[]).filter(l =>
+      l.matCode === mc && (
+        l.id === maAsgn?.lotId ||
+        l.reservedFor === order.id ||
+        (l.reservations||[]).some(r => r.orderId === order.id) ||
+        (l.allocations||[]).some(a => a.orderId === order.id && a.drawingId === drawing.id)
+      )
+    );
+    const reqKg      = drawingParts.filter(p => p.matCode === mc).reduce((s,p) => s+(p.clientTotalWt||0), 0);
+    const receivedKg = linkedLots.reduce((s,l) => s+(l.wtReceived||0), 0);
+    const qcOk       = linkedLots.length > 0 && linkedLots.every(l => l.rmQcStatus==="approved" && l.clientInspStatus==="approved");
+    const qcPart     = !qcOk && linkedLots.some(l => l.rmQcStatus==="approved");
+    const qcStatus   = linkedLots.length===0 ? "none" : qcOk ? "approved" : qcPart ? "partial" : "pending";
+    const locBays    = [...new Set(linkedLots.map(l => l.bayId).filter(Boolean))].join(", ") || "—";
+    return { mc, reqKg, receivedKg, qcStatus, lots: linkedLots, location: locBays, maAsgn, assignedLot };
+  });
+
+  // Parts + instance enrichment
+  const partsStatus = drawingParts.map(p => ({
+    ...p,
+    _insts: (instances||[]).filter(i => i.markNo===p.markNo && i.drawingId===drawing.id && i.orderId===order.id),
+  }));
+  const partsReady   = partsStatus.filter(p => p.qcStatus==="passed").length;
+  const partsInProg  = partsStatus.filter(p => p.cutAt && p.qcStatus!=="passed" && p.qcStatus!=="written_off").length;
+  const partsBlocked = partsStatus.filter(p => p.qcStatus==="rework"||p.qcStatus==="written_off").length;
+  const partsTotal   = partsStatus.length;
+
+  const hour          = new Date().getHours();
+  const endOfShift    = hour >= 17;
+  const uncollected   = partsStatus.filter(p =>
+    p.qcStatus==="passed" && p.collectionStatus!=="collected" && (p.location||"").toLowerCase().includes("bay")
+  );
+
+  const outboundOps = (order.outboundOps||[]).filter(op => op.drawingId === drawing.id);
+
+  // ── Action helpers ────────────────────────────────────────────────────────
+  const updPart = (partId, patch) => setOrders(prev => prev.map(o =>
+    o.id !== order.id ? o : { ...o, parts: o.parts.map(p => p.id===partId ? {...p,...patch} : p) }
+  ));
+  const updStep = (idx, patch) => setOrders(prev => prev.map(o =>
+    o.id !== order.id ? o : {
+      ...o,
+      drawings: o.drawings.map(d => d.id!==drawing.id ? d : {
+        ...d,
+        productionSteps: (d.productionSteps||[]).map((s,i) => i===idx ? {...s,...patch} : s)
+      })
+    }
+  ));
+
+  const doConfirmCut = (partId) => {
+    const ts = new Date().toISOString();
+    updPart(partId, { cutAt:ts, cutBy:user.username, collectionStatus:"pending_qc", location:"Cutting Bay" });
+  };
+  const doQcPass = (partId) => {
+    const ts   = new Date().toISOString();
+    const ma   = machineAsgns[0];
+    const mach = ma ? (machines||[]).find(m => m.id===ma.machineId) : null;
+    updPart(partId, { qcStatus:"passed", qcAt:ts, qcBy:user.username,
+      collectionStatus:"ready_for_collection", location: mach ? `${mach.name} Bay` : "Machine Bay" });
+  };
+  const doReworkDecision = () => {
+    if (!reworkModal) return;
+    const ts = new Date().toISOString();
+    if (reworkDecision === "rework") {
+      updPart(reworkModal.partId, { qcStatus:"rework", qcAt:ts, qcBy:user.username,
+        reworkReason, cutAt:null, cutBy:null, collectionStatus:"not_ready", location:"—" });
+    } else {
+      updPart(reworkModal.partId, { qcStatus:"written_off", qcAt:ts, qcBy:user.username, reworkReason });
+    }
+    setReworkModal(null); setReworkReason(""); setReworkDecision("rework");
+  };
+  const doCollected = (partId) => {
+    const ts = new Date().toISOString();
+    updPart(partId, { collectionStatus:"collected", collectedBy:user.username, collectedAt:ts,
+      location:`Contractor — ${user.name}` });
+  };
+  const doMoveHolding = (partId) => {
+    const ts = new Date().toISOString();
+    updPart(partId, { location:"Holding Bay", movedToHoldingAt:ts, movedBy:user.username, collectionStatus:"holding" });
+  };
+  const doStageComplete = (idx) => {
+    const ts = new Date().toISOString();
+    updStep(idx, { status:"completed", completedAt:ts, completedBy:user.username });
+  };
+  const doTpiOffer = (idx) => {
+    updStep(idx, { tpiOfferedAt:new Date().toISOString(), tpiOfferedBy:user.username });
+    setTpiModal(null);
+  };
+  const doTpiDone = (idx) => {
+    updStep(idx, { tpiDoneAt:new Date().toISOString(), tpiIrn, tpiDoneBy:user.username });
+    setTpiModal(null); setTpiIrn("");
+  };
+  const doAddOutboundOp = () => {
+    if (!outboundForm) return;
+    const newOp = { id:`OB-${Date.now()}`, drawingId:drawing.id, ...outboundForm,
+      status:"pending", createdAt:new Date().toISOString(), createdBy:user.username };
+    setOrders(prev => prev.map(o => o.id!==order.id ? o :
+      { ...o, outboundOps:[...(o.outboundOps||[]), newOp] }
+    ));
+    setOutboundForm(null);
+  };
+
+  // ── Style helpers ─────────────────────────────────────────────────────────
+  const secCard  = { marginBottom:16, background:T.bgCard, borderRadius:8, border:`1px solid ${T.border}` };
+  const secHd    = { fontSize:11, fontWeight:800, color:T.textMid, letterSpacing:"0.08em",
+                     padding:"10px 14px", borderBottom:`1px solid ${T.border}` };
+  const secBody  = { padding:"12px 14px" };
+  const colFor   = s => s==="completed"?T.green : s==="in_progress"?T.amber : s==="blocked"?T.red : T.textLow;
+  const iconFor  = s => s==="completed"?"✅" : s==="in_progress"?"⚡" : s==="blocked"?"❌" : "⏳";
+
+  const role       = user.role;
+  const isEng      = ["production_engineer","super_admin"].includes(role);
+  const isPlan     = role === "planning_admin";
+  const isQc       = ["qc_user","qc_admin"].includes(role);
+  const isStore    = role === "store_admin";
+  const isContr    = role === "contractor";
+  const isOp       = role === "machine_operator";
+  const hasActions = isEng||isQc||isStore||isContr||isOp;
+
+  return (
+    <div>
+      {/* ── Header ─────────────────────────────────────────────────── */}
+      <div style={{ display:"flex", alignItems:"flex-start", gap:12, marginBottom:16 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Back</button>
+        <div style={{ flex:1 }}>
+          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:4 }}>
+            <span style={{ fontFamily:T.fontMono, fontSize:16, fontWeight:800, color:T.accentHi }}>{drawing.drawingNo}</span>
+            {drawing.title && <span style={{ fontSize:14, color:T.text, fontWeight:600 }}>{drawing.title}</span>}
+            <Badge color="blue">{order.id}</Badge>
+            <Badge color="gray">{order.clientId}</Badge>
+            {drawing.totalWt>0 && <span style={{fontSize:12,color:T.textMid}}>{(drawing.totalWt/1000).toFixed(2)} T</span>}
+          </div>
+          <div style={{ display:"flex", gap:14, alignItems:"center", flexWrap:"wrap" }}>
+            <span style={{ fontSize:20, fontWeight:800, color:colFor(currentStepObj?.status) }}>
+              {iconFor(currentStepObj?.status)} {(DSC_STAGE_LABELS[currentStage]||currentStage).toUpperCase()}
+            </span>
+            {daysAtStage>0 && <span style={{fontSize:12,color:T.textMid}}>{daysAtStage} day{daysAtStage!==1?"s":""} at this stage</span>}
+            {steps.length===0 && <span style={{fontSize:12,color:T.amber}}>⚠ Not yet released</span>}
+          </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:4 }}>
+            <span style={{ fontSize:11, color:T.textLow }}>
+              Last updated: {secondsAgo<60?`${secondsAgo}s ago`:`${Math.floor(secondsAgo/60)}m ago`}
+            </span>
+            <button onClick={()=>setSecondsAgo(0)} style={{...css.btn.sm,fontSize:10,padding:"1px 8px"}}>↻ Refresh</button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SECTION A — RM STATUS ──────────────────────────────────── */}
+      <div style={secCard}>
+        <div style={secHd}>A — RM STATUS</div>
+        <div style={secBody}>
+          {rmRows.length===0 && <div style={{color:T.textLow,fontSize:12}}>No fabricate parts requiring RM for this drawing.</div>}
+          {rmRows.length>0 && (
+            <div style={{ display:"grid", gridTemplateColumns:"20px 2fr 1fr 1fr 1fr 1fr 1fr 1.5fr", gap:6, padding:"0 0 4px", borderBottom:`1px solid ${T.border}` }}>
+              {["","MAT CODE","RM UNITS","RECEIVED","QC STATUS","TPI","RESERVED","LOCATION"].map(h=>(
+                <div key={h} style={{fontSize:10,color:T.textLow,fontWeight:700}}>{h}</div>
+              ))}
+            </div>
+          )}
+          {rmRows.map(r => {
+            const qcC = r.qcStatus==="approved"?T.green:r.qcStatus==="partial"?T.amber:r.qcStatus==="none"?T.red:T.amber;
+            const qcL = r.qcStatus==="approved"?"✅ Approved":r.qcStatus==="partial"?"⚡ Partial":r.qcStatus==="none"?"❌ None":"⏳ Pending";
+            const reservedKg = r.lots.filter(l=>["reserved","partially_reserved","allocated","issued"].includes(l.status)).reduce((s,l)=>s+(l.wtReceived||0),0);
+            const isRowExp = expandedMcRow === r.mc;
+            const toggleRow = () => setExpandedMcRow(p => p===r.mc ? null : r.mc);
+
+            // Nesting batch data for this matCode
+            const nestBatchLot = (nestingBatches||[]).flatMap(b=>b.lots||[]).find(l=>l.matCode===r.mc);
+            const nestSheets   = nestBatchLot?.sheets||[];
+            const drgMarkNos   = new Set(drawingParts.map(p=>p.markNo));
+            const relevantSheets = nestSheets.filter(sh=>(sh.parts||[]).some(p=>drgMarkNos.has(p.markNo)));
+
+            return (
+              <div key={r.mc}>
+                {/* ── Clickable row ── */}
+                <div
+                  onClick={toggleRow}
+                  style={{ display:"grid", gridTemplateColumns:"20px 2fr 1fr 1fr 1fr 1fr 1fr 1.5fr", gap:6, alignItems:"center",
+                    padding:"8px 0", borderBottom:`1px solid ${T.border}44`, cursor:"pointer",
+                    background:isRowExp?`${T.accent}08`:"transparent" }}>
+                  <div style={{fontSize:10,color:T.textMid,userSelect:"none"}}>{isRowExp?"▼":"▶"}</div>
+                  <div style={{fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>{r.mc}</div>
+                  <div style={{fontSize:11,color:T.textMid}}>
+                    {r.lots.length>0
+                      ? `${r.lots.length} lot${r.lots.length!==1?"s":""}`
+                      : <span style={{color:T.textLow}}>No lot</span>}
+                  </div>
+                  <div style={{fontSize:11,color:r.receivedKg>0?T.text:T.textLow}}>{r.receivedKg.toFixed(0)} kg</div>
+                  <div style={{fontSize:11,color:qcC,fontWeight:600}}>{qcL}</div>
+                  <div style={{fontSize:11,color:T.textLow}}>—</div>
+                  <div style={{fontSize:11,color:reservedKg>0?T.green:T.textLow}}>{reservedKg.toFixed(0)} kg</div>
+                  <div style={{fontSize:11,color:T.textMid}}>{r.location}</div>
+                </div>
+
+                {/* ── Expanded panel ── */}
+                {isRowExp && (
+                  <div style={{padding:"10px 12px 12px 28px",background:`${T.accent}06`,borderBottom:`1px solid ${T.border}44`}}>
+                    {/* Case 1: no lot assigned */}
+                    {r.lots.length===0 && (
+                      <div style={{fontSize:11,color:T.textLow,fontStyle:"italic"}}>
+                        No lot assigned yet — pending Release Wizard or floor nesting
+                      </div>
+                    )}
+
+                    {/* Case 2: lot assigned, no nesting batch */}
+                    {r.lots.length>0 && relevantSheets.length===0 && (() => {
+                      const l = r.assignedLot || r.lots[0];
+                      return (
+                        <div>
+                          <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6}}>LOT DETAILS</div>
+                          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,fontSize:11,marginBottom:8}}>
+                            <div><span style={{color:T.textLow}}>Lot ID </span><span style={{fontFamily:T.fontMono,color:T.accentHi}}>{l.lotNo||l.id}</span></div>
+                            <div><span style={{color:T.textLow}}>Total weight </span><span style={{color:T.text}}>{(l.wtReceived||0).toFixed(0)} kg</span></div>
+                            <div><span style={{color:T.textLow}}>Status </span><Badge color={["reserved","partially_reserved"].includes(l.status)?"amber":l.status==="allocated"?"blue":l.status==="available"?"green":"gray"}>{l.status.replace("_"," ")}</Badge></div>
+                            <div><span style={{color:T.textLow}}>Bay </span><span style={{color:T.text}}>{l.bayId||"—"}</span></div>
+                          </div>
+                          <div style={{fontSize:11,color:T.amber,fontStyle:"italic"}}>
+                            RM units pending — floor nesting not yet run
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Case 3: nesting batch with RM units */}
+                    {relevantSheets.length>0 && (
+                      <div>
+                        <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6}}>RM UNITS ({relevantSheets.length})</div>
+                        <div style={{display:"grid",gridTemplateColumns:"20px 2fr 1.5fr 1fr 1.5fr",gap:6,padding:"3px 0",borderBottom:`1px solid ${T.border}66`,marginBottom:4}}>
+                          {["","RM Unit ID","Dimensions","Parts","Cut Status"].map((h,i)=>(
+                            <div key={i} style={{fontSize:9,color:T.textLow,fontWeight:700}}>{h}</div>
+                          ))}
+                        </div>
+                        {relevantSheets.map(sh => {
+                          const shParts = (sh.parts||[]).filter(p=>drgMarkNos.has(p.markNo));
+                          const totalQty = shParts.reduce((s,p)=>s+(p.qty||1),0);
+                          const cutQty   = shParts.filter(p=>{
+                            const ps = partsStatus.find(x=>x.markNo===p.markNo);
+                            return !!ps?.cutAt;
+                          }).reduce((s,p)=>s+(p.qty||1),0);
+                          const isUnitExp = expandedRmUnits.has(sh.rmUnitId||sh.sheetNo);
+                          const toggleUnit = (e) => {
+                            e.stopPropagation();
+                            const uid = sh.rmUnitId||sh.sheetNo;
+                            setExpandedRmUnits(prev=>{ const n=new Set(prev); n.has(uid)?n.delete(uid):n.add(uid); return n; });
+                          };
+                          return (
+                            <div key={sh.rmUnitId||sh.sheetNo}>
+                              <div onClick={toggleUnit} style={{display:"grid",gridTemplateColumns:"20px 2fr 1.5fr 1fr 1.5fr",gap:6,padding:"5px 0",borderBottom:`1px solid ${T.border}33`,cursor:"pointer",alignItems:"center"}}>
+                                <div style={{fontSize:10,color:T.textMid}}>{isUnitExp?"▼":"▶"}</div>
+                                <div style={{fontFamily:T.fontMono,fontSize:10,color:T.accentHi}}>{sh.rmUnitId||`Sheet ${sh.sheetNo}`}</div>
+                                <div style={{fontSize:10,color:T.textMid}}>{sh.sheetDim||"—"}</div>
+                                <div style={{fontSize:10,color:T.text}}>{shParts.length} parts</div>
+                                <div style={{fontSize:10,color:cutQty>=totalQty&&totalQty>0?T.green:cutQty>0?T.amber:T.textMid}}>
+                                  {cutQty}/{totalQty} cut
+                                </div>
+                              </div>
+                              {isUnitExp && (
+                                <div style={{paddingLeft:24,paddingBottom:6,background:`${T.bg}88`}}>
+                                  <table style={{width:"100%",fontSize:10,borderCollapse:"collapse",marginTop:4}}>
+                                    <thead>
+                                      <tr style={{color:T.textLow}}>
+                                        <th style={{textAlign:"left",padding:"2px 6px"}}>Mark No</th>
+                                        <th style={{textAlign:"right",padding:"2px 6px"}}>Qty</th>
+                                        <th style={{textAlign:"left",padding:"2px 6px"}}>Drawing No</th>
+                                        <th style={{textAlign:"left",padding:"2px 6px"}}>Order</th>
+                                        <th style={{textAlign:"center",padding:"2px 6px"}}>Cut</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {shParts.map(pt=>{
+                                        const ps = partsStatus.find(x=>x.markNo===pt.markNo);
+                                        const cutDone = !!ps?.cutAt;
+                                        return (
+                                          <tr key={pt.markNo} style={{borderTop:`1px solid ${T.border}33`}}>
+                                            <td style={{padding:"3px 6px",fontFamily:T.fontMono,color:T.accentHi}}>{pt.markNo}</td>
+                                            <td style={{padding:"3px 6px",textAlign:"right",color:T.text}}>{pt.qty||1} pcs</td>
+                                            <td style={{padding:"3px 6px",fontFamily:T.fontMono,color:T.textMid}}>{drawing.drawingNo}</td>
+                                            <td style={{padding:"3px 6px",color:T.textMid}}>{order.id}</td>
+                                            <td style={{padding:"3px 6px",textAlign:"center"}}>{cutDone?<span style={{color:T.green}}>✅</span>:<span style={{color:T.textLow}}>⏳</span>}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── SECTION B — PARTS STATUS ──────────────────────────────── */}
+      <div style={secCard}>
+        <div style={secHd}>B — PARTS STATUS</div>
+        <div style={secBody}>
+          <div style={{display:"flex",gap:16,marginBottom:10,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:T.green,fontWeight:600}}>✅ {partsReady}/{partsTotal} ready for next stage</span>
+            <span style={{fontSize:12,color:T.amber,fontWeight:600}}>⚡ {partsInProg} in progress</span>
+            {partsBlocked>0 && <span style={{fontSize:12,color:T.red,fontWeight:600}}>❌ {partsBlocked} blocked</span>}
+            {endOfShift&&uncollected.length>0 && <span style={{fontSize:12,color:T.amber,fontWeight:700}}>⚠ {uncollected.length} uncollected at end of shift</span>}
+          </div>
+          {partsStatus.length===0 && <div style={{color:T.textLow,fontSize:12}}>No fabricate parts defined for this drawing.</div>}
+          {partsStatus.length>0 && (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",fontSize:11,borderCollapse:"collapse"}}>
+                <thead>
+                  <tr style={{color:T.textMid,borderBottom:`1px solid ${T.border}`}}>
+                    <th style={{textAlign:"left",padding:"4px 8px"}}>Mark No</th>
+                    <th style={{textAlign:"left",padding:"4px 8px"}}>Description</th>
+                    <th style={{textAlign:"left",padding:"4px 8px"}}>Req Ops</th>
+                    <th style={{textAlign:"center",padding:"4px 8px"}}>Cut</th>
+                    <th style={{textAlign:"center",padding:"4px 8px"}}>QC</th>
+                    <th style={{textAlign:"left",padding:"4px 8px"}}>Collection</th>
+                    <th style={{textAlign:"left",padding:"4px 8px"}}>Location</th>
+                    {hasActions && <th style={{textAlign:"left",padding:"4px 8px"}}>Actions</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {partsStatus.map(p => {
+                    const cutDone   = !!p.cutAt;
+                    const qcVal     = p.qcStatus||"not_started";
+                    const colStatus = p.collectionStatus||"not_ready";
+                    const isRework  = qcVal==="rework";
+                    const isWO      = qcVal==="written_off";
+                    const rowBg     = isWO?`${T.red}0f`:isRework?`${T.amber}0f`:qcVal==="passed"?`${T.green}08`:"transparent";
+                    const colLabel  = colStatus==="collected"?`Collected — ${p.collectedBy||""}`:colStatus==="ready_for_collection"?"Ready — awaiting collection":colStatus==="holding"?"In Holding Bay":cutDone?"Pending QC":"Not started";
+                    const colColor  = colStatus==="collected"?T.green:colStatus==="ready_for_collection"?T.amber:T.textMid;
+                    return (
+                      <tr key={p.id} style={{background:rowBg,borderBottom:`1px solid ${T.border}44`}}>
+                        <td style={{padding:"5px 8px",fontFamily:T.fontMono,color:T.accentHi,fontWeight:700}}>{p.markNo}</td>
+                        <td style={{padding:"5px 8px",color:T.text}}>{p.desc||"—"}</td>
+                        <td style={{padding:"5px 8px"}}>
+                          <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                            {(p.requiredOps||["Cut"]).map(op=>(
+                              <span key={op} style={{fontSize:9,padding:"1px 4px",borderRadius:3,background:`${T.accent}22`,color:T.accent,border:`1px solid ${T.accent}44`}}>{op}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td style={{padding:"5px 8px",textAlign:"center"}}>
+                          {cutDone
+                            ? <span title={`Cut ${p.cutAt?.slice(0,10)} by ${p.cutBy}`} style={{color:T.green}}>✅</span>
+                            : <span style={{color:T.textLow}}>⏳</span>}
+                        </td>
+                        <td style={{padding:"5px 8px",textAlign:"center"}}>
+                          {qcVal==="passed"?<span style={{color:T.green}}>✅</span>
+                           :qcVal==="rework"?<span style={{color:T.amber}} title={p.reworkReason||""}>⚠️ Rework</span>
+                           :qcVal==="written_off"?<span style={{color:T.red}}>❌ W/O</span>
+                           :cutDone?<span style={{color:T.amber}}>⚡</span>
+                           :<span style={{color:T.textLow}}>⏳</span>}
+                        </td>
+                        <td style={{padding:"5px 8px",color:colColor}}>{colLabel}</td>
+                        <td style={{padding:"5px 8px",color:T.textMid}}>{p.location||"—"}</td>
+                        {hasActions && (
+                          <td style={{padding:"5px 8px"}}>
+                            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                              {(isOp||isEng)&&!cutDone&&!isRework&&!isWO&&(
+                                <button onClick={()=>doConfirmCut(p.id)} style={{...css.btn.green,fontSize:10,padding:"2px 8px"}}>✓ Cut</button>
+                              )}
+                              {(isQc||isEng)&&cutDone&&qcVal==="not_started"&&(
+                                <>
+                                  <button onClick={()=>doQcPass(p.id)} style={{...css.btn.green,fontSize:10,padding:"2px 8px"}}>✓ Pass</button>
+                                  <button onClick={()=>setReworkModal({partId:p.id,markNo:p.markNo})} style={{...css.btn.ghost,color:T.red,fontSize:10,padding:"2px 8px"}}>Fail</button>
+                                </>
+                              )}
+                              {isContr&&colStatus==="ready_for_collection"&&(
+                                <button onClick={()=>doCollected(p.id)} style={{...css.btn.primary,fontSize:10,padding:"2px 8px"}}>✓ Collected</button>
+                              )}
+                              {(isStore||isEng)&&endOfShift&&colStatus==="ready_for_collection"&&(
+                                <button onClick={()=>doMoveHolding(p.id)} style={{...css.btn.amber,fontSize:10,padding:"2px 8px"}}>→ Holding</button>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── SECTION C — STAGE PROGRESS ───────────────────────────── */}
+      <div style={secCard}>
+        <div style={secHd}>C — STAGE PROGRESS</div>
+        <div style={secBody}>
+          {steps.length===0 && (
+            <div style={{color:T.amber,fontSize:12}}>⚠ Release not yet confirmed — no stage sequence defined. Create a production release to populate the timeline.</div>
+          )}
+          {steps.length>0 && (
+            <>
+              <div style={{display:"flex",overflowX:"auto",paddingBottom:8,alignItems:"flex-start"}}>
+                {steps.map((s,i) => {
+                  const isBlocked   = !!(s.tpiRequired && s.tpiOfferedAt && !s.tpiDoneAt);
+                  const nodeState   = isBlocked ? 'blocked'
+                    : s.status==='completed' ? 'completed'
+                    : i===currentStepIdx      ? 'in_progress'
+                    : 'pending';
+                  const nc = nodeState==='completed'?T.green:nodeState==='in_progress'?T.amber:nodeState==='blocked'?T.red:T.textLow;
+                  const ni = nodeState==='completed'?'✓':nodeState==='in_progress'?'⬤':nodeState==='blocked'?'⏸':'○';
+                  const sz = nodeState==='in_progress'?36:30;
+                  const prevLine = i>0&&steps[i-1].status==='completed'?T.green:T.border;
+                  const nextLine = s.status==='completed'?T.green:T.border;
+                  const isExp    = expandedStage===i;
+                  const tpiWaitDays = s.tpiOfferedAt
+                    ? Math.max(0,Math.floor((Date.now()-new Date(s.tpiOfferedAt).getTime())/86400000))
+                    : 0;
+                  const completionLabel = s.completedAt ? (()=>{
+                    const d=new Date(s.completedAt);
+                    return `${d.getDate()} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]}`;
+                  })() : null;
+                  return (
+                    <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",minWidth:80,flexShrink:0}}>
+                      <div style={{display:"flex",alignItems:"center",width:"100%"}}>
+                        {i>0 && <div style={{flex:1,height:2,background:prevLine}} />}
+                        <button
+                          onClick={()=>setExpandedStage(isExp?null:i)}
+                          title={`${DSC_STAGE_LABELS[s.stage]||s.stage} — ${nodeState}`}
+                          style={{width:sz,height:sz,borderRadius:"50%",border:`2px solid ${nc}`,
+                            background:nodeState==='completed'?`${nc}33`:nodeState==='in_progress'?`${nc}18`:'transparent',
+                            color:nc,fontSize:nodeState==='completed'?14:12,fontWeight:700,cursor:"pointer",
+                            display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+                            boxShadow:nodeState==='in_progress'?`0 0 8px ${nc}55`:'none'}}>
+                          {ni}
+                        </button>
+                        {i<steps.length-1 && <div style={{flex:1,height:2,background:nextLine}} />}
+                      </div>
+                      <div style={{fontSize:9,color:nc,marginTop:4,textAlign:"center",maxWidth:76,lineHeight:1.2,fontWeight:nodeState==='in_progress'?700:400}}>
+                        {DSC_STAGE_LABELS[s.stage]||s.stage.replace(/_/g," ")}
+                      </div>
+                      {nodeState==='completed'&&completionLabel&&(
+                        <div style={{fontSize:8,color:T.green,marginTop:1}}>{completionLabel}</div>
+                      )}
+                      {nodeState==='in_progress'&&(
+                        <div style={{fontSize:8,color:T.amber,marginTop:1,fontWeight:700}}>Day {Math.max(1,daysAtStage+1)}</div>
+                      )}
+                      {nodeState==='blocked'&&(
+                        <div style={{fontSize:8,color:T.red,marginTop:1}}>TPI {tpiWaitDays}d wait</div>
+                      )}
+                      {s.tpiRequired===true&&(
+                        <div style={{fontSize:8,color:s.tpiDoneAt?T.green:s.tpiOfferedAt?T.amber:T.textLow,marginTop:1}}>
+                          {s.tpiDoneAt?"TPI ✓":s.tpiOfferedAt?"TPI ⚡":"TPI ⏳"}
+                        </div>
+                      )}
+                      {s.tpiRequired===false&&(
+                        <div style={{fontSize:8,color:T.textLow,marginTop:1}}>TPI N/A</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {expandedStage!==null && steps[expandedStage] && (() => {
+                const s  = steps[expandedStage];
+                const sc = colFor(s.status);
+                return (
+                  <div style={{marginTop:10,padding:12,background:T.bg,borderRadius:6,border:`1px solid ${T.border}`}}>
+                    <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>
+                      {iconFor(s.status)} {DSC_STAGE_LABELS[s.stage]||s.stage} — <span style={{color:sc}}>{s.status}</span>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,fontSize:11,marginBottom:10}}>
+                      {s.completedAt && <div><span style={{color:T.textMid}}>Completed: </span><span style={{color:T.text}}>{s.completedAt.slice(0,10)} by {s.completedBy||"—"}</span></div>}
+                      {s.contractorId && <div><span style={{color:T.textMid}}>Contractor: </span><span style={{color:T.text}}>{(contractors||[]).find(c=>c.id===s.contractorId)?.name||s.contractorId}</span></div>}
+                      {s.machineId && <div><span style={{color:T.textMid}}>Machine: </span><span style={{color:T.text}}>{(machines||[]).find(m=>m.id===s.machineId)?.name||s.machineId}</span></div>}
+                      {s.tpiRequired!==undefined && <div><span style={{color:T.textMid}}>TPI Required: </span><Badge color={s.tpiRequired?"amber":"gray"}>{s.tpiRequired?"Yes":"No"}</Badge></div>}
+                      {s.tpiOfferedAt && <div><span style={{color:T.textMid}}>TPI Offered: </span><span style={{color:T.amber}}>{s.tpiOfferedAt.slice(0,10)} by {s.tpiOfferedBy||"—"}</span></div>}
+                      {s.tpiDoneAt && <div><span style={{color:T.textMid}}>TPI Done: </span><span style={{color:T.green}}>{s.tpiDoneAt.slice(0,10)}</span></div>}
+                      {s.tpiIrn && <div><span style={{color:T.textMid}}>IRN: </span><span style={{fontFamily:T.fontMono,color:T.accentHi}}>{s.tpiIrn}</span></div>}
+                      {s.ops && s.ops.length>0 && <div><span style={{color:T.textMid}}>Ops: </span>{s.ops.join(", ")}</div>}
+                      {s.coatName && <div><span style={{color:T.textMid}}>Coat: </span>{s.coatName}</div>}
+                    </div>
+                    {isEng && s.status!=="completed" && (
+                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                        <button onClick={()=>doStageComplete(expandedStage)} style={{...css.btn.green,fontSize:11}}>✓ Mark Stage Complete</button>
+                        {s.tpiRequired&&!s.tpiOfferedAt && <button onClick={()=>doTpiOffer(expandedStage)} style={{...css.btn.amber,fontSize:11}}>TPI — Offer Inspection</button>}
+                        {s.tpiRequired&&s.tpiOfferedAt&&!s.tpiDoneAt && <button onClick={()=>setTpiModal({stageIdx:expandedStage,action:"done"})} style={{...css.btn.primary,fontSize:11}}>TPI — Enter IRN</button>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── SECTION D — OUTBOUND OPERATIONS ──────────────────────── */}
+      <div style={secCard}>
+        <div style={secHd}>D — OUTBOUND OPERATIONS</div>
+        <div style={secBody}>
+          {outboundOps.length===0 && <div style={{color:T.textLow,fontSize:12}}>No outbound operations defined for this drawing.</div>}
+          {outboundOps.map((op,i) => (
+            <div key={op.id||i} style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,padding:"8px 0",borderBottom:`1px solid ${T.border}44`,fontSize:12}}>
+              <div><span style={{color:T.textMid,fontSize:10}}>OPERATION </span><br/>{op.operation||"—"}</div>
+              <div><span style={{color:T.textMid,fontSize:10}}>VENDOR </span><br/>{op.vendor||"—"}</div>
+              <div><span style={{color:T.textMid,fontSize:10}}>AFTER STAGE </span><br/>{DSC_STAGE_LABELS[op.insertAfterStage]||op.insertAfterStage||"—"}</div>
+              <div><span style={{color:T.textMid,fontSize:10}}>STATUS </span><br/><Badge color={op.status==="returned"?"green":op.status==="dispatched"?"blue":"gray"}>{op.status||"pending"}</Badge></div>
+              {op.expectedReturn && <div><span style={{color:T.textMid,fontSize:10}}>EXPECTED RETURN </span><br/>{op.expectedReturn}</div>}
+              {op.actualReturn && <div><span style={{color:T.textMid,fontSize:10}}>ACTUAL RETURN </span><br/>{op.actualReturn}</div>}
+              {op.dispatchedDate && <div><span style={{color:T.textMid,fontSize:10}}>DISPATCHED </span><br/>{op.dispatchedDate}</div>}
+            </div>
+          ))}
+          {isEng && !outboundForm && (
+            <button onClick={()=>setOutboundForm({operation:"",vendor:"",insertAfterStage:"welding",expectedReturn:""})} style={{...css.btn.sm,marginTop:outboundOps.length>0?10:0}}>+ Add Outbound Operation</button>
+          )}
+          {isEng && outboundForm && (
+            <div style={{marginTop:10,padding:12,background:T.bg,borderRadius:6,border:`1px solid ${T.border}`,display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,alignItems:"end"}}>
+              <div><label style={css.label}>Operation</label><input value={outboundForm.operation} onChange={e=>setOutboundForm(f=>({...f,operation:e.target.value}))} style={css.input} placeholder="e.g. Galvanising" /></div>
+              <div><label style={css.label}>Vendor</label><input value={outboundForm.vendor} onChange={e=>setOutboundForm(f=>({...f,vendor:e.target.value}))} style={css.input} /></div>
+              <div><label style={css.label}>Insert After Stage</label>
+                <select value={outboundForm.insertAfterStage} onChange={e=>setOutboundForm(f=>({...f,insertAfterStage:e.target.value}))} style={css.input}>
+                  {["cutting","secondary_ops","fit_up","welding","blasting","paint_coat_1"].map(st=><option key={st} value={st}>{DSC_STAGE_LABELS[st]||st}</option>)}
+                </select>
+              </div>
+              <div><label style={css.label}>Expected Return</label><input type="date" value={outboundForm.expectedReturn||""} onChange={e=>setOutboundForm(f=>({...f,expectedReturn:e.target.value}))} style={css.input} /></div>
+              <div style={{display:"flex",gap:6,gridColumn:"span 4",justifyContent:"flex-end"}}>
+                <button onClick={()=>setOutboundForm(null)} style={css.btn.secondary}>Cancel</button>
+                <button onClick={doAddOutboundOp} disabled={!outboundForm.operation.trim()} style={{...css.btn.primary,opacity:outboundForm.operation.trim()?1:0.5}}>Save</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── SECTION E — ALERTS & ACTIONS ─────────────────────────── */}
+      <div style={secCard}>
+        <div style={secHd}>E — ALERTS & ACTIONS</div>
+        <div style={secBody}>
+          {/* End-of-shift alert banner */}
+          {endOfShift&&uncollected.length>0&&(isEng||isStore)&&(
+            <div style={{padding:10,background:T.amberBg,border:`1px solid ${T.amber}55`,borderRadius:6,marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:700,color:T.amber,marginBottom:6}}>⚠ END OF SHIFT — {uncollected.length} part{uncollected.length!==1?"s":""} uncollected</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {uncollected.map(p=>(
+                  <div key={p.id} style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <span style={{fontFamily:T.fontMono,fontSize:11}}>{p.markNo}</span>
+                    <span style={{fontSize:11,color:T.textMid}}>{p.location}</span>
+                    <button onClick={()=>doMoveHolding(p.id)} style={{...css.btn.amber,fontSize:10,padding:"2px 8px"}}>→ Holding Bay</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Production Engineer — escalation alerts */}
+          {isEng && (
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:8}}>Production Engineer Actions</div>
+              {daysAtStage>5&&steps.length>0&&(
+                <div style={{padding:8,background:T.redBg,border:`1px solid ${T.red}55`,borderRadius:4,fontSize:12,color:T.red,marginBottom:8}}>
+                  🔴 Stuck at {DSC_STAGE_LABELS[currentStage]||currentStage} for {daysAtStage} days — escalation required
+                </div>
+              )}
+              {(() => {
+                const tpiWaiting = steps.filter(s=>s.tpiRequired&&s.tpiOfferedAt&&!s.tpiDoneAt);
+                return tpiWaiting.length>0?(
+                  <div style={{padding:8,background:T.amberBg,border:`1px solid ${T.amber}55`,borderRadius:4,fontSize:12,color:T.amber,marginBottom:8}}>
+                    ⚡ TPI offered but not cleared on {tpiWaiting.length} stage{tpiWaiting.length!==1?"s":""}: {tpiWaiting.map(s=>DSC_STAGE_LABELS[s.stage]||s.stage).join(", ")}
+                  </div>
+                ):null;
+              })()}
+              {daysAtStage<=5&&steps.every(s=>!s.tpiRequired||s.tpiDoneAt||!s.tpiOfferedAt)&&uncollected.length===0&&(
+                <div style={{fontSize:12,color:T.textLow}}>No escalation alerts — drawing progressing normally.</div>
+              )}
+              {steps.length===0&&(
+                <div style={{fontSize:12,color:T.textMid}}>Create a Production Release to begin tracking this drawing.</div>
+              )}
+            </div>
+          )}
+
+          {/* Machine Operator */}
+          {isOp && (
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:8}}>Parts to Cut</div>
+              {partsStatus.filter(p=>!p.cutAt&&p.qcStatus!=="written_off").length===0
+                ? <div style={{color:T.textLow,fontSize:12}}>All parts cut or nothing assigned to your machine.</div>
+                : partsStatus.filter(p=>!p.cutAt&&p.qcStatus!=="written_off").map(p=>(
+                  <div key={p.id} style={{display:"flex",gap:8,alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}44`}}>
+                    <span style={{fontFamily:T.fontMono,fontSize:12,color:T.accentHi,minWidth:80}}>{p.markNo}</span>
+                    <span style={{fontSize:11,color:T.textMid,flex:1}}>{p.section} {p.size} — {p.qtyPerDrg||1} pcs — {(p.clientTotalWt||0).toFixed(1)} kg</span>
+                    <button onClick={()=>doConfirmCut(p.id)} style={{...css.btn.green,fontSize:11}}>✓ Confirm Cut</button>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+
+          {/* QC Engineer */}
+          {isQc && (
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:8}}>Parts Pending Cutting QC</div>
+              {partsStatus.filter(p=>p.cutAt&&(!p.qcStatus||p.qcStatus==="not_started")).length===0
+                ? <div style={{color:T.textLow,fontSize:12}}>No parts pending QC for this drawing.</div>
+                : partsStatus.filter(p=>p.cutAt&&(!p.qcStatus||p.qcStatus==="not_started")).map(p=>(
+                  <div key={p.id} style={{display:"flex",gap:8,alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}44`}}>
+                    <span style={{fontFamily:T.fontMono,fontSize:12,color:T.accentHi,minWidth:80}}>{p.markNo}</span>
+                    <span style={{fontSize:11,color:T.textMid,flex:1}}>Cut {p.cutAt?.slice(0,10)||"—"} by {p.cutBy||"—"}</span>
+                    <button onClick={()=>doQcPass(p.id)} style={{...css.btn.green,fontSize:11}}>✓ Pass</button>
+                    <button onClick={()=>setReworkModal({partId:p.id,markNo:p.markNo})} style={{...css.btn.ghost,color:T.red,fontSize:11}}>✕ Fail</button>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+
+          {/* Store Admin */}
+          {isStore && (
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:8}}>Collection & Holding Bay Actions</div>
+              {partsStatus.filter(p=>p.qcStatus==="passed"&&p.collectionStatus!=="collected").length===0
+                ? <div style={{color:T.textLow,fontSize:12}}>No pending collection actions for this drawing.</div>
+                : partsStatus.filter(p=>p.qcStatus==="passed"&&p.collectionStatus!=="collected").map(p=>(
+                  <div key={p.id} style={{display:"flex",gap:8,alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}44`}}>
+                    <span style={{fontFamily:T.fontMono,fontSize:12,color:T.accentHi,minWidth:80}}>{p.markNo}</span>
+                    <span style={{fontSize:11,color:T.textMid,flex:1}}>{p.location||"Machine Bay"}</span>
+                    {p.collectionStatus==="holding"
+                      ? <span style={{fontSize:11,color:T.amber}}>In Holding Bay</span>
+                      : <button onClick={()=>doMoveHolding(p.id)} style={{...css.btn.amber,fontSize:11}}>→ Holding Bay</button>
+                    }
+                  </div>
+                ))
+              }
+            </div>
+          )}
+
+          {/* Contractor */}
+          {isContr && (
+            <div>
+              <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:8}}>Parts Ready for Collection</div>
+              {partsStatus.filter(p=>p.qcStatus==="passed"&&p.collectionStatus==="ready_for_collection").length===0
+                ? <div style={{color:T.textLow,fontSize:12}}>No parts ready for collection at this time.</div>
+                : partsStatus.filter(p=>p.qcStatus==="passed"&&p.collectionStatus==="ready_for_collection").map(p=>(
+                  <div key={p.id} style={{display:"flex",gap:8,alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}44`}}>
+                    <span style={{fontFamily:T.fontMono,fontSize:12,color:T.accentHi,minWidth:80}}>{p.markNo}</span>
+                    <span style={{fontSize:11,color:T.textMid,flex:1}}>{p.location||"Machine Bay"}</span>
+                    <button onClick={()=>doCollected(p.id)} style={{...css.btn.primary,fontSize:11}}>✓ Collected</button>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+
+          {/* Planning Admin — read-only */}
+          {isPlan && (
+            <div style={{fontSize:12,color:T.textMid,padding:"8px 12px",background:T.bg,borderRadius:4}}>
+              👁 Read-only view — Planning Admin has no actions here.
+            </div>
+          )}
+
+          {!isEng&&!isQc&&!isStore&&!isContr&&!isOp&&!isPlan&&(
+            <div style={{color:T.textLow,fontSize:12}}>No actions available for your role on this drawing.</div>
+          )}
+        </div>
+      </div>
+
+      {/* ── REWORK MODAL ──────────────────────────────────────────── */}
+      {reworkModal && (
+        <Modal title={`QC Fail — ${reworkModal.markNo}`} onClose={()=>{setReworkModal(null);setReworkReason("");setReworkDecision("rework");}} width={440}>
+          <div style={{marginBottom:12}}>
+            <label style={css.label}>Reason for Rejection</label>
+            <textarea value={reworkReason} onChange={e=>setReworkReason(e.target.value)}
+              style={{...css.input,height:72,resize:"vertical"}} placeholder="Describe the defect or non-conformance..." />
+          </div>
+          <div style={{marginBottom:16}}>
+            <label style={css.label}>Decision</label>
+            <div style={{display:"flex",gap:16,marginTop:6}}>
+              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12}}>
+                <input type="radio" value="rework" checked={reworkDecision==="rework"} onChange={()=>setReworkDecision("rework")} />
+                Rework (return to cutting queue)
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,color:T.red}}>
+                <input type="radio" value="writeoff" checked={reworkDecision==="writeoff"} onChange={()=>setReworkDecision("writeoff")} />
+                Write-Off (flag replacement RM)
+              </label>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>{setReworkModal(null);setReworkReason("");setReworkDecision("rework");}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={doReworkDecision} disabled={!reworkReason.trim()}
+              style={{...css.btn.primary,opacity:reworkReason.trim()?1:0.5}}>Confirm Decision</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── TPI IRN MODAL ─────────────────────────────────────────── */}
+      {tpiModal?.action==="done" && (
+        <Modal title="TPI — Enter Inspection Release Note" onClose={()=>{setTpiModal(null);setTpiIrn("");}} width={380}>
+          <label style={css.label}>IRN Number</label>
+          <input value={tpiIrn} onChange={e=>setTpiIrn(e.target.value)}
+            style={{...css.input,marginBottom:16}} placeholder="e.g. IRN-2026-0042" autoFocus />
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>{setTpiModal(null);setTpiIrn("");}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={()=>doTpiDone(tpiModal.stageIdx)} disabled={!tpiIrn.trim()}
+              style={{...css.btn.primary,opacity:tpiIrn.trim()?1:0.5}}>Confirm TPI Cleared</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 // ─── C3: Cross-Order Production Drawing Register ──────────────────────────────
-const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, machines, onBack }) => {
+const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, machines, onBack, onViewStatus, onViewProgress }) => {
   const [filterOrder, setFilterOrder] = useState("");
   const [filterAssembly, setFilterAssembly] = useState("");
   const [filterStage, setFilterStage] = useState("");
@@ -12115,11 +13424,11 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
               <TH></TH>
               <TH>Drawing No</TH><TH>Order</TH><TH>Client</TH><TH>Assembly Group</TH>
               <TH>Tier</TH><TH>Priority</TH><TH>Parts Cut/Total</TH>
-              <TH>RM Types</TH><TH>Stage</TH><TH>Status</TH>
+              <TH>RM Types</TH><TH>Stage</TH><TH>Status</TH><TH></TH>
             </tr>
           </thead>
           <tbody>
-            {filtered.length===0&&<tr><td colSpan={11} style={{ padding:32,textAlign:"center",color:T.textLow }}>No drawings found</td></tr>}
+            {filtered.length===0&&<tr><td colSpan={12} style={{ padding:32,textAlign:"center",color:T.textLow }}>No drawings found</td></tr>}
             {filtered.map(d=>{
               const key = `${d.drawingId}/${d.orderId}`;
               const isExp = expanded.has(key);
@@ -12154,10 +13463,14 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
                       <span style={{ width:8, height:8, borderRadius:"50%", display:"inline-block", background:rmColor, marginRight:4 }}></span>
                       {rmOk?"RM OK":rmPartial?"Partial":d.latestStage==="not_started"?"Not Started":"In Progress"}
                     </TD>
+                    <TD onClick={e=>e.stopPropagation()}>
+                      {onViewStatus && <button style={{ ...css.btn.ghost, fontSize:11, padding:"3px 8px" }} onClick={()=>onViewStatus(d.drawingId, d.orderId)}>View Status</button>}
+                      {onViewProgress && <button style={{ ...css.btn.ghost, fontSize:11, padding:"3px 8px" }} onClick={()=>onViewProgress(d.orderId)}>Progress</button>}
+                    </TD>
                   </tr>
                   {isExp && (
                     <tr style={{ background:`${T.accent}08` }}>
-                      <td colSpan={11} style={{ padding:"12px 16px" }}>
+                      <td colSpan={12} style={{ padding:"12px 16px" }}>
                         {/* Section A: Part status */}
                         <div style={{ marginBottom:12 }}>
                           <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>PARTS</div>
@@ -12509,12 +13822,14 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const ProductionModule = ({ user, instances, setInstances, orders, stock, setStock,
-                            nestingRuns, setNestingRuns, machines, contractors, materials, vendors, tpiAgencies,
+const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
+                            nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests }) => {
   const [view, setView]           = useState("dashboard");
   const [selOrderId, setSelOrderId]   = useState("");
   const [selDrawingId, setSelDrawingId] = useState("");
+  const [selStatusDrawing, setSelStatusDrawing] = useState(null); // {drawingId, orderId}
+  const [selProgressOrderId, setSelProgressOrderId] = useState("");
 
   // Contractor → own work queue only (after hooks)
   if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} />;
@@ -12534,7 +13849,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
 
   // ── Release creation wizard ──
   if (view==="release_new") return (
-    <ProductionReleaseWizard user={user} orders={orders} stock={stock} materials={materials||[]}
+    <ProductionReleaseWizard user={user} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} materials={materials||[]}
       machines={machines} contractors={contractors} releases={releases||[]} setReleases={setReleases}
       productionStandards={productionStandards} instances={instances||[]} onBack={()=>setView("dashboard")} />
   );
@@ -12551,10 +13866,39 @@ const ProductionModule = ({ user, instances, setInstances, orders, stock, setSto
       orders={orders} vendors={vendors||[]} onBack={()=>setView("dashboard")} />
   );
 
+  // ── Order Progress view ──
+  if (view==="order_progress" && selProgressOrderId) {
+    const progOrder = orders.find(o=>o.id===selProgressOrderId);
+    if (progOrder) return (
+      <div style={{ padding:0 }}>
+        <OrderProgressTracker order={progOrder}
+          onChange={(updated)=>setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o))}
+          user={user} pos={[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances}
+          onBack={()=>{ setView("register"); setSelProgressOrderId(""); }} />
+      </div>
+    );
+    return <div style={{padding:32,color:T.textLow}}>Order not found. <button style={css.btn.ghost} onClick={()=>setView("register")}>← Back</button></div>;
+  }
+
   // ── Drawing Register view ──
   if (view==="register") return (
-    <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} machines={machines||[]} onBack={()=>setView("dashboard")} />
+    <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} machines={machines||[]} onBack={()=>setView("dashboard")}
+      onViewStatus={(drawingId, orderId)=>{ setSelStatusDrawing({drawingId,orderId}); setView("drawing_status"); }}
+      onViewProgress={(orderId)=>{ setSelProgressOrderId(orderId); setView("order_progress"); }} />
   );
+
+  // ── Drawing Status Card view ──
+  if (view==="drawing_status" && selStatusDrawing) {
+    const statusOrder = orders.find(o=>o.id===selStatusDrawing.orderId);
+    const statusDrawing = (statusOrder?.drawings||[]).find(d=>d.id===selStatusDrawing.drawingId);
+    if (statusOrder && statusDrawing) return (
+      <DrawingStatusCard user={user} drawing={statusDrawing} order={statusOrder} stock={stock} orders={orders}
+        setOrders={setOrders} releases={releases||[]} instances={instances} machines={machines||[]}
+        contractors={contractors||[]} nestingBatches={nestingBatches||[]}
+        onBack={()=>{ setView("register"); setSelStatusDrawing(null); }} />
+    );
+    return <div style={{ padding:32, color:T.textLow }}>Drawing not found. <button style={css.btn.ghost} onClick={()=>setView("register")}>← Back</button></div>;
+  }
 
   // ── Progress grid view ──
   if (view==="progress") {
@@ -13038,8 +14382,8 @@ export default function App() {
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
-      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
+      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
