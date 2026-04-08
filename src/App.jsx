@@ -1512,6 +1512,7 @@ const createInstances = ({ nestingRunId, lotId, barRef, batchNo, cuttingBayUsed,
         // Defects
         defects: isDefective
           ? [{ type: part.defectType || "dimensional", reason: part.defectReason || "",
+               action: part.defectAction || "",
                reportedBy: confirmedBy, date: confirmDate }]
           : [],
         qualityConcernFlag: false,
@@ -2832,15 +2833,47 @@ const DevToolsMaster = ({ user, setInstances, setReleases, setNestingRuns, setOr
     window.location.reload();
   };
 
+  const navTo = (mod, view) => {
+    if (view) sessionStorage.setItem('dev_target_view', view);
+    setMod(mod);
+  };
+
+  const NAV_BTNS = [
+    { label:"Production — Supervisor Queue",     icon:"👷", mod:"production", view:"approvals" },
+    { label:"Production — Cutting Confirmation", icon:"✂",  mod:"production", view:"cutting"   },
+    { label:"Production — Drawing Register",     icon:"📋", mod:"production", view:"register"  },
+    { label:"RM Quality",                        icon:"✓",  mod:"qc",         view:null         },
+    { label:"Orders",                            icon:"📦", mod:"orders",      view:null         },
+  ];
+
   return (
     <div>
-      <div style={{ background:"#7c3aed22", border:"1px solid #7c3aed55", borderRadius:8, padding:"10px 16px", marginBottom:20, fontSize:12 }}>
+      <div style={{ background:"#7c3aed22", border:"1px solid #7c3aed55", borderRadius:8, padding:"10px 16px", marginBottom:24, fontSize:12 }}>
         <div style={{ fontWeight:800, color:"#a78bfa", marginBottom:4 }}>⚙ DEV TOOLS — super_admin only</div>
-        <div style={{ color:T.textMid }}>Loads test scenarios directly into React state (SF-2026-6273 / JB01329-0104) and navigates to the relevant screen. Data is in-memory only — not persisted to localStorage. Browser reload resets all in-memory state.</div>
+        <div style={{ color:T.textMid }}>Quick navigation, test scenarios, and data management utilities. Test scenarios load in-memory only — browser reload resets instances/releases.</div>
       </div>
 
+      {/* Quick Navigation */}
       <div style={{ marginBottom:24 }}>
-        <div style={{ fontWeight:700, fontSize:13, color:T.text, marginBottom:12 }}>TEST SCENARIOS</div>
+        <div style={{ fontWeight:700, fontSize:13, color:T.text, marginBottom:12, textTransform:"uppercase", letterSpacing:"0.06em" }}>Quick Navigation</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:10 }}>
+          {NAV_BTNS.map(b=>(
+            <button key={b.label} onClick={()=>navTo(b.mod, b.view)}
+              style={{ ...css.card, border:`1px solid ${T.accent}44`, cursor:"pointer", textAlign:"left", padding:"14px 16px",
+                display:"flex", alignItems:"center", gap:12, background:T.bgCard }}>
+              <span style={{ fontSize:22 }}>{b.icon}</span>
+              <span style={{ fontSize:13, fontWeight:700, color:T.text }}>{b.label}</span>
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize:11, color:T.textLow, marginTop:8 }}>
+          Note: Machine Operator Queue and Contractor Queue are role-restricted — log in as machine_operator or contractor to access them.
+        </div>
+      </div>
+
+      {/* Test Scenarios */}
+      <div style={{ marginBottom:24 }}>
+        <div style={{ fontWeight:700, fontSize:13, color:T.text, marginBottom:12, textTransform:"uppercase", letterSpacing:"0.06em" }}>Test Scenarios</div>
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
           {SCENARIOS.map((sc,i)=>(
             <div key={i} style={{ ...css.card, borderLeft:`4px solid ${sc.color}`, padding:"12px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:16 }}>
@@ -2859,26 +2892,26 @@ const DevToolsMaster = ({ user, setInstances, setReleases, setNestingRuns, setOr
             ✓ Loaded: {lastLoaded} — navigating to production module
           </div>
         )}
+        <div style={{ fontSize:11, color:T.textLow, marginTop:10, lineHeight:"1.8" }}>
+          <div>• Blast timer ⚙: visible in Supervisor Queue when stage = Blasting (super_admin only)</div>
+          <div>• Coat time ⚙: visible in Supervisor Queue when stage = Painting (super_admin only)</div>
+          <div>• Each load replaces SF-2026-6273 only — existing orders preserved</div>
+        </div>
       </div>
 
-      <div style={{ ...css.card, border:`1px solid ${T.red}44`, marginBottom:20 }}>
-        <div style={{ fontWeight:700, fontSize:13, color:T.red, marginBottom:8 }}>RESET TO SEED DATA</div>
-        <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>Clears all localStorage and reloads from seed data. In-memory state (instances, releases, nesting runs) also resets. <strong style={{ color:T.red }}>This cannot be undone.</strong></div>
+      {/* Data Management */}
+      <div style={{ ...css.card, border:`1px solid ${T.red}44` }}>
+        <div style={{ fontWeight:700, fontSize:13, color:T.red, marginBottom:8, textTransform:"uppercase", letterSpacing:"0.06em" }}>Data Management</div>
+        <div style={{ fontSize:12, color:T.amber, marginBottom:10, padding:"8px 12px", background:T.amberBg, borderRadius:5 }}>
+          ⚠ This will permanently delete ALL data and reload seed data. This cannot be undone.
+        </div>
+        <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>Clears all localStorage and reloads from seed data. In-memory state (instances, releases, nesting runs) also resets.</div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
           <input value={resetConfirm} onChange={e=>setResetConfirm(e.target.value)}
             placeholder="Type RESET to confirm" style={{ ...css.input, width:220, borderColor:resetConfirm==="RESET"?T.red:T.border }} />
           <button onClick={resetToSeed} disabled={resetConfirm!=="RESET"}
             style={{ ...css.btn.danger, opacity:resetConfirm==="RESET"?1:0.4 }}>Reset to Seed Data</button>
         </div>
-      </div>
-
-      <div style={{ fontSize:11, color:T.textLow, lineHeight:"1.8" }}>
-        <div style={{ fontWeight:700, marginBottom:4, color:T.textMid }}>Usage notes:</div>
-        <div>• Scenario 6 instances appear in Machine Operator Queue — log in as a machine_operator user to see them</div>
-        <div>• Each load replaces the test order SF-2026-6273 and all instances — existing real orders are preserved</div>
-        <div>• Blast timer ⚙ control: visible to super_admin in Supervisor Queue when stage = Blasting</div>
-        <div>• Coat applied time ⚙ control: visible to super_admin in Supervisor Queue when stage = Painting</div>
-        <div>• Browser reload clears all in-memory state (instances, releases) — localStorage persists until Reset</div>
       </div>
     </div>
   );
@@ -9452,8 +9485,8 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
       machineCaps,
       subStageChecks: { cut:false, bevel:false, grind:false, drill:false },
       parts: getRunParts(run).map(p=>({
-        ...p, included:true, actualQty:p.plannedQty,
-        shortReason:"", isDefective:false, defectType:"dimensional", defectReason:"",
+        ...p, included:true, goodQty:p.plannedQty, defects:[],
+        shortReason:"",
         markingConfirmed:false, markingCannotStamp:false, markingCannotStampReason:"",
       })),
       hasOffcut:false, offcutLength:"", offcutWidth:"",
@@ -9463,6 +9496,16 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
 
   const updatePart = (i,k,v) =>
     setBarForm(f=>{ const p=[...f.parts]; p[i]={...p[i],[k]:v}; return {...f,parts:p}; });
+
+  const handleGoodQtyChange = (i,val,p) => {
+    const newGoodQty = Math.min(p.plannedQty, Math.max(0, +val||0));
+    const newDefQty  = p.plannedQty - newGoodQty;
+    const cur = p.defects||[];
+    const newDefects = newDefQty > cur.length
+      ? [...cur, ...Array.from({length:newDefQty-cur.length},()=>({defectType:"dimensional",action:"",reason:""}))]
+      : cur.slice(0, newDefQty);
+    setBarForm(f=>{ const pts=[...f.parts]; pts[i]={...pts[i],goodQty:newGoodQty,defects:newDefects}; return {...f,parts:pts}; });
+  };
 
   const ocWt = () => {
     if (!barForm.hasOffcut) return 0;
@@ -9479,9 +9522,16 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
     if (!barForm.cuttingBayUsed) return showToast("Select a cutting bay","amber");
     const included = barForm.parts.filter(p=>p.included);
     if (!included.length) return showToast("Check at least one part","amber");
-    const needsReason = included.filter(p=>!p.isDefective&&(+p.actualQty||0)<p.plannedQty&&!p.shortReason.trim());
+    const needsReason = included.filter(p=>{
+      const totalAccounted = (+p.goodQty||0)+(p.defects||[]).length;
+      return totalAccounted < p.plannedQty && !p.shortReason.trim();
+    });
     if (needsReason.length) return showToast("Enter reason for short quantities on highlighted parts","amber");
-    const needsMarking = included.filter(p=>!p.isDefective && !p.markingConfirmed && (!p.markingCannotStamp || !p.markingCannotStampReason?.trim()));
+    const needsDefectReason = included.filter(p=>(p.defects||[]).some(d=>!d.reason?.trim()));
+    if (needsDefectReason.length) return showToast("Enter reason for all defective pieces","amber");
+    const needsDefectAction = included.filter(p=>(p.defects||[]).some(d=>!d.action));
+    if (needsDefectAction.length) return showToast("Select action for all defective pieces","amber");
+    const needsMarking = included.filter(p=>(+p.goodQty||0)>0 && !p.markingConfirmed && (!p.markingCannotStamp || !p.markingCannotStampReason?.trim()));
     if (needsMarking.length) return showToast("Confirm piece marking (or enter reason for no-stamp) on all parts","amber");
 
     const confirmDate = today();
@@ -9496,25 +9546,34 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
       return {};
     };
 
+    // Build confirmed parts: one "good" entry per part + one entry per defective piece
+    const confirmedPartsAll = [];
+    included.forEach(p => {
+      const ca = getContractorForDrawing(p.drawingId, p.orderId);
+      const ord = (orders||[]).find(o=>o.id===p.orderId);
+      const orderPart = (ord?.parts||[]).find(op=>op.markNo===p.markNo&&op.drawingId===p.drawingId);
+      const reqOps = (orderPart?.requiredOps||[]).length>0 ? orderPart.requiredOps : ['Cut'];
+      const base = {
+        markNo:p.markNo, drawingId:p.drawingId, drawingNo:p.drawingNo,
+        orderId:p.orderId, desc:p.desc, totalInstances:p.plannedQty,
+        subOpsRequired:reqOps,
+        contractorId:ca.contractorId||"", contractorName:ca.contractorName||"",
+        pinnedEngineerId:ca.pinnedEngineerId||"", pinnedEngineerName:ca.pinnedEngineerName||"",
+      };
+      const gq = +p.goodQty||0;
+      if (gq>0) confirmedPartsAll.push({...base, actualQty:gq, isDefective:false});
+      (p.defects||[]).forEach(d => confirmedPartsAll.push({
+        ...base, actualQty:1, isDefective:true,
+        defectType:d.defectType||"dimensional", defectReason:d.reason||"",
+        defectAction:d.action||"",
+      }));
+    });
+
     // Create instances
     const newInst = createInstances({
       nestingRunId:selRunId, lotId:barForm.lotId, barRef:selBarRef,
       batchNo:barForm.batchNo, cuttingBayUsed:barForm.cuttingBayUsed,
-      confirmedParts: included.map(p=>{
-        const ca = getContractorForDrawing(p.drawingId, p.orderId);
-        const ord = (orders||[]).find(o=>o.id===p.orderId);
-        const orderPart = (ord?.parts||[]).find(op=>op.markNo===p.markNo&&op.drawingId===p.drawingId);
-        const reqOps = (orderPart?.requiredOps||[]).length>0 ? orderPart.requiredOps : ['Cut'];
-        return {
-          markNo:p.markNo, drawingId:p.drawingId, drawingNo:p.drawingNo,
-          orderId:p.orderId, desc:p.desc,
-          actualQty:Math.max(1, +p.actualQty||0), totalInstances:p.plannedQty,
-          subOpsRequired: reqOps,
-          isDefective:p.isDefective, defectType:p.defectType, defectReason:p.defectReason,
-          contractorId:ca.contractorId||"", contractorName:ca.contractorName||"",
-          pinnedEngineerId:ca.pinnedEngineerId||"", pinnedEngineerName:ca.pinnedEngineerName||"",
-        };
-      }),
+      confirmedParts: confirmedPartsAll,
       confirmedBy:user.name, confirmDate, existingInstances:instances,
     });
     // Route to secondary_ops if instance has any required op beyond 'Cut'
@@ -9527,16 +9586,15 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
         }
       }
     });
-    // Route defective instances by defectAction
+    // Route defective instances by action stored on their defect record
     newInst.forEach(inst => {
       if (inst.currentStatus === "defective") {
-        const confirmedPart = included.find(p=>p.markNo===inst.markNo&&p.drawingId===inst.drawingId);
-        const action = confirmedPart?.defectAction||"";
+        const action = inst.defects?.[0]?.action || "";
         if (action === "rework") {
           inst.currentStage = "cutting";
           inst.currentStatus = "rework";
         } else if (action === "writeoff") {
-          inst.currentStatus = "writeoff";
+          inst.currentStatus = "written_off";
           inst.writeoffRequiresReplacement = true;
         } else if (action === "use_as_is") {
           inst.currentStage = "cutting";
@@ -9548,8 +9606,8 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
 
     // Update stock lot wtConsumed (sections only; plates calculated from dims)
     const wtConsumed = barForm.isPlate ? 0 :
-      included.filter(p=>!p.isDefective).reduce((s,p)=>
-        s+((p.length||0)/1000)*(barForm.wtPerMetre||0)*(+p.actualQty||0), 0);
+      included.reduce((s,p)=>
+        s+((p.length||0)/1000)*(barForm.wtPerMetre||0)*((+p.goodQty||0)+(p.defects||[]).length), 0);
     if (barForm.lotId && wtConsumed>0) {
       setStock(prev=>prev.map(s=>s.id!==barForm.lotId?s:{...s,
         wtConsumed:(s.wtConsumed||0)+wtConsumed,
@@ -9873,12 +9931,14 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
           <InfoBanner color="amber">No parts found matching material code <strong>{selRun.materialCode}</strong> in the linked orders. Check that Drawing Part List entries have matching material codes and are linked to the drawings in this nesting run.</InfoBanner>
         )}
         {barForm.parts.map((p,i)=>{
-          const short = p.included && !p.isDefective && (+p.actualQty||0)<p.plannedQty;
-          const over  = p.included && !p.isDefective && (+p.actualQty||0)>p.plannedQty;
-          const repl  = p.isDefective ? findReplacement(p) : null;
+          const defQty = p.plannedQty - (+p.goodQty||0);
+          const totalAccounted = (+p.goodQty||0)+(p.defects||[]).length;
+          const short = p.included && totalAccounted < p.plannedQty;
+          const over  = p.included && (+p.goodQty||0) > p.plannedQty;
+          const repl  = defQty>0 ? findReplacement(p) : null;
           return (
             <div key={i} style={{ ...css.card,marginBottom:10,
-              borderLeft:`3px solid ${p.isDefective?T.red:p.included?T.green:T.border}` }}>
+              borderLeft:`3px solid ${defQty>0?T.red:p.included?T.green:T.border}` }}>
               {/* Part header row */}
               <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
                 <label style={{ display:"flex",alignItems:"center",gap:8,cursor:"pointer" }}>
@@ -9887,14 +9947,6 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
                   <span style={{ fontWeight:800,fontSize:14 }}>{p.markNo}</span>
                   {p.desc&&<span style={{ fontSize:12,color:T.textMid }}>— {p.desc}</span>}
                 </label>
-                {p.included&&(
-                  <label style={{ display:"flex",alignItems:"center",gap:6,cursor:"pointer",
-                    fontSize:12,color:T.red }}>
-                    <input type="checkbox" checked={p.isDefective}
-                      onChange={e=>updatePart(i,"isDefective",e.target.checked)} />
-                    Defective
-                  </label>
-                )}
               </div>
               <div style={{ fontSize:11,color:T.textMid,paddingLeft:24,marginTop:2,marginBottom:p.included?10:0 }}>
                 {p.drawingNo&&<span>Drawing: {p.drawingNo} · </span>}
@@ -9902,14 +9954,20 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
                 {p.length>0&&<span> · Length: <span style={{fontFamily:T.fontMono}}>{p.length}mm</span></span>}
               </div>
 
-              {/* Good piece — actual qty */}
-              {p.included&&!p.isDefective&&(
+              {/* Good pieces cut + auto defective count */}
+              {p.included&&(
                 <div style={{ display:"flex",gap:12,alignItems:"flex-end",paddingLeft:24,flexWrap:"wrap" }}>
-                  <Field label="Actual Qty">
-                    <Input type="number" min={0} value={p.actualQty}
-                      onChange={e=>updatePart(i,"actualQty",+e.target.value)}
+                  <Field label="Good Pieces Cut">
+                    <Input type="number" min={0} max={p.plannedQty} value={p.goodQty??p.plannedQty}
+                      onChange={e=>handleGoodQtyChange(i,+e.target.value,p)}
                       style={{ width:80 }} />
                   </Field>
+                  {defQty>0&&(
+                    <div style={{ paddingBottom:6 }}>
+                      <div style={{ fontSize:10,color:T.textMid,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",marginBottom:3 }}>Defective</div>
+                      <div style={{ fontSize:16,fontWeight:800,color:T.red }}>{defQty} pc{defQty!==1?"s":""}</div>
+                    </div>
+                  )}
                   {short&&(
                     <Field label="Reason for short qty *" required>
                       <Input value={p.shortReason} onChange={e=>updatePart(i,"shortReason",e.target.value)}
@@ -9918,54 +9976,68 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
                     </Field>
                   )}
                   {over&&<div style={{ fontSize:12,color:T.amber,fontWeight:700,paddingBottom:6 }}>
-                    ⚠ Actual exceeds planned qty
+                    ⚠ Good qty exceeds planned qty
                   </div>}
                 </div>
               )}
 
-              {/* Defective piece */}
-              {p.included&&p.isDefective&&(
-                <div style={{ paddingLeft:24 }}>
-                  <div style={{ display:"flex",gap:12,marginBottom:8,flexWrap:"wrap" }}>
-                    <Field label="Defect Type">
-                      <Sel value={p.defectType} onChange={e=>updatePart(i,"defectType",e.target.value)}
-                        style={{width:160}}>
-                        <option value="dimensional">Dimensional</option>
-                        <option value="surface">Surface</option>
-                        <option value="wrong_cut">Wrong Cut</option>
-                        <option value="damaged">Damaged</option>
-                        <option value="other">Other</option>
-                      </Sel>
-                    </Field>
-                    <Field label="Defect Reason *" required>
-                      <Input value={p.defectReason} onChange={e=>updatePart(i,"defectReason",e.target.value)}
-                        placeholder="Describe the defect" style={{ minWidth:240 }} />
-                    </Field>
+              {/* Defective piece details — one row per defective piece, auto-shown */}
+              {p.included&&defQty>0&&(
+                <div style={{ paddingLeft:24,marginTop:10 }}>
+                  <div style={{ fontSize:12,fontWeight:700,color:T.red,marginBottom:8 }}>
+                    {defQty} defective piece{defQty!==1?"s":""} — record details for each:
                   </div>
-                  <div style={{ marginBottom:8 }}>
-                    <label style={css.label}>Action Required</label>
-                    <select value={p.defectAction||""} onChange={e=>updatePart(i,"defectAction",e.target.value)} style={css.input}>
-                      <option value="">Select action...</option>
-                      <option value="rework">Rework — send back to cutting</option>
-                      <option value="writeoff">Write-off — scrap, need replacement</option>
-                      <option value="use_as_is">Use as-is — deviation acceptable (requires PE approval)</option>
-                    </select>
-                  </div>
+                  {(p.defects||[]).map((d,di)=>(
+                    <div key={di} style={{ background:T.bgInput,border:`1px solid ${T.red}33`,borderRadius:6,padding:"10px 12px",marginBottom:8 }}>
+                      <div style={{ fontSize:11,color:T.textMid,fontWeight:700,marginBottom:6 }}>Defective Piece {di+1}</div>
+                      <div style={{ display:"flex",gap:10,flexWrap:"wrap",marginBottom:8 }}>
+                        <Field label="Defect Type">
+                          <Sel value={d.defectType||"dimensional"} onChange={e=>{const nd=[...(p.defects||[])];nd[di]={...nd[di],defectType:e.target.value};updatePart(i,"defects",nd);}} style={{width:160}}>
+                            <option value="dimensional">Dimensional</option>
+                            <option value="surface">Surface</option>
+                            <option value="wrong_cut">Wrong Cut</option>
+                            <option value="damaged">Damaged</option>
+                            <option value="wrong_dimension">Wrong Dimension</option>
+                            <option value="other">Other</option>
+                          </Sel>
+                        </Field>
+                        <Field label="Defect Reason *" required>
+                          <Input value={d.reason||""} onChange={e=>{const nd=[...(p.defects||[])];nd[di]={...nd[di],reason:e.target.value};updatePart(i,"defects",nd);}}
+                            placeholder="Describe the defect"
+                            style={{ minWidth:220,borderColor:!d.reason?T.red:T.border }} />
+                        </Field>
+                      </div>
+                      <div>
+                        <label style={css.label}>Action Required *</label>
+                        <div style={{ display:"flex",gap:16,flexWrap:"wrap",marginTop:4 }}>
+                          {[["rework","Rework (re-cut)"],["writeoff","Write-off (scrap)"],["use_as_is","Use as-is (PE approval)"]].map(([val,lbl])=>(
+                            <label key={val} style={{ display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:12,
+                              color:d.action===val?T.text:T.textMid }}>
+                              <input type="radio" checked={d.action===val}
+                                onChange={()=>{const nd=[...(p.defects||[])];nd[di]={...nd[di],action:val};updatePart(i,"defects",nd);}} />
+                              {lbl}
+                            </label>
+                          ))}
+                        </div>
+                        {!d.action&&<div style={{ fontSize:11,color:T.red,marginTop:4 }}>Select an action</div>}
+                      </div>
+                    </div>
+                  ))}
                   {repl
                     ? <div style={{ padding:"8px 12px",background:T.greenBg,border:`1px solid ${T.green}`,
                         borderRadius:6,fontSize:12,color:T.green }}>
-                        ✓ Replacement available: Off-cut <strong style={{fontFamily:T.fontMono}}>{repl.lotNo}</strong> ({repl.offcutLength}mm) can yield a replacement piece of <strong>{p.markNo}</strong> ({p.length}mm required).
+                        ✓ Replacement available: Off-cut <strong style={{fontFamily:T.fontMono}}>{repl.lotNo}</strong> ({repl.offcutLength}mm) — can yield a replacement piece of <strong>{p.markNo}</strong> ({p.length}mm required).
                       </div>
                     : <div style={{ padding:"8px 12px",background:T.amberBg,border:`1px solid ${T.amber}`,
                         borderRadius:6,fontSize:12,color:T.amber }}>
-                        ⚠ No matching off-cut found for <strong>{p.markNo}</strong>. A new nesting run will be required to replace this piece.
+                        ⚠ No matching off-cut for <strong>{p.markNo}</strong> — a new nesting run will be required.
                       </div>
                   }
                 </div>
               )}
 
-              {/* Piece marking */}
-              {p.included && !p.isDefective && (() => {
+              {/* Piece marking — only shown when there are good pieces */}
+              {p.included && (+p.goodQty||0)>0 && (() => {
                 const sectionType = p.sectionType||"";
                 const stampLoc = productionStandards ? getStampLocation(sectionType, productionStandards) : "Top face, centre of piece";
                 const stampText = `${p.markNo} / ${p.drawingNo}`;
@@ -9977,7 +10049,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
                         style={{ width:16, height:16, marginTop:2 }} />
                       <div>
                         <div style={{ fontSize:12, fontWeight:700, color:p.markingConfirmed?T.green:T.red }}>
-                          Mark No stamped on all {p.actualQty||p.plannedQty} piece{(p.actualQty||p.plannedQty)!==1?"s":""}
+                          Mark No stamped on all {+p.goodQty||p.plannedQty} piece{(+p.goodQty||p.plannedQty)!==1?"s":""}
                         </div>
                         <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>Location: {stampLoc}</div>
                         <div style={{ fontSize:11, color:T.textMid }}>Stamp text: <span style={{ fontFamily:T.fontMono }}>{stampText}</span></div>
@@ -11992,8 +12064,9 @@ const STAGE_COLS = ["cutting","fitup","welding","tpi_weld","blasting","painting"
 
 const DrawingProgressGrid = ({ drawing, order, instances, onBack }) => {
   const dInst = instances.filter(i => i.drawingId===drawing.id && i.orderId===order.id);
-  const parts = drawing.parts || [];
-  const fabParts = parts.filter(p => p.fabType!=="Bought Out");
+  const parts = (order.parts||[]).filter(p => p.drawingId===drawing.id);
+  const fabParts = parts.filter(p => (p.fabType||"").toLowerCase()!=="bought out");
+  const noInstances = dInst.length === 0;
 
   // Stage counts per markNo
   const stageCountFor = (markNo, stage) => {
@@ -12046,8 +12119,39 @@ const DrawingProgressGrid = ({ drawing, order, instances, onBack }) => {
             {fabParts.length===0&&(
               <tr><td colSpan={STAGE_COLS.length+3} style={{ textAlign:"center",padding:32,color:T.textLow }}>No fabricated parts in this drawing.</td></tr>
             )}
-            {fabParts.map((p,i)=>{
-              const total = p.qtyPerDrg||0;
+            {fabParts.length>0&&noInstances&&(
+              <tr><td colSpan={STAGE_COLS.length+3} style={{ padding:0 }}>
+                <div style={{ margin:"8px 0",padding:"10px 14px",background:`${T.accent}14`,border:`1px solid ${T.accent}44`,borderRadius:6,fontSize:12,color:T.accent }}>
+                  ℹ No production instances yet — showing planned parts from drawing register. Complete a nesting run and confirm cutting to begin production tracking.
+                </div>
+                <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign:"left",padding:"5px 10px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Mark No</th>
+                      <th style={{ textAlign:"left",padding:"5px 10px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Description</th>
+                      <th style={{ textAlign:"center",padding:"5px 8px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Qty</th>
+                      <th style={{ textAlign:"left",padding:"5px 10px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Material</th>
+                      <th style={{ textAlign:"left",padding:"5px 10px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Req Ops</th>
+                      <th style={{ textAlign:"left",padding:"5px 10px",color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}` }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fabParts.map((p,i)=>(
+                      <tr key={p.id||i} style={{ background:i%2===0?"transparent":T.bg }}>
+                        <td style={{ padding:"6px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.text,borderBottom:`1px solid ${T.border}22` }}>{p.markNo}</td>
+                        <td style={{ padding:"6px 10px",color:T.textMid,borderBottom:`1px solid ${T.border}22` }}>{p.desc||p.partDesc||"—"}</td>
+                        <td style={{ textAlign:"center",padding:"6px 8px",color:T.text,fontWeight:700,borderBottom:`1px solid ${T.border}22` }}>{p.qtyPerDrg||p.qty||0}</td>
+                        <td style={{ padding:"6px 10px",color:T.textMid,fontFamily:T.fontMono,fontSize:11,borderBottom:`1px solid ${T.border}22` }}>{p.matCode||(p.sectionType||p.section||"")+(" "+(p.grade||"")+" "+(p.size||"")).trim()||"—"}</td>
+                        <td style={{ padding:"6px 10px",color:T.textMid,borderBottom:`1px solid ${T.border}22` }}>{(p.requiredOps||[]).join(", ")||"Cut"}</td>
+                        <td style={{ padding:"6px 10px",color:T.textLow,fontStyle:"italic",borderBottom:`1px solid ${T.border}22` }}>Not yet released to production</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </td></tr>
+            )}
+            {!noInstances&&fabParts.map((p,i)=>{
+              const total = p.qtyPerDrg||p.qty||0;
               const markInst = dInst.filter(inst=>inst.markNo===p.markNo&&inst.currentStatus!=="defective");
               const defCount = dInst.filter(inst=>inst.markNo===p.markNo&&inst.currentStatus==="defective").length;
               return (
@@ -12412,8 +12516,13 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         // Primary: normalized matCode match (handles MM-suffix and case differences)
         // Fallback: sectionType match only for lots with no matCode set
         const sNorm = normMatCode(s.matCode), rNorm = normMatCode(row.matCode);
-        const matMatch = (sNorm && rNorm) ? sNorm===rNorm
-          : (!s.matCode && (s.sectionType||s.section||"").toUpperCase()===(row.section||"").toUpperCase());
+        const secMatch = (s.sectionType||s.section||"").toUpperCase()===(row.section||"").toUpperCase();
+        // Primary: normalized full matCode match
+        // Fallback 1: lot has no matCode → match by sectionType
+        // Fallback 2: row matCode is just a section name (no slashes, from order parts with no matCode) → match by sectionType
+        const matMatch = (sNorm && rNorm && sNorm===rNorm)
+          || (!s.matCode && secMatch)
+          || (!row.matCode.includes('/') && secMatch);
         return matMatch && (s.status==="available"||s.status==="qc_hold"||s.status==="reserved"||s.status==="partially_reserved");
       });
       const availKg = availLots.reduce((s,l)=>(s+(l.wtAvailable||l.wtReceived||0)),0);
@@ -13323,6 +13432,36 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
           </div>
         );
       })}
+
+      {/* Rework Queue */}
+      {(() => {
+        const reworkInst = (instances||[]).filter(i=>i.currentStage==="cutting"&&i.currentStatus==="rework");
+        if (reworkInst.length===0) return null;
+        return (
+          <div style={{ marginTop:28 }}>
+            <div style={{ fontSize:16,fontWeight:800,color:T.red,marginBottom:12 }}>Rework Queue ({reworkInst.length})</div>
+            {reworkInst.map(inst=>(
+              <div key={inst.instanceId} style={{ ...css.card,marginBottom:10,borderLeft:`4px solid ${T.red}` }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start" }}>
+                  <div>
+                    <div style={{ fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi }}>{inst.markNo} — {inst.drawingNo||inst.drawingId}</div>
+                    <div style={{ fontSize:11,color:T.textMid,marginTop:2 }}>{inst.desc} · {inst.instanceId}</div>
+                  </div>
+                  <Badge color="red">REWORK</Badge>
+                </div>
+                {inst.defects?.length>0&&(
+                  <div style={{ fontSize:11,color:T.red,marginTop:6,padding:"6px 10px",background:T.redBg,borderRadius:4 }}>
+                    Original defect: <strong>{inst.defects[0].type}</strong> — {inst.defects[0].reason}
+                  </div>
+                )}
+                <div style={{ fontSize:11,color:T.textMid,marginTop:6 }}>
+                  Re-cut this piece. Use Cutting Confirmation to confirm when done.
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Secondary Ops Queue */}
       {(() => {
