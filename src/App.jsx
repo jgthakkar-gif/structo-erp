@@ -3150,7 +3150,7 @@ const qcStatusBadge   = { approved:"green", pending:"gray", failed:"red", hold:"
 // ═══════════════════════════════════════════════════════════════════════════════
 // MRP MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines }) => {
+const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setMod }) => {
   const [view, setView] = useState("overview");
   const [expand, setExpand] = useState({});
   const [nestModal, setNestModal] = useState(null);
@@ -3185,7 +3185,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
   const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
   // Procurement helpers for planning batches
-  const prForBatch = (batchId) => (purchaseReqs||[]).find(r=>r.nestingBatchId===batchId&&r.type==="nesting");
+  const prForBatch = (batchId) => (purchaseReqs||[]).find(r=>r.nestingBatchId===batchId&&r.type==="nesting"&&r.status!=='stale'&&r.status!=='cancelled');
   const poForPr    = (pr) => pr?.poId ? (pos||[]).find(p=>p.id===pr.poId) : null;
 
   const createBatchPr = (batch) => {
@@ -3413,6 +3413,12 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
       status: "Planned",
       lots
     };
+    // Mark existing PRs for this batch ID as stale (reimport case, >24h old)
+    setPurchaseReqs(prev=>prev.map(r=>{
+      if(r.type!=='nesting'||r.nestingBatchId!==batchId||r.status==='converted'||r.status==='cancelled') return r;
+      const ageHours=(Date.now()-new Date(r.createdAt||0).getTime())/3600000;
+      return ageHours>=24?{...r,status:'stale',staleReason:'source batch reimported'}:r;
+    }));
     setNestingBatches(prev=>[...(prev||[]), batch]);
     setNestModal(null);
     setNestImportRows([]); setNestImportReady(false); setNestImportError("");
@@ -3422,7 +3428,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
     showToast(`Batch ${batchId} created — ${lots.length} lots, ${totalSheets} sheets, ${totalRmUnits} RM units`, "green");
   };
 
-  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} machines={machines||[]} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} user={user} />;
+  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} machines={machines||[]} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} user={user} />;
 
   // ── Material Requirements computation (View 2) ───────────────────────────
   // Only include parts from drawings with receivedDate (same rule as byOrder overview).
@@ -4264,9 +4270,10 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
               Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
             </div>
             <Field label="Vendor" required>
-              <select value={convertPoVendor} onChange={e=>setConvertPoVendor(e.target.value)} style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"6px 10px", color:T.text, fontSize:12 }}>
+              <select value={convertPoVendor} onChange={e=>{ if(e.target.value==="__add_new__"){ setConvertPoModal(null); setConvertPoVendor(""); if(setMod) setMod("masters"); } else setConvertPoVendor(e.target.value); }} style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"6px 10px", color:T.text, fontSize:12 }}>
                 <option value="">— Select vendor —</option>
-                {(vendors||[]).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                {(vendors||[]).filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
               </select>
             </Field>
             <div style={{ marginBottom:12, marginTop:8 }}>
@@ -4349,7 +4356,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
 };
 
 // ─── MRP NESTING EXPORT VIEW ─────────────────────────────────────────────────
-const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds, machines, nestingBatches, setNestingBatches, user }) => {
+const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, selectedDrawingIds, machines, nestingBatches, setNestingBatches, user }) => {
   const [sheet, setSheet] = useState("S1");
   const sheets = [
     { id:"S1", label:"Sheet 1 — Drawing Register" },
@@ -4670,6 +4677,12 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
       apiJobs: [],
       lots,
     };
+    // Mark existing PRs for this batch ID as stale (reimport case, >24h old)
+    if (setPurchaseReqs) setPurchaseReqs(prev=>prev.map(r=>{
+      if(r.type!=='nesting'||r.nestingBatchId!==finalId||r.status==='converted'||r.status==='cancelled') return r;
+      const ageHours=(Date.now()-new Date(r.createdAt||0).getTime())/3600000;
+      return ageHours>=24?{...r,status:'stale',staleReason:'source batch reimported'}:r;
+    }));
     setNestingBatches(prev=>[...(prev||[]), batch]);
     setNestConfirmed(true);
   };
@@ -5251,7 +5264,7 @@ const nestingSheetWt = (matCode, sheetDim) => {
   return (L && W && t) ? Math.round(L * W * t * 7.85 / 1e6 * 100) / 100 : 0;
 };
 
-const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials, paint, consumables }) => {
+const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials, paint, consumables, setMod }) => {
   const [purTab, setPurTab] = useState("pos"); // "pos" | "requisitions"
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -5513,7 +5526,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {/* Requisitions Tab */}
       {purTab === "requisitions" && (()=>{
         const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting").sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
-        const prStatusBadge = { pending:"amber", converted:"green", cancelled:"gray" };
+        const prStatusBadge = { pending:"amber", converted:"green", cancelled:"gray", stale:"red" };
         return (
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -5657,9 +5670,10 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           </div>
           <G2>
             <Field label="Vendor" required>
-              <Sel value={combineForm.vendorId||""} onChange={e=>{ const v=vendors.find(x=>x.id===e.target.value); setCombineForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); }}>
+              <Sel value={combineForm.vendorId||""} onChange={e=>{ if(e.target.value==="__add_new__"){ setCombineModal(false); if(setMod) setMod("masters"); } else { const v=vendors.find(x=>x.id===e.target.value); setCombineForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); } }}>
                 <option value="">Select vendor...</option>
-                {vendors.filter(v=>v.vendorType==="RM").map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                {vendors.filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
               </Sel>
             </Field>
             <Field label="PO Date"><Input type="date" value={combineForm.poDate||""} onChange={e=>setCombineForm(f=>({...f,poDate:e.target.value}))} /></Field>
@@ -5678,9 +5692,10 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         <Modal title="New Purchase Order" onClose={()=>setModal(null)} width={720}>
           <G2>
             <Field label="Vendor" required>
-              <Sel value={form.vendorId||""} onChange={e=>{ const v=vendors.find(x=>x.id===e.target.value); setForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); }}>
+              <Sel value={form.vendorId||""} onChange={e=>{ if(e.target.value==="__add_new__"){ setModal(null); if(setMod) setMod("masters"); } else { const v=vendors.find(x=>x.id===e.target.value); setForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); } }}>
                 <option value="">Select vendor...</option>
-                {vendors.filter(v=>v.vendorType==="RM").map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                {vendors.filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
               </Sel>
             </Field>
             <Field label="PO Date" required><Input type="date" value={form.poDate||""} onChange={e=>setForm(f=>({...f,poDate:e.target.value}))} /></Field>
@@ -16490,8 +16505,8 @@ export default function App() {
     } catch { return INIT_STOCK; }
   });
   const [nestingRuns, setNestingRuns]       = useState(INIT_NESTING_RUNS);
-  const [nestingBatches, setNestingBatches] = useState([]);
-  const [instances, setInstances]       = useState(INIT_INSTANCES);
+  const [nestingBatches, setNestingBatches] = useState(() => { try { const s=localStorage.getItem('structo_nestingBatches'); if(s){ const p=JSON.parse(s); return Array.isArray(p)?p:[]; } return []; } catch { return []; } });
+  const [instances, setInstances]       = useState(() => { try { const s=localStorage.getItem('structo_instances'); return s?JSON.parse(s):INIT_INSTANCES; } catch { return INIT_INSTANCES; } });
   const [orders, setOrders]             = useState(() => {
     try {
       const s = localStorage.getItem('structo_orders');
@@ -16532,18 +16547,18 @@ export default function App() {
   const [clients, setClients]           = useState(() => { try { const s=localStorage.getItem('structo_clients'); return s?JSON.parse(s):CLIENTS_FULL; } catch { return CLIENTS_FULL; } });
   const [vendors, setVendors]           = useState(() => { try { const s=localStorage.getItem('structo_vendors'); return s?JSON.parse(s):VENDORS; } catch { return VENDORS; } });
   const [contractors, setContractors]   = useState(CONTRACTORS);
-  const [welders, setWelders]           = useState(WELDERS_SEED);
+  const [welders, setWelders]           = useState(() => { try { const s=localStorage.getItem('structo_welders'); return s?JSON.parse(s):WELDERS_SEED; } catch { return WELDERS_SEED; } });
   const [bays, setBays]                 = useState(BAYS_SEED);
   const [materials, setMaterials]       = useState(MATERIALS_LIBRARY);
   const [paint, setPaint]               = useState(PAINT_LIBRARY);
   const [consumables, setConsumables]   = useState(CONSUMABLES_SEED);
   const [tpiAgencies, setTpiAgencies]   = useState(TPI_AGENCIES);
   const [approvedMakes, setApprovedMakes] = useState(APPROVED_MAKES_LIBRARY);
-  const [machines, setMachines]         = useState(MACHINES_SEED);
-  const [releases, setReleases]         = useState([]);
-  const [qcRules, setQcRules]           = useState([]);
-  const [overrideLog, setOverrideLog]   = useState([]);
-  const [issueRequests, setIssueRequests] = useState([]);
+  const [machines, setMachines]         = useState(() => { try { const s=localStorage.getItem('structo_machines'); return s?JSON.parse(s):MACHINES_SEED; } catch { return MACHINES_SEED; } });
+  const [releases, setReleases]         = useState(() => { try { const s=localStorage.getItem('structo_releases'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [qcRules, setQcRules]           = useState(() => { try { const s=localStorage.getItem('structo_qcRules'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [overrideLog, setOverrideLog]   = useState(() => { try { const s=localStorage.getItem('structo_overrideLog'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [issueRequests, setIssueRequests] = useState(() => { try { const s=localStorage.getItem('structo_issueRequests'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [productionStandards, setProductionStandards] = useState({
     blastThresholds: { amberHours: 3, redHours: 4 },
     tiers: [
@@ -16564,14 +16579,22 @@ export default function App() {
     try { const s=localStorage.getItem('structo_company'); return s?JSON.parse(s):defaults; } catch { return defaults; }
   });
 
-  // ── Persist 7 state arrays to localStorage ──
-  useEffect(() => { try { localStorage.setItem('structo_orders',       JSON.stringify(orders));       } catch(e) { console.warn('Storage full',e); } }, [orders]);
-  useEffect(() => { try { localStorage.setItem('structo_clients',      JSON.stringify(clients));      } catch(e) { console.warn('Storage full',e); } }, [clients]);
-  useEffect(() => { try { localStorage.setItem('structo_vendors',      JSON.stringify(vendors));      } catch(e) { console.warn('Storage full',e); } }, [vendors]);
-  useEffect(() => { try { localStorage.setItem('structo_pos',          JSON.stringify(pos));          } catch(e) { console.warn('Storage full',e); } }, [pos]);
-  useEffect(() => { try { localStorage.setItem('structo_stock',        JSON.stringify(stock));        } catch(e) { console.warn('Storage full',e); } }, [stock]);
-  useEffect(() => { try { localStorage.setItem('structo_purchaseReqs', JSON.stringify(purchaseReqs)); } catch(e) { console.warn('Storage full',e); } }, [purchaseReqs]);
-  useEffect(() => { try { localStorage.setItem('structo_company',      JSON.stringify(company));      } catch(e) { console.warn('Storage full',e); } }, [company]);
+  // ── Persist state arrays to localStorage ──
+  useEffect(() => { try { localStorage.setItem('structo_orders',          JSON.stringify(orders));          } catch(e) { console.warn('Storage full',e); } }, [orders]);
+  useEffect(() => { try { localStorage.setItem('structo_clients',         JSON.stringify(clients));         } catch(e) { console.warn('Storage full',e); } }, [clients]);
+  useEffect(() => { try { localStorage.setItem('structo_vendors',         JSON.stringify(vendors));         } catch(e) { console.warn('Storage full',e); } }, [vendors]);
+  useEffect(() => { try { localStorage.setItem('structo_pos',             JSON.stringify(pos));             } catch(e) { console.warn('Storage full',e); } }, [pos]);
+  useEffect(() => { try { localStorage.setItem('structo_stock',           JSON.stringify(stock));           } catch(e) { console.warn('Storage full',e); } }, [stock]);
+  useEffect(() => { try { localStorage.setItem('structo_purchaseReqs',    JSON.stringify(purchaseReqs));    } catch(e) { console.warn('Storage full',e); } }, [purchaseReqs]);
+  useEffect(() => { try { localStorage.setItem('structo_company',         JSON.stringify(company));         } catch(e) { console.warn('Storage full',e); } }, [company]);
+  useEffect(() => { try { localStorage.setItem('structo_nestingBatches',  JSON.stringify(nestingBatches));  } catch(e) { console.warn('Storage full',e); } }, [nestingBatches]);
+  useEffect(() => { try { localStorage.setItem('structo_instances',       JSON.stringify(instances));       } catch(e) { console.warn('Storage full',e); } }, [instances]);
+  useEffect(() => { try { localStorage.setItem('structo_releases',        JSON.stringify(releases));        } catch(e) { console.warn('Storage full',e); } }, [releases]);
+  useEffect(() => { try { localStorage.setItem('structo_qcRules',         JSON.stringify(qcRules));         } catch(e) { console.warn('Storage full',e); } }, [qcRules]);
+  useEffect(() => { try { localStorage.setItem('structo_overrideLog',     JSON.stringify(overrideLog));     } catch(e) { console.warn('Storage full',e); } }, [overrideLog]);
+  useEffect(() => { try { localStorage.setItem('structo_issueRequests',   JSON.stringify(issueRequests));   } catch(e) { console.warn('Storage full',e); } }, [issueRequests]);
+  useEffect(() => { try { localStorage.setItem('structo_welders',         JSON.stringify(welders));         } catch(e) { console.warn('Storage full',e); } }, [welders]);
+  useEffect(() => { try { localStorage.setItem('structo_machines',        JSON.stringify(machines));        } catch(e) { console.warn('Storage full',e); } }, [machines]);
 
   if (!user) return <Login onLogin={u=>{setUser(u);setMod("dashboard");}} />;
 
@@ -16582,8 +16605,8 @@ export default function App() {
   const renderMod = () => {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
-      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} />;
-      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} />;
+      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setMod={setMod} />;
+      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;

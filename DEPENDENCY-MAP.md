@@ -1,19 +1,40 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 2.0 — April 2026
-# Session 4 Phase 3 — Part 2: PO fixes + consumables catalog + structured line entry
-# Updated: CONSUMABLES_SEED (50 items) + consumables state + ConsumablesMaster component
-#          Masters: Consumables tab between Paint and TPI Agencies
-#          parseNestingMatCode() + nestingSheetWt() helpers before PurchaseModule
-#          PO lines from nesting PR: one line per dimension, weight calculated per sheet
-#          po.sourceType="nesting": PODetail shows grouped matCode view with ₹/kg per group
-#          savePO: PR status marked converted with poId after creation
-#          createCombinedPO: multi-PR combine into single PO, checkboxes + sticky bar
-#          LinePicker modal: structured line entry for manual POs (RM / Paint / Consumable)
-#          Nesting form lines: shown read-only summary; manual filter excludes sourceType=nesting
-#          Dead code removed: prExpanded/setPrExpanded placeholder in Requisitions tab
+# Version 2.1 — April 2026
+# Session 4 Phase 3 — Part 3: Persistence + vendor dropdowns + stale PR detection
+# Updated:
+#   PERSISTENCE (FIX 1):
+#     nestingBatches → localStorage key 'structo_nestingBatches' (was in-memory only)
+#     instances      → localStorage key 'structo_instances'
+#     releases       → localStorage key 'structo_releases'
+#     qcRules        → localStorage key 'structo_qcRules'
+#     overrideLog    → localStorage key 'structo_overrideLog'
+#     issueRequests  → localStorage key 'structo_issueRequests'
+#     welders        → localStorage key 'structo_welders' (fallback: WELDERS_SEED)
+#     machines       → localStorage key 'structo_machines' (fallback: MACHINES_SEED)
+#   STALE PR DETECTION (FIX 1):
+#     prForBatch: now excludes status='stale' and status='cancelled'
+#     handleNestImport + handleConfirmBatch: marks matching PRs stale (>24h, not converted)
+#       pr.status = 'stale', pr.staleReason = 'source batch reimported'
+#     MRPNestExport now receives setPurchaseReqs prop for stale marking
+#     Requisitions tab: prStatusBadge includes stale:'red'
+#   VENDOR DROPDOWNS (FIX 2):
+#     MRPModule now receives vendors + setMod props
+#     PurchaseModule now receives setMod prop
+#     All vendor fields (convertPoModal, new_po modal, combine modal) show all active vendors
+#       sorted alphabetically; include '+ Add New Vendor' option → setMod('masters')
+#     vendorType filter removed from all PO vendor dropdowns
+#   PO LINES (FIX 3 — already complete from ef4ec38):
+#     convertPoModal (MRP): flatMap over pr.lots × lot.lines, weight per sheet calculated
+#     Purchase 'Convert to PO' button: flatMap + weight calculation
+#     createCombinedPO: flatMap over all selected PRs × lots × lines + weight
+#     PODetail gate: po.sourceType==='nesting' OR po.lines.some(l=>l.prId)
+#   MULTI-PR COMBINE (FIX 4 — already complete from 4ec0b7b):
+#     selectedPrs state + checkboxes on pending PR cards
+#     Sticky combine bar (≥2 selected) → combine modal → createCombinedPO
+#     po.prIds = array of all included PR ids; each PR.status = 'converted', PR.poId = newPoId
 #
-# Prior: v1.9 — rmUnitId fractions, normRmMatCode, off-cut fields, PR/PO badges, discard flow,
-#        Requisitions tab, MRP UI fixes, E1 contractor EOD banner
+# Prior: v2.0 — consumables, parseNestingMatCode, nestingSheetWt, single+combined PO creation
+# Prior: v1.9 — rmUnitId fractions, normRmMatCode, off-cut fields, PR/PO badges, discard flow
 #
 # INSTRUCTIONS FOR CLAUDE CODE:
 # Before changing ANY field, function, or data structure,
