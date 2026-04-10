@@ -1010,6 +1010,67 @@ const VENDORS = [
 const BAYS = Array.from({length:25},(_,i)=>({ id:`BAY-${String(i+1).padStart(2,"0")}`, number:i+1 }));
 
 // ─── SEED: MACHINES ───────────────────────────────────────────────────────────
+// ─── CONSUMABLES SEED DATA ───────────────────────────────────────────────────
+const CONSUMABLES_SEED = [
+  // WELDING
+  { id:"CON-001", name:"SMAW Electrode E7018",        category:"consumables", subCategory:"welding",  sizes:["2.5mm","3.15mm","4.0mm"],             packSizes:["5kg box","10kg box","20kg box"],      approvedMakes:["ESAB","D&H","Lincoln"],          hsnCode:"83110010", unit:"Kg",    reorderLevel:50,  reorderQty:200, trackingTier:"strict"   },
+  { id:"CON-002", name:"SMAW Electrode E6013",        category:"consumables", subCategory:"welding",  sizes:["2.5mm","3.15mm"],                      packSizes:["5kg box","10kg box"],                approvedMakes:["ESAB","D&H","Ador"],             hsnCode:"83110010", unit:"Kg",    reorderLevel:50,  reorderQty:200, trackingTier:"strict"   },
+  { id:"CON-003", name:"MIG Wire ER70S-6",            category:"consumables", subCategory:"welding",  sizes:["0.8mm","1.0mm","1.2mm"],               packSizes:["5kg spool","15kg spool"],            approvedMakes:["ESAB","Ador","Lincoln"],          hsnCode:"83110090", unit:"Kg",    reorderLevel:30,  reorderQty:100, trackingTier:"strict"   },
+  { id:"CON-004", name:"SAW Wire + Flux",             category:"consumables", subCategory:"welding",  sizes:["3.15mm wire"],                         packSizes:["25kg wire coil","25kg flux bag"],     approvedMakes:["ESAB","Lincoln"],                hsnCode:"83110090", unit:"Kg",    reorderLevel:50,  reorderQty:200, trackingTier:"strict"   },
+  { id:"CON-005", name:"TIG Filler ER70S-2",         category:"consumables", subCategory:"welding",  sizes:["1.6mm","2.4mm","3.2mm"],               packSizes:["5kg tube"],                          approvedMakes:["ESAB","Lincoln","D&H"],           hsnCode:"83110090", unit:"Kg",    reorderLevel:10,  reorderQty:50,  trackingTier:"strict"   },
+  // CUTTING
+  { id:"CON-006", name:"Plasma Tip",                  category:"consumables", subCategory:"cutting",  sizes:["20A","40A","60A","80A"],               packSizes:["piece"],                             approvedMakes:["Hypertherm","Kjellberg","Victor"], hsnCode:"84669390", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"quantity" },
+  { id:"CON-007", name:"Plasma Nozzle",               category:"consumables", subCategory:"cutting",  sizes:["20A","40A","60A","80A"],               packSizes:["piece"],                             approvedMakes:["Hypertherm","Kjellberg","Victor"], hsnCode:"84669390", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"quantity" },
+  { id:"CON-008", name:"Oxy-fuel Cutting Tip",        category:"consumables", subCategory:"cutting",  sizes:["0","1","2","3"],                       packSizes:["piece"],                             approvedMakes:["Victor","Harris","Weld-Cut"],     hsnCode:"84819090", unit:"Piece", reorderLevel:5,   reorderQty:20,  trackingTier:"quantity" },
+  { id:"CON-009", name:"Cutting Disc 14 inch",        category:"consumables", subCategory:"cutting",  sizes:["14 inch"],                             packSizes:["piece","25-piece box"],              approvedMakes:["Norton","Bosch","Tyrolit"],       hsnCode:"68042190", unit:"Piece", reorderLevel:20,  reorderQty:100, trackingTier:"quantity" },
+  // GRINDING
+  { id:"CON-010", name:"Grinding Disc 100mm",         category:"consumables", subCategory:"grinding", sizes:["100mm"],                               packSizes:["piece","25-piece box"],              approvedMakes:["Norton","Bosch","Tyrolit"],       hsnCode:"68042190", unit:"Piece", reorderLevel:50,  reorderQty:200, trackingTier:"quantity" },
+  { id:"CON-011", name:"Grinding Disc 125mm",         category:"consumables", subCategory:"grinding", sizes:["125mm"],                               packSizes:["piece","25-piece box"],              approvedMakes:["Norton","Bosch","Tyrolit"],       hsnCode:"68042190", unit:"Piece", reorderLevel:50,  reorderQty:200, trackingTier:"quantity" },
+  { id:"CON-012", name:"Flap Disc 100mm",             category:"consumables", subCategory:"grinding", sizes:["100mm 40G","100mm 60G","100mm 80G"],   packSizes:["piece","10-piece box"],              approvedMakes:["Norton","3M","Tyrolit"],          hsnCode:"68042220", unit:"Piece", reorderLevel:30,  reorderQty:100, trackingTier:"quantity" },
+  { id:"CON-013", name:"Flap Disc 125mm",             category:"consumables", subCategory:"grinding", sizes:["125mm 40G","125mm 60G","125mm 80G"],   packSizes:["piece","10-piece box"],              approvedMakes:["Norton","3M","Tyrolit"],          hsnCode:"68042220", unit:"Piece", reorderLevel:30,  reorderQty:100, trackingTier:"quantity" },
+  { id:"CON-014", name:"Wire Brush",                  category:"consumables", subCategory:"grinding", sizes:["100mm cup","125mm cup","straight"],    packSizes:["piece"],                             approvedMakes:["Bosch","Stanley","Apex"],         hsnCode:"96036010", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"quantity" },
+  // PPE
+  { id:"CON-015", name:"Safety Gloves Leather",       category:"consumables", subCategory:"ppe",      sizes:["M","L","XL"],                          packSizes:["pair","12-pair box"],                approvedMakes:["Honeywell","3M","Mallcom"],       hsnCode:"39262090", unit:"Pair",  reorderLevel:20,  reorderQty:100, trackingTier:"quantity" },
+  { id:"CON-016", name:"Welding Helmet Auto-darkening",category:"consumables",subCategory:"ppe",      sizes:["one size"],                            packSizes:["piece"],                             approvedMakes:["3M","Honeywell","Lincoln"],       hsnCode:"90049090", unit:"Piece", reorderLevel:2,   reorderQty:10,  trackingTier:"strict"   },
+  { id:"CON-017", name:"Face Visor",                  category:"consumables", subCategory:"ppe",      sizes:["one size"],                            packSizes:["piece"],                             approvedMakes:["3M","Honeywell","Karam"],         hsnCode:"90049090", unit:"Piece", reorderLevel:5,   reorderQty:20,  trackingTier:"quantity" },
+  { id:"CON-018", name:"Ear Plugs",                   category:"consumables", subCategory:"ppe",      sizes:["one size"],                            packSizes:["pair","200-pair box"],               approvedMakes:["3M","Honeywell","Uvex"],          hsnCode:"90214000", unit:"Pair",  reorderLevel:100, reorderQty:500, trackingTier:"quantity" },
+  { id:"CON-019", name:"Safety Shoes",                category:"consumables", subCategory:"ppe",      sizes:["6","7","8","9","10","11"],              packSizes:["pair"],                              approvedMakes:["Bata Industrial","Karam","Mallcom"],hsnCode:"64019990",unit:"Pair",  reorderLevel:5,   reorderQty:20,  trackingTier:"strict"   },
+  // GENERAL
+  { id:"CON-020", name:"Cotton Rags",                 category:"consumables", subCategory:"general",  sizes:["mixed"],                               packSizes:["1kg bundle","5kg bundle"],           approvedMakes:["local"],                         hsnCode:"63051090", unit:"Kg",    reorderLevel:10,  reorderQty:50,  trackingTier:"none"     },
+  { id:"CON-021", name:"Acetone Cleaning Solvent",    category:"consumables", subCategory:"general",  sizes:["500ml","1 litre","5 litre"],           packSizes:["500ml can","1L can","5L can"],       approvedMakes:["BASF","Pidilite","local"],        hsnCode:"29141100", unit:"Litre", reorderLevel:10,  reorderQty:50,  trackingTier:"quantity" },
+  { id:"CON-022", name:"Paint Marker Silver",         category:"consumables", subCategory:"general",  sizes:["3mm tip"],                             packSizes:["piece","10-piece box"],              approvedMakes:["Edding","Sakura","Markal"],       hsnCode:"96081020", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"none"     },
+  { id:"CON-023", name:"Paint Marker White",          category:"consumables", subCategory:"general",  sizes:["3mm tip"],                             packSizes:["piece","10-piece box"],              approvedMakes:["Edding","Sakura","Markal"],       hsnCode:"96081020", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"none"     },
+  { id:"CON-024", name:"Centre Punch",                category:"consumables", subCategory:"general",  sizes:["standard"],                            packSizes:["piece"],                             approvedMakes:["Stanley","Taparia","Gedore"],     hsnCode:"82055990", unit:"Piece", reorderLevel:5,   reorderQty:20,  trackingTier:"quantity" },
+  // BLASTING
+  { id:"CON-025", name:"Steel Grit G25",              category:"consumables", subCategory:"blasting", sizes:["G25"],                                 packSizes:["25kg bag","50kg bag"],               approvedMakes:["Wheelabrator","Ervin","local"],   hsnCode:"72059090", unit:"Kg",    reorderLevel:500, reorderQty:2000,trackingTier:"strict"   },
+  { id:"CON-026", name:"Steel Shot S230",             category:"consumables", subCategory:"blasting", sizes:["S230"],                                packSizes:["25kg bag","50kg bag"],               approvedMakes:["Wheelabrator","Ervin","local"],   hsnCode:"72059090", unit:"Kg",    reorderLevel:500, reorderQty:2000,trackingTier:"strict"   },
+  { id:"CON-027", name:"Steel Grit G40",              category:"consumables", subCategory:"blasting", sizes:["G40"],                                 packSizes:["25kg bag","50kg bag"],               approvedMakes:["Wheelabrator","Ervin","local"],   hsnCode:"72059090", unit:"Kg",    reorderLevel:500, reorderQty:2000,trackingTier:"strict"   },
+  { id:"CON-028", name:"Garnet Sand 80 mesh",         category:"consumables", subCategory:"blasting", sizes:["80 mesh"],                             packSizes:["25kg bag"],                          approvedMakes:["GMA Garnet","local"],             hsnCode:"25132010", unit:"Kg",    reorderLevel:250, reorderQty:1000,trackingTier:"strict"   },
+  { id:"CON-029", name:"Blasting Nozzle Tungsten Carbide",category:"consumables",subCategory:"blasting",sizes:["6mm","8mm","10mm"],                 packSizes:["piece"],                             approvedMakes:["Clemco","Graco","Schmidt"],       hsnCode:"84219990", unit:"Piece", reorderLevel:2,   reorderQty:10,  trackingTier:"strict"   },
+  { id:"CON-030", name:"Blasting Hose 32mm",          category:"consumables", subCategory:"blasting", sizes:["32mm ID"],                             packSizes:["per metre"],                         approvedMakes:["Clemco","Graco","Gates"],         hsnCode:"39173990", unit:"Metre", reorderLevel:10,  reorderQty:50,  trackingTier:"quantity" },
+  { id:"CON-031", name:"Deadman Handle Assembly",     category:"consumables", subCategory:"blasting", sizes:["standard"],                            packSizes:["piece"],                             approvedMakes:["Clemco","Schmidt","Graco"],       hsnCode:"84219990", unit:"Piece", reorderLevel:1,   reorderQty:5,   trackingTier:"strict"   },
+  { id:"CON-032", name:"Blasting Hood and Cape",      category:"consumables", subCategory:"blasting", sizes:["one size"],                            packSizes:["set"],                               approvedMakes:["Clemco","Bullard","Moldex"],      hsnCode:"65061090", unit:"Set",   reorderLevel:2,   reorderQty:10,  trackingTier:"strict"   },
+  // PAINTING
+  { id:"CON-033", name:"Paint Brush 1 inch",          category:"consumables", subCategory:"painting", sizes:["1 inch"],                              packSizes:["piece"],                             approvedMakes:["Asian Paints","Cumi","local"],    hsnCode:"96032100", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"none"     },
+  { id:"CON-034", name:"Paint Brush 2 inch",          category:"consumables", subCategory:"painting", sizes:["2 inch"],                              packSizes:["piece"],                             approvedMakes:["Asian Paints","Cumi","local"],    hsnCode:"96032100", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"none"     },
+  { id:"CON-035", name:"Paint Brush 3 inch",          category:"consumables", subCategory:"painting", sizes:["3 inch"],                              packSizes:["piece"],                             approvedMakes:["Asian Paints","Cumi","local"],    hsnCode:"96032100", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"none"     },
+  { id:"CON-036", name:"Paint Roller 4 inch",         category:"consumables", subCategory:"painting", sizes:["4 inch"],                              packSizes:["piece"],                             approvedMakes:["Asian Paints","Cumi","local"],    hsnCode:"96032900", unit:"Piece", reorderLevel:5,   reorderQty:20,  trackingTier:"none"     },
+  { id:"CON-037", name:"Paint Roller 9 inch",         category:"consumables", subCategory:"painting", sizes:["9 inch"],                              packSizes:["piece"],                             approvedMakes:["Asian Paints","Cumi","local"],    hsnCode:"96032900", unit:"Piece", reorderLevel:5,   reorderQty:20,  trackingTier:"none"     },
+  { id:"CON-038", name:"Roller Cover Sleeve",         category:"consumables", subCategory:"painting", sizes:["4 inch","9 inch"],                     packSizes:["piece"],                             approvedMakes:["Asian Paints","Cumi","local"],    hsnCode:"96032900", unit:"Piece", reorderLevel:10,  reorderQty:50,  trackingTier:"none"     },
+  { id:"CON-039", name:"Masking Tape 25mm",           category:"consumables", subCategory:"painting", sizes:["25mm"],                                packSizes:["roll"],                              approvedMakes:["3M","Tesa","Nitto"],             hsnCode:"48239010", unit:"Roll",  reorderLevel:20,  reorderQty:100, trackingTier:"none"     },
+  { id:"CON-040", name:"Masking Tape 50mm",           category:"consumables", subCategory:"painting", sizes:["50mm"],                                packSizes:["roll"],                              approvedMakes:["3M","Tesa","Nitto"],             hsnCode:"48239010", unit:"Roll",  reorderLevel:20,  reorderQty:100, trackingTier:"none"     },
+  { id:"CON-041", name:"Spray Gun Tip 411",           category:"consumables", subCategory:"painting", sizes:["411"],                                 packSizes:["piece"],                             approvedMakes:["Graco","Titan","Wagner"],         hsnCode:"84243090", unit:"Piece", reorderLevel:3,   reorderQty:10,  trackingTier:"strict"   },
+  { id:"CON-042", name:"Spray Gun Tip 515",           category:"consumables", subCategory:"painting", sizes:["515"],                                 packSizes:["piece"],                             approvedMakes:["Graco","Titan","Wagner"],         hsnCode:"84243090", unit:"Piece", reorderLevel:3,   reorderQty:10,  trackingTier:"strict"   },
+  { id:"CON-043", name:"Spray Gun Filter",            category:"consumables", subCategory:"painting", sizes:["standard"],                            packSizes:["piece","5-piece pack"],              approvedMakes:["Graco","Titan","Wagner"],         hsnCode:"84219990", unit:"Piece", reorderLevel:5,   reorderQty:20,  trackingTier:"quantity" },
+  { id:"CON-044", name:"Airless Spray Hose 15m",     category:"consumables", subCategory:"painting", sizes:["15m"],                                 packSizes:["piece"],                             approvedMakes:["Graco","Titan","Parker"],         hsnCode:"39173990", unit:"Piece", reorderLevel:1,   reorderQty:5,   trackingTier:"strict"   },
+  { id:"CON-045", name:"DFT Gauge",                   category:"consumables", subCategory:"painting", sizes:["0-2000 micron"],                       packSizes:["piece"],                             approvedMakes:["Elcometer","DeFelsko","Fischer"], hsnCode:"90318090", unit:"Piece", reorderLevel:1,   reorderQty:2,   trackingTier:"strict"   },
+  { id:"CON-046", name:"Holiday Detector",            category:"consumables", subCategory:"painting", sizes:["standard"],                            packSizes:["piece"],                             approvedMakes:["Elcometer","Tinker & Rasor"],     hsnCode:"90318090", unit:"Piece", reorderLevel:1,   reorderQty:2,   trackingTier:"strict"   },
+  { id:"CON-047", name:"Mixing Stick",                category:"consumables", subCategory:"painting", sizes:["standard"],                            packSizes:["bundle of 50"],                      approvedMakes:["local"],                         hsnCode:"44219090", unit:"Bundle",reorderLevel:5,   reorderQty:20,  trackingTier:"none"     },
+  { id:"CON-048", name:"Measuring Cup 1 litre",       category:"consumables", subCategory:"painting", sizes:["1 litre"],                             packSizes:["piece"],                             approvedMakes:["local"],                         hsnCode:"39249090", unit:"Piece", reorderLevel:5,   reorderQty:20,  trackingTier:"none"     },
+  { id:"CON-049", name:"Lint Free Cloth",             category:"consumables", subCategory:"painting", sizes:["mixed"],                               packSizes:["1kg bundle"],                        approvedMakes:["local"],                         hsnCode:"63072090", unit:"Kg",    reorderLevel:5,   reorderQty:20,  trackingTier:"none"     },
+  { id:"CON-050", name:"Surface Cleaner Solvent",     category:"consumables", subCategory:"painting", sizes:["500ml","1 litre","5 litre"],           packSizes:["500ml can","1L can","5L can"],       approvedMakes:["Jotun","International","local"],  hsnCode:"38140090", unit:"Litre", reorderLevel:10,  reorderQty:50,  trackingTier:"quantity" },
+];
+
 const MACHINES_SEED = [
   { id:"MCH-001", name:"Plasma Cutter 1",  type:"Cutting", bayLocation:"Bay 3", active:true, capabilities:['cut_straight','cut_profile','bevel','grind'], specs:{maxThicknessMm:25,maxSectionSizeMm:0,notes:"Hypertherm XPR300"} },
   { id:"MCH-002", name:"Flame Cutter 1",   type:"Cutting", bayLocation:"Bay 3", active:true, capabilities:['cut_straight','cut_profile','bevel'],         specs:{maxThicknessMm:100,maxSectionSizeMm:0,notes:""} },
@@ -2072,6 +2133,114 @@ const PaintMaster = ({ user, paint }) => {
   );
 };
 
+// ─── MASTERS: CONSUMABLES ─────────────────────────────────────────────────────
+const ConsumablesMaster = ({ user, consumables, setConsumables }) => {
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [modal, setModal] = useState(null); // null | "add" | "edit"
+  const [form, setForm] = useState({});
+  const canEdit = ["super_admin","purchase_admin","planning_admin"].includes(user.role);
+
+  const subCats = [...new Set((consumables||[]).map(c=>c.subCategory))].sort();
+  const filtered = (consumables||[]).filter(c => {
+    if (catFilter !== "all" && c.subCategory !== catFilter) return false;
+    if (search && !c.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const openAdd = () => {
+    setForm({ name:"", subCategory:"welding", sizes:"", packSizes:"", approvedMakes:"", hsnCode:"", unit:"Kg", reorderLevel:50, reorderQty:200, trackingTier:"quantity" });
+    setModal("add");
+  };
+  const openEdit = (item) => {
+    setForm({ ...item, sizes:(item.sizes||[]).join(", "), packSizes:(item.packSizes||[]).join(", "), approvedMakes:(item.approvedMakes||[]).join(", ") });
+    setModal("edit");
+  };
+  const save = () => {
+    const item = {
+      ...form,
+      category:"consumables",
+      sizes: form.sizes ? form.sizes.split(",").map(s=>s.trim()).filter(Boolean) : [],
+      packSizes: form.packSizes ? form.packSizes.split(",").map(s=>s.trim()).filter(Boolean) : [],
+      approvedMakes: form.approvedMakes ? form.approvedMakes.split(",").map(s=>s.trim()).filter(Boolean) : [],
+      reorderLevel: Number(form.reorderLevel)||0,
+      reorderQty: Number(form.reorderQty)||0,
+    };
+    if (modal === "add") {
+      const max = (consumables||[]).reduce((m,c)=>{ const mt=c.id?.match(/^CON-(\d+)$/); return mt?Math.max(m,+mt[1]):m; }, 0);
+      item.id = `CON-${String(max+1).padStart(3,"0")}`;
+      setConsumables(prev=>[...prev, item]);
+    } else {
+      setConsumables(prev=>prev.map(c=>c.id===item.id?item:c));
+    }
+    setModal(null);
+  };
+
+  const tierColor = { strict:"red", quantity:"amber", none:"gray" };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ fontSize:15, fontWeight:700, color:T.text }}>Consumables ({filtered.length} items)</div>
+        {canEdit && <button onClick={openAdd} style={css.btn.primary}>+ Add Consumable</button>}
+      </div>
+      <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+        <Input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by name..." style={{ width:220 }} />
+        <Sel value={catFilter} onChange={e=>setCatFilter(e.target.value)} style={{ width:160 }}>
+          <option value="all">All sub-categories</option>
+          {subCats.map(s=><option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+        </Sel>
+      </div>
+      <MTable cols={[
+        {key:"id",    label:"ID",           render:r=><span style={{fontFamily:T.fontMono,fontSize:11,color:T.textMid}}>{r.id}</span>},
+        {key:"name",  label:"Name",         render:r=><span style={{fontWeight:600,color:T.text}}>{r.name}</span>},
+        {key:"subCategory", label:"Sub-category", render:r=><span style={{textTransform:"capitalize"}}>{r.subCategory}</span>},
+        {key:"sizes", label:"Sizes",        render:r=><span style={{fontSize:11,color:T.textMid}}>{(r.sizes||[]).join(", ")||"—"}</span>},
+        {key:"unit",  label:"Unit",         render:r=><span style={{fontFamily:T.fontMono,fontSize:12}}>{r.unit}</span>},
+        {key:"reorder",label:"Reorder Lvl", render:r=><span style={{fontFamily:T.fontMono,fontSize:12}}>{r.reorderLevel}</span>},
+        {key:"tier",  label:"Tracking",     render:r=><Badge color={tierColor[r.trackingTier]||"gray"}>{r.trackingTier}</Badge>},
+        {key:"makes", label:"Approved Makes",render:r=><span style={{fontSize:11,color:T.textMid}}>{(r.approvedMakes||[]).slice(0,2).join(", ")}{(r.approvedMakes||[]).length>2?` +${(r.approvedMakes||[]).length-2}`:""}</span>},
+        {key:"actions",label:"",           render:r=>canEdit?<button onClick={()=>openEdit(r)} style={css.btn.ghost}>Edit</button>:null},
+      ]} rows={filtered} />
+
+      {modal && (
+        <Modal title={modal==="add"?"Add Consumable":"Edit Consumable"} onClose={()=>setModal(null)} width={560}>
+          <G2>
+            <Field label="Name" required><Input value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. SMAW Electrode E7018" /></Field>
+            <Field label="Sub-category">
+              <Sel value={form.subCategory||"welding"} onChange={e=>setForm(f=>({...f,subCategory:e.target.value}))}>
+                {["welding","cutting","grinding","ppe","general","blasting","painting"].map(s=><option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+              </Sel>
+            </Field>
+            <Field label="Sizes (comma-separated)"><Input value={form.sizes||""} onChange={e=>setForm(f=>({...f,sizes:e.target.value}))} placeholder="e.g. 2.5mm, 3.15mm, 4.0mm" /></Field>
+            <Field label="Pack Sizes (comma-separated)"><Input value={form.packSizes||""} onChange={e=>setForm(f=>({...f,packSizes:e.target.value}))} placeholder="e.g. 5kg box, 20kg box" /></Field>
+            <Field label="Approved Makes (comma-separated)"><Input value={form.approvedMakes||""} onChange={e=>setForm(f=>({...f,approvedMakes:e.target.value}))} placeholder="e.g. ESAB, D&H, Lincoln" /></Field>
+            <Field label="HSN Code"><Input value={form.hsnCode||""} onChange={e=>setForm(f=>({...f,hsnCode:e.target.value}))} placeholder="e.g. 83110010" /></Field>
+            <Field label="Unit">
+              <Sel value={form.unit||"Piece"} onChange={e=>setForm(f=>({...f,unit:e.target.value}))}>
+                {["Kg","Piece","Pair","Set","Litre","Metre","Roll","Bundle"].map(u=><option key={u} value={u}>{u}</option>)}
+              </Sel>
+            </Field>
+            <Field label="Tracking Tier">
+              <Sel value={form.trackingTier||"quantity"} onChange={e=>setForm(f=>({...f,trackingTier:e.target.value}))}>
+                <option value="strict">Strict (serial/batch)</option>
+                <option value="quantity">Quantity only</option>
+                <option value="none">None</option>
+              </Sel>
+            </Field>
+            <Field label="Reorder Level"><Input type="number" value={form.reorderLevel||""} onChange={e=>setForm(f=>({...f,reorderLevel:e.target.value}))} /></Field>
+            <Field label="Reorder Qty"><Input type="number" value={form.reorderQty||""} onChange={e=>setForm(f=>({...f,reorderQty:e.target.value}))} /></Field>
+          </G2>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+            <button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={save} disabled={!form.name?.trim()} style={{ ...css.btn.primary, opacity:form.name?.trim()?1:0.4 }}>Save</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 // ─── MASTERS: TPI AGENCIES ────────────────────────────────────────────────────
 const TPIMaster = ({ user, tpiAgencies }) => {
   const agencies = tpiAgencies;
@@ -2924,7 +3093,7 @@ const DevToolsMaster = ({ user, setInstances, setReleases, setNestingRuns, setOr
   );
 };
 
-const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders, setMod, setInstances, setReleases, setNestingRuns }) => {
+const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, consumables, setConsumables, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders, setMod, setInstances, setReleases, setNestingRuns }) => {
   const tabs = [
     { id:"company",     label:"Company Details",     show: user.role==="super_admin" },
     { id:"prodstd",     label:"Production Standards", show: ["super_admin","planning_admin"].includes(user.role) },
@@ -2935,6 +3104,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
     { id:"bays",        label:"Storage Bays"      },
     { id:"materials",   label:"Materials Library" },
     { id:"paint",       label:"Paint Library"     },
+    { id:"consumables", label:"Consumables"       },
     { id:"tpi",         label:"TPI Agencies"      },
     { id:"makes",       label:"Approved Makes"    },
     { id:"machines",    label:"Machines",          show: user.role==="super_admin" },
@@ -2960,6 +3130,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       {activeTab==="bays"        && <BaysMaster        user={user} bays={bays} setBays={setBays} />}
       {activeTab==="materials"   && <MaterialsMaster   user={user} materials={materials} setMaterials={setMaterials} />}
       {activeTab==="paint"       && <PaintMaster       user={user} paint={paint} />}
+      {activeTab==="consumables" && <ConsumablesMaster user={user} consumables={consumables} setConsumables={setConsumables} />}
       {activeTab==="tpi"         && <TPIMaster         user={user} tpiAgencies={tpiAgencies} />}
       {activeTab==="makes"       && <ApprovedMakesMaster user={user} approvedMakes={approvedMakes} />}
       {activeTab==="machines"    && <MachinesMaster    user={user} machines={machines} setMachines={setMachines} />}
@@ -5019,7 +5190,28 @@ const POLineImportModal = ({ rows, err, mode, setMode, fileRef, onFile, onDownlo
   </Modal>
 );
 
-const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials }) => {
+// ─── NESTING PO HELPERS ───────────────────────────────────────────────────────
+// Parse matCode segments for PO line fields: "PLATE/MS/E350/10mm" → {sectionType,matType,grade,size}
+const parseNestingMatCode = (matCode) => {
+  const segs = (matCode||"").split("/");
+  return {
+    sectionType: segs[0]||"PLATE",
+    matType:     segs[1]||"MS",
+    grade:       segs[2]||"E250",
+    size:        segs[3]||"",
+  };
+};
+// Weight per sheet: L(mm) × W(mm) × t(mm) × 7.85 / 10^6 kg
+// sheetDim: "6000x1250" or "6000X1250"
+const nestingSheetWt = (matCode, sheetDim) => {
+  const segs = (matCode||"").split("/");
+  const t = parseFloat((segs[3]||"").replace(/mm$/i,""))||0;
+  const parts = (sheetDim||"").toUpperCase().split("X").map(Number);
+  const L = parts[0]||0, W = parts[1]||0;
+  return (L && W && t) ? Math.round(L * W * t * 7.85 / 1e6 * 100) / 100 : 0;
+};
+
+const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials, paint, consumables }) => {
   const [purTab, setPurTab] = useState("pos"); // "pos" | "requisitions"
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -5034,6 +5226,11 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [poImpMode,  setPoImpMode]  = useState("append");
   const poImpRef = useRef(null);
   const [showCancelled, setShowCancelled] = useState(false);
+  const [selectedPrs, setSelectedPrs] = useState([]);   // Part 3: multi-PR combine
+  const [combineModal, setCombineModal] = useState(false);
+  const [combineForm, setCombineForm] = useState({});
+  const [linePickerModal, setLinePickerModal] = useState(null); // Part 4: null | {category:null|"rm"|"paint"|"consumable"}
+  const [linePickerForm, setLinePickerForm] = useState({});
 
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
   const [addToLibModal, setAddToLibModal] = useState(null);
@@ -5077,12 +5274,14 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const savePO = () => {
     const lines = form.lines||[];
     const v = vendors.find(x=>x.id===form.vendorId);
+    // Compute ID before updater so we can reference it for PR status update
+    const yr = new Date().getFullYear();
+    const maxSeq = pos.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; }, 0);
+    const newPoId = `PO-${yr}-${String(maxSeq+1).padStart(3,"0")}`;
     setPos(prev => {
-      const yr = new Date().getFullYear();
-      const max = prev.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; }, 0);
       const newPO = {
         ...form,
-        id: `PO-${yr}-${String(max+1).padStart(3,"0")}`,
+        id: newPoId,
         vendorCode: v?.vendorCode||"",
         status:"pending",
         grns:[],
@@ -5092,8 +5291,57 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       };
       return [...prev, newPO];
     });
+    // Mark source PR as converted (for nesting-originated POs)
+    if (form.prId) setPurchaseReqs(prev=>prev.map(r=>r.id===form.prId?{...r,status:"converted",poId:newPoId}:r));
     showToast("Purchase Order created");
     setModal(null);
+  };
+
+  const createCombinedPO = () => {
+    const yr = new Date().getFullYear();
+    const maxSeq = pos.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
+    const newPoId = `PO-${yr}-${String(maxSeq+1).padStart(3,"0")}`;
+    const v = vendors.find(x=>x.id===combineForm.vendorId);
+    const ts = Date.now();
+    const allLines = (purchaseReqs||[])
+      .filter(r=>selectedPrs.includes(r.id))
+      .flatMap((pr,prIdx)=>
+        (pr.lots||[]).flatMap((l,lotIdx)=>
+          (l.lines||[]).map((ln,lineIdx)=>{
+            const p = parseNestingMatCode(l.matCode);
+            const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
+            const qty = ln.qty||0;
+            const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
+            return {
+              id:`POL-${ts}-${prIdx}-${lotIdx}-${lineIdx}`,
+              matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
+              sheetDim:ln.sheetDim||ln.dims, isPlate:true,
+              sheetLength:dimParts[0]||0, sheetWidth:dimParts[1]||0,
+              orderMode:"ByUnits", qty, qtyOrdered:qty, unit:"Sheets",
+              pricingMethod:"PerUnit", unitPrice:0,
+              wtPerSheet, wtOrdered:Math.round(wtPerSheet*qty*100)/100,
+              wtRequired:Math.round(wtPerSheet*qty*100)/100,
+              totalPrice:0, wtReceived:0, qtyReceived:0, status:"pending",
+              sourceType:"nesting", sourcePrId:pr.id,
+              itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
+            };
+          })
+        )
+      );
+    const newPO = {
+      id:newPoId, vendorId:combineForm.vendorId, vendorCode:v?.vendorCode||"",
+      vendorName:v?.name||combineForm.vendorName||"", poDate:combineForm.poDate||today(),
+      expectedDelivery:combineForm.expectedDelivery||"", remarks:combineForm.notes||"",
+      status:"pending", sourceType:"nesting",
+      prIds:selectedPrs,
+      servedOrders:[], coveredOrders:[], includesStock:false,
+      lines:allLines, grns:[], createdBy:user.name, createdDate:today(),
+    };
+    setPos(prev=>[...prev, newPO]);
+    setPurchaseReqs(prev=>prev.map(r=>selectedPrs.includes(r.id)?{...r,status:"converted",poId:newPoId}:r));
+    showToast(`${newPoId} created from ${selectedPrs.length} requisitions`);
+    setCombineModal(false); setCombineForm({}); setSelectedPrs([]);
+    setPurTab("pos"); setSelected(newPoId);
   };
 
   const saveGRN = (poId) => {
@@ -5238,10 +5486,15 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             )}
             {nestingPrs.map(pr=>{
               const po = pr.poId ? pos.find(p=>p.id===pr.poId) : null;
-              const [prExpanded, setPrExpanded] = [false, ()=>{}]; // static — use key-driven approach below
               return (
                 <div key={pr.id} style={{ ...css.card, marginBottom:10 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 }}>
+                    <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
+                      {pr.status==="pending" && canEdit && (
+                        <input type="checkbox" checked={selectedPrs.includes(pr.id)}
+                          onChange={e=>setSelectedPrs(prev=>e.target.checked?[...prev,pr.id]:prev.filter(x=>x!==pr.id))}
+                          style={{ marginTop:3, accentColor:T.accent, width:15, height:15, cursor:"pointer" }} />
+                      )}
                     <div>
                       <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
                         <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{pr.id}</span>
@@ -5256,18 +5509,35 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                       {pr.cancelReason && (
                         <div style={{ fontSize:11, color:T.textLow, marginTop:4 }}>Cancel reason: {pr.cancelReason}</div>
                       )}
-                    </div>
+                    </div>{/* end pr info */}
+                    </div>{/* end left col (checkbox + info) */}
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                       {pr.status==="pending" && canEdit && (
                         <>
                           <button onClick={()=>{
-                            const yr=new Date().getFullYear();
-                            const max=(pos||[]).reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
-                            const poId=`PO-${yr}-${String(max+1).padStart(3,"0")}`;
-                            setForm({id:poId,vendorId:"",vendorCode:"",vendorName:"",poDate:today(),expectedDelivery:"",status:"pending",servedOrders:[],coveredOrders:[],includesStock:false,
-                              remarks:`From ${pr.id} — ${pr.nestingBatchId}`, prId:pr.id,
-                              lines:(pr.lots||[]).map((l,i)=>({id:`POL-${Date.now()}-${i}`,matCode:l.matCode,sectionType:"",size:"",grade:"E250",matType:"MS",isPlate:false,orderMode:"ByUnits",qty:l.sheetCount||0,qtyOrdered:l.sheetCount||0,unit:"Sheets",pricingMethod:"PerUnit",unitPrice:0,wtOrdered:0,wtRequired:0,totalPrice:0,wtReceived:0,status:"pending",qtyReceived:0,itemCode:l.matCode})),
-                              grns:[],createdBy:user.name,createdDate:today(),
+                            const nestLines = (pr.lots||[]).flatMap((l,lotIdx)=>
+                              (l.lines||[]).map((ln,lineIdx)=>{
+                                const p = parseNestingMatCode(l.matCode);
+                                const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
+                                const qty = ln.qty||0;
+                                const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
+                                return {
+                                  id:`POL-${Date.now()}-${lotIdx}-${lineIdx}`,
+                                  matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
+                                  sheetDim:ln.sheetDim||ln.dims, isPlate:true,
+                                  sheetLength:dimParts[0]||0, sheetWidth:dimParts[1]||0,
+                                  orderMode:"ByUnits", qty, qtyOrdered:qty, unit:"Sheets",
+                                  pricingMethod:"PerUnit", unitPrice:0,
+                                  wtPerSheet, wtOrdered:Math.round(wtPerSheet*qty*100)/100,
+                                  wtRequired:Math.round(wtPerSheet*qty*100)/100,
+                                  totalPrice:0, wtReceived:0, qtyReceived:0, status:"pending",
+                                  sourceType:"nesting", itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
+                                };
+                              })
+                            );
+                            setForm({vendorId:"",vendorCode:"",vendorName:"",poDate:today(),expectedDelivery:"",status:"pending",servedOrders:[],coveredOrders:[],includesStock:false,
+                              remarks:`From ${pr.id} — ${pr.nestingBatchId}`, prId:pr.id, sourceType:"nesting",
+                              lines:nestLines, grns:[],createdBy:user.name,createdDate:today(),
                             });
                             setModal("new_po"); setPurTab("pos");
                           }} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO</button>
@@ -5307,9 +5577,61 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                 </div>
               );
             })}
+
+            {/* Sticky combine bar */}
+            {selectedPrs.length >= 2 && canEdit && (
+              <div style={{ position:"sticky", bottom:16, background:T.bgCard, border:`2px solid ${T.accent}`, borderRadius:10, padding:"12px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"0 4px 24px #0008", zIndex:200, marginTop:12 }}>
+                <span style={{ color:T.accent, fontWeight:700, fontSize:13 }}>
+                  {selectedPrs.length} requisitions selected
+                  {" · "}<span style={{ color:T.textMid, fontWeight:400 }}>
+                    {fmt.num((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>{
+                      return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(nestingSheetWt(l.matCode,ln.sheetDim||ln.dims)*(ln.qty||0)),ss),0);
+                    },0))} kg total
+                  </span>
+                </span>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={()=>setSelectedPrs([])} style={css.btn.secondary}>Clear</button>
+                  <button onClick={()=>{ setCombineForm({vendorId:"",poDate:today(),expectedDelivery:"",notes:""}); setCombineModal(true); }} style={css.btn.primary}>Combine into PO →</button>
+                </div>
+              </div>
+            )}
           </div>
         );
       })()}
+
+      {/* Combined PO Modal */}
+      {combineModal && (
+        <Modal title="Create Combined Purchase Order" onClose={()=>setCombineModal(false)} width={520}>
+          <div style={{ marginBottom:14, padding:"10px 14px", background:T.bgInput, borderRadius:6, fontSize:12 }}>
+            <div style={{ fontWeight:700, color:T.textMid, marginBottom:6 }}>Combining {selectedPrs.length} requisitions:</div>
+            {(purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).map(pr=>{
+              const totalWt = (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(nestingSheetWt(l.matCode,ln.sheetDim||ln.dims)*(ln.qty||0)),ss),0);
+              return (
+                <div key={pr.id} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:`1px solid ${T.border}` }}>
+                  <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:11 }}>{pr.id}</span>
+                  <span style={{ fontSize:11, color:T.textMid }}>{(pr.lots||[])[0]?.matCode||"—"}</span>
+                  <span style={{ fontFamily:T.fontMono, fontSize:11, fontWeight:700 }}>{fmt.num(totalWt)} kg</span>
+                </div>
+              );
+            })}
+          </div>
+          <G2>
+            <Field label="Vendor" required>
+              <Sel value={combineForm.vendorId||""} onChange={e=>{ const v=vendors.find(x=>x.id===e.target.value); setCombineForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); }}>
+                <option value="">Select vendor...</option>
+                {vendors.filter(v=>v.vendorType==="RM").map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+              </Sel>
+            </Field>
+            <Field label="PO Date"><Input type="date" value={combineForm.poDate||""} onChange={e=>setCombineForm(f=>({...f,poDate:e.target.value}))} /></Field>
+            <Field label="Expected Delivery"><Input type="date" value={combineForm.expectedDelivery||""} onChange={e=>setCombineForm(f=>({...f,expectedDelivery:e.target.value}))} /></Field>
+            <Field label="Notes"><Input value={combineForm.notes||""} onChange={e=>setCombineForm(f=>({...f,notes:e.target.value}))} placeholder="Optional..." /></Field>
+          </G2>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+            <button onClick={()=>setCombineModal(false)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={createCombinedPO} disabled={!combineForm.vendorId} style={{ ...css.btn.primary, opacity:combineForm.vendorId?1:0.4 }}>Create PO</button>
+          </div>
+        </Modal>
+      )}
 
       {/* New PO Modal */}
       {modal==="new_po" && (
@@ -5357,10 +5679,31 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               <div style={{ display:"flex", gap:6 }}>
                 <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
                 <button onClick={()=>setPoImpModal(true)} style={css.btn.amber}>📥 Import CSV</button>
-                <button onClick={()=>setForm(f=>({...f,lines:[...(f.lines||[]),{matLibId:"",matCode:"",sectionType:"",size:"",grade:"E250",matType:"MS",isPlate:false,orderMode:"ByUnits",qty:0,qtyOrdered:0,unit:"Pcs",pricingMethod:"PerUnit",unitPrice:0,wtOrdered:0,wtRequired:0,totalPrice:0,length:null,width:null,effectiveRateKg:0,qtyReceived:0,wtSource:"",libraryMatch:true}]}))} style={css.btn.sm}>+ Add Line</button>
+                {!form.prId && form.sourceType!=="nesting"
+                  ? <button onClick={()=>{ setLinePickerForm({}); setLinePickerModal({category:null}); }} style={css.btn.sm}>+ Add Line</button>
+                  : null
+                }
               </div>
             } />
-            {(form.lines||[]).map((l,i)=>{
+            {/* Nesting source summary (read-only) */}
+            {form.sourceType==="nesting" && (form.lines||[]).length>0 && (()=>{
+              const grpMap = {};
+              (form.lines||[]).forEach(l=>{ const k=l.matCode||"?"; if(!grpMap[k]) grpMap[k]=[]; grpMap[k].push(l); });
+              return (
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ fontSize:11, color:T.textMid, marginBottom:6 }}>Lines pre-filled from nesting batch — prices can be set after PO creation.</div>
+                  {Object.entries(grpMap).map(([mc,lines])=>(
+                    <div key={mc} style={{ background:T.bgInput, borderRadius:6, padding:"8px 12px", marginBottom:6, fontSize:12 }}>
+                      <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi }}>{mc}</span>
+                      <span style={{ color:T.textMid, marginLeft:8 }}>{lines.length} dimension{lines.length!==1?"s":""}</span>
+                      <span style={{ color:T.textMid, marginLeft:8 }}>· {fmt.num(lines.reduce((s,l)=>s+(l.wtOrdered||0),0))} kg</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+            {(form.lines||[]).filter(l=>l.sourceType!=="nesting").map((l, _fi)=>{
+              const i = (form.lines||[]).indexOf(l);
               return (
   <div key={i} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
     {/* Row 1: Material type selectors */}
@@ -5606,6 +5949,191 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           }
         </Modal>
       )}
+      {/* Line Picker Modal — structured line entry for manual POs */}
+      {linePickerModal && (
+        <Modal title={linePickerModal.category ? "Add PO Line" : "Select Line Category"} onClose={()=>setLinePickerModal(null)} width={560}>
+          {!linePickerModal.category && (
+            <div style={{ display:"flex", flexDirection:"column", gap:12, padding:"8px 0" }}>
+              <div style={{ fontSize:12, color:T.textMid, marginBottom:4 }}>What are you purchasing?</div>
+              {[
+                { id:"rm",          label:"Raw Material",  icon:"🔩", desc:"Steel sections, plates, bars" },
+                { id:"paint",       label:"Paint",         icon:"🎨", desc:"Primers, coatings, thinners" },
+                { id:"consumable",  label:"Consumable",    icon:"🔧", desc:"Welding, grinding, PPE, blasting" },
+              ].map(c=>(
+                <button key={c.id} onClick={()=>{ setLinePickerForm({ category:c.id, unit:c.id==="rm"?"Pcs":c.id==="paint"?"Litre":"Piece", pricingMethod:"PerUnit", qty:1, unitPrice:0 }); setLinePickerModal({category:c.id}); }}
+                  style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 18px", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:8, cursor:"pointer", textAlign:"left" }}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor=T.accent} onMouseLeave={e=>e.currentTarget.style.borderColor=T.border}>
+                  <span style={{ fontSize:24 }}>{c.icon}</span>
+                  <div>
+                    <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{c.label}</div>
+                    <div style={{ fontSize:12, color:T.textMid }}>{c.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          {linePickerModal.category === "rm" && (()=>{
+            const sectionTypes = ["PLATE","ISA","ISMB","ISMC","RHS","SHS","Flat Bar","Pipe","Round Bar","Other"];
+            const grades = ["E250","E350","E410","SS304","SS316","Other"];
+            const plateSizes = ["6mm","8mm","10mm","12mm","16mm","20mm","25mm","32mm","40mm"];
+            const st = linePickerForm.sectionType||"";
+            const availSizes = st==="PLATE" ? plateSizes : [...new Set((materials||[]).filter(m=>m.sectionType===st&&m.active!==false).map(m=>m.size))];
+            const wtPerSheet = (st==="PLATE"&&linePickerForm.length&&linePickerForm.width&&linePickerForm.size)
+              ? Math.round((linePickerForm.length||0)*(linePickerForm.width||0)*(parseFloat((linePickerForm.size||"").replace(/mm$/i,""))||0)*7.85/1e6*100)/100 : 0;
+            const autoDesc = [st, st!=="PLATE"&&linePickerForm.size, linePickerForm.grade].filter(Boolean).join(" ");
+            return (
+              <div>
+                <G2>
+                  <Field label="Section Type">
+                    <Sel value={st} onChange={e=>setLinePickerForm(f=>({...f,sectionType:e.target.value,size:"",matLibId:""}))}>
+                      <option value="">— Select —</option>
+                      {sectionTypes.map(s=><option key={s}>{s}</option>)}
+                    </Sel>
+                  </Field>
+                  <Field label="Grade">
+                    <Sel value={linePickerForm.grade||"E250"} onChange={e=>setLinePickerForm(f=>({...f,grade:e.target.value}))}>
+                      {grades.map(g=><option key={g}>{g}</option>)}
+                    </Sel>
+                  </Field>
+                  {st && <Field label="Size / Thickness">
+                    <Sel value={linePickerForm.size||""} onChange={e=>setLinePickerForm(f=>({...f,size:e.target.value}))}>
+                      <option value="">— Select —</option>
+                      {availSizes.map(s=><option key={s}>{s}</option>)}
+                    </Sel>
+                  </Field>}
+                  <Field label="Unit">
+                    <Sel value={linePickerForm.unit||"Pcs"} onChange={e=>setLinePickerForm(f=>({...f,unit:e.target.value}))}>
+                      {["Pcs","Sheets","Metres","Kg"].map(u=><option key={u}>{u}</option>)}
+                    </Sel>
+                  </Field>
+                  {st==="PLATE" && <>
+                    <Field label="Length (mm)"><Input type="number" value={linePickerForm.length||""} onChange={e=>setLinePickerForm(f=>({...f,length:+e.target.value}))} placeholder="e.g. 6000" /></Field>
+                    <Field label="Width (mm)"><Input type="number" value={linePickerForm.width||""} onChange={e=>setLinePickerForm(f=>({...f,width:+e.target.value}))} placeholder="e.g. 1250" /></Field>
+                  </>}
+                  <Field label="Qty"><Input type="number" value={linePickerForm.qty||""} onChange={e=>setLinePickerForm(f=>({...f,qty:+e.target.value}))} /></Field>
+                  <Field label="Unit Price (₹)"><Input type="number" value={linePickerForm.unitPrice||""} onChange={e=>setLinePickerForm(f=>({...f,unitPrice:+e.target.value}))} /></Field>
+                </G2>
+                {wtPerSheet>0 && <div style={{ fontSize:12, color:T.textMid, margin:"8px 0" }}>Wt/sheet: <strong style={{color:T.text}}>{fmt.num(wtPerSheet)} kg</strong> · Total: <strong style={{color:T.green}}>{fmt.num(wtPerSheet*(linePickerForm.qty||1))} kg</strong></div>}
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14 }}>
+                  <button onClick={()=>setLinePickerModal({category:null})} style={css.btn.ghost}>← Back</button>
+                  <button onClick={()=>{
+                    const wt = wtPerSheet>0 ? wtPerSheet*(linePickerForm.qty||1) : 0;
+                    const tp = linePickerForm.pricingMethod==="PerKg" ? wt*(linePickerForm.unitPrice||0) : (linePickerForm.qty||1)*(linePickerForm.unitPrice||0);
+                    const newLine = { matLibId:"", matCode:`${st}/${linePickerForm.matType||"MS"}/${linePickerForm.grade||"E250"}/${linePickerForm.size||""}`, sectionType:st, matType:linePickerForm.matType||"MS", grade:linePickerForm.grade||"E250", size:linePickerForm.size||"", isPlate:st==="PLATE", orderMode:"ByUnits", qty:linePickerForm.qty||1, qtyOrdered:linePickerForm.qty||1, unit:linePickerForm.unit||"Pcs", pricingMethod:linePickerForm.pricingMethod||"PerUnit", unitPrice:linePickerForm.unitPrice||0, wtOrdered:wt, wtRequired:wt, totalPrice:tp, length:linePickerForm.length||null, width:linePickerForm.width||null, wtSource:"", effectiveRateKg:wt>0?tp/wt:0, qtyReceived:0, wtReceived:0, status:"pending", category:"raw_material", itemDescription:autoDesc };
+                    setForm(f=>({...f,lines:[...(f.lines||[]),newLine]}));
+                    setLinePickerModal(null);
+                  }} disabled={!st||!linePickerForm.size} style={{ ...css.btn.primary, opacity:(!st||!linePickerForm.size)?0.4:1 }}>Add to PO</button>
+                </div>
+              </div>
+            );
+          })()}
+          {linePickerModal.category === "paint" && (()=>{
+            const paintTypes = ["Primer","Intermediate/MIO","Finish Coat","Thinner","Hardener","Putty"];
+            const paintItems = (paint||[]).filter(p=>p.active!==false);
+            const makes = [...new Set(paintItems.map(p=>p.make).filter(Boolean))];
+            const packs = ["1 Litre","4 Litre","10 Litre","20 Litre","200 Litre"];
+            const autoDesc = [linePickerForm.paintType, linePickerForm.product, linePickerForm.make, linePickerForm.packSize].filter(Boolean).join(" — ");
+            return (
+              <div>
+                <G2>
+                  <Field label="Type">
+                    <Sel value={linePickerForm.paintType||""} onChange={e=>setLinePickerForm(f=>({...f,paintType:e.target.value,product:""}))}>
+                      <option value="">— Select —</option>
+                      {paintTypes.map(t=><option key={t}>{t}</option>)}
+                    </Sel>
+                  </Field>
+                  <Field label="Make">
+                    <Sel value={linePickerForm.make||""} onChange={e=>setLinePickerForm(f=>({...f,make:e.target.value,product:""}))}>
+                      <option value="">— Select —</option>
+                      {makes.map(m=><option key={m}>{m}</option>)}
+                    </Sel>
+                  </Field>
+                  <Field label="Product">
+                    <Sel value={linePickerForm.product||""} onChange={e=>setLinePickerForm(f=>({...f,product:e.target.value}))}>
+                      <option value="">— Select —</option>
+                      {paintItems.filter(p=>!linePickerForm.make||p.make===linePickerForm.make).map(p=><option key={p.id} value={p.product}>{p.product}</option>)}
+                    </Sel>
+                  </Field>
+                  <Field label="Pack Size">
+                    <Sel value={linePickerForm.packSize||""} onChange={e=>setLinePickerForm(f=>({...f,packSize:e.target.value}))}>
+                      <option value="">— Select —</option>
+                      {packs.map(p=><option key={p}>{p}</option>)}
+                    </Sel>
+                  </Field>
+                  <Field label="Qty (packs)"><Input type="number" value={linePickerForm.qty||""} onChange={e=>setLinePickerForm(f=>({...f,qty:+e.target.value}))} /></Field>
+                  <Field label="Unit Price (₹/pack)"><Input type="number" value={linePickerForm.unitPrice||""} onChange={e=>setLinePickerForm(f=>({...f,unitPrice:+e.target.value}))} /></Field>
+                </G2>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14 }}>
+                  <button onClick={()=>setLinePickerModal({category:null})} style={css.btn.ghost}>← Back</button>
+                  <button onClick={()=>{
+                    const qty = linePickerForm.qty||1;
+                    const tp = qty*(linePickerForm.unitPrice||0);
+                    const newLine = { matLibId:"", matCode:"", sectionType:"Paint", size:linePickerForm.packSize||"", grade:"", matType:"", isPlate:false, orderMode:"ByUnits", qty, qtyOrdered:qty, unit:linePickerForm.packSize?.includes("Litre")?"Litre":"Pack", pricingMethod:"PerUnit", unitPrice:linePickerForm.unitPrice||0, wtOrdered:0, wtRequired:0, totalPrice:tp, effectiveRateKg:0, qtyReceived:0, wtReceived:0, status:"pending", category:"paint", itemDescription:autoDesc, paintType:linePickerForm.paintType, make:linePickerForm.make, product:linePickerForm.product };
+                    setForm(f=>({...f,lines:[...(f.lines||[]),newLine]}));
+                    setLinePickerModal(null);
+                  }} disabled={!linePickerForm.paintType||!linePickerForm.product} style={{ ...css.btn.primary, opacity:(!linePickerForm.paintType||!linePickerForm.product)?0.4:1 }}>Add to PO</button>
+                </div>
+              </div>
+            );
+          })()}
+          {linePickerModal.category === "consumable" && (()=>{
+            const subCats = [...new Set((consumables||[]).map(c=>c.subCategory))].sort();
+            const subCatItems = (consumables||[]).filter(c=>!linePickerForm.subCategory||c.subCategory===linePickerForm.subCategory);
+            const selItem = (consumables||[]).find(c=>c.id===linePickerForm.consumableId);
+            const autoDesc = selItem ? `${selItem.name}${linePickerForm.size?" "+linePickerForm.size:""}${linePickerForm.make?" — "+linePickerForm.make:""}${linePickerForm.packSize?" "+linePickerForm.packSize:""}` : "";
+            return (
+              <div>
+                <G2>
+                  <Field label="Sub-category">
+                    <Sel value={linePickerForm.subCategory||""} onChange={e=>setLinePickerForm(f=>({...f,subCategory:e.target.value,consumableId:"",size:"",make:"",packSize:""}))}>
+                      <option value="">— Select —</option>
+                      {subCats.map(s=><option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+                    </Sel>
+                  </Field>
+                  <Field label="Item">
+                    <Sel value={linePickerForm.consumableId||""} onChange={e=>{ const item=(consumables||[]).find(c=>c.id===e.target.value); setLinePickerForm(f=>({...f,consumableId:e.target.value,size:"",make:"",packSize:"",unit:item?.unit||"Piece"})); }}>
+                      <option value="">— Select —</option>
+                      {subCatItems.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                    </Sel>
+                  </Field>
+                  {selItem?.sizes?.length>0 && <Field label="Size">
+                    <Sel value={linePickerForm.size||""} onChange={e=>setLinePickerForm(f=>({...f,size:e.target.value}))}>
+                      <option value="">— Select —</option>
+                      {selItem.sizes.map(s=><option key={s}>{s}</option>)}
+                    </Sel>
+                  </Field>}
+                  {selItem?.approvedMakes?.length>0 && <Field label="Brand">
+                    <Sel value={linePickerForm.make||""} onChange={e=>setLinePickerForm(f=>({...f,make:e.target.value}))}>
+                      <option value="">— Select —</option>
+                      {selItem.approvedMakes.map(m=><option key={m}>{m}</option>)}
+                    </Sel>
+                  </Field>}
+                  {selItem?.packSizes?.length>0 && <Field label="Pack Size">
+                    <Sel value={linePickerForm.packSize||""} onChange={e=>setLinePickerForm(f=>({...f,packSize:e.target.value}))}>
+                      <option value="">— Select —</option>
+                      {selItem.packSizes.map(p=><option key={p}>{p}</option>)}
+                    </Sel>
+                  </Field>}
+                  <Field label="Qty"><Input type="number" value={linePickerForm.qty||""} onChange={e=>setLinePickerForm(f=>({...f,qty:+e.target.value}))} /></Field>
+                  <Field label={`Unit Price (₹/${selItem?.unit||"unit"})`}><Input type="number" value={linePickerForm.unitPrice||""} onChange={e=>setLinePickerForm(f=>({...f,unitPrice:+e.target.value}))} /></Field>
+                </G2>
+                {autoDesc && <div style={{ fontSize:11, color:T.textMid, margin:"8px 0" }}>Description: <strong style={{color:T.text}}>{autoDesc}</strong></div>}
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14 }}>
+                  <button onClick={()=>setLinePickerModal({category:null})} style={css.btn.ghost}>← Back</button>
+                  <button onClick={()=>{
+                    const qty = linePickerForm.qty||1;
+                    const tp = qty*(linePickerForm.unitPrice||0);
+                    const newLine = { matLibId:"", matCode:"", sectionType:"Consumable", size:linePickerForm.size||"", grade:"", matType:"", isPlate:false, orderMode:"ByUnits", qty, qtyOrdered:qty, unit:selItem?.unit||"Piece", pricingMethod:"PerUnit", unitPrice:linePickerForm.unitPrice||0, wtOrdered:0, wtRequired:0, totalPrice:tp, effectiveRateKg:0, qtyReceived:0, wtReceived:0, status:"pending", category:"consumable", consumableId:linePickerForm.consumableId, itemDescription:autoDesc };
+                    setForm(f=>({...f,lines:[...(f.lines||[]),newLine]}));
+                    setLinePickerModal(null);
+                  }} disabled={!linePickerForm.consumableId} style={{ ...css.btn.primary, opacity:!linePickerForm.consumableId?0.4:1 }}>Add to PO</button>
+                </div>
+              </div>
+            );
+          })()}
+        </Modal>
+      )}
+
       {/* Hidden file input for New PO CSV import */}
       <input ref={poImpRef} type="file" accept=".csv" style={{display:"none"}} onChange={handlePOImpFile} />
       {/* PO Line CSV Import Preview Modal */}
@@ -5626,6 +6154,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
   const [grnModal, setGrnModal] = useState(false);
   const [grnForm, setGrnForm] = useState({ lines:[] });
   const [inspModal, setInspModal] = useState(null);
+  const [groupRates, setGroupRates] = useState({}); // {[matCode]: ratePerKg} for nesting POs
   const [poImpModal, setPoImpModal] = useState(false);
   const [poImpRows,  setPoImpRows]  = useState([]);
   const [poImpErr,   setPoImpErr]   = useState("");
@@ -5829,6 +6358,84 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           {po.lines?.some(l=>l.wtSource==="manual") && (
             <InfoBanner color="amber">One or more lines have manually entered weights — verify with vendor before raising GRN.</InfoBanner>
           )}
+          {po.sourceType==="nesting" ? (()=>{
+            // GROUP by matCode for nesting POs
+            const grpMap = {};
+            (po.lines||[]).forEach(l => {
+              const k = l.matCode||"unknown";
+              if (!grpMap[k]) grpMap[k] = [];
+              grpMap[k].push(l);
+            });
+            const grpTotal = (po.lines||[]).reduce((s,l)=>s+(l.totalPrice||0),0);
+            const grpWtOrd = (po.lines||[]).reduce((s,l)=>s+(l.wtOrdered||0),0);
+            return (
+              <div>
+                {Object.entries(grpMap).map(([matCode, lines])=>{
+                  const gWt = lines.reduce((s,l)=>s+(l.wtOrdered||0),0);
+                  const gTotal = lines.reduce((s,l)=>s+(l.totalPrice||0),0);
+                  const rate = groupRates[matCode]||"";
+                  return (
+                    <div key={matCode} style={{ marginBottom:20, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+                      <div style={{ background:T.bgCard, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+                        <div>
+                          <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi, fontSize:13 }}>{matCode}</span>
+                          <span style={{ fontSize:12, color:T.textMid, marginLeft:12 }}>{lines.length} dimension{lines.length!==1?"s":""} · {fmt.num(gWt)} kg total</span>
+                        </div>
+                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <span style={{ fontSize:12, color:T.textMid }}>₹/kg (applies to all):</span>
+                          <input type="number" value={rate} min={0} placeholder="0.00"
+                            onChange={e=>{
+                              const r = parseFloat(e.target.value)||0;
+                              setGroupRates(prev=>({...prev,[matCode]:e.target.value}));
+                              setPos(prev=>prev.map(p=>{
+                                if(p.id!==po.id) return p;
+                                return {...p, lines:p.lines.map(l=>{
+                                  if(l.matCode!==matCode) return l;
+                                  const totalPrice = Math.round((l.wtOrdered||0)*r*100)/100;
+                                  return {...l, pricingMethod:"PerKg", unitPrice:r, totalPrice, effectiveRateKg:r};
+                                })};
+                              }));
+                            }}
+                            style={{ width:100, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"4px 8px", color:T.text, fontFamily:T.fontMono, fontSize:12 }} />
+                          <span style={{ fontSize:12, fontWeight:700, color:T.green }}>= {fmt.currency(gTotal)}</span>
+                        </div>
+                      </div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                        <thead><tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                          <TH>Dimensions</TH><TH right>Sheets</TH><TH right>Wt/Sheet (kg)</TH><TH right>Total Wt (kg)</TH><TH right>Total Value</TH><TH>Status</TH>
+                        </tr></thead>
+                        <tbody>
+                          {lines.map((l,i)=>(
+                            <tr key={l.id} style={{ background:i%2===0?"transparent":T.bg }}>
+                              <TD mono>{l.sheetDim||l.description||"—"}</TD>
+                              <TD right mono>{l.qty||0}</TD>
+                              <TD right mono>{l.wtPerSheet ? fmt.num(l.wtPerSheet) : "—"}</TD>
+                              <TD right mono>{fmt.num(l.wtOrdered||0)}</TD>
+                              <TD right mono color={l.totalPrice>0?T.green:T.textLow}>{fmt.currency(l.totalPrice)}</TD>
+                              <TD><Badge color={l.status==="fully_received"?"green":l.status==="partially_received"?"amber":"gray"}>{l.status?.replace("_"," ")}</Badge></TD>
+                            </tr>
+                          ))}
+                          <tr style={{ background:T.bgInput, fontWeight:700 }}>
+                            <td colSpan={3} style={{ padding:"6px 10px", fontSize:12, color:T.textMid }}>Subtotal</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontSize:12 }}>{fmt.num(gWt)}</td>
+                            <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.fontMono, fontSize:12, color:T.green }}>{fmt.currency(gTotal)}</td>
+                            <td/>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+                <div style={{ background:T.bgCard, borderRadius:6, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:13, fontWeight:700, color:T.textMid }}>Grand Total</span>
+                  <div style={{ display:"flex", gap:24 }}>
+                    <span style={{ fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(grpWtOrd)} kg</span>
+                    <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.currency(grpTotal)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })() : (
           <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
             <thead><tr><TH>#</TH><TH>Section</TH><TH>Size</TH><TH>Grade</TH><TH right>Qty / Weight</TH><TH right>Unit Price</TH><TH>Pricing</TH><TH right>Eff ₹/kg</TH><TH right>Total</TH><TH right>Wt Ord (kg)</TH><TH right>Wt Rcvd (kg)</TH><TH>Status</TH></tr></thead>
@@ -5869,6 +6476,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
             </tbody>
           </table>
           </div>
+          )}
         </div>
       )}
 
@@ -15888,6 +16496,7 @@ export default function App() {
   const [bays, setBays]                 = useState(BAYS_SEED);
   const [materials, setMaterials]       = useState(MATERIALS_LIBRARY);
   const [paint, setPaint]               = useState(PAINT_LIBRARY);
+  const [consumables, setConsumables]   = useState(CONSUMABLES_SEED);
   const [tpiAgencies, setTpiAgencies]   = useState(TPI_AGENCIES);
   const [approvedMakes, setApprovedMakes] = useState(APPROVED_MAKES_LIBRARY);
   const [machines, setMachines]         = useState(MACHINES_SEED);
@@ -15934,7 +16543,7 @@ export default function App() {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} />;
-      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
+      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
@@ -15943,7 +16552,7 @@ export default function App() {
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
-      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} />;
+      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} />;
       default:          return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
     }
   };

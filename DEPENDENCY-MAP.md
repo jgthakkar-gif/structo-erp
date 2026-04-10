@@ -1,19 +1,19 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 1.9 — April 2026
-# Session 4 Phase 3 — Nesting/Purchase additions + MRP UI fixes + E1 contractor updates
-# Updated: rmUnitId — format changed to matCode/sheetDim/n-of-groupTotal (per-dimension fractions)
-#          normRmMatCode() — helper adds mm suffix to bare numeric thickness segments
-#          normMatCode() — lowercases and strips mm suffix (comparison)
-#          lot.parentRmUnitId, lot.offcutSequence — off-cut inheritance fields
-#          nestingBatch PR/PO status badges — MRPModule batch cards show procurement status
-#          Discard Nesting Run — modal flow with PR cascading and PO note
-#          PurchaseModule Requisitions tab — nesting-type PRs with Convert/Discard actions
-#          MRP drawing selection — all unchecked by default, Select All/Clear All, reset on tab change
-#          MRP nesting runs — Section A (NEST-PLN) / Section B (NEST-BCH) labelling
-#          ContractorWorkQueue — stock prop, EOD prompt banner, RM QC done status row
-#          C5-WIZARD-STEP1 — confirmed PASS: expandedDrg, parts/RM sub-tables in Release Wizard Step 1
+# Version 2.0 — April 2026
+# Session 4 Phase 3 — Part 2: PO fixes + consumables catalog + structured line entry
+# Updated: CONSUMABLES_SEED (50 items) + consumables state + ConsumablesMaster component
+#          Masters: Consumables tab between Paint and TPI Agencies
+#          parseNestingMatCode() + nestingSheetWt() helpers before PurchaseModule
+#          PO lines from nesting PR: one line per dimension, weight calculated per sheet
+#          po.sourceType="nesting": PODetail shows grouped matCode view with ₹/kg per group
+#          savePO: PR status marked converted with poId after creation
+#          createCombinedPO: multi-PR combine into single PO, checkboxes + sticky bar
+#          LinePicker modal: structured line entry for manual POs (RM / Paint / Consumable)
+#          Nesting form lines: shown read-only summary; manual filter excludes sourceType=nesting
+#          Dead code removed: prExpanded/setPrExpanded placeholder in Requisitions tab
 #
-# Prior: FIX1/2/3, DevTools, D1-D6, E2, Welder Register, Dev Tools (blast/paint timers)
+# Prior: v1.9 — rmUnitId fractions, normRmMatCode, off-cut fields, PR/PO badges, discard flow,
+#        Requisitions tab, MRP UI fixes, E1 contractor EOD banner
 #
 # INSTRUCTIONS FOR CLAUDE CODE:
 # Before changing ANY field, function, or data structure,
@@ -856,8 +856,105 @@ purchaseReq.status ('open' | 'converted' | 'cancelled')
 
 purchaseReq.poId (string — links to converted PO)
   READS:   MRPModule poForPr(pr) — finds PO matching this PR
-  WRITES:  PurchaseModule Requisitions tab Convert to PO action
+           PurchaseModule Requisitions — "View {po.id}" button visibility
+  WRITES:  PurchaseModule savePO() — set when form.prId exists (single PR convert)
+           PurchaseModule createCombinedPO() — set on ALL selectedPrs simultaneously
   IF CHANGED: poForPr() relies on pos.find(p=>p.id===pr.poId)
+
+# ── PO Object Fields ──────────────────────────────────────────────────
+
+po.sourceType ('nesting' | undefined)
+  *** NEW FIELD — identifies nesting-originated POs ***
+  READS:   PODetail lines tab — branch to grouped matCode view vs. flat table
+           PurchaseModule new_po modal — hides [+ Add Line] and CSV import when nesting
+  WRITES:  PurchaseModule savePO() — set from form.sourceType (set in Convert to PO handler)
+           PurchaseModule createCombinedPO() — always sets "nesting"
+  DISPLAYS: PODetail lines tab — nesting POs show matCode groups with ₹/kg input per group
+  IF CHANGED: Both PODetail branch and New PO modal [+ Add Line] guard must be updated together
+
+po.prIds (string[] | undefined)
+  *** NEW FIELD — for combined multi-PR POs ***
+  READS:   PurchaseModule Requisitions tab — each PR with poId shows "View {po.id}" button;
+           poId is set on each individual PR, so prIds is for traceability only
+  WRITES:  PurchaseModule createCombinedPO()
+  NOTE:    For single-PR conversion, only pr.poId is set (no po.prIds needed)
+  IF CHANGED: No functional dependency — informational only
+
+po.line.sourceType ('nesting' | undefined)
+  *** NEW FIELD — per-line origin marker ***
+  READS:   PurchaseModule new_po modal — filter nesting lines out of editable map
+           PurchaseModule new_po modal — shows read-only nesting summary above editable lines
+  WRITES:  Convert to PO handler and createCombinedPO() — always set "nesting"
+  IF CHANGED: The filter `l.sourceType!=="nesting"` in new_po modal line render must match
+
+po.line.sheetDim (string e.g. "6000X1250")
+  *** NEW FIELD — dimension string for nesting plate lines ***
+  READS:   PODetail grouped nesting view — "Dimensions" column
+  WRITES:  Convert to PO handler, createCombinedPO() — from ln.sheetDim||ln.dims
+  IF CHANGED: nestingSheetWt() parses this — must use X delimiter (uppercase)
+
+po.line.wtPerSheet (number kg)
+  *** NEW FIELD — weight per sheet calculated at line creation ***
+  FORMULA: L(mm) × W(mm) × t(mm) × 7.85 / 10^6
+           where t = parseFloat(matCode.split("/")[3].replace(/mm$/i,""))
+  READS:   PODetail grouped nesting view — "Wt/Sheet" column
+  WRITES:  nestingSheetWt() helper called in Convert to PO and createCombinedPO()
+  NOTE:    0 if sheetDim is blank or t cannot be parsed from matCode
+  IF CHANGED: Update nestingSheetWt() helper; recalculate wtOrdered (= wtPerSheet × qty)
+
+po.line.category ('raw_material' | 'paint' | 'consumable' | undefined)
+  *** NEW FIELD — structured line type from LinePicker ***
+  READS:   No current reader — reserved for future display (category badge)
+  WRITES:  LinePicker modal — set per category button chosen
+  NOTE:    Lines without category (legacy POs) display unchanged — no migration needed
+  IF CHANGED: Add category badge rendering to PODetail lines table if needed
+
+po.line.itemDescription (string)
+  *** NEW FIELD — auto-generated description from LinePicker ***
+  FORMAT:  RM: "ISA E250 75x75x8", Paint: "Primer — Berger 20L", Cons: "SMAW E7018 3.15mm — ESAB 5kg"
+  READS:   Not yet used in display (future: replace itemCode in GRN line descriptions)
+  WRITES:  LinePicker modal on Add to PO click
+  IF CHANGED: Update GRN auto-line materialDesc when using this field
+
+parseNestingMatCode(matCode) — PO creation helper
+  *** NEW HELPER — before PurchaseModule, shared by Convert to PO and createCombinedPO ***
+  BEHAVIOR: Splits matCode by "/" → {sectionType[0], matType[1], grade[2], size[3]}
+  EXAMPLE:  "PLATE/MS/E350/10mm" → {sectionType:"PLATE", matType:"MS", grade:"E350", size:"10mm"}
+  READS:   Convert to PO handler, createCombinedPO()
+  IF CHANGED: Both handlers must be updated; sectionType used in GRN material description
+
+nestingSheetWt(matCode, sheetDim) — PO weight calculation helper
+  *** NEW HELPER — before PurchaseModule ***
+  FORMULA: L × W × t × 7.85 / 1e6  (all in mm)
+  PARSES:  t from matCode.split("/")[3] stripping "mm" suffix
+           L,W from sheetDim.toUpperCase().split("X")
+  READS:   Convert to PO, createCombinedPO(), combine bar total weight display
+  IF CHANGED: Update all three callers; test against: PLATE/MS/E350/10, 6000X1250 → 471.0 kg
+
+# ── Consumables Master ────────────────────────────────────────────────
+
+consumable object shape
+  {id:string, name:string, category:"consumables", subCategory:string,
+   sizes:string[], packSizes:string[], approvedMakes:string[],
+   hsnCode:string, unit:string, reorderLevel:number, reorderQty:number,
+   trackingTier:"strict"|"quantity"|"none"}
+  READS:   ConsumablesMaster table and add/edit modal
+           PurchaseModule LinePicker modal (category=consumable)
+  WRITES:  ConsumablesMaster save() — add/edit
+  DISPLAYS: Masters → Consumables tab — searchable table with filter by subCategory
+  IF CHANGED: Update LinePicker consumable dropdown source
+
+consumables state (array of consumable objects)
+  READS:   ConsumablesMaster, PurchaseModule LinePicker
+  WRITES:  ConsumablesMaster.save()
+  NOTE:    Initialized from CONSUMABLES_SEED (50 items, 7 sub-categories)
+           NOT persisted to localStorage yet — resets on page reload
+  IF CHANGED: Add localStorage persistence if needed (same pattern as paint/materials)
+
+consumable.id (CON-NNN format)
+  READS:   LinePicker — consumableId field on po.line
+  WRITES:  ConsumablesMaster save() — max existing id + 1
+  IF CHANGED: Update po.line.consumableId references
 
 # ── MRP Drawing Selection ──────────────────────────────────────────────
 
