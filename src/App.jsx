@@ -4264,7 +4264,10 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
               Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
             </div>
             <Field label="Vendor" required>
-              <Input value={convertPoVendor} onChange={e=>setConvertPoVendor(e.target.value)} placeholder="Vendor name..." />
+              <select value={convertPoVendor} onChange={e=>setConvertPoVendor(e.target.value)} style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"6px 10px", color:T.text, fontSize:12 }}>
+                <option value="">— Select vendor —</option>
+                {(vendors||[]).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
             </Field>
             <div style={{ marginBottom:12, marginTop:8 }}>
               <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:6 }}>Lines from PR</div>
@@ -4278,28 +4281,65 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
             <div style={{ fontSize:11, color:T.amber, marginBottom:12 }}>Pricing to be confirmed in the Purchase module after PO creation.</div>
             <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
               <button onClick={()=>setConvertPoModal(null)} style={css.btn.secondary}>Cancel</button>
-              <button disabled={!convertPoVendor.trim()} onClick={()=>{
+              <button disabled={!convertPoVendor} onClick={()=>{
                 const yr = new Date().getFullYear();
                 const max = (pos||[]).reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; }, 0);
                 const poId = `PO-${yr}-${String(max+1).padStart(3,"0")}`;
+                const vendor = (vendors||[]).find(v=>v.id===convertPoVendor);
                 const newPO = {
-                  id:poId, vendorId:"", vendorCode:"", vendorName:convertPoVendor.trim(),
-                  poDate:today(), expectedDelivery:"", status:"pending",
+                  id:poId, vendorId:convertPoVendor, vendorCode:vendor?.vendorCode||"", vendorName:vendor?.name||convertPoVendor,
+                  poDate:today(), expectedDelivery:"", status:"pending", sourceType:"nesting",
                   servedOrders:[], coveredOrders:[], includesStock:false, remarks:`From ${pr.id} — ${pr.nestingBatchId}`,
                   prId:pr.id,
-                  lines:(pr.lots||[]).map((l,i)=>({
-                    id:`POL-${Date.now()}-${i}`, matCode:l.matCode, sectionType:"", size:"", grade:"E250", matType:"MS",
-                    isPlate:false, orderMode:"ByUnits", qty:l.sheetCount||0, qtyOrdered:l.sheetCount||0, unit:"Sheets",
-                    pricingMethod:"PerUnit", unitPrice:0, wtOrdered:0, wtRequired:0, totalPrice:0,
-                    wtReceived:0, status:"pending", qtyReceived:0, itemCode:l.matCode,
-                  })),
+                  lines:(pr.lots||[]).flatMap((l,li)=>{
+                    const segs = l.matCode.split('/');
+                    const sectionType = segs[0]||'';
+                    const matType = segs[1]||'MS';
+                    const grade = segs[2]||'E350';
+                    const rawSize = segs[3]||'';
+                    const size = rawSize ? rawSize.replace(/mm$/i,'')+'mm' : '';
+                    const thickness = parseFloat(rawSize)||0;
+                    const dimLines = l.lines||[];
+                    if(dimLines.length===0){
+                      return [{
+                        id:`POL-${Date.now()}-${li}-0`, matCode:l.matCode,
+                        sectionType, matType, grade, size,
+                        isPlate:sectionType.toUpperCase()==='PLATE',
+                        orderMode:'ByUnits', qty:l.sheetCount||0, qtyOrdered:l.sheetCount||0, unit:'Sheets', description:'', sheetDim:'',
+                        pricingMethod:'PerKg', unitPrice:0, wtPerSheet:0, wtOrdered:0, wtRequired:0, totalPrice:0,
+                        wtReceived:0, status:'pending', qtyReceived:0, itemCode:l.matCode,
+                        category:'raw_material', prId:pr.id, nestingBatchId:pr.nestingBatchId,
+                      }];
+                    }
+                    return dimLines.map((d,di)=>{
+                      const dimStr = d.sheetDim||'';
+                      const dimParts = dimStr.toUpperCase().split('X');
+                      const dimL = parseFloat(dimParts[1]||dimParts[0]||0);
+                      const dimW = parseFloat(dimParts[0]||0);
+                      const wtPerSheet = (sectionType.toUpperCase()==='PLATE' && thickness>0 && dimL>0 && dimW>0)
+                        ? Math.round(dimL*dimW*thickness*7.85/1000000*10)/10 : 0;
+                      const totalWt = Math.round(wtPerSheet*d.qty*10)/10;
+                      return {
+                        id:`POL-${Date.now()}-${li}-${di}`, matCode:l.matCode,
+                        sectionType, matType, grade, size,
+                        isPlate:sectionType.toUpperCase()==='PLATE',
+                        orderMode:'ByUnits', description:dimStr, sheetDim:dimStr,
+                        qty:d.qty, qtyOrdered:d.qty, unit:'Sheets',
+                        pricingMethod:'PerKg', unitPrice:0,
+                        wtPerSheet, wtOrdered:totalWt, wtRequired:totalWt,
+                        totalPrice:0, wtReceived:0, status:'pending', qtyReceived:0,
+                        itemCode:l.matCode, category:'raw_material',
+                        prId:pr.id, prLineRef:dimStr, nestingBatchId:pr.nestingBatchId,
+                      };
+                    });
+                  }),
                   grns:[], createdBy:user.name, createdDate:today(),
                 };
                 setPos(prev=>[...(prev||[]), newPO]);
                 setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"converted",poId}));
                 setConvertPoModal(null); setConvertPoVendor("");
                 showToast(`${poId} created`);
-              }} style={{ ...css.btn.primary, opacity:convertPoVendor.trim()?1:0.4 }}>Create PO</button>
+              }} style={{ ...css.btn.primary, opacity:convertPoVendor?1:0.4 }}>Create PO</button>
             </div>
           </Modal>
         );
@@ -6358,7 +6398,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           {po.lines?.some(l=>l.wtSource==="manual") && (
             <InfoBanner color="amber">One or more lines have manually entered weights — verify with vendor before raising GRN.</InfoBanner>
           )}
-          {po.sourceType==="nesting" ? (()=>{
+          {(po.sourceType==="nesting"||(po.lines||[]).some(l=>l.prId)) ? (()=>{
             // GROUP by matCode for nesting POs
             const grpMap = {};
             (po.lines||[]).forEach(l => {
