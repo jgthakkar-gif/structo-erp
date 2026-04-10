@@ -1333,6 +1333,13 @@ const normalize = s => (s||'').toLowerCase().split('x').map(seg => /^\d+\.0$/.te
 
 // Normalize matCode for fuzzy comparison: lowercase + strip trailing "mm" (e.g. "PLATE/MS/E250/8MM" → "plate/ms/e250/8")
 const normMatCode = mc => (mc||"").toLowerCase().replace(/mm$/, "");
+// Normalize matCode for rmUnitId: add "mm" suffix to bare numeric thickness segment (e.g. "PLATE/MS/E250/8" → "PLATE/MS/E250/8mm")
+const normRmMatCode = mc => {
+  const segs = (mc||"").split("/");
+  const last = segs[segs.length-1];
+  if (/^\d+(\.\d+)?$/.test(last)) segs[segs.length-1] = last + "mm";
+  return segs.join("/");
+};
 
 const parsePOLineCSV = (text, materials) => {
   const clean = (text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
@@ -2972,7 +2979,7 @@ const qcStatusBadge   = { approved:"green", pending:"gray", failed:"red", hold:"
 // ═══════════════════════════════════════════════════════════════════════════════
 // MRP MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines }) => {
+const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines }) => {
   const [view, setView] = useState("overview");
   const [expand, setExpand] = useState({});
   const [nestModal, setNestModal] = useState(null);
@@ -2991,12 +2998,66 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
   // Batch drill-down
   const [expandedBatch, setExpandedBatch] = useState(null); // batchId
   const [expandedLot, setExpandedLot] = useState(null); // lotId
-  // nestSelDrgs: { "orderId|drawingId": bool } — absent key means selected (true)
+  // Batch procurement / discard state
+  const [showDiscardedBatches, setShowDiscardedBatches] = useState(false);
+  const [discardModal, setDiscardModal] = useState(null); // { batch, pr, po }
+  const [discardReason, setDiscardReason] = useState("");
+  const [createPrModal, setCreatePrModal] = useState(null); // batch
+  const [convertPoModal, setConvertPoModal] = useState(null); // pr
+  const [convertPoVendor, setConvertPoVendor] = useState("");
+  // nestSelDrgs: { "orderId|drawingId": bool } — absent key means NOT selected (false = default unchecked)
   const [nestSelDrgs, setNestSelDrgs] = useState({});
   const [nestExportSel, setNestExportSel] = useState(null); // Set<drawingId> passed to export
+  // Reset selections whenever the tab changes
+  useEffect(() => { setNestSelDrgs({}); }, [view]);
 
   const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
-  const isDrgSel = (orderId, drgId) => nestSelDrgs[`${orderId}|${drgId}`] ?? true;
+
+  // Procurement helpers for planning batches
+  const prForBatch = (batchId) => (purchaseReqs||[]).find(r=>r.nestingBatchId===batchId&&r.type==="nesting");
+  const poForPr    = (pr) => pr?.poId ? (pos||[]).find(p=>p.id===pr.poId) : null;
+
+  const createBatchPr = (batch) => {
+    const yr = new Date().getFullYear();
+    let maxPr = 0;
+    (purchaseReqs||[]).forEach(r=>{ const m=(r.id||"").match(/^PR-NEST-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) maxPr=Math.max(maxPr,+m[2]); });
+    const prId = `PR-NEST-${yr}-${String(maxPr+1).padStart(3,"0")}`;
+    const lots = (batch.lots||[]).map(l=>({
+      matCode: l.matCode,
+      sheetCount: l.sheets.length,
+      parts: l.parts,
+      lines: Object.values(l.sheets.reduce((acc,sh)=>{
+        const k = sh.sheetDim||"?";
+        if (!acc[k]) acc[k]={ sheetDim:k, qty:0 };
+        acc[k].qty++;
+        return acc;
+      },{})),
+    }));
+    const newPr = { id:prId, type:"nesting", nestingBatchId:batch.id,
+      createdAt:today(), createdBy:user.name, status:"pending",
+      lots, poId:null, cancelledAt:null, cancelReason:null };
+    setPurchaseReqs(prev=>[...(prev||[]), newPr]);
+    setCreatePrModal(null);
+    showToast(`${prId} created`);
+  };
+
+  const discardBatch = (batch, pr, po, reason) => {
+    setNestingBatches(prev=>prev.map(b=>b.id!==batch.id?b:{
+      ...b, status:"discarded", discardedAt:today(), discardedBy:user.name, discardReason:reason, supersededBy:null
+    }));
+    if (pr && !po) {
+      setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"cancelled",cancelledAt:today(),cancelReason:reason}));
+    }
+    if (po) {
+      setPos(prev=>prev.map(p=>p.id!==po.id?p:{
+        ...p, notes:[...(p.notes||[]),{text:`⚠ Source nesting run discarded on ${today()} — ${reason}`,by:user.name,date:today()}]
+      }));
+    }
+    setDiscardModal(null); setDiscardReason("");
+    showToast("Nesting run discarded");
+  };
+
+  const isDrgSel = (orderId, drgId) => nestSelDrgs[`${orderId}|${drgId}`] ?? false; // default: unchecked
   const toggleDrg = (orderId, drgId) => setNestSelDrgs(prev => ({...prev, [`${orderId}|${drgId}`]: !isDrgSel(orderId, drgId)}));
 
   // Group purchase reqs by order → drawing
@@ -3129,7 +3190,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
       const sheetNo = col(row,"sheet no","sheet_no","sheetno","sheet number");
       const sheetDim = col(row,"sheet dim lxw","sheet dim","sheetdim","sheet_dim","dims","dimensions","lxw");
       const markNo   = col(row,"mark no","mark_no","markno","mark number","part");
-      const utilisPctStr = col(row,"utilisation %","utilisation","utilization %","utilization");
+      const utilisPctStr = col(row,"utilisation %","utilisation%","utilization %","utilization%","utilisation","utilization","util %","util%","util","usage %","usage");
       const utilisPct = parseFloat(utilisPctStr)||0;
       if (!matCode) return;
       if (!lotsMap[matCode]) lotsMap[matCode] = { matCode, sheets:{}, allParts:[] };
@@ -3148,11 +3209,21 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
     // Build lot records with RM Unit IDs
     const lots = Object.values(lotsMap).map(lot=>{
       const sheetArr = Object.values(lot.sheets);
-      const total = sheetArr.length;
-      const sheetsWithIds = sheetArr.map((s,i)=>{
-        // RM Unit ID: [matCode]/[LxW]/[n-of-total]
-        // e.g. PLATE/E250/12mm/2500x1250/1-4
-        const rmUnitId = `${lot.matCode}/${s.sheetDim||"?"}/` + `${i+1}-${total}`;
+      // Group by sheetDim so fractions are per-dimension, not across all sheets
+      // e.g. 1500X9000 has 2 sheets → /1-2 and /2-2 (not /5-31 and /6-31)
+      const byDim = {};
+      sheetArr.forEach(s => {
+        const k = s.sheetDim||"?";
+        if (!byDim[k]) byDim[k] = [];
+        byDim[k].push(s);
+      });
+      const sheetsWithIds = sheetArr.map(s => {
+        const k = s.sheetDim||"?";
+        const dimGroup = byDim[k];
+        const idxInGroup = dimGroup.indexOf(s); // reference equality — safe since same objects
+        // RM Unit ID: matCode/sheetDim/n-of-groupTotal
+        // e.g. PLATE/MS/E350/10mm/1500X9000/1-2
+        const rmUnitId = `${normRmMatCode(lot.matCode)}/${k}/${idxInGroup+1}-${dimGroup.length}`;
         return { sheetNo:s.sheetNo, sheetDim:s.sheetDim, utilisPct:s.utilisPct, parts:[...s.parts], rmUnitId };
       });
       const safeId = lot.matCode.replace(/[^a-zA-Z0-9]/g,"-");
@@ -3274,45 +3345,84 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
         </InfoBanner>
       )}
 
-      <div style={{ display:"flex", gap:8, marginBottom:18, alignItems:"center" }}>
-        <button onClick={()=>{
-          const sel = new Set();
-          byOrder.forEach(({order:o,drawings})=>{
-            drawings.forEach(d=>{ if(isDrgSel(o.id,d.id)) sel.add(d.id); });
-          });
-          setNestExportSel(sel);
-          setView("nest_export");
-        }} style={css.btn.primary}>
-          📤 Export Nesting Sheets (Stage 1)
-        </button>
-        {selDrgCount < byOrder.reduce((n,{drawings})=>n+drawings.length,0) && (
-          <span style={{fontSize:12,color:T.amber}}>
-            {selDrgCount} of {byOrder.reduce((n,{drawings})=>n+drawings.length,0)} drawings selected
-          </span>
-        )}
-        <button onClick={()=>setNestModal("import")} style={css.btn.amber}>📥 Import Nesting Results</button>
-      </div>
+      {/* Global selection controls */}
+      {(()=>{
+        const totalDrgCount = byOrder.reduce((n,{drawings})=>n+drawings.length,0);
+        const canExport = selDrgCount > 0;
+        return (
+          <div style={{ display:"flex", gap:8, marginBottom:14, alignItems:"center", flexWrap:"wrap" }}>
+            <button onClick={()=>{
+              const allSel = {};
+              byOrder.forEach(({order:o,drawings})=>drawings.forEach(d=>{ allSel[`${o.id}|${d.id}`]=true; }));
+              setNestSelDrgs(allSel);
+            }} style={css.btn.secondary}>☐ Select All Drawings</button>
+            <button onClick={()=>setNestSelDrgs({})} style={css.btn.secondary}>Clear All</button>
+            <span style={{ fontSize:12, color:selDrgCount===0?T.textLow:T.amber, fontWeight:selDrgCount>0?600:400 }}>
+              {selDrgCount} of {totalDrgCount} drawing{totalDrgCount!==1?"s":""} selected
+            </span>
+            <div style={{ marginLeft:"auto", display:"flex", gap:8 }}>
+              <button
+                disabled={!canExport}
+                title={!canExport?"Select drawings first":undefined}
+                onClick={()=>{
+                  const sel = new Set();
+                  byOrder.forEach(({order:o,drawings})=>drawings.forEach(d=>{ if(isDrgSel(o.id,d.id)) sel.add(d.id); }));
+                  setNestExportSel(sel);
+                  setView("nest_export");
+                }}
+                style={{ ...css.btn.primary, opacity:canExport?1:0.4, cursor:canExport?"pointer":"not-allowed" }}>
+                📤 Export Nesting Sheets (Stage 1)
+              </button>
+              <button onClick={()=>setNestModal("import")} style={css.btn.amber}>📥 Import Nesting Results</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Per-order MRP view */}
       {byOrder.map(({ order, reqs, totalWtReq, drawings, totalDrgWt }) => (
         <div key={order.id} style={{ ...css.card, marginBottom:14 }}>
+          {(()=>{
+            const orderAllSel = drawings.length>0 && drawings.every(d=>isDrgSel(order.id,d.id));
+            const orderNoneSel = drawings.every(d=>!isDrgSel(order.id,d.id));
+            const orderPartial = !orderAllSel && !orderNoneSel;
+            const orderSelCount = drawings.filter(d=>isDrgSel(order.id,d.id)).length;
+            return (
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-            <div>
-              <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
-                <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{order.id}</span>
-                <Badge color="green">{order.status}</Badge>
-                <Badge color="gray">{CLIENTS[order.clientId]?.name}</Badge>
-              </div>
-              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>{order.projectDesc}</div>
-              <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>
-                {order.orderQty} {order.orderUnit} · {fmt.currency(order.orderValue)} ·{" "}
-                Drawings received: {drawings.length}/{order.drawings.length} · {fmt.wtT(totalDrgWt)} of {order.orderQty}T
+            <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+              <input type="checkbox"
+                ref={el=>{ if(el) el.indeterminate=orderPartial; }}
+                checked={orderAllSel}
+                title={orderAllSel?"Deselect all drawings in this order":orderPartial?`${orderSelCount} of ${drawings.length} selected — click to select all`:"Select all drawings in this order"}
+                onChange={()=>{
+                  const newVal = !orderAllSel;
+                  setNestSelDrgs(prev=>{
+                    const next={...prev};
+                    drawings.forEach(d=>{ next[`${order.id}|${d.id}`]=newVal; });
+                    return next;
+                  });
+                }}
+                style={{ marginTop:4, cursor:"pointer", width:15, height:15 }} />
+              <div>
+                <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
+                  <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{order.id}</span>
+                  <Badge color="green">{order.status}</Badge>
+                  <Badge color="gray">{CLIENTS[order.clientId]?.name}</Badge>
+                  {orderSelCount>0 && <span style={{ fontSize:11, color:T.amber }}>{orderSelCount}/{drawings.length} selected</span>}
+                </div>
+                <div style={{ fontSize:14, fontWeight:700, color:T.text }}>{order.projectDesc}</div>
+                <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>
+                  {order.orderQty} {order.orderUnit} · {fmt.currency(order.orderValue)} ·{" "}
+                  Drawings received: {drawings.length}/{order.drawings.length} · {fmt.wtT(totalDrgWt)} of {order.orderQty}T
+                </div>
               </div>
             </div>
             <button onClick={()=>setExpand(e=>({...e,[order.id]:!e[order.id]}))} style={css.btn.ghost}>
               {expand[order.id]?"▲ Collapse":"▼ Expand"}
             </button>
           </div>
+            );
+          })()}
 
           {/* Drawing release mini-bar */}
           <div style={{ height:5, background:T.border, borderRadius:3, overflow:"hidden", marginBottom:8 }}>
@@ -3638,39 +3748,74 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
       {/* ── VIEW: NESTING RUNS ───────────────────────────────────────────────── */}
       {view==="nesting" && (
         <div>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-            <div>
-              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Nesting Runs</div>
-              <div style={{ fontSize:12, color:T.textMid }}>Planning batches (imported) · Production runs (DeepNest bridge)</div>
-            </div>
-            {["super_admin","planning_admin","floor_planner"].includes(user.role) && (
-              <button onClick={()=>{setRunForm({orderIds:[],drawings:[],status:"draft"});setNewRunModal(true);}} style={css.btn.primary}>+ New Nesting Run</button>
-            )}
-          </div>
 
           {/* Section A: Planning Batches (from import) */}
           <div style={{ ...css.card, marginBottom:16 }}>
-            <SectionHd title="Planning Batches" sub="Created by importing nesting software output · NEST-PLN-YYYY-NNN" />
-            {(nestingBatches||[]).length===0
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
+              <div>
+                <div style={{ fontSize:15, fontWeight:800, color:T.text }}>Preliminary Nesting — NEST-PLN</div>
+                <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>For procurement planning. Import results from your nesting software to create a planning batch.</div>
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"center", flexShrink:0, marginLeft:12 }}>
+                <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.textMid, cursor:"pointer" }}>
+                  <input type="checkbox" checked={showDiscardedBatches} onChange={e=>setShowDiscardedBatches(e.target.checked)} />
+                  Show Discarded
+                </label>
+                {["super_admin","planning_admin","floor_planner"].includes(user.role) && (
+                  <button onClick={()=>setNestModal("import")} style={css.btn.amber}>📥 Import Nesting Results</button>
+                )}
+              </div>
+            </div>
+            <div style={{ fontSize:11, color:T.textLow, marginBottom:12, borderBottom:`1px solid ${T.border}`, paddingBottom:8 }}>
+              Import a CSV file from Nesting Center, DeepNest, or other nesting software to create a planning batch.
+            </div>
+            {(nestingBatches||[]).filter(b=>showDiscardedBatches||b.status!=="discarded").length===0
               ? <div style={{ color:T.textLow, fontSize:12, padding:12 }}>No planning batches yet. Use "Import Nesting Results" to create one.</div>
-              : (nestingBatches||[]).map((batch,bi)=>{
+              : (nestingBatches||[]).filter(b=>showDiscardedBatches||b.status!=="discarded").map((batch,bi)=>{
                 const isExpBatch = expandedBatch===batch.id;
                 const totalSheets = (batch.lots||[]).reduce((s,l)=>s+l.sheets.length,0);
                 const totalParts  = (batch.lots||[]).reduce((s,l)=>s+l.parts.length,0);
+                const pr = prForBatch(batch.id);
+                const po = poForPr(pr);
+                const isDiscarded = batch.status === "discarded";
                 return (
-                  <div key={batch.id} style={{ marginBottom:4 }}>
+                  <div key={batch.id} style={{ marginBottom:8, opacity:isDiscarded?0.6:1 }}>
                     {/* Batch header row */}
                     <div onClick={()=>setExpandedBatch(isExpBatch?null:batch.id)}
-                      style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:isExpBatch?T.bgHover:bi%2===0?"transparent":T.bg, cursor:"pointer", borderRadius:6, borderLeft:`3px solid ${T.accent}` }}>
+                      style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:isExpBatch?T.bgHover:bi%2===0?"transparent":T.bg, cursor:"pointer", borderRadius:6, borderLeft:`3px solid ${isDiscarded?T.textLow:T.accent}` }}>
                       <span style={{ fontSize:12, color:T.accent }}>{isExpBatch?"▼":"▶"}</span>
                       <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.text, fontSize:13, minWidth:180 }}>{batch.id}</span>
                       <span style={{ fontSize:12, color:T.textMid }}>{fmt.date(batch.createdAt)}</span>
                       <span style={{ fontSize:12, color:T.textMid }}>by {batch.createdBy}</span>
-                      <Badge color={batch.status==="Planned"?"amber":"green"}>{batch.status}</Badge>
+                      <Badge color={isDiscarded?"gray":batch.status==="Planned"?"amber":"green"}>{isDiscarded?"Discarded":batch.status}</Badge>
+                      {/* Procurement status badge */}
+                      {!isDiscarded && !po && !pr && <Badge color="amber">No PR raised</Badge>}
+                      {!isDiscarded && pr && !po && <Badge color="blue">{pr.id} raised</Badge>}
+                      {!isDiscarded && po && <Badge color="green">{po.id} raised</Badge>}
                       <span style={{ fontSize:12, color:T.textLow, marginLeft:"auto" }}>
                         {(batch.lots||[]).length} lots · {totalSheets} sheets · {totalParts} parts
                       </span>
                     </div>
+                    {/* Procurement action bar */}
+                    {!isDiscarded && (
+                      <div style={{ display:"flex", gap:8, padding:"6px 14px 6px 38px", borderLeft:`3px solid ${T.accent}`, background:T.bg }}>
+                        {!pr && (
+                          <button onClick={e=>{e.stopPropagation();setCreatePrModal(batch);}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>+ Create Purchase Requisition</button>
+                        )}
+                        {pr && !po && (
+                          <button onClick={e=>{e.stopPropagation();setConvertPoModal(pr);setConvertPoVendor("");}} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO</button>
+                        )}
+                        {po && (
+                          <button onClick={e=>{e.stopPropagation();}} style={{ ...css.btn.sm, background:T.greenBg, color:T.green, border:`1px solid ${T.green}` }}>{po.id} — {po.vendorName||"No vendor"}</button>
+                        )}
+                        <button onClick={e=>{e.stopPropagation();setDiscardModal({batch,pr,po});setDiscardReason("");}} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Discard Run</button>
+                      </div>
+                    )}
+                    {isDiscarded && batch.discardReason && (
+                      <div style={{ padding:"4px 14px 4px 38px", fontSize:11, color:T.textLow, borderLeft:`3px solid ${T.textLow}` }}>
+                        Discarded {fmt.date(batch.discardedAt)} by {batch.discardedBy} — {batch.discardReason}
+                      </div>
+                    )}
                     {/* Batch drill-down: Lots */}
                     {isExpBatch && (
                       <div style={{ marginLeft:24, borderLeft:`2px solid ${T.border}`, paddingLeft:12, marginTop:4, marginBottom:8 }}>
@@ -3688,31 +3833,54 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
                                 <span style={{ fontSize:11, color:T.textMid }}>{lot.parts.length} parts</span>
                                 <span style={{ fontSize:11, color:T.textLow }}>avg util: {avgUtil}%</span>
                               </div>
-                              {/* Lot drill-down: Sheets */}
-                              {isExpLot && (
-                                <div style={{ marginLeft:20, marginTop:4, marginBottom:4 }}>
-                                  <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
-                                    <thead><tr>
-                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Sheet No</th>
-                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Dimensions</th>
-                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>RM Unit ID</th>
-                                      <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Utilisation</th>
-                                      <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}` }}>Parts on Sheet</th>
-                                    </tr></thead>
-                                    <tbody>
-                                      {(lot.sheets||[]).map((sh,si)=>(
-                                        <tr key={si} style={{ background:si%2===0?"transparent":T.bg }}>
-                                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent, borderBottom:`1px solid ${T.border}` }}>{sh.sheetNo||si+1}</td>
-                                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.text, borderBottom:`1px solid ${T.border}` }}>{sh.sheetDim||"—"}</td>
-                                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono, fontSize:10, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{sh.rmUnitId}</td>
-                                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:sh.utilisPct>=85?T.green:sh.utilisPct>=70?T.amber:T.red, borderBottom:`1px solid ${T.border}` }}>{sh.utilisPct?sh.utilisPct.toFixed(1)+"%" : "—"}</td>
-                                          <td style={{ padding:"4px 8px", fontSize:10, color:T.textLow, borderBottom:`1px solid ${T.border}` }}>{(sh.parts||[]).join(", ")||"—"}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              )}
+                              {/* Lot drill-down: Sheets grouped by dimension */}
+                              {isExpLot && (()=>{
+                                const allSheets = lot.sheets||[];
+                                // Build ordered unique dim list preserving first-seen order
+                                const dimOrder = [];
+                                const byDim = {};
+                                allSheets.forEach(sh=>{
+                                  const d = sh.sheetDim||"?";
+                                  if (!byDim[d]) { byDim[d]=[]; dimOrder.push(d); }
+                                  byDim[d].push(sh);
+                                });
+                                return (
+                                  <div style={{ marginLeft:20, marginTop:4, marginBottom:4 }}>
+                                    {dimOrder.map(dim=>{
+                                      const dimSheets = byDim[dim];
+                                      const avgUtil = dimSheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/dimSheets.length;
+                                      return (
+                                        <div key={dim} style={{ marginBottom:8 }}>
+                                          {/* Dimension sub-header */}
+                                          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 8px", background:T.bg, borderRadius:4, marginBottom:2 }}>
+                                            <span style={{ fontFamily:T.fontMono, fontSize:11, fontWeight:700, color:T.gold }}>{dim}</span>
+                                            <span style={{ fontSize:10, color:T.textMid }}>{dimSheets.length} sheet{dimSheets.length!==1?"s":""}</span>
+                                            <span style={{ fontSize:10, color:avgUtil>=85?T.green:avgUtil>=70?T.amber:T.red }}>avg {avgUtil.toFixed(1)}%</span>
+                                          </div>
+                                          <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+                                            <thead><tr>
+                                              <th style={{ padding:"3px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}`, fontSize:10 }}>Sheet No</th>
+                                              <th style={{ padding:"3px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}`, fontSize:10 }}>RM Unit ID</th>
+                                              <th style={{ padding:"3px 8px", textAlign:"right", color:T.textMid, borderBottom:`1px solid ${T.border}`, fontSize:10 }}>Util%</th>
+                                              <th style={{ padding:"3px 8px", textAlign:"left", color:T.textMid, borderBottom:`1px solid ${T.border}`, fontSize:10 }}>Parts on Sheet</th>
+                                            </tr></thead>
+                                            <tbody>
+                                              {dimSheets.map((sh,si)=>(
+                                                <tr key={si} style={{ background:si%2===0?"transparent":T.bg }}>
+                                                  <td style={{ padding:"3px 8px", fontFamily:T.fontMono, color:T.accent, borderBottom:`1px solid ${T.border}` }}>{sh.sheetNo||si+1}</td>
+                                                  <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontSize:10, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{sh.rmUnitId}</td>
+                                                  <td style={{ padding:"3px 8px", textAlign:"right", fontFamily:T.fontMono, color:sh.utilisPct>=85?T.green:sh.utilisPct>=70?T.amber:T.red, borderBottom:`1px solid ${T.border}` }}>{sh.utilisPct?(+sh.utilisPct).toFixed(1)+"%" : "—"}</td>
+                                                  <td style={{ padding:"3px 8px", fontSize:10, color:T.textLow, borderBottom:`1px solid ${T.border}` }}>{(sh.parts||[]).join(", ")||"—"}</td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           );
                         })}
@@ -3724,9 +3892,25 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
             }
           </div>
 
-          {/* Section B: Production Nesting Runs (DeepNest bridge) */}
+          {/* Section B: Production Nesting Runs */}
           <div style={{ ...css.card }}>
-            <SectionHd title="Production Nesting Runs" sub="Confirmed via DeepNest bridge · NEST-YYYY-NNN · used for cutting confirmation" />
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
+              <div>
+                <div style={{ fontSize:15, fontWeight:800, color:T.text }}>Production Nesting — NEST-BCH</div>
+                <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>Actual cutting plan from received material.</div>
+              </div>
+              {["super_admin","planning_admin","floor_planner"].includes(user.role) && (
+                <button
+                  title="For advanced use — normally production runs are created automatically from the Release Wizard"
+                  onClick={()=>{setRunForm({orderIds:[],drawings:[],status:"draft"});setNewRunModal(true);}}
+                  style={css.btn.secondary}>
+                  + Manual Production Run
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize:11, color:T.textLow, marginBottom:12, borderBottom:`1px solid ${T.border}`, paddingBottom:8 }}>
+              Production nesting runs are created from the Production module after material is received, QC cleared, and reserved.
+            </div>
             <div style={{ overflowX:"auto" }}>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                 <thead><tr>
@@ -3839,6 +4023,116 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, stock, orders, materia
           </div>
         </Modal>
       )}
+
+      {/* Create PR from Batch Modal */}
+      {createPrModal && (
+        <Modal title={`Create Purchase Requisition — ${createPrModal.id}`} onClose={()=>setCreatePrModal(null)} width={500}>
+          <div style={{ fontSize:13, color:T.textMid, marginBottom:12 }}>
+            A Purchase Requisition will be raised for this nesting batch. Finance can convert it to a PO once approved.
+          </div>
+          <div style={{ marginBottom:12 }}>
+            {(createPrModal.lots||[]).map(l=>(
+              <div key={l.lotId||l.matCode} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>
+                <span style={{ fontFamily:T.fontMono, color:T.text }}>{l.matCode}</span>
+                <span style={{ color:T.textMid }}>{l.sheets?.length||0} sheets · {l.parts?.length||0} parts</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+            <button onClick={()=>setCreatePrModal(null)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={()=>createBatchPr(createPrModal)} style={css.btn.primary}>Create PR</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Discard Nesting Run Modal */}
+      {discardModal && (()=>{
+        const { batch, pr, po } = discardModal;
+        const hasPoWarning = !!po;
+        const hasPrCancel = !!(pr && !po);
+        return (
+          <Modal title={`Discard ${batch.id}?`} onClose={()=>setDiscardModal(null)} width={500}>
+            {hasPoWarning && (
+              <div style={{ background:T.amberBg, border:`1px solid ${T.amber}`, borderRadius:6, padding:"10px 14px", fontSize:13, color:T.amber, marginBottom:12 }}>
+                ⚠ {po.id} has already been raised for this nesting run.<br/>
+                Please contact the vendor before discarding. The PO will NOT be automatically cancelled.
+              </div>
+            )}
+            {hasPrCancel && (
+              <div style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, padding:"10px 14px", fontSize:13, color:T.textMid, marginBottom:12 }}>
+                Purchase Requisition {pr.id} will also be cancelled.
+              </div>
+            )}
+            {!hasPoWarning && !hasPrCancel && (
+              <div style={{ fontSize:13, color:T.textMid, marginBottom:12 }}>
+                This nesting run will be marked as discarded. You can create a new run.
+              </div>
+            )}
+            <Field label="Reason" required={hasPoWarning||hasPrCancel}>
+              <Input value={discardReason} onChange={e=>setDiscardReason(e.target.value)} placeholder="Reason for discarding..." />
+            </Field>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}>
+              <button onClick={()=>setDiscardModal(null)} style={css.btn.secondary}>Cancel</button>
+              <button
+                disabled={(hasPoWarning||hasPrCancel)&&!discardReason.trim()}
+                onClick={()=>discardBatch(batch,pr,po,discardReason)}
+                style={{ ...css.btn.primary, background:T.red, borderColor:T.red, opacity:((hasPoWarning||hasPrCancel)&&!discardReason.trim())?0.4:1 }}>
+                {hasPoWarning?"Confirm Discard Anyway":"Confirm Discard"}
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* Convert PR to PO Modal */}
+      {convertPoModal && (()=>{
+        const pr = convertPoModal;
+        return (
+          <Modal title={`Convert ${pr.id} to Purchase Order`} onClose={()=>setConvertPoModal(null)} width={520}>
+            <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
+              Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
+            </div>
+            <Field label="Vendor" required>
+              <Input value={convertPoVendor} onChange={e=>setConvertPoVendor(e.target.value)} placeholder="Vendor name..." />
+            </Field>
+            <div style={{ marginBottom:12, marginTop:8 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:6 }}>Lines from PR</div>
+              {(pr.lots||[]).map(l=>(
+                <div key={l.matCode} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>
+                  <span style={{ fontFamily:T.fontMono, color:T.text }}>{l.matCode}</span>
+                  <span style={{ color:T.textMid }}>{l.sheetCount} sheets</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize:11, color:T.amber, marginBottom:12 }}>Pricing to be confirmed in the Purchase module after PO creation.</div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={()=>setConvertPoModal(null)} style={css.btn.secondary}>Cancel</button>
+              <button disabled={!convertPoVendor.trim()} onClick={()=>{
+                const yr = new Date().getFullYear();
+                const max = (pos||[]).reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; }, 0);
+                const poId = `PO-${yr}-${String(max+1).padStart(3,"0")}`;
+                const newPO = {
+                  id:poId, vendorId:"", vendorCode:"", vendorName:convertPoVendor.trim(),
+                  poDate:today(), expectedDelivery:"", status:"pending",
+                  servedOrders:[], coveredOrders:[], includesStock:false, remarks:`From ${pr.id} — ${pr.nestingBatchId}`,
+                  prId:pr.id,
+                  lines:(pr.lots||[]).map((l,i)=>({
+                    id:`POL-${Date.now()}-${i}`, matCode:l.matCode, sectionType:"", size:"", grade:"E250", matType:"MS",
+                    isPlate:false, orderMode:"ByUnits", qty:l.sheetCount||0, qtyOrdered:l.sheetCount||0, unit:"Sheets",
+                    pricingMethod:"PerUnit", unitPrice:0, wtOrdered:0, wtRequired:0, totalPrice:0,
+                    wtReceived:0, status:"pending", qtyReceived:0, itemCode:l.matCode,
+                  })),
+                  grns:[], createdBy:user.name, createdDate:today(),
+                };
+                setPos(prev=>[...(prev||[]), newPO]);
+                setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"converted",poId}));
+                setConvertPoModal(null); setConvertPoVendor("");
+                showToast(`${poId} created`);
+              }} style={{ ...css.btn.primary, opacity:convertPoVendor.trim()?1:0.4 }}>Create PO</button>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 };
@@ -4133,7 +4427,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
           }
           return acc;
         }, []);
-        const rmUnitId = `${mc}/${sheetDim}/${idx+1}-${totalSheets}`;
+        const rmUnitId = `${normRmMatCode(mc)}/${sheetDim}/${idx+1}-${totalSheets}`;
         return { sheetNo: idx+1, sheetDim, utilisPct: rp.LengthUsed != null ? +((1 - rp.Scrap)*100).toFixed(1) : np, parts, rmUnitId };
       });
 
@@ -4570,7 +4864,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
                     {!err && rp.map((sheet, idx)=>{
                       const rm = group?.rawMats[sheet.RawPlateIndex] || group?.rawMats[0] || {};
                       const sheetDim = group?.isPlate ? `${rm.length}×${rm.width}` : `${rm.length}mm`;
-                      const rmUnitId = `${mc}/${sheetDim}/${idx+1}-${totalSheets}`;
+                      const rmUnitId = `${normRmMatCode(mc)}/${sheetDim}/${idx+1}-${totalSheets}`;
                       const sheetUtil = sheet.Scrap != null ? ((1-sheet.Scrap)*100).toFixed(1) : "—";
                       // Build parts with qty
                       const partsOnSheet = (sheet.PartsNested||[]).reduce((acc,pn)=>{
@@ -4725,7 +5019,8 @@ const POLineImportModal = ({ rows, err, mode, setMode, fileRef, onFile, onDownlo
   </Modal>
 );
 
-const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orders, vendors, materials, setMaterials }) => {
+const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials }) => {
+  const [purTab, setPurTab] = useState("pos"); // "pos" | "requisitions"
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
   const [modal, setModal] = useState(null);
@@ -4851,10 +5146,25 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
       {toast && <div style={{ position:"fixed", top:20, right:20, zIndex:2000, background:toast.color==="green"?T.greenBg:T.redBg, border:`1px solid ${toast.color==="green"?T.green:T.red}`, borderRadius:8, padding:"12px 20px", color:toast.color==="green"?T.green:T.red, fontSize:13, fontWeight:600 }}>{toast.msg}</div>}
 
       <div style={{ marginBottom:16 }}>
-        <div style={{ fontSize:20, fontWeight:800, color:T.text }}>Purchase Orders</div>
-        <div style={{ fontSize:12, color:T.textMid }}>PO management · GRN · Multi-order coverage · Many-to-many PO/Order linking</div>
+        <div style={{ fontSize:20, fontWeight:800, color:T.text }}>Purchase</div>
+        <div style={{ fontSize:12, color:T.textMid }}>Purchase Orders · Requisitions · GRN · Multi-order coverage</div>
       </div>
 
+      {/* Tab navigation */}
+      <div style={{ display:"flex", gap:0, marginBottom:20, borderBottom:`2px solid ${T.border}` }}>
+        {[["pos","Purchase Orders"],["requisitions","Requisitions"]].map(([tab,lbl])=>{
+          const nestPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting"&&r.status==="pending");
+          const badge = tab==="requisitions" && nestPrs.length>0 ? nestPrs.length : null;
+          return (
+            <button key={tab} onClick={()=>setPurTab(tab)} style={{ padding:"8px 18px", background:"none", border:"none", borderBottom:`2px solid ${purTab===tab?T.accent:"transparent"}`, marginBottom:-2, color:purTab===tab?T.accent:T.textMid, fontWeight:purTab===tab?700:400, fontSize:13, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+              {lbl}
+              {badge && <span style={{ background:T.amber, color:"#000", borderRadius:10, padding:"1px 6px", fontSize:10, fontWeight:700 }}>{badge}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {purTab === "pos" && (<>
       <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
         <StatCard label="Total POs" value={pos.length} color={T.text} />
         <StatCard label="Total Value" value={fmt.currency(totalPoValue)} color={T.accent} />
@@ -4910,6 +5220,96 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, stock, setStock, orde
           </div>
         );
       })}
+      </>)}
+
+      {/* Requisitions Tab */}
+      {purTab === "requisitions" && (()=>{
+        const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting").sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+        const prStatusBadge = { pending:"amber", converted:"green", cancelled:"gray" };
+        return (
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+              <div style={{ fontSize:13, color:T.textMid }}>{nestingPrs.length} requisition{nestingPrs.length!==1?"s":""} from nesting batches</div>
+            </div>
+            {nestingPrs.length===0 && (
+              <div style={{ ...css.card, textAlign:"center", padding:40, color:T.textLow, fontSize:13 }}>
+                No purchase requisitions yet. Raise one from MRP → Nesting Runs.
+              </div>
+            )}
+            {nestingPrs.map(pr=>{
+              const po = pr.poId ? pos.find(p=>p.id===pr.poId) : null;
+              const [prExpanded, setPrExpanded] = [false, ()=>{}]; // static — use key-driven approach below
+              return (
+                <div key={pr.id} style={{ ...css.card, marginBottom:10 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 }}>
+                    <div>
+                      <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
+                        <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{pr.id}</span>
+                        <Badge color={prStatusBadge[pr.status]||"gray"}>{pr.status}</Badge>
+                      </div>
+                      <div style={{ fontSize:12, color:T.textMid }}>
+                        {fmt.date(pr.createdAt)} · by {pr.createdBy}
+                      </div>
+                      <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>
+                        Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
+                      </div>
+                      {pr.cancelReason && (
+                        <div style={{ fontSize:11, color:T.textLow, marginTop:4 }}>Cancel reason: {pr.cancelReason}</div>
+                      )}
+                    </div>
+                    <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                      {pr.status==="pending" && canEdit && (
+                        <>
+                          <button onClick={()=>{
+                            const yr=new Date().getFullYear();
+                            const max=(pos||[]).reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
+                            const poId=`PO-${yr}-${String(max+1).padStart(3,"0")}`;
+                            setForm({id:poId,vendorId:"",vendorCode:"",vendorName:"",poDate:today(),expectedDelivery:"",status:"pending",servedOrders:[],coveredOrders:[],includesStock:false,
+                              remarks:`From ${pr.id} — ${pr.nestingBatchId}`, prId:pr.id,
+                              lines:(pr.lots||[]).map((l,i)=>({id:`POL-${Date.now()}-${i}`,matCode:l.matCode,sectionType:"",size:"",grade:"E250",matType:"MS",isPlate:false,orderMode:"ByUnits",qty:l.sheetCount||0,qtyOrdered:l.sheetCount||0,unit:"Sheets",pricingMethod:"PerUnit",unitPrice:0,wtOrdered:0,wtRequired:0,totalPrice:0,wtReceived:0,status:"pending",qtyReceived:0,itemCode:l.matCode})),
+                              grns:[],createdBy:user.name,createdDate:today(),
+                            });
+                            setModal("new_po"); setPurTab("pos");
+                          }} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO</button>
+                          <button onClick={()=>{
+                            if (!window.confirm("Cancel this purchase requisition?")) return;
+                            setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"cancelled",cancelledAt:today(),cancelReason:"Manually cancelled"}));
+                          }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Discard PR</button>
+                        </>
+                      )}
+                      {pr.status==="converted" && po && (
+                        <button onClick={()=>{setPurTab("pos");setSelected(po.id);}} style={{ ...css.btn.sm, background:T.greenBg, color:T.green, border:`1px solid ${T.green}` }}>View {po.id}</button>
+                      )}
+                    </div>
+                  </div>
+                  {/* Line items */}
+                  {(pr.lots||[]).length>0 && (
+                    <div style={{ marginTop:10, borderTop:`1px solid ${T.border}`, paddingTop:10 }}>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                        <thead><tr>
+                          {["Material Code","Sheets","Sheet Dims","Parts"].map(h=><th key={h} style={{ textAlign:"left",padding:"3px 8px",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {(pr.lots||[]).map((l,i)=>(
+                            <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
+                              <td style={{ padding:"4px 8px", fontFamily:T.fontMono, fontSize:11, color:T.text }}>{l.matCode}</td>
+                              <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent }}>{l.sheetCount}</td>
+                              <td style={{ padding:"4px 8px", color:T.textMid, fontSize:10 }}>
+                                {(l.lines||[]).map(ln=>`${ln.sheetDim}×${ln.qty}`).join(", ")||"—"}
+                              </td>
+                              <td style={{ padding:"4px 8px", color:T.textMid }}>{(l.parts||[]).length}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* New PO Modal */}
       {modal==="new_po" && (
@@ -6382,7 +6782,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
                 <tr>
                   <td colSpan={18} style={{ background:`${T.accent}08`,padding:"12px 20px",borderBottom:`1px solid ${T.border}` }}>
                     <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:12 }}>
-                      {[["PO",s.poId||"—"],["GRN",s.grnId||"—"],["Received",fmt.date(s.receivedDate)],["Bay",s.bayId||"—"],["Heat No",s.heatNo||"—"],["Batch No",s.batchNo||"—"],["Item Code",s.itemCode||"—"],["Off-cut",s.isOffcut?`Yes${s.parentLotId?" — parent: "+s.parentLotId:""}` :"No"]].map(([k,v])=>(
+                      {[["PO",s.poId||"—"],["GRN",s.grnId||"—"],["Received",fmt.date(s.receivedDate)],["Bay",s.bayId||"—"],["Heat No",s.heatNo||"—"],["Batch No",s.batchNo||"—"],["Item Code",s.itemCode||"—"],["Off-cut",s.isOffcut?`Yes${s.parentLotId?" — parent: "+s.parentLotId:""}` :"No"],...(s.isOffcut&&s.parentRmUnitId?[["Parent RM Unit",s.parentRmUnitId]]:[]),(s.isOffcut&&s.offcutSequence?[["OC Sequence",s.offcutSequence]]:[])].map(([k,v])=>(
                         <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12,color:T.text,fontFamily:T.fontMono }}>{v}</div></div>
                       ))}
                     </div>
@@ -9625,7 +10025,11 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
       let maxLot=0;
       stock.forEach(s=>{const m=(s.lotNo||"").match(/^LOT-(\d{4})-(\d+)$/);if(m&&+m[1]===yr)maxLot=Math.max(maxLot,+m[2]);});
       const parentLot = stock.find(s=>s.id===barForm.lotId)||{};
-      newOcId = `STK-OC-${Date.now()}`;
+      const parentRmUnitId = `${normRmMatCode(selRun.materialCode)}/${selBarRef}`;
+      const existingOcsFromUnit = stock.filter(s=>s.parentRmUnitId===parentRmUnitId).length;
+      const ocSeq = existingOcsFromUnit + 1;
+      const offcutSequence = `OC-${ocSeq}`;
+      newOcId = `${parentRmUnitId}/${offcutSequence}`;
       const ocItemCode = barForm.isPlate
         ? `${selRun.materialCode}/${barForm.offcutLength}X${barForm.offcutWidth}`
         : `${selRun.materialCode}/${barForm.offcutLength}`;
@@ -9645,6 +10049,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
         heatNo:parentLot.heatNo||"",
         rmQcStatus:"approved", clientInspStatus:"approved", qcHoldReason:"",
         isOffcut:true, parentLotId:barForm.lotId, parentBatchNo:barForm.batchNo,
+        parentRmUnitId, offcutSequence,
         offcutLength:barForm.isPlate?null:+(barForm.offcutLength||0),
         offcutDimensions:barForm.isPlate?`${barForm.offcutLength}X${barForm.offcutWidth}`:"",
         nestingRunId:selRunId, allocations:[], issues:[],
@@ -10488,7 +10893,7 @@ const StageWorkerQueue = ({ user, instances, setInstances }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION STEP 5: CONTRACTOR WORK QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
-const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
+const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock }) => {
   const [selGroup, setSelGroup]       = useState(null);
   const [subOpChecks, setSubOpChecks] = useState({});
 
@@ -10652,6 +11057,24 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
           ✓ {readyToCollect} part{readyToCollect!==1?"s":""} ready to collect
         </div>
       )}
+
+      {/* EOD prompt — at 5pm if any in-progress work hasn't been updated in 24h */}
+      {(()=>{
+        const hour = new Date().getHours();
+        if (hour < 17) return null;
+        const now24 = Date.now() - 24*3600000;
+        const stale = inProg.filter(i=>{
+          const lastEntry = (i.stageHistory||[]).slice().reverse()[0];
+          const lastTs = lastEntry?.signedOffDate || lastEntry?.markedDoneDate || i.createdAt || "";
+          return lastTs ? new Date(lastTs).getTime() < now24 : true;
+        });
+        if (stale.length === 0) return null;
+        return (
+          <div style={{ marginBottom:12, padding:"10px 14px", background:T.amberBg, borderRadius:8, border:`1px solid ${T.amber}`, fontSize:12, color:T.amber, fontWeight:600 }}>
+            ⏰ End of Day — {stale.length} in-progress part{stale.length!==1?"s":""} {stale.length===1?"has":"have"} no update in the last 24 hours. Please update progress or notify your supervisor.
+          </div>
+        );
+      })()}
 
       {my.length === 0 && (
         <div style={{ textAlign:"center",padding:64,color:T.textLow }}>
@@ -10825,6 +11248,19 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
                 const cutCleared = drgInstances.filter(inst=>['fitup','welding','tpi_weld','assembly','blasting','painting','tpi_paint','mdcc','dispatch','complete'].includes(inst.currentStage)).length;
                 const cuttingInProg = drgInstances.filter(inst=>['cutting','cutting_qc'].includes(inst.currentStage)).length;
                 const notStarted = Math.max(0, (drg.qty||0) - drgInstances.length);
+                // RM QC done: lots linked to this drawing's release are QC approved and available
+                const relForDrg = (releases||[]).find(r=>r.id===drg.releaseId);
+                const rmQcDone = (()=>{
+                  if (!relForDrg) return 0;
+                  const asgn = (relForDrg.machineAssignments||[]).find(ma=>
+                    (ma.drawings||[]).some(d=>d.drawingId===drg.drawingId) ||
+                    (relForDrg.drawings||[]).some(d=>d.drawingId===drg.drawingId)
+                  );
+                  const lotId = asgn?.lotId || (relForDrg.machineAssignments||[])[0]?.lotId;
+                  if (!lotId) return 0;
+                  const lot = (stock||[]).find(s=>s.id===lotId);
+                  return (lot?.rmQcStatus==="approved" && ["available","reserved","allocated"].includes(lot?.status||"")) ? notStarted : 0;
+                })();
                 return (
                   <div key={i} style={{ ...css.card,border:`1px solid ${T.border}` }}>
                     <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8 }}>
@@ -10846,6 +11282,7 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases }) => {
                     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,marginTop:8}}>
                       <tbody>
                         {[
+                          ['RM QC done — available', rmQcDone, '#a78bfa'],
                           ['Cut and QC cleared — ready to collect', cutCleared, '#22c55e'],
                           ['Cutting in progress', cuttingInProg, '#3b82f6'],
                           ['Cut not started', notStarted, '#6b7280'],
@@ -14949,7 +15386,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const [selProgressOrderId, setSelProgressOrderId] = useState("");
 
   // Contractor → own work queue only (after hooks)
-  if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} />;
+  if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} />;
   // Machine operator → machine queue
   if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} />;
   // Stage workers (blasting/painting engineers) → stage-filtered work queue
@@ -15496,8 +15933,8 @@ export default function App() {
   const renderMod = () => {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
-      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} />;
-      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
+      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} />;
+      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;

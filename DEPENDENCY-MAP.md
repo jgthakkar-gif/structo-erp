@@ -1,25 +1,19 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 1.7 — April 2026
-# Session 4 Phase 3 — D1-D6, E2, Welder Register
-# Updated: Release Wizard (productionSteps, requiredOps binding, lot reservation fix)
-#          PO smart allocation (coveredOrders, includesStock, orderAllocations)
-#          GRN auto-reservation (lot.reservations extended, partially_reserved status)
-#          lot.status correction: wizard now writes 'reserved' not 'allocated'
-#          Nesting integration fields documented
-#          FIX: productionSteps[].type now set (production/qc/contractor/Outbound)
-#          FIX: progressMarkers.mrp_done now readable by calcProgress in OrderProgressTracker
-#          FIX: lot.pendingReservations REMOVED — was redundant with lot.reservations[]
-#          FIX: instance.subOpsCompleted created with ["cut"] only (not all reqOps)
-#          FIX: confirmBar now reads requiredOps from order parts; pending_secondary routing
-#          D1: cutting_qc form — L×W dimensional table + tolerance pass/fail + ref links
-#          D2: defect actions rework/writeoff/use_as_is + instance routing
-#          D3: fitup checklist 11 items + ref links + 5-dim measurement table
-#          D4: welder dropdown from Masters + full NDT (UT/RT/PT/MT) + hard gate
-#          D5: blastingCompletedAt ISO timestamp + live HH:MM:SS timer + PE override
-#          D6: dftReadings[] per coat + holiday instrument/voltage/result + dry time countdown
-#          E2: assembly_hold gate — simultaneous sibling advancement when last weld done
-#          Masters: Welder Register with certifications + expiry alerts
-#               covers all secondary ops beyond Cut; SecondaryOpsQueue in MachineOperatorQueue
+# Version 1.9 — April 2026
+# Session 4 Phase 3 — Nesting/Purchase additions + MRP UI fixes + E1 contractor updates
+# Updated: rmUnitId — format changed to matCode/sheetDim/n-of-groupTotal (per-dimension fractions)
+#          normRmMatCode() — helper adds mm suffix to bare numeric thickness segments
+#          normMatCode() — lowercases and strips mm suffix (comparison)
+#          lot.parentRmUnitId, lot.offcutSequence — off-cut inheritance fields
+#          nestingBatch PR/PO status badges — MRPModule batch cards show procurement status
+#          Discard Nesting Run — modal flow with PR cascading and PO note
+#          PurchaseModule Requisitions tab — nesting-type PRs with Convert/Discard actions
+#          MRP drawing selection — all unchecked by default, Select All/Clear All, reset on tab change
+#          MRP nesting runs — Section A (NEST-PLN) / Section B (NEST-BCH) labelling
+#          ContractorWorkQueue — stock prop, EOD prompt banner, RM QC done status row
+#          C5-WIZARD-STEP1 — confirmed PASS: expandedDrg, parts/RM sub-tables in Release Wizard Step 1
+#
+# Prior: FIX1/2/3, DevTools, D1-D6, E2, Welder Register, Dev Tools (blast/paint timers)
 #
 # INSTRUCTIONS FOR CLAUDE CODE:
 # Before changing ANY field, function, or data structure,
@@ -355,6 +349,31 @@ lot.pendingReservations (boolean)
            partially_reserved) now handled via lot.reservations.length check only.
   IF CHANGED: Do not re-add — use lot.reservations[] instead
 
+lot.matCode (string — e.g. "PLATE/MS/E250/8MM" or "" for GRN-created lots)
+  *** FIX 2: lot matching in Release Wizard computeRmPicture ***
+  READS:   computeRmPicture — normMatCode(s.matCode) vs normMatCode(row.matCode)
+  WRITES:  GRN buildStockLots — inherits from poLine.matCode (may be "")
+           Cutting off-cut creation — inherits from parent lot
+  MATCH LOGIC (FIX2): Three-way fallback in computeRmPicture:
+    1. sNorm && rNorm && sNorm===rNorm → full normalized matCode match
+    2. !s.matCode && secMatch → lot has no matCode → section type fallback
+    3. !row.matCode.includes('/') && secMatch → row is just section (e.g. "PLATE") → section fallback
+  NOTE: Seed order parts (SEED_ORDERS) have no matCode on parts → key="PLATE" etc.
+        Orders module parts DO have matCode. FIX2 handles both cases.
+  IF CHANGED: normMatCode() strips trailing mm (case-insensitive). Update matching logic if
+              new matCode formats are introduced.
+
+normRmMatCode(mc) — display/ID helper
+  *** NEW HELPER — added for nesting rmUnitId and off-cut ID generation ***
+  BEHAVIOR: Appends "mm" to bare numeric last segment of matCode path
+            "PLATE/MS/E250/8" → "PLATE/MS/E250/8mm" (already "8mm" → unchanged)
+  READS:   handleNestImport() — for rmUnitId construction
+           parseNestingResult() — same
+           CuttingConfirmation confirmBar() — for parentRmUnitId and off-cut lot.id
+  WRITES:  Pure function — no side effects
+  NOTE:    Use normMatCode() for COMPARISON, normRmMatCode() for ID DISPLAY/GENERATION
+  IF CHANGED: All rmUnitId strings and off-cut lot.id values must be regenerated
+
 lot.allocations (array of {drawingId, orderId, partId, rmUnitId, kg})
   *** NOW SYSTEM-GENERATED from nesting output — not manually entered ***
   READS:   Machine assignment — which lot/unit per RM type
@@ -376,6 +395,39 @@ lot.offcutParentId (reference to parent lot)
   DISPLAYS: Stock module — off-cut detail
   TRIGGERS: Created → off-cut inherits parent.reservations automatically
   IF CHANGED: Never change — breaks traceability chain
+
+lot.parentRmUnitId (string — e.g. "PLATE/MS/E350/10mm/SHEET-01")
+  *** NEW FIELD — added for off-cut traceability and dimension grouping ***
+  FORMAT:  normRmMatCode(materialCode) + "/" + barRef (sheet reference)
+  READS:   Off-cut ID generation (CuttingConfirmation) — count existing OCs from same unit
+           Stock module lot detail view — shows parent RM unit info
+  WRITES:  CuttingConfirmation confirmBar() — set when creating off-cut lot
+  DISPLAYS: Stock module — off-cut card shows parentRmUnitId
+  TRIGGERS: New off-cut count: stock.filter(s=>s.parentRmUnitId===parentRmUnitId).length
+  IF CHANGED: Off-cut IDs (lot.id) are derived from this — never change retroactively
+
+lot.offcutSequence (string — e.g. "OC-1", "OC-2")
+  *** NEW FIELD — sequential off-cut counter per RM unit ***
+  FORMAT:  "OC-" + (existing off-cut count + 1)
+  READS:   Stock module lot detail view
+  WRITES:  CuttingConfirmation confirmBar() — derived from parentRmUnitId count
+  DISPLAYS: Stock module — off-cut card shows offcutSequence
+  NOTE:    lot.id = parentRmUnitId + "/" + offcutSequence
+  IF CHANGED: Never change — breaks lot ID consistency
+
+lot.rmUnitId (string — per-sheet unit ID within a nesting run)
+  *** FORMAT: normRmMatCode(matCode)/sheetDim/n-of-groupTotal ***
+  FORMAT:  Fractions counted per dimension group within each lot, NOT across all sheets
+  EXAMPLE: "PLATE/MS/E350/10mm/2400x1200/1-3" = first of 3 sheets with dim 2400x1200 in this lot
+  READS:   Cutting confirmation — identifies which physical sheet is being cut
+           Machine operator queue — which RM unit to request
+           MDCC dossier — material traceability per sheet
+  WRITES:  handleNestImport() — generated when CSV nesting results are imported
+           parseNestingResult() — generated from DeepNest API bridge output
+  DISPLAYS: Nesting batch detail, stock lot sheets view (grouped by dimension)
+  TRIGGERS: Per-dimension grouping via byDim[sheetDim] before assigning n-of-total
+  IF CHANGED: normRmMatCode() must be applied to matCode before building ID
+              Fractions must be per-dim group — see handleNestImport byDim pattern
 
 lot.batchNo
   READS:   Off-cut inheritance, MDCC dossier, QC records
@@ -468,16 +520,35 @@ instance.subStageChecks ({cut:bool, bevel:bool, grind:bool, drill:bool})
         order.parts[].requiredOps at confirmBar time (not hardcoded ["cut"]).
   IF CHANGED: Update confirmBar requiredOps lookup; update SecondaryOpsQueue in MachineOperatorQueue
 
-instance.defectAction (rework | writeoff | use_as_is)
-  *** UPDATED VALUES — was scrap_recut/rectify/accept_deviation ***
-  READS:   confirmBar routing — determines instance.currentStatus after cut confirmation
-           QC Admin — defect resolution tracking
-  WRITES:  Cutting confirmation bar form — defectAction select (visible when isDefective)
-  DISPLAYS: Cutting confirmation, QC Admin pending jobs
+barForm.goodQty (number, per part in barForm.parts[])
+  *** REPLACES barForm.actualQty — FIX 1 ***
+  READS:   confirmBar — good instance qty; wtConsumed calculation
+           handleGoodQtyChange — syncs barForm.defects[] length
+  WRITES:  "Good Pieces Cut" input in CuttingConfirmation barForm UI
+  DISPLAYS: Cutting confirmation bar form — replaces "Actual Qty"
+  TRIGGERS: goodQty change → defects[] auto-resized to plannedQty - goodQty
+  IF CHANGED: Update confirmBar + handleGoodQtyChange + wtConsumed + piece marking display
+
+barForm.defects (array per part: [{defectType, action, reason}])
+  *** NEW FIELD — one entry per defective piece — FIX 1 ***
+  READS:   confirmBar — splits into per-defective-piece confirmedPartsAll entries
+  WRITES:  Defective piece rows in barForm UI (auto-appears when defQty > 0)
+  DISPLAYS: Per-piece rows with type dropdown, action radio, reason text
+  TRIGGERS: defects[i].action="rework" → instance.currentStatus="rework"
+             defects[i].action="writeoff" → instance.currentStatus="written_off"
+             defects[i].action="use_as_is" → instance.currentStatus="pending_pe_approval"
+  NOTE: defectAction stored on instance.defects[0].action via createInstances
+  IF CHANGED: Update createInstances, confirmBar routing block, MachineOperatorQueue rework
+
+instance.defectAction (stored via instance.defects[0].action)
+  *** UPDATED — now stored on instance.defects[0].action via createInstances ***
+  READS:   confirmBar routing — newInst routing block reads inst.defects?.[0]?.action
+  WRITES:  Cutting confirmation — per defective-piece action radio
+  DISPLAYS: MachineOperatorQueue Rework Queue — original defect reason
   TRIGGERS: rework → instance.currentStage="cutting", instance.currentStatus="rework"
-             writeoff → instance.currentStatus="writeoff", writeoffRequiresReplacement=true
+             writeoff → instance.currentStatus="written_off", writeoffRequiresReplacement=true
              use_as_is → instance.currentStatus="pending_pe_approval" (PE must approve)
-  IF CHANGED: Update confirmBar routing block + MachineOperatorQueue rework display
+  IF CHANGED: Update createInstances defects[].action + confirmBar routing + MachineOperatorQueue
 
 stageHistory[].weldGaugeReading (number, mm — welding stage)
 stageHistory[].postWeldLength (number, mm — welding stage)
@@ -684,14 +755,30 @@ release.machineAssignments[n] (one entry per matCode)
 nestingBatch.id (NEST-PLN-YYYY-NNN)
   READS:   MRP Nesting Runs tab — batch header display
            Lot lotId generation — used as prefix
+           PurchaseModule Requisitions tab — links PR to batch via nestingBatchId
   WRITES:  handleNestImport — auto-generated from nestingBatches sequence
   DISPLAYS: Nesting Runs tab Section A — Planning Batches
+            Nesting batch card — PR/PO status badge
   IF CHANGED: Never — all child lotIds would break
 
+nestingBatch.status ('active' | 'discarded')
+  *** NEW VALUE — 'discarded' added for Discard Nesting Run flow ***
+  READS:   MRP Nesting Runs tab — showDiscardedBatches toggle
+           prForBatch() — check if batch is discarded before showing PR action
+  WRITES:  discardBatch() — sets 'discarded' + discardedReason + discardedAt
+  DISPLAYS: Nesting Runs tab — discarded batches hidden unless toggle is on
+  IF CHANGED: Discarded batches show in section only when showDiscardedBatches=true
+
+nestingBatch.discardedReason (string)
+  WRITES:  discardBatch() — stores user-entered reason for discard
+  DISPLAYS: Discarded batch card (amber strike-through style)
+  IF CHANGED: N/A — historical record
+
 nestingBatch.lots[].rmUnitId (format: matCode/sheetDim/n-total)
-  *** IMPLEMENTED — generated at import time ***
-  FORMAT:  {matCode}/{sheetDim}/{n}-{total}
-           Example: PLATE/E250/12mm/2500x1250/1-4
+  *** FIXED — fractions now per dimension group within each lot ***
+  FORMAT:  normRmMatCode(matCode)/{sheetDim}/{n}-{groupTotal}
+           Example: PLATE/MS/E250/8mm/2400x1200/1-3  (1st of 3 sheets of this dimension in lot)
+  IMPORTANT: n and total are counted WITHIN each dimension group (byDim[sheetDim]) NOT across all sheets
   READS:   Nesting Runs tab drill-down — Sheets table
            Future: machine assignment lot detail view
   WRITES:  handleNestImport — computed per sheet from grouping
@@ -741,6 +828,51 @@ nestingLot.sourceReservations (array of lotId + orderId that fed this nesting lo
   WRITES:  Set automatically at nesting confirmation
   DISPLAYS: Nesting lot detail
   IF CHANGED: Never — historical record
+
+# ── Purchase Requisitions — Nesting Type ──────────────────────────────
+# purchaseReqs[] in App component — shared between MRPModule and PurchaseModule
+
+purchaseReq.type ('nesting' | undefined)
+  *** NEW FIELD — identifies nesting-sourced PRs ***
+  READS:   PurchaseModule Requisitions tab — filters purchaseReqs where type==="nesting"
+           MRPModule batch card — prForBatch() checks type==="nesting" && nestingBatchId
+  WRITES:  MRPModule createBatchPr() — sets type:"nesting"
+  DISPLAYS: PurchaseModule Requisitions tab — shows nesting PRs with Convert/Discard actions
+  IF CHANGED: Only "nesting" type handled in Requisitions tab; standard PRs not shown there
+
+purchaseReq.nestingBatchId (string — links PR to a nestingBatch)
+  *** NEW FIELD — bidirectional link between PR and nesting batch ***
+  READS:   MRPModule prForBatch(batchId) — finds PR matching this batch
+           PurchaseModule — shows batch ID on requisition row
+  WRITES:  MRPModule createBatchPr() — set to batch.id
+  IF CHANGED: prForBatch() relies on this — never rename field
+
+purchaseReq.status ('open' | 'converted' | 'cancelled')
+  READS:   MRPModule batch card — prForBatch().status for badge display
+           PurchaseModule Requisitions tab — filter by status
+  WRITES:  MRPModule discardBatch() — sets 'cancelled' if PR exists and no PO
+           PurchaseModule convertPoModal — sets 'converted' when PO created
+  TRIGGERS: 'converted' → poForPr() lookup becomes valid (pr.poId set)
+
+purchaseReq.poId (string — links to converted PO)
+  READS:   MRPModule poForPr(pr) — finds PO matching this PR
+  WRITES:  PurchaseModule Requisitions tab Convert to PO action
+  IF CHANGED: poForPr() relies on pos.find(p=>p.id===pr.poId)
+
+# ── MRP Drawing Selection ──────────────────────────────────────────────
+
+nestSelDrgs (state: {[orderId|drgId]: boolean})
+  *** CHANGED — absent key now means UNCHECKED (was: checked) ***
+  DEFAULT: {} empty object = ALL drawings unchecked
+  READS:   isDrgSel() — returns nestSelDrgs[key] ?? false (was ?? true)
+  WRITES:  Order-level checkbox — sets all drawings for an order true/false
+           Individual drawing checkbox — sets single key
+           Select All — sets all keys to true
+           Clear All — sets {} (clears all = all unchecked)
+  RESETS:  useEffect on [view] change — setNestSelDrgs({})
+  DISPLAYS: Export button disabled when selectedCount === 0
+            Counter: "{N} drawings selected"
+  IF CHANGED: Do not revert to ?? true default — users prefer opt-in selection
 
 # ── Excel Export (MRPNestExport component) ────────────────────────────
 # handleDownloadExcel() — builds 3-sheet XLSX workbook via SheetJS
