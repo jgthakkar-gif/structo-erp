@@ -1,6 +1,6 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 2.1 — April 2026
-# Session 4 Phase 3 — Part 3: Persistence + vendor dropdowns + stale PR detection
+# Version 2.2 — April 2026
+# Session 4 Phase 3 — Part 4: Single-PR convert modal stays on Requisitions tab
 # Updated:
 #   PERSISTENCE (FIX 1):
 #     nestingBatches → localStorage key 'structo_nestingBatches' (was in-memory only)
@@ -32,6 +32,14 @@
 #     selectedPrs state + checkboxes on pending PR cards
 #     Sticky combine bar (≥2 selected) → combine modal → createCombinedPO
 #     po.prIds = array of all included PR ids; each PR.status = 'converted', PR.poId = newPoId
+#     createCombinedPO: STAYS on Requisitions tab (removed setPurTab/setSelected calls)
+#   SINGLE PR CONVERT (Part 4):
+#     convertSingleModal state (PR object) + convertSingleForm state (vendorId/poDate/notes/rates)
+#     saveSingleConvertPO: flatMap pr.lots × l.lines → per-dimension PO lines with weight + rate
+#     Modal: vendor dropdown (all active vendors A-Z + Add New Vendor), PO date, notes,
+#       read-only lines table grouped by matCode with ₹/kg input per group + group total
+#     STAYS on Requisitions tab after creation
+#     Old "Convert to PO" path (setForm + setModal("new_po") + setPurTab) removed
 #
 # Prior: v2.0 — consumables, parseNestingMatCode, nestingSheetWt, single+combined PO creation
 # Prior: v1.9 — rmUnitId fractions, normRmMatCode, off-cut fields, PR/PO badges, discard flow

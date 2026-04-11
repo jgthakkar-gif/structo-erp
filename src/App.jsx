@@ -5282,6 +5282,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [selectedPrs, setSelectedPrs] = useState([]);   // Part 3: multi-PR combine
   const [combineModal, setCombineModal] = useState(false);
   const [combineForm, setCombineForm] = useState({});
+  const [convertSingleModal, setConvertSingleModal] = useState(null); // PR object
+  const [convertSingleForm, setConvertSingleForm] = useState({});    // vendorId/poDate/notes/rates
   const [linePickerModal, setLinePickerModal] = useState(null); // Part 4: null | {category:null|"rm"|"paint"|"consumable"}
   const [linePickerForm, setLinePickerForm] = useState({});
 
@@ -5394,7 +5396,51 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     setPurchaseReqs(prev=>prev.map(r=>selectedPrs.includes(r.id)?{...r,status:"converted",poId:newPoId}:r));
     showToast(`${newPoId} created from ${selectedPrs.length} requisitions`);
     setCombineModal(false); setCombineForm({}); setSelectedPrs([]);
-    setPurTab("pos"); setSelected(newPoId);
+    // Stay on Requisitions tab — user can click "View PO" on the PR cards
+  };
+
+  const saveSingleConvertPO = () => {
+    const pr = convertSingleModal;
+    const csf = convertSingleForm;
+    if (!pr || !csf.vendorId) return;
+    const yr = new Date().getFullYear();
+    const maxSeq = pos.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
+    const newPoId = `PO-${yr}-${String(maxSeq+1).padStart(3,"0")}`;
+    const v = vendors.find(x=>x.id===csf.vendorId);
+    const ts = Date.now();
+    const lines = (pr.lots||[]).flatMap((l,li)=>
+      (l.lines||[]).map((ln,di)=>{
+        const p = parseNestingMatCode(l.matCode);
+        const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
+        const qty = ln.qty||0;
+        const rate = parseFloat(csf.rates?.[l.matCode])||0;
+        const totalWt = Math.round(wtPerSheet*qty*100)/100;
+        return {
+          id:`POL-${ts}-${li}-${di}`,
+          matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
+          sheetDim:ln.sheetDim||ln.dims, description:ln.sheetDim||ln.dims, isPlate:true,
+          orderMode:'ByUnits', qty, qtyOrdered:qty, unit:'Sheets',
+          pricingMethod:'PerKg', unitPrice:rate,
+          wtPerSheet, wtOrdered:totalWt, wtRequired:totalWt,
+          totalPrice:Math.round(totalWt*rate*100)/100,
+          wtReceived:0, qtyReceived:0, status:'pending',
+          sourceType:'nesting', prId:pr.id,
+          itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
+        };
+      })
+    );
+    const newPO = {
+      id:newPoId, vendorId:csf.vendorId, vendorCode:v?.vendorCode||"",
+      vendorName:v?.name||"", poDate:csf.poDate||today(),
+      expectedDelivery:csf.expectedDelivery||"", remarks:csf.notes||"",
+      status:"pending", sourceType:"nesting", prId:pr.id,
+      servedOrders:[], coveredOrders:[], includesStock:false,
+      lines, grns:[], createdBy:user.name, createdDate:today(),
+    };
+    setPos(prev=>[...prev, newPO]);
+    setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"converted",poId:newPoId}));
+    setConvertSingleModal(null); setConvertSingleForm({});
+    showToast(`${newPoId} created`);
   };
 
   const saveGRN = (poId) => {
@@ -5568,31 +5614,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                       {pr.status==="pending" && canEdit && (
                         <>
                           <button onClick={()=>{
-                            const nestLines = (pr.lots||[]).flatMap((l,lotIdx)=>
-                              (l.lines||[]).map((ln,lineIdx)=>{
-                                const p = parseNestingMatCode(l.matCode);
-                                const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
-                                const qty = ln.qty||0;
-                                const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
-                                return {
-                                  id:`POL-${Date.now()}-${lotIdx}-${lineIdx}`,
-                                  matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
-                                  sheetDim:ln.sheetDim||ln.dims, isPlate:true,
-                                  sheetLength:dimParts[0]||0, sheetWidth:dimParts[1]||0,
-                                  orderMode:"ByUnits", qty, qtyOrdered:qty, unit:"Sheets",
-                                  pricingMethod:"PerUnit", unitPrice:0,
-                                  wtPerSheet, wtOrdered:Math.round(wtPerSheet*qty*100)/100,
-                                  wtRequired:Math.round(wtPerSheet*qty*100)/100,
-                                  totalPrice:0, wtReceived:0, qtyReceived:0, status:"pending",
-                                  sourceType:"nesting", itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
-                                };
-                              })
-                            );
-                            setForm({vendorId:"",vendorCode:"",vendorName:"",poDate:today(),expectedDelivery:"",status:"pending",servedOrders:[],coveredOrders:[],includesStock:false,
-                              remarks:`From ${pr.id} — ${pr.nestingBatchId}`, prId:pr.id, sourceType:"nesting",
-                              lines:nestLines, grns:[],createdBy:user.name,createdDate:today(),
-                            });
-                            setModal("new_po"); setPurTab("pos");
+                            setConvertSingleModal(pr);
+                            setConvertSingleForm({vendorId:'',poDate:today(),expectedDelivery:'',notes:'',rates:{}});
                           }} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO</button>
                           <button onClick={()=>{
                             if (!window.confirm("Cancel this purchase requisition?")) return;
@@ -5686,6 +5709,94 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           </div>
         </Modal>
       )}
+
+      {/* Single PR → Convert to PO Modal */}
+      {convertSingleModal && (()=>{
+        const pr = convertSingleModal;
+        const csf = convertSingleForm;
+        const lineGroups = (pr.lots||[]).map(l=>{
+          const dimLines = (l.lines||[]).map(d=>{
+            const wt = nestingSheetWt(l.matCode, d.sheetDim);
+            return { ...d, wt, totalWt:Math.round(wt*(d.qty||0)*100)/100 };
+          });
+          const subtotalQty = dimLines.reduce((s,d)=>s+(d.qty||0),0);
+          const subtotalWt  = dimLines.reduce((s,d)=>s+(d.totalWt||0),0);
+          const rate = parseFloat(csf.rates?.[l.matCode])||0;
+          return { matCode:l.matCode, dimLines, subtotalQty, subtotalWt, groupTotal:Math.round(subtotalWt*rate*100)/100 };
+        });
+        const grandWt    = lineGroups.reduce((s,g)=>s+g.subtotalWt,0);
+        const grandTotal = lineGroups.reduce((s,g)=>s+g.groupTotal,0);
+        return (
+          <Modal title={`Convert ${pr.id} to Purchase Order`} onClose={()=>setConvertSingleModal(null)} width={640}>
+            <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
+              Source batch: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
+            </div>
+            <G2>
+              <Field label="Vendor" required>
+                <Sel value={csf.vendorId||""} onChange={e=>{ if(e.target.value==="__add_new__"){ setConvertSingleModal(null); if(setMod) setMod("masters"); } else setConvertSingleForm(f=>({...f,vendorId:e.target.value})); }}>
+                  <option value="">Select vendor...</option>
+                  {vendors.filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                  <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
+                </Sel>
+              </Field>
+              <Field label="PO Date"><Input type="date" value={csf.poDate||""} onChange={e=>setConvertSingleForm(f=>({...f,poDate:e.target.value}))} /></Field>
+              <Field label="Expected Delivery"><Input type="date" value={csf.expectedDelivery||""} onChange={e=>setConvertSingleForm(f=>({...f,expectedDelivery:e.target.value}))} /></Field>
+              <Field label="Notes"><Input value={csf.notes||""} onChange={e=>setConvertSingleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional..." /></Field>
+            </G2>
+            <div style={{ marginTop:14 }}>
+              {lineGroups.map(g=>(
+                <div key={g.matCode} style={{ marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+                  <div style={{ background:T.bgCard, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi, fontSize:12 }}>{g.matCode}</span>
+                    <span style={{ fontSize:11, color:T.textMid }}>{g.subtotalQty} sheets · {fmt.num(g.subtotalWt)} kg</span>
+                  </div>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead><tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                      <th style={{ padding:"3px 10px", textAlign:"left", color:T.textMid, fontWeight:600 }}>Dims</th>
+                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Sheets</th>
+                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Wt/Sheet</th>
+                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Total Wt</th>
+                    </tr></thead>
+                    <tbody>
+                      {g.dimLines.map((d,i)=>(
+                        <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
+                          <td style={{ padding:"3px 10px", fontFamily:T.fontMono, color:T.text }}>{d.sheetDim}</td>
+                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono }}>{d.qty}</td>
+                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono, color:T.textMid }}>{fmt.num(d.wt)} kg</td>
+                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono }}>{fmt.num(d.totalWt)} kg</td>
+                        </tr>
+                      ))}
+                      <tr style={{ background:T.bgInput }}>
+                        <td colSpan={2} style={{ padding:"4px 10px", fontSize:11, color:T.textMid, fontWeight:700 }}>Subtotal</td>
+                        <td />
+                        <td style={{ padding:"4px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(g.subtotalWt)} kg</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div style={{ padding:"7px 12px", display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${T.border}`, background:T.bgCard }}>
+                    <span style={{ fontSize:11, color:T.textMid }}>Unit Price ₹/kg:</span>
+                    <input type="number" min={0} value={csf.rates?.[g.matCode]||""} placeholder="0.00"
+                      onChange={e=>setConvertSingleForm(f=>({...f,rates:{...(f.rates||{}),[g.matCode]:e.target.value}}))}
+                      style={{ width:90, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"3px 7px", color:T.text, fontFamily:T.fontMono, fontSize:11 }} />
+                    <span style={{ fontSize:11, fontWeight:700, color:T.green, marginLeft:"auto" }}>Group Total: {fmt.currency(g.groupTotal)}</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{ background:T.bgCard, borderRadius:6, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, fontWeight:700 }}>
+                <span style={{ color:T.textMid }}>Grand Total</span>
+                <div style={{ display:"flex", gap:24 }}>
+                  <span style={{ fontFamily:T.fontMono }}>{fmt.num(grandWt)} kg</span>
+                  <span style={{ fontFamily:T.fontMono, color:T.green }}>{fmt.currency(grandTotal)}</span>
+                </div>
+              </div>
+            </div>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+              <button onClick={()=>setConvertSingleModal(null)} style={css.btn.secondary}>Cancel</button>
+              <button onClick={saveSingleConvertPO} disabled={!csf.vendorId} style={{ ...css.btn.primary, opacity:csf.vendorId?1:0.4 }}>Create PO</button>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* New PO Modal */}
       {modal==="new_po" && (
