@@ -1350,15 +1350,19 @@ const nextGrnId = (pos) => {
 const buildStockLots = (grnForm, po, grnId, ts) =>
   (grnForm.lines||[]).filter(l=>(l.wtReceived||0)>0).map((l,idx) => {
     const poLine = po.lines?.find(pl=>pl.id===l.poLineId)||{};
+    const mtc = (grnForm.mtcs||[]).find(m=>m.id===l.mtcId)||null;
     return {
       id:`LOT-${ts}-${idx}`, poId:po.id, poLineId:l.poLineId, grnId,
       vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
       batchNo:grnForm.batchNo||"",
       itemCode:poLine.itemCode||"", matCode:poLine.matCode||"", matLibId:poLine.matLibId||"",
       matType:poLine.matType||"MS", grade:poLine.grade||"", sectionType:poLine.sectionType||poLine.section||"", size:poLine.size||"",
-      heatNo:l.heatNo||"",
+      heatNo: mtc?.heatNo || l.heatNo || "",
+      mtcNo: mtc?.mtcNo || "",
+      mtcDoc: mtc?.driveLink || "",
+      mtcUploaded: !!(mtc?.driveLink),
       wtReceived:l.wtReceived, wtAvailable:l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
-      status:"qc_hold", bayId:grnForm.bayId||"", mtcUploaded:false, mtcDoc:"",
+      status:"qc_hold", bayId:grnForm.bayId||"",
       rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:today(),
       isOffcut:false, parentLotId:"",
       allocations:[], qcHoldReason:(l.inspStatus||"")==="hold"?(grnForm.holdReason||""):"",
@@ -3357,9 +3361,9 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
     // Group rows by Material Code → sheets
     const lotsMap = {};
     nestImportRows.forEach(row=>{
-      const matCode = col(row,"material code","matcode","material_code","mat code");
-      const sheetNo = col(row,"sheet no","sheet_no","sheetno","sheet number");
-      const sheetDim = col(row,"sheet dim lxw","sheet dim","sheetdim","sheet_dim","dims","dimensions","lxw");
+      const matCode = (col(row,"material code","matcode","material_code","mat code")||'').trim();
+      const sheetNo = (col(row,"sheet no","sheet_no","sheetno","sheet number")||'0').toString().trim();
+      const sheetDim = (col(row,"sheet dim lxw","sheet dim","sheetdim","sheet_dim","dims","dimensions","lxw")||'').trim().toUpperCase();
       const markNo   = col(row,"mark no","mark_no","markno","mark number","part");
       const utilisPctStr = col(row,"utilisation %","utilisation%","utilization %","utilization%","utilisation","utilization","util %","util%","util","usage %","usage");
       const utilisPct = parseFloat(utilisPctStr)||0;
@@ -6509,7 +6513,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
         {user.role==="super_admin" && po.status!=="cancelled" && !((po.grns||[]).length===0 && po.status==="pending") && (
           <button onClick={()=>{ setCancelReason(""); setCancelModal(true); }} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}` }}>Cancel PO</button>
         )}
-        {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
+        {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview,mtcs:[]}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
         {canEdit && tab==="lines" && po.status==="pending" && (
           <div style={{ display:"flex", gap:6 }}>
             <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
@@ -6725,8 +6729,30 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           {(grnForm.lines||[]).some(l=>l.inspStatus==="hold") && (
             <Field label="Hold Reason"><Input value={grnForm.holdReason||""} onChange={e=>setGrnForm(f=>({...f,holdReason:e.target.value}))} placeholder="Reason for hold..." /></Field>
           )}
+          <SectionHd title="Mill Test Certificates" action={
+            <button onClick={()=>setGrnForm(f=>({...f,mtcs:[...(f.mtcs||[]),{id:`MTC-${Date.now()}`,mtcNo:"",heatNo:"",grade:"",driveLink:""}]}))} style={css.btn.sm}>+ Add MTC</button>
+          } />
+          {(grnForm.mtcs||[]).length===0 && (
+            <div style={{ fontSize:12, color:T.textLow, padding:"4px 0 10px" }}>No MTCs added. Add MTC certificates received with this delivery.</div>
+          )}
+          {(grnForm.mtcs||[]).map((m,mi)=>(
+            <div key={m.id} style={{ ...css.card, background:T.bg, marginBottom:6 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 2fr auto", gap:8, alignItems:"end" }}>
+                <Field label="MTC No"><Input value={m.mtcNo} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],mtcNo:e.target.value}; return {...f,mtcs:ms}; })} placeholder="MTC-001" /></Field>
+                <Field label="Heat No"><Input value={m.heatNo} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],heatNo:e.target.value}; return {...f,mtcs:ms}; })} placeholder="JSW-HEAT-001" /></Field>
+                <Field label="Grade"><Input value={m.grade} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],grade:e.target.value}; return {...f,mtcs:ms}; })} placeholder="IS 2062 E250" /></Field>
+                <Field label="Drive Link"><Input value={m.driveLink} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],driveLink:e.target.value}; return {...f,mtcs:ms}; })} placeholder="https://drive.google.com/..." /></Field>
+                <button onClick={()=>setGrnForm(f=>({...f,mtcs:(f.mtcs||[]).filter((_,j)=>j!==mi)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
+              </div>
+            </div>
+          ))}
+          {(grnForm.mtcs||[]).length>0 && (
+            <div style={{ textAlign:"right", marginBottom:12 }}>
+              <button onClick={()=>setGrnForm(f=>({...f,lines:(f.lines||[]).map(l=>({...l,mtcId:(f.mtcs||[])[0]?.id||""}))}))} style={css.btn.sm}>Apply MTC-1 to all lines</button>
+            </div>
+          )}
           <SectionHd title="Received Lines" action={
-            <button onClick={()=>setGrnForm(f=>({...f,lines:[...(f.lines||[]),{poLineId:"",materialDesc:"",qtyReceived:0,calculatedWt:0,actualWt:0,variance:0,wtReceived:0,heatNo:"",condition:"good",inspStatus:"approved"}]}))} style={css.btn.sm}>+ Add Line</button>
+            <button onClick={()=>setGrnForm(f=>({...f,lines:[...(f.lines||[]),{poLineId:"",materialDesc:"",qtyReceived:0,calculatedWt:0,actualWt:0,variance:0,wtReceived:0,heatNo:"",mtcId:"",condition:"good",inspStatus:"approved"}]}))} style={css.btn.sm}>+ Add Line</button>
           } />
           {(grnForm.lines||[]).map((l,i)=>(
             <div key={i} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
@@ -6746,7 +6772,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                   {(()=>{ const vp=l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0; const vc=vp<=2?T.green:vp<=5?T.amber:T.red; return (
                     <Field label="Variance"><Input value={l.variance!==undefined&&l.variance!==null&&l.calculatedWt>0?`${(l.variance>0?"+":"")}${l.variance} kg (${vp.toFixed(1)}%)`:"—"} readOnly style={{opacity:0.9,cursor:"default",fontFamily:T.fontMono,color:vc,fontSize:11}} /></Field>
                   ); })()}
-                  <Field label={<span>Heat No {!l.heatNo&&<span style={{color:T.amber,fontSize:10}}>⚠</span>}</span>}><Input value={l.heatNo||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],heatNo:e.target.value}; return {...f,lines:n}; })} placeholder="From MTC..." /></Field>
+                  <Field label={<span>MTC {!(grnForm.mtcs||[]).length&&<span style={{color:T.textLow,fontSize:10}}>(no MTCs)</span>}</span>}>{(grnForm.mtcs||[]).length>0?(<Sel value={l.mtcId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const mtc=(f.mtcs||[]).find(m=>m.id===e.target.value); n[i]={...n[i],mtcId:e.target.value,heatNo:mtc?.heatNo||n[i].heatNo}; return {...f,lines:n}; })}><option value="">— Select MTC —</option>{(grnForm.mtcs||[]).map(m=><option key={m.id} value={m.id}>{m.mtcNo||"MTC"} · {m.heatNo||"no heat"}</option>)}</Sel>):(<Input value={l.heatNo||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],heatNo:e.target.value}; return {...f,lines:n}; })} placeholder="Heat no..." />)}</Field>
                   <Field label="Condition"><Sel value={l.condition||"good"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],condition:e.target.value}; return {...f,lines:n}; })}><option value="good">Good</option><option value="damaged">Damaged</option><option value="short">Short</option></Sel></Field>
                   <Field label="Insp"><Sel value={l.inspStatus||"approved"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],inspStatus:e.target.value}; return {...f,lines:n}; })}><option value="approved">Approved</option><option value="hold">Hold</option><option value="rejected">Rejected</option></Sel></Field>
                   <button onClick={()=>setGrnForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
@@ -6859,11 +6885,12 @@ const RMQCModule = ({ user, stock, setStock }) => {
   const doQC = (lotId, result, remarks) => {
     const mtcDoc  = form.mtcLink?.trim()||"";
     const heatNo  = form.heatNo?.trim()||"";
+    const mtcNo   = form.mtcNo?.trim()||"";
     setStock(prev=>prev.map(s=>s.id===lotId?{...s,
       rmQcStatus:result, qcRemarks:remarks, qcDate:today(), qcBy:user.name,
       status:result==="failed"?"rejected":s.status,
-      mtcDoc: mtcDoc||s.mtcDoc, heatNo: heatNo||s.heatNo,
-      mtcUploaded: mtcDoc ? true : s.mtcUploaded
+      mtcDoc: mtcDoc||s.mtcDoc, heatNo: heatNo||s.heatNo, mtcNo: mtcNo||s.mtcNo||"",
+      mtcUploaded: (mtcDoc||s.mtcDoc) ? true : s.mtcUploaded
     }:s));
     showToast(result==="approved"?"RM QC Approved — pending client inspection":"RM QC result saved");
     setModal(null);
@@ -6923,7 +6950,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
       <TD>
         <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
           {canQC && type!=="done" && type!=="failed" && (
-            <button onClick={()=>{setForm({lotId:lot.id,type,lot});setModal("inspect");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
+            <button onClick={()=>{setForm({lotId:lot.id,type,lot,mtcLink:lot.mtcDoc||"",heatNo:lot.heatNo||"",mtcNo:lot.mtcNo||"",mtcOverride:false});setModal("inspect");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
               {type==="qc"?"Inspect":"Client Insp"}
             </button>
           )}
@@ -7044,21 +7071,38 @@ const RMQCModule = ({ user, stock, setStock }) => {
           {form.type==="qc" && (
             <div>
               <div style={{ ...css.card, background:T.bg, marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:10, letterSpacing:"0.06em" }}>MTC DOCUMENT UPLOAD</div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, letterSpacing:"0.06em" }}>MTC DOCUMENT</div>
+                  {(form.mtcLink||form.heatNo||form.mtcNo) && !form.mtcOverride && (
+                    <button onClick={()=>setForm(f=>({...f,mtcOverride:true}))} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber }}>Override MTC</button>
+                  )}
+                </div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                  <div style={{ gridColumn:"span 2" }}>
-                    <label style={css.label}>Drive Link</label>
-                    <input value={form.mtcLink||""} onChange={e=>setForm(f=>({...f,mtcLink:e.target.value}))}
-                      placeholder="https://drive.google.com/..."
-                      style={{ ...css.input, marginTop:4, width:"100%" }} />
+                  <div>
+                    <label style={css.label}>MTC No</label>
+                    <input value={form.mtcNo||""} onChange={e=>setForm(f=>({...f,mtcNo:e.target.value}))}
+                      readOnly={!form.mtcOverride && !!(form.mtcNo)}
+                      placeholder="MTC document number"
+                      style={{ ...css.input, marginTop:4, opacity:(!form.mtcOverride&&form.mtcNo)?0.7:1 }} />
                   </div>
                   <div>
                     <label style={css.label}>Heat Number</label>
                     <input value={form.heatNo||""} onChange={e=>setForm(f=>({...f,heatNo:e.target.value}))}
+                      readOnly={!form.mtcOverride && !!(form.heatNo)}
                       placeholder="e.g. JSW-HEAT-2026-001"
-                      style={{ ...css.input, marginTop:4 }} />
+                      style={{ ...css.input, marginTop:4, opacity:(!form.mtcOverride&&form.heatNo)?0.7:1 }} />
+                  </div>
+                  <div style={{ gridColumn:"span 2" }}>
+                    <label style={css.label}>Drive Link</label>
+                    <input value={form.mtcLink||""} onChange={e=>setForm(f=>({...f,mtcLink:e.target.value}))}
+                      readOnly={!form.mtcOverride && !!(form.mtcLink)}
+                      placeholder="https://drive.google.com/..."
+                      style={{ ...css.input, marginTop:4, width:"100%", opacity:(!form.mtcOverride&&form.mtcLink)?0.7:1 }} />
                   </div>
                 </div>
+                {(form.mtcLink||form.heatNo||form.mtcNo) && !form.mtcOverride && (
+                  <div style={{ fontSize:11, color:T.textLow, marginTop:8 }}>Pre-filled from GRN MTC — click Override MTC to modify</div>
+                )}
               </div>
               <Field label="Inspection Checks">
                 <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
