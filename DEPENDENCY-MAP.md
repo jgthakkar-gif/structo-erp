@@ -1,6 +1,70 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 2.4 — April 2026
-# Session 4 Phase 3 — OrderProgressTracker full redesign + buildStockLots size fix
+# Version 2.5 — April 2026
+# Session 4 Phase 4 — Purchase module fixes: GRN reversal, rate entry, GRN redesign, lot weight exclusions
+# Updated:
+#   FIX 1 — GRN REVERSAL (reverseGRN in PODetail):
+#     OLD: setStock(prev => prev.filter(s => s.grnId !== grnId))  [DELETE]
+#     NEW: setStock(prev => prev.map(s => s.grnId !== grnId ? s : { ...s, status:'rejected',
+#              wtAvailable:0, rejectedAt, rejectedBy, rejectionReason:'GRN reversed', grnReversed:true }))
+#     NEW lot fields on reversal: lot.rejectedAt (ISO string), lot.rejectedBy (user.name),
+#              lot.rejectionReason (string), lot.grnReversed (boolean true)
+#     Toast updated: "GRN reversed — lots marked rejected (material remains in yard)"
+#     stCol map: added rejected:"red", returned:"gray"
+#     Stock filter tabs: added ['rejected','Rejected'] tab
+#     Stock lot actions: added Return to Vendor + Re-inspect buttons for rejected lots
+#     Return to Vendor: sets lot.status='returned', stores returnDate/vehicleNo/returnChallan/remarks
+#
+#   FIX 2 — RATE MANDATORY ON PO CREATION:
+#     Single PR → PO modal (convertSingleModal):
+#       csf.lineRates: { "${li}-${di}": rate } — per-dimension rate storage in convertSingleForm
+#       csf.rates: { [matCode]: rate } — group-level rate (auto-fills non-manual per-line)
+#       Changing first dim (di===0) auto-fills all other dims in same matCode group
+#       manualRate per-line flag: prevents group auto-fill from overwriting explicit entries
+#       anyRateZero: disables Create PO button; red border on zero-rate inputs
+#     Combine PRs modal (combineModal):
+#       combineForm.rates: { [matCode]: rate } — per-matCode rate input section added
+#       Create PO disabled when any matCode rate is zero/missing
+#     saveSingleConvertPO: rate = lineRates[`${li}-${di}`] ?? rates[matCode]
+#     createCombinedPO: pricingMethod:"PerKg", unitPrice, totalPrice saved per line
+#     po.totalValue: now computed and saved (allLines.reduce totalPrice sum)
+#
+#   FIX 3 — GRN REDESIGN (PODetail.saveGRN and GRN modal):
+#     grnGroupRates state: { [matCode]: groupRate } — new in PODetail, cleared on GRN close
+#     grnForm.lines[] NEW FIELDS:
+#       .checked (boolean, default true) — whether line is included in this receipt
+#       .rcvgQty (number) — qty being received in this GRN (≤ balance qty)
+#       .rate (number) — unit price ₹/kg for this line (from PO line unitPrice or manual)
+#       .manualRate (boolean) — true = user typed rate manually (don't auto-fill from group)
+#       .lineValue (number) — actualWt × rate rounded to 2dp
+#     GRN modal: 3-section design:
+#       Section A — Header: date picker, GRN No preview, vehicle, challan, DC no, supplier invoice
+#       Section B — MTC Definition: MTC-N labels, quick-assign buttons per matCode and for all
+#       Section C — Excel-like table grouped by matCode:
+#         Group header: matCode | N lines | PO wt | Rate input → Apply to group
+#         Columns: ☑ | Dimensions | PO Qty | Rcvg Qty | Calc Wt | Actual Wt | Variance | MTC | Rate | Value
+#     Totals footer: checked line count, calc wt, actual wt, variance, total value
+#     "Confirm GRN (N lines)" button
+#     saveGRN: filters checked!==false && actualWt>0; uses rcvgQty for qty tracking
+#     newGrn.totalActualWt: sum of checked lines actualWt
+#     buildStockLots UPDATED:
+#       wtReceived: l.actualWt||l.wtReceived (was l.wtReceived only)
+#       wtAvailable: l.actualWt||l.wtReceived (was l.wtReceived)
+#       lot.unitPrice: l.rate||0 — NEW field on lot
+#       lot.lineValue: l.lineValue||Math.round(wt*rate*100)/100 — NEW field on lot
+#     GRN display (GRNs tab) UPDATED:
+#       Lines table: added Rate ₹/kg and Value ₹ columns; totals footer row
+#       MTCs table: shown below lines when grn.mtcs.length>0
+#       Weight summary: Received/Rejected+Returned/Net Good from stock lots by grnId
+#
+#   FIX 4 — REJECTED LOT WEIGHT EXCLUDED FROM CALCULATIONS:
+#     activeLotWt helper: (lot) => ['rejected','returned','written_off'].includes(lot.status) ? 0 : (lot.wtAvailable||0)
+#     MRP stockAvail (~line 3461): now filters out rejected/returned/written_off lots before summing wtAvailable
+#     OrderProgressTracker receivedKg (~line 10196):
+#       OLD: orderLots.reduce((s,l)=>s+(l.kg||l.weightKg||0))  [wrong field]
+#       NEW: orderLots filtered !['rejected','returned','written_off'].includes(l.status)
+#            then .reduce((s,l)=>s+(l.wtReceived||0))  [correct field]
+#
+# Prior: v2.4 — OrderProgressTracker full redesign + buildStockLots size fix
 # Updated:
 #   ORDER PROGRESS TRACKER REDESIGN:
 #     New stage IDs (replaces old stageGroups):
@@ -335,9 +399,11 @@ part.matCode (derived: matType+grade+sectionType+size)
 # STOCK LOT OBJECT
 # ═══════════════════════════════════════════════════════════════════
 
-lot.status (qc_hold | available | reserved | partially_reserved | allocated | issued | consumed | written_off | pending_offcut_verification)
+lot.status (qc_hold | available | reserved | partially_reserved | allocated | issued | consumed | written_off | pending_offcut_verification | rejected | returned)
   *** CORRECTED: Release Wizard writes 'reserved' not 'allocated' — see lot.reservedFor ***
   *** NEW STATUS: partially_reserved — lot split across multiple orders via GRN auto-reservation ***
+  *** NEW STATUS: rejected — GRN reversed (lot stays in yard but excluded from all calculations) ***
+  *** NEW STATUS: returned — lot sent back to vendor after rejection ***
   FULL STATUS LIFECYCLE:
     GRN created               → qc_hold
     RM QC approved            → qc_hold (unchanged — needs client inspection too)
@@ -351,10 +417,15 @@ lot.status (qc_hold | available | reserved | partially_reserved | allocated | is
     Nesting NEST-BCH confirm  → allocated (HARD LOCK — this is the only path to allocated)
     Store Admin issues        → issued
     Cutting confirmation      → consumed
+    GRN reversed (super_admin) → rejected (wtAvailable set to 0; material stays in yard)
+    Return to Vendor (store_admin/super_admin) → returned (from rejected only)
   READS:   computeRmPicture — includes available+qc_hold+reserved+partially_reserved lots
-           Release Wizard Step 4 dropdown — hides allocated/issued/consumed
+           Release Wizard Step 4 dropdown — hides allocated/issued/consumed/rejected/returned
            Stock module filter tabs
            Off-cut verification banner — pending_offcut_verification
+           activeLotWt helper — returns 0 for rejected/returned/written_off
+           MRP stockAvail — excludes rejected/returned/written_off
+           OrderProgressTracker receivedKg — excludes rejected/returned/written_off
   WRITES:  doClientInsp — sets available/reserved/partially_reserved based on lot.reservations
            Release Wizard confirm() — sets 'reserved' (FIXED — no longer 'allocated')
            GRN saveGRN — stays qc_hold with lot.reservations populated if coveredOrders set
@@ -363,17 +434,23 @@ lot.status (qc_hold | available | reserved | partially_reserved | allocated | is
            Cutting — sets 'consumed'
            Off-cut creation — sets 'pending_offcut_verification'
            Store Admin verify — sets 'available' or 'reserved' based on parent.reservations
-  DISPLAYS: Stock module STATUS column badge (stCol map includes partially_reserved → amber)
+           reverseGRN (super_admin) — sets 'rejected', wtAvailable=0, adds audit fields
+           Return to Vendor modal (store_admin/super_admin) — sets 'returned'
+  DISPLAYS: Stock module STATUS column badge (stCol: rejected→"red", returned→"gray")
              Production register RM status dot
              Release Wizard Step 4 lot dropdown — shows only eligible lots
              Stock module "Off-cuts Pending Verification" banner
+             GRNs tab weight summary — shows rejected/net good breakdown
   TRIGGERS: reserved/partially_reserved → lot appears in reserved order's Step 4 dropdown with ✓
              reserved/partially_reserved → included in computeRmPicture lot filter
              pending_offcut_verification → Store Admin alert banner only
+             rejected → wtAvailable forced to 0; excluded from MRP/Tracker calcs
+             rejected → Return to Vendor and Re-inspect buttons visible in Stock module
   IF CHANGED: Manual status change (super_admin only) must be logged with reason
   IMPORTANT: 'allocated' is ONLY set by Nesting NEST-BCH confirmation (hard lock)
              'reserved' is the soft lock — set by wizard confirm() and GRN auto-reservation
              Off-cut verification restores to 'reserved' (not 'available') if parent had reservations
+             'rejected' and 'returned' are the ONLY terminal states where material is not in yard (usable)
 
 lot.reservations (array of reservation objects)
   *** EXTENDED: now has multiple sources — see below ***
@@ -540,7 +617,83 @@ lot.mtcDoc (Google Drive URL — was lot.mtcLink in earlier sessions)
   IF CHANGED: Verify new link accessible and correct document
   NOTE: field internally named mtcDoc not mtcLink on the lot object
 
+lot.unitPrice (number — ₹/kg at time of receipt)
+  *** NEW FIELD — added v2.5 ***
+  READS:   GRN display — Rate column
+  WRITES:  buildStockLots: l.rate||0
+  DISPLAYS: Stock module lot detail (rate), GRN lines Rate column
+  IF CHANGED: lineValue should be recalculated; use super_admin override flow
+
+lot.lineValue (number — wtReceived × unitPrice rounded to 2dp)
+  *** NEW FIELD — added v2.5 ***
+  READS:   GRN display — Value column; GRN totals footer
+  WRITES:  buildStockLots: l.lineValue || Math.round(wt*rate*100)/100
+  DISPLAYS: Stock module lot detail, GRN lines Value column, GRN totals footer
+  IF CHANGED: Log reason; may affect purchase valuation
+
+lot.rejectedAt (ISO timestamp — set on GRN reversal)
+  *** NEW FIELD — added v2.5 ***
+  WRITES:  reverseGRN in PODetail — new Date().toISOString()
+  DISPLAYS: Stock module rejected lot card (future: audit trail)
+
+lot.rejectedBy (string — user.name at reversal)
+  *** NEW FIELD — added v2.5 ***
+  WRITES:  reverseGRN in PODetail
+  DISPLAYS: Stock module rejected lot card (audit trail)
+
+lot.rejectionReason (string)
+  *** NEW FIELD — added v2.5 ***
+  WRITES:  reverseGRN: hardcoded 'GRN reversed'; Return to Vendor: user-entered remarks
+  DISPLAYS: Stock module rejected lot card
+
+lot.grnReversed (boolean true)
+  *** NEW FIELD — added v2.5 ***
+  WRITES:  reverseGRN in PODetail
+  READS:   (available for future GRN history audit)
+
 # ─── GRN FORM (transient — not persisted; used during GRN modal) ───
+
+grnForm.lines[].checked (boolean, default true)
+  *** NEW FIELD — added v2.5 ***
+  READS:   saveGRN — filters checked!==false && actualWt>0 lines only
+           GRN modal Section C — checkbox per line
+  WRITES:  GRN modal checkbox onChange
+  INITIAL: true — set in "Raise GRN" button onClick
+
+grnForm.lines[].rcvgQty (number)
+  *** NEW FIELD — added v2.5 ***
+  READS:   saveGRN — used as qty for PO line qtyReceived update
+           GRN modal Section C — Rcvg Qty input
+  WRITES:  "Raise GRN" button: balQty (balance qty); GRN modal Rcvg Qty input
+  INITIAL: balQty = (qtyOrdered||qty) - (qtyReceived||0)
+  NOTE: rcvgQty stored on saved GRN line for display (rcvgQty||qtyReceived in GRNs tab)
+
+grnForm.lines[].rate (number — ₹/kg)
+  *** NEW FIELD — added v2.5 ***
+  READS:   saveGRN → saved to newGrn.lines[].rate → buildStockLots → lot.unitPrice
+           GRN modal Section C — Rate input per line
+           grnGroupRates onChange — auto-fills non-manual lines
+  WRITES:  "Raise GRN" button: pl.unitPrice||0; group rate changes; per-line input
+  INITIAL: pl.unitPrice||0 from PO line
+
+grnForm.lines[].manualRate (boolean)
+  *** NEW FIELD — added v2.5 ***
+  READS:   grnGroupRates onChange — skips lines where manualRate===true
+  WRITES:  Per-line rate input onChange sets manualRate:true
+  INITIAL: false
+
+grnForm.lines[].lineValue (number)
+  *** NEW FIELD — added v2.5 ***
+  READS:   saveGRN → saved to newGrn.lines[].lineValue → buildStockLots → lot.lineValue
+           GRN modal Section C — Value column (computed display)
+           Totals footer — totalValue sum
+  WRITES:  Per-line rate change: Math.round(actualWt*rate*100)/100
+
+grnGroupRates ({ [matCode]: number } — PODetail component state)
+  *** NEW STATE — added v2.5 ***
+  READS:   GRN modal Section C group header — Rate input for each matCode
+  WRITES:  Group Rate input onChange — auto-fills non-manual grnForm.lines for that matCode
+  INITIAL: {} — set in "Raise GRN" onClick; cleared in modal onClose and saveGRN
 
 grnForm.mtcs (array of {id, mtcNo, heatNo, grade, driveLink})
   READS:   buildStockLots — finds mtc by grnLine.mtcId to populate lot fields
@@ -1010,6 +1163,53 @@ po.line.wtPerSheet (number kg)
   WRITES:  nestingSheetWt() helper called in Convert to PO and createCombinedPO()
   NOTE:    0 if sheetDim is blank or t cannot be parsed from matCode
   IF CHANGED: Update nestingSheetWt() helper; recalculate wtOrdered (= wtPerSheet × qty)
+
+po.line.unitPrice (number — ₹/kg)
+  *** FIELD NOW POPULATED — v2.5: both single-convert and combine-PO paths now save this ***
+  READS:   PODetail lines table — Unit Price column
+           "Raise GRN" button init — pre-fills grnForm.lines[].rate
+           buildStockLots — lot.unitPrice inherits from pl.unitPrice
+  WRITES:  saveSingleConvertPO: rate from csf.lineRates[`${li}-${di}`] ?? csf.rates[matCode]
+           createCombinedPO: parseFloat(combineForm.rates?.[l.matCode])||0
+  IF CHANGED: Recalculate po.line.totalPrice and po.totalValue
+
+po.line.pricingMethod ('PerKg' | 'PerUnit' | undefined)
+  *** FIELD NOW POPULATED — v2.5 ***
+  READS:   PODetail lines table — Pricing column
+  WRITES:  saveSingleConvertPO: hardcoded "PerKg"
+           createCombinedPO: hardcoded "PerKg"
+  IF CHANGED: Update effectiveRateKg display calculation in PODetail
+
+po.line.totalPrice (number — unitPrice × wtOrdered rounded to 2dp)
+  *** FIELD NOW POPULATED — v2.5 ***
+  READS:   PODetail lines table — Total column; po.totalValue sum
+  WRITES:  saveSingleConvertPO: Math.round(wtPerSheet * qty * rate * 100) / 100
+           createCombinedPO: Math.round(wtPS * qty * 100)/100 * rate rounded to 2dp
+  IF CHANGED: Recompute po.totalValue
+
+po.totalValue (number — sum of all po.lines[].totalPrice)
+  *** FIELD NOW POPULATED — v2.5: createCombinedPO and saveSingleConvertPO both save this ***
+  READS:   PODetail header — Total PO Value display
+  WRITES:  createCombinedPO: allLines.reduce((s,l)=>s+(l.totalPrice||0),0)
+           saveSingleConvertPO: lines.reduce sum
+  IF CHANGED: No cascade — display only
+
+csf.lineRates ({ "${li}-${di}": rate } — convertSingleForm field)
+  *** NEW FIELD — v2.5 ***
+  KEY FORMAT: `${lotIndex}-${dimIndex}` matching pr.lots[li].lines[di]
+  READS:   saveSingleConvertPO: rate = csf.lineRates[key] ?? csf.rates[matCode]
+           convertSingleModal: per-dim rate input binding; anyRateZero check
+  WRITES:  Per-dim rate input onChange; group rate input auto-fills non-manual dims (di!==0 without override)
+  INITIAL: {} on convertSingleModal open
+  NOTE:    csf.rates[matCode] is the group-level fallback; csf.lineRates is the per-dim override
+
+combineForm.rates ({ [matCode]: number } — combineModal field)
+  *** NEW FIELD — v2.5 ***
+  READS:   createCombinedPO: parseFloat(combineForm.rates?.[l.matCode])||0 per line
+           combineModal: per-matCode rate input; anyRateZero guard on Create PO button
+  WRITES:  Per-matCode rate input onChange in combineModal
+  INITIAL: {} on combine modal open
+  NOTE:    One rate per matCode applies to ALL lines for that material
 
 po.line.category ('raw_material' | 'paint' | 'consumable' | undefined)
   *** NEW FIELD — structured line type from LinePicker ***

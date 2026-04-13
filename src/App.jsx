@@ -1361,7 +1361,8 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       mtcNo: mtc?.mtcNo || "",
       mtcDoc: mtc?.driveLink || "",
       mtcUploaded: !!(mtc?.driveLink),
-      wtReceived:l.wtReceived, wtAvailable:l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
+      wtReceived:l.actualWt||l.wtReceived, wtAvailable:l.actualWt||l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
+      unitPrice:l.rate||0, lineValue:l.lineValue||Math.round((l.actualWt||l.wtReceived||0)*(l.rate||0)*100)/100,
       status:"qc_hold", bayId:grnForm.bayId||"",
       rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:today(),
       isOffcut:false, parentLotId:"",
@@ -1375,6 +1376,10 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       variance: l.variance||0,
     };
   });
+
+// Helper: returns 0 for lots that are rejected/returned/written_off — use everywhere lot weight is summed
+const activeLotWt = (lot) =>
+  ['rejected','returned','written_off'].includes(lot.status) ? 0 : (lot.wtAvailable||0);
 
 // ─── PO LINE CSV IMPORT ───────────────────────────────────────────────────────
 const PO_LINE_COLS = [
@@ -3458,7 +3463,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
     });
   });
   const fabList = Object.values(fabAgg).map(row => {
-    const stockAvail = stock.filter(s=>(s.matCode&&s.matCode===row.matCode)||((s.sectionType||s.section)===row.section&&s.size===row.size&&s.grade===row.grade)).reduce((a,s)=>a+(s.wtAvailable||0),0);
+    const stockAvail = stock.filter(s=>!['rejected','returned','written_off'].includes(s.status)&&((s.matCode&&s.matCode===row.matCode)||((s.sectionType||s.section)===row.section&&s.size===row.size&&s.grade===row.grade))).reduce((a,s)=>a+(s.wtAvailable||0),0);
     const netToProcure = Math.max(0, row.wtRequired - stockAvail);
     return { ...row, stockAvail, netToProcure };
   });
@@ -4324,11 +4329,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
                     }
                     return dimLines.map((d,di)=>{
                       const dimStr = d.sheetDim||'';
-                      const dimParts = dimStr.toUpperCase().split('X');
-                      const dimL = parseFloat(dimParts[1]||dimParts[0]||0);
-                      const dimW = parseFloat(dimParts[0]||0);
-                      const wtPerSheet = (sectionType.toUpperCase()==='PLATE' && thickness>0 && dimL>0 && dimW>0)
-                        ? Math.round(dimL*dimW*thickness*7.85/1000000*10)/10 : 0;
+                      const wtPerSheet = nestingSheetWt(l.matCode, dimStr);
                       const totalWt = Math.round(wtPerSheet*d.qty*10)/10;
                       return {
                         id:`POL-${Date.now()}-${li}-${di}`, matCode:l.matCode,
@@ -5258,14 +5259,25 @@ const parseNestingMatCode = (matCode) => {
     size:        segs[3]||"",
   };
 };
-// Weight per sheet: L(mm) × W(mm) × t(mm) × 7.85 / 10^6 kg
-// sheetDim: "6000x1250" or "6000X1250"
+// Weight per unit: PLATE = L×W×t×7.85/1e6, sections = barLength(m)×wtPerMetre from library
+// sheetDim: plate = "6000X1250" (LxW in mm), section = "12000" (bar length in mm)
 const nestingSheetWt = (matCode, sheetDim) => {
   const segs = (matCode||"").split("/");
-  const t = parseFloat((segs[3]||"").replace(/mm$/i,""))||0;
-  const parts = (sheetDim||"").toUpperCase().split("X").map(Number);
-  const L = parts[0]||0, W = parts[1]||0;
-  return (L && W && t) ? Math.round(L * W * t * 7.85 / 1e6 * 100) / 100 : 0;
+  const sectionType = (segs[0]||"").toUpperCase();
+  const size = segs[3] || "";
+  if (sectionType === "PLATE") {
+    const t = parseFloat(size.replace(/mm$/i,""))||0;
+    const parts = (sheetDim||"").toUpperCase().split("X").map(Number);
+    const L = parts[0]||0, W = parts[1]||0;
+    return (L && W && t) ? Math.round(L * W * t * 7.85 / 1e6 * 100) / 100 : 0;
+  } else {
+    const barLengthM = (parseFloat(sheetDim)||0) / 1000;
+    const matEntry = MATERIALS_LIBRARY.find(m =>
+      (m.sectionType||"").toUpperCase() === sectionType && m.size === size && !m.isPlate
+    );
+    const wtPerMetre = matEntry?.wtPerMetre || 0;
+    return (barLengthM > 0 && wtPerMetre > 0) ? Math.round(barLengthM * wtPerMetre * 100) / 100 : 0;
+  }
 };
 
 const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials, paint, consumables, setMod }) => {
@@ -5374,13 +5386,14 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             return {
               id:`POL-${ts}-${prIdx}-${lotIdx}-${lineIdx}`,
               matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
-              sheetDim:ln.sheetDim||ln.dims, isPlate:true,
+              sheetDim:ln.sheetDim||ln.dims, isPlate:p.sectionType?.toUpperCase()==='PLATE',
               sheetLength:dimParts[0]||0, sheetWidth:dimParts[1]||0,
               orderMode:"ByUnits", qty, qtyOrdered:qty, unit:"Sheets",
-              pricingMethod:"PerUnit", unitPrice:0,
+              pricingMethod:"PerKg", unitPrice:parseFloat(combineForm.rates?.[l.matCode])||0,
               wtPerSheet, wtOrdered:Math.round(wtPerSheet*qty*100)/100,
               wtRequired:Math.round(wtPerSheet*qty*100)/100,
-              totalPrice:0, wtReceived:0, qtyReceived:0, status:"pending",
+              totalPrice:Math.round(Math.round(wtPerSheet*qty*100)/100*(parseFloat(combineForm.rates?.[l.matCode])||0)*100)/100,
+              wtReceived:0, qtyReceived:0, status:"pending",
               sourceType:"nesting", sourcePrId:pr.id,
               itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
             };
@@ -5394,6 +5407,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       status:"pending", sourceType:"nesting",
       prIds:selectedPrs,
       servedOrders:[], coveredOrders:[], includesStock:false,
+      totalValue:allLines.reduce((s,l)=>s+(l.totalPrice||0),0),
       lines:allLines, grns:[], createdBy:user.name, createdDate:today(),
     };
     setPos(prev=>[...prev, newPO]);
@@ -5417,12 +5431,12 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         const p = parseNestingMatCode(l.matCode);
         const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
         const qty = ln.qty||0;
-        const rate = parseFloat(csf.rates?.[l.matCode])||0;
+        const rate = parseFloat(csf.lineRates?.[`${li}-${di}`]??csf.rates?.[l.matCode])||0;
         const totalWt = Math.round(wtPerSheet*qty*100)/100;
         return {
           id:`POL-${ts}-${li}-${di}`,
           matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
-          sheetDim:ln.sheetDim||ln.dims, description:ln.sheetDim||ln.dims, isPlate:true,
+          sheetDim:ln.sheetDim||ln.dims, description:ln.sheetDim||ln.dims, isPlate:p.sectionType?.toUpperCase()==='PLATE',
           orderMode:'ByUnits', qty, qtyOrdered:qty, unit:'Sheets',
           pricingMethod:'PerKg', unitPrice:rate,
           wtPerSheet, wtOrdered:totalWt, wtRequired:totalWt,
@@ -5535,7 +5549,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {pos.filter(po => showCancelled || po.status !== "cancelled").map(po => {
         const totalVal = po.lines.reduce((s,l)=>s+(l.totalPrice||0),0);
         const totalWtOrd = po.lines.reduce((s,l)=>s+(l.wtOrdered||0),0);
-        const totalWtRec = po.lines.reduce((s,l)=>s+(l.wtReceived||0),0);
+        const _grnWt = (g) => g.totalActualWt || (g.lines||[]).reduce((s,l)=>s+(l.actualWt||l.wtReceived||0),0);
+        const totalWtRec = (po.grns||[]).filter(g=>g.status!=='reversed').reduce((s,g)=>s+_grnWt(g),0);
         return (
           <div key={po.id} onClick={()=>setSelected(po.id)} style={{ ...css.card, marginBottom:10, cursor:"pointer" }}
             onMouseEnter={e=>e.currentTarget.style.borderColor=T.borderHi}
@@ -5707,9 +5722,33 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             <Field label="Expected Delivery"><Input type="date" value={combineForm.expectedDelivery||""} onChange={e=>setCombineForm(f=>({...f,expectedDelivery:e.target.value}))} /></Field>
             <Field label="Notes"><Input value={combineForm.notes||""} onChange={e=>setCombineForm(f=>({...f,notes:e.target.value}))} placeholder="Optional..." /></Field>
           </G2>
+          {(()=>{
+            const matCodes = [...new Set((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>(pr.lots||[]).map(l=>l.matCode)))];
+            const anyRateZero = matCodes.some(mc=>!(parseFloat(combineForm.rates?.[mc])||0));
+            if (!matCodes.length) return null;
+            return (
+              <div style={{ marginTop:12 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8, letterSpacing:"0.05em" }}>RATES (₹/kg) — mandatory</div>
+                {matCodes.map(mc=>{
+                  const mcWt = (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>(pr.lots||[]).filter(l=>l.matCode===mc).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+nestingSheetWt(mc,ln.sheetDim||ln.dims)*(ln.qty||0),ss),s),0);
+                  return (
+                    <div key={mc} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:`1px solid ${T.border}` }}>
+                      <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.accentHi, minWidth:160 }}>{mc}</span>
+                      <span style={{ fontSize:11, color:T.textMid }}>{fmt.num(Math.round(mcWt))} kg</span>
+                      <input type="number" min={0} value={combineForm.rates?.[mc]||""} placeholder="Rate ₹/kg"
+                        onChange={e=>setCombineForm(f=>({...f,rates:{...(f.rates||{}),[mc]:e.target.value}}))}
+                        style={{ width:90, background:T.bgInput, border:`1px solid ${!(parseFloat(combineForm.rates?.[mc])||0)?T.red:T.border}`, borderRadius:4, padding:"3px 7px", color:T.text, fontFamily:T.fontMono, fontSize:11 }} />
+                      <span style={{ fontSize:11, color:T.green }}>{(parseFloat(combineForm.rates?.[mc])||0)>0?fmt.currency(Math.round(mcWt*(parseFloat(combineForm.rates?.[mc])||0))):"—"}</span>
+                    </div>
+                  );
+                })}
+                {anyRateZero && combineForm.vendorId && <div style={{ marginTop:6, fontSize:11, color:T.red }}>Enter rate for all material codes before creating PO</div>}
+              </div>
+            );
+          })()}
           <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
             <button onClick={()=>setCombineModal(false)} style={css.btn.secondary}>Cancel</button>
-            <button onClick={createCombinedPO} disabled={!combineForm.vendorId} style={{ ...css.btn.primary, opacity:combineForm.vendorId?1:0.4 }}>Create PO</button>
+            <button onClick={createCombinedPO} disabled={!combineForm.vendorId||[...new Set((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>(pr.lots||[]).map(l=>l.matCode)))].some(mc=>!(parseFloat(combineForm.rates?.[mc])||0))} style={{ ...css.btn.primary, opacity:(!combineForm.vendorId||[...new Set((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>(pr.lots||[]).map(l=>l.matCode)))].some(mc=>!(parseFloat(combineForm.rates?.[mc])||0)))?0.4:1 }}>Create PO</button>
           </div>
         </Modal>
       )}
@@ -5718,15 +5757,17 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {convertSingleModal && (()=>{
         const pr = convertSingleModal;
         const csf = convertSingleForm;
-        const lineGroups = (pr.lots||[]).map(l=>{
-          const dimLines = (l.lines||[]).map(d=>{
+        const lineGroups = (pr.lots||[]).map((l,li)=>{
+          const dimLines = (l.lines||[]).map((d,di)=>{
             const wt = nestingSheetWt(l.matCode, d.sheetDim);
-            return { ...d, wt, totalWt:Math.round(wt*(d.qty||0)*100)/100 };
+            const lineRate = parseFloat(csf.lineRates?.[`${li}-${di}`]??csf.rates?.[l.matCode])||0;
+            const totalWt = Math.round(wt*(d.qty||0)*100)/100;
+            return { ...d, di, wt, totalWt, lineRate, lineValue:Math.round(totalWt*lineRate*100)/100 };
           });
           const subtotalQty = dimLines.reduce((s,d)=>s+(d.qty||0),0);
           const subtotalWt  = dimLines.reduce((s,d)=>s+(d.totalWt||0),0);
-          const rate = parseFloat(csf.rates?.[l.matCode])||0;
-          return { matCode:l.matCode, dimLines, subtotalQty, subtotalWt, groupTotal:Math.round(subtotalWt*rate*100)/100 };
+          const groupTotal  = dimLines.reduce((s,d)=>s+d.lineValue,0);
+          return { matCode:l.matCode, dimLines, subtotalQty, subtotalWt, groupTotal, li };
         });
         const grandWt    = lineGroups.reduce((s,g)=>s+g.subtotalWt,0);
         const grandTotal = lineGroups.reduce((s,g)=>s+g.groupTotal,0);
@@ -5748,55 +5789,84 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               <Field label="Notes"><Input value={csf.notes||""} onChange={e=>setConvertSingleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional..." /></Field>
             </G2>
             <div style={{ marginTop:14 }}>
-              {lineGroups.map(g=>(
-                <div key={g.matCode} style={{ marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
-                  <div style={{ background:T.bgCard, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi, fontSize:12 }}>{g.matCode}</span>
-                    <span style={{ fontSize:11, color:T.textMid }}>{g.subtotalQty} sheets · {fmt.num(g.subtotalWt)} kg</span>
-                  </div>
-                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
-                    <thead><tr style={{ borderBottom:`1px solid ${T.border}` }}>
-                      <th style={{ padding:"3px 10px", textAlign:"left", color:T.textMid, fontWeight:600 }}>Dims</th>
-                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Sheets</th>
-                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Wt/Sheet</th>
-                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Total Wt</th>
-                    </tr></thead>
-                    <tbody>
-                      {g.dimLines.map((d,i)=>(
-                        <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
-                          <td style={{ padding:"3px 10px", fontFamily:T.fontMono, color:T.text }}>{d.sheetDim}</td>
-                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono }}>{d.qty}</td>
-                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono, color:T.textMid }}>{fmt.num(d.wt)} kg</td>
-                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono }}>{fmt.num(d.totalWt)} kg</td>
+              {(()=>{
+                const anyRateZero = lineGroups.some(g=>g.dimLines.some(d=>!(d.lineRate>0)));
+                return (<>
+                {lineGroups.map(g=>(
+                  <div key={g.matCode} style={{ marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+                    <div style={{ background:T.bgCard, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+                      <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi, fontSize:12 }}>{g.matCode}</span>
+                      <span style={{ fontSize:11, color:T.textMid }}>{g.subtotalQty} sheets · {fmt.num(g.subtotalWt)} kg</span>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginLeft:"auto" }}>
+                        <span style={{ fontSize:10, color:T.textMid }}>Group rate ₹/kg:</span>
+                        <input type="number" min={0} value={csf.rates?.[g.matCode]||""} placeholder="Enter rate..."
+                          onChange={e=>{
+                            const r=e.target.value;
+                            setConvertSingleForm(f=>{
+                              const lr={...(f.lineRates||{})};
+                              g.dimLines.forEach(d=>{ lr[`${g.li}-${d.di}`]=r; });
+                              return {...f,rates:{...(f.rates||{}),[g.matCode]:r},lineRates:lr};
+                            });
+                          }}
+                          style={{ width:80, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 6px", color:T.text, fontFamily:T.fontMono, fontSize:11 }} />
+                        <span style={{ fontSize:11, fontWeight:700, color:T.green }}>= {fmt.currency(g.groupTotal)}</span>
+                      </div>
+                    </div>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                      <thead><tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                        <th style={{ padding:"3px 10px", textAlign:"left", color:T.textMid, fontWeight:600 }}>Dims</th>
+                        <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Sheets</th>
+                        <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Calc Wt</th>
+                        <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Rate ₹/kg</th>
+                        <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Value</th>
+                      </tr></thead>
+                      <tbody>
+                        {g.dimLines.map((d,i)=>(
+                          <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
+                            <td style={{ padding:"3px 10px", fontFamily:T.fontMono, color:T.text }}>{d.sheetDim}</td>
+                            <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono }}>{d.qty}</td>
+                            <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono, color:T.textMid }}>{fmt.num(d.totalWt)} kg</td>
+                            <td style={{ padding:"2px 6px", textAlign:"right" }}>
+                              <input type="number" min={0} value={csf.lineRates?.[`${g.li}-${d.di}`]??csf.rates?.[g.matCode]??""} placeholder="0.00"
+                                onChange={e=>{
+                                  const r=e.target.value;
+                                  setConvertSingleForm(f=>{
+                                    const lr={...(f.lineRates||{})};
+                                    lr[`${g.li}-${d.di}`]=r;
+                                    // if first dim, auto-fill all others in this group
+                                    if(d.di===0) g.dimLines.forEach(dd=>{ if(dd.di>0&&!(f.lineRates?.[`${g.li}-${dd.di}`]>0)) lr[`${g.li}-${dd.di}`]=r; });
+                                    return {...f,lineRates:lr};
+                                  });
+                                }}
+                                style={{ width:72, background:T.bgInput, border:`1px solid ${!(d.lineRate>0)?T.red:T.border}`, borderRadius:4, padding:"2px 5px", color:T.text, fontFamily:T.fontMono, fontSize:11, textAlign:"right" }} />
+                            </td>
+                            <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono, color:d.lineValue>0?T.green:T.textLow }}>{d.lineValue>0?fmt.currency(d.lineValue):"—"}</td>
+                          </tr>
+                        ))}
+                        <tr style={{ background:T.bgInput }}>
+                          <td colSpan={2} style={{ padding:"4px 10px", fontSize:11, color:T.textMid, fontWeight:700 }}>Subtotal</td>
+                          <td style={{ padding:"4px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(g.subtotalWt)} kg</td>
+                          <td />
+                          <td style={{ padding:"4px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.currency(g.groupTotal)}</td>
                         </tr>
-                      ))}
-                      <tr style={{ background:T.bgInput }}>
-                        <td colSpan={2} style={{ padding:"4px 10px", fontSize:11, color:T.textMid, fontWeight:700 }}>Subtotal</td>
-                        <td />
-                        <td style={{ padding:"4px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(g.subtotalWt)} kg</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <div style={{ padding:"7px 12px", display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${T.border}`, background:T.bgCard }}>
-                    <span style={{ fontSize:11, color:T.textMid }}>Unit Price ₹/kg:</span>
-                    <input type="number" min={0} value={csf.rates?.[g.matCode]||""} placeholder="0.00"
-                      onChange={e=>setConvertSingleForm(f=>({...f,rates:{...(f.rates||{}),[g.matCode]:e.target.value}}))}
-                      style={{ width:90, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"3px 7px", color:T.text, fontFamily:T.fontMono, fontSize:11 }} />
-                    <span style={{ fontSize:11, fontWeight:700, color:T.green, marginLeft:"auto" }}>Group Total: {fmt.currency(g.groupTotal)}</span>
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+                <div style={{ background:T.bgCard, borderRadius:6, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, fontWeight:700 }}>
+                  <span style={{ color:T.textMid }}>Grand Total</span>
+                  <div style={{ display:"flex", gap:24 }}>
+                    <span style={{ fontFamily:T.fontMono }}>{fmt.num(grandWt)} kg</span>
+                    <span style={{ fontFamily:T.fontMono, color:T.green }}>{fmt.currency(grandTotal)}</span>
                   </div>
                 </div>
-              ))}
-              <div style={{ background:T.bgCard, borderRadius:6, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, fontWeight:700 }}>
-                <span style={{ color:T.textMid }}>Grand Total</span>
-                <div style={{ display:"flex", gap:24 }}>
-                  <span style={{ fontFamily:T.fontMono }}>{fmt.num(grandWt)} kg</span>
-                  <span style={{ fontFamily:T.fontMono, color:T.green }}>{fmt.currency(grandTotal)}</span>
-                </div>
-              </div>
+                {anyRateZero && csf.vendorId && <div style={{ marginTop:8, fontSize:11, color:T.red, textAlign:"right" }}>Enter rate for all lines before creating PO</div>}
+                </>);
+              })()}
             </div>
             <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
               <button onClick={()=>setConvertSingleModal(null)} style={css.btn.secondary}>Cancel</button>
-              <button onClick={saveSingleConvertPO} disabled={!csf.vendorId} style={{ ...css.btn.primary, opacity:csf.vendorId?1:0.4 }}>Create PO</button>
+              <button onClick={saveSingleConvertPO} disabled={!csf.vendorId||lineGroups.some(g=>g.dimLines.some(d=>!(d.lineRate>0)))} style={{ ...css.btn.primary, opacity:(!csf.vendorId||lineGroups.some(g=>g.dimLines.some(d=>!(d.lineRate>0))))?0.4:1 }}>Create PO</button>
             </div>
           </Modal>
         );
@@ -6323,6 +6393,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
   const [tab, setTab] = useState("lines");
   const [grnModal, setGrnModal] = useState(false);
   const [grnForm, setGrnForm] = useState({ lines:[] });
+  const [grnGroupRates, setGrnGroupRates] = useState({}); // {[matCode]: groupRate} for GRN bulk-fill
   const [inspModal, setInspModal] = useState(null);
   const [groupRates, setGroupRates] = useState({}); // {[matCode]: ratePerKg} for nesting POs
   const [poImpModal, setPoImpModal] = useState(false);
@@ -6370,19 +6441,22 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
   };
 
   const saveGRN = () => {
-    if (!(grnForm.lines||[]).length) { showToast("Add at least one received line", "red"); return; }
+    const checkedLines = (grnForm.lines||[]).filter(l=>l.checked!==false && (l.actualWt||l.wtReceived||0)>0);
+    if (!checkedLines.length) { showToast("No lines selected for receipt", "red"); return; }
     const ts = Date.now();
     const yr = new Date().getFullYear();
     const grnId = nextGrnId(pos);
     const batchNo = po.vendorCode ? genBatchNo(po.vendorCode, pos, yr) : "";
-    const newGrn = { ...grnForm, id:grnId, batchNo, date:today(), createdBy:user.name, lines:(grnForm.lines||[]), status:"received" };
+    const grnDate = grnForm.date||today();
+    const newGrn = { ...grnForm, id:grnId, batchNo, date:grnDate, createdBy:user.name, lines:checkedLines, status:"received",
+      totalActualWt: checkedLines.reduce((s,l)=>s+(l.actualWt||l.wtReceived||0),0) };
     setPos(prev => prev.map(p => {
       if (p.id!==po.id) return p;
       const updLines = p.lines.map(pl=>{
         const gl = newGrn.lines.find(x=>x.poLineId===pl.id);
         if(!gl) return pl;
         const nw=(pl.wtReceived||0)+(gl.actualWt||gl.wtReceived||0);
-        const nq=(pl.qtyReceived||0)+(gl.qtyReceived||0);
+        const nq=(pl.qtyReceived||0)+(gl.rcvgQty||gl.qtyReceived||0);
         return {...pl, wtReceived:nw, qtyReceived:nq, status:nw>=pl.wtOrdered?"fully_received":"partially_received"};
       });
       const allF=updLines.every(l=>l.status==="fully_received");
@@ -6407,8 +6481,8 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
         return [...prev, ...finalLots];
       });
     }
-    showToast("GRN saved — materials added to RM QC queue");
-    setGrnModal(false); setGrnForm({lines:[]});
+    showToast(`GRN saved — ${checkedLines.length} lots added to RM QC queue`);
+    setGrnModal(false); setGrnForm({lines:[]}); setGrnGroupRates({});
   };
 
   const cancelPO = () => {
@@ -6435,8 +6509,13 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       showToast(`Cannot reverse — lot ${blockedLot.lotNo} has been approved or allocated. Contact administrator.`, "red");
       return;
     }
-    // Step 2 — remove stock lots immediately using functional updater (always fresh)
-    setStock(prev => prev.filter(s => s.grnId !== grnId));
+    // Step 2 — mark lots as rejected (NOT deleted — physical material still in yard)
+    const rejectedAt = new Date().toISOString();
+    setStock(prev => prev.map(s => s.grnId !== grnId ? s : {
+      ...s, status:'rejected', wtAvailable:0,
+      rejectedAt, rejectedBy:user.name,
+      rejectionReason:'GRN reversed', grnReversed:true
+    }));
     // Steps 3-5 — update PO lines, GRN status, and PO status atomically
     // Read GRN lines from the pos functional updater to avoid stale-closure bugs
     setPos(prev => prev.map(p => {
@@ -6448,7 +6527,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
         const gl = grn.lines?.find(x => x.poLineId === pl.id);
         if (!gl) return pl;
         const nw = Math.max(0, (pl.wtReceived||0) - (gl.actualWt||gl.wtReceived||0));
-        const nq = Math.max(0, (pl.qtyReceived||0) - (gl.qtyReceived||0));
+        const nq = Math.max(0, (pl.qtyReceived||0) - (gl.rcvgQty||gl.qtyReceived||0));
         return { ...pl, wtReceived:nw, qtyReceived:nq,
           status: nw <= 0 ? "pending" : nw >= pl.wtOrdered ? "fully_received" : "partially_received" };
       });
@@ -6466,7 +6545,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       });
       return { ...p, grns:updGrns, lines:updLines, status:newPoStatus };
     }));
-    showToast("GRN reversed — stock lots removed");
+    showToast("GRN reversed — lots marked rejected (material remains in yard)");
     setReverseModal(null);
     setReverseReason("");
   };
@@ -6479,8 +6558,10 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
   };
 
   const totalWtOrd = po.lines?.reduce((s,l)=>s+(l.wtOrdered||0),0)||0;
-  const totalWtRec = po.lines?.reduce((s,l)=>s+(l.wtReceived||0),0)||0;
   const totalVal = po.lines?.reduce((s,l)=>s+(l.totalPrice||0),0)||0;
+  // Compute from non-reversed GRNs — always accurate regardless of line wtReceived state
+  const grnWt = (g) => g.totalActualWt || (g.lines||[]).reduce((s,l)=>s+(l.actualWt||l.wtReceived||0),0);
+  const totalWtRec = (po.grns||[]).filter(g=>g.status!=='reversed').reduce((s,g)=>s+grnWt(g),0);
 
   return (
     <div>
@@ -6513,7 +6594,32 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
         {user.role==="super_admin" && po.status!=="cancelled" && !((po.grns||[]).length===0 && po.status==="pending") && (
           <button onClick={()=>{ setCancelReason(""); setCancelModal(true); }} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}` }}>Cancel PO</button>
         )}
-        {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview,mtcs:[]}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
+        {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{
+          const yr=new Date().getFullYear();
+          const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):"";
+          const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{
+            const balQty=Math.max(0,(pl.qtyOrdered||pl.qty||0)-(pl.qtyReceived||0));
+            const balWt=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0));
+            const wtPS=pl.wtPerSheet||0;
+            const calcWt=wtPS>0?Math.round(wtPS*balQty*100)/100:balWt;
+            return {
+              poLineId:pl.id,
+              materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),
+              checked:true,
+              rcvgQty:balQty,
+              calculatedWt:calcWt,
+              actualWt:calcWt,
+              wtReceived:calcWt,
+              variance:0,
+              rate:pl.unitPrice||0, manualRate:false,
+              lineValue:Math.round(calcWt*(pl.unitPrice||0)*100)/100,
+              heatNo:"", mtcId:"", condition:"good", inspStatus:"approved"
+            };
+          });
+          setGrnGroupRates({});
+          setGrnForm({lines:autoLines,batchNo:preview,date:today(),receivedBy:user.name,mtcs:[]});
+          setGrnModal(true);
+        }} style={css.btn.primary}>+ Raise GRN</button>}
         {canEdit && tab==="lines" && po.status==="pending" && (
           <div style={{ display:"flex", gap:6 }}>
             <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
@@ -6673,120 +6779,295 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                 )}
               </div>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                <thead><tr><TH>PO Line</TH><TH>Material</TH><TH right>Qty Rcvd</TH><TH right>Calc Wt (kg)</TH><TH right>Actual Wt (kg)</TH><TH right>Variance</TH><TH>Insp</TH></tr></thead>
+                <thead><tr><TH>PO Line</TH><TH>Material</TH><TH right>Qty Rcvd</TH><TH right>Calc Wt (kg)</TH><TH right>Actual Wt (kg)</TH><TH right>Variance</TH><TH right>Rate ₹/kg</TH><TH right>Value ₹</TH><TH>Insp</TH></tr></thead>
                 <tbody>
                   {grn.lines?.map((l,i)=>(
                     <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
-                      <TD mono>{l.poLineId}</TD>
+                      <TD mono color={T.textLow}>{l.poLineId}</TD>
                       <TD><span style={{fontFamily:T.fontMono,fontSize:11}}>{l.materialDesc||l.poLineId}</span></TD>
-                      <TD right mono>{l.qtyReceived||"—"}</TD>
+                      <TD right mono>{l.rcvgQty||l.qtyReceived||"—"}</TD>
                       <TD right mono>{fmt.num(l.calculatedWt||l.wtReceived)}</TD>
                       <TD right mono bold color={T.green}>{fmt.num(l.actualWt||l.wtReceived)}</TD>
-                      <TD right mono color={(()=>{ const vp=l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0; return vp<=2?T.green:vp<=5?T.amber:T.red; })()}>{l.variance!=null?`${l.variance>0?"+":""}${l.variance}`:"—"}</TD>
-                      <TD><Badge color={grnStatusBadge[l.inspStatus]||"gray"}>{l.inspStatus}</Badge></TD>
+                      <TD right mono color={(()=>{ const vp=l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0; return vp<=2?T.green:vp<=5?T.amber:T.red; })()}>{l.variance!=null?`${l.variance>=0?"+":""}${l.variance}`:"—"}</TD>
+                      <TD right mono>{l.rate>0?`₹${Number(l.rate).toFixed(1)}`:"—"}</TD>
+                      <TD right mono bold>{l.lineValue>0?fmt.currency(l.lineValue):"—"}</TD>
+                      <TD><Badge color={grnStatusBadge[l.inspStatus]||"gray"}>{l.inspStatus||"—"}</Badge></TD>
                     </tr>
                   ))}
                 </tbody>
+                {(()=>{
+                  const totalCalc=(grn.lines||[]).reduce((s,l)=>s+(l.calculatedWt||0),0);
+                  const totalAct=(grn.lines||[]).reduce((s,l)=>s+(l.actualWt||l.wtReceived||0),0);
+                  const totalVar=totalAct-totalCalc;
+                  const totalVal=(grn.lines||[]).reduce((s,l)=>s+(l.lineValue||0),0);
+                  return (
+                    <tfoot><tr style={{ background:T.bgInput, borderTop:`1px solid ${T.border}` }}>
+                      <td colSpan={3} style={{ padding:"5px 10px", fontSize:11, fontWeight:700, color:T.textMid }}>Total ({grn.lines?.length||0} lines)</td>
+                      <td style={{ padding:"5px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(Math.round(totalCalc))}</td>
+                      <td style={{ padding:"5px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.num(Math.round(totalAct))}</td>
+                      <td style={{ padding:"5px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:totalVar>=0?T.green:T.red }}>{totalVar>=0?"+":""}{Math.round(totalVar)}</td>
+                      <td/>
+                      <td style={{ padding:"5px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{totalVal>0?fmt.currency(totalVal):"—"}</td>
+                      <td/>
+                    </tr></tfoot>
+                  );
+                })()}
               </table>
+              {/* MTCs */}
+              {(grn.mtcs||[]).length>0 && (
+                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6, letterSpacing:"0.05em" }}>MILL TEST CERTIFICATES</div>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead><tr><TH>#</TH><TH>MTC No</TH><TH>Heat No</TH><TH>Grade</TH><TH>Drive Link</TH></tr></thead>
+                    <tbody>
+                      {(grn.mtcs||[]).map((m,mi)=>(
+                        <tr key={m.id} style={{ background:mi%2===0?"transparent":T.bg }}>
+                          <TD mono color={T.textLow}>MTC-{mi+1}</TD>
+                          <TD mono>{m.mtcNo||"—"}</TD>
+                          <TD mono>{m.heatNo||"—"}</TD>
+                          <TD>{m.grade||"—"}</TD>
+                          <TD>{m.driveLink?<a href={m.driveLink} target="_blank" rel="noreferrer" style={{ color:T.accentHi, fontSize:11 }}>View</a>:"—"}</TD>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {/* Stock weight summary */}
+              {(()=>{
+                const grnLots=(stock||[]).filter(s=>s.grnId===grn.id);
+                if(!grnLots.length) return null;
+                const recvWt=grnLots.reduce((s,l)=>s+(l.wtReceived||0),0);
+                const rejWt=grnLots.filter(l=>['rejected','returned'].includes(l.status)).reduce((s,l)=>s+(l.wtReceived||0),0);
+                const netWt=recvWt-rejWt;
+                return (
+                  <div style={{ display:"flex", gap:20, marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}`, fontSize:12 }}>
+                    <span style={{ color:T.textMid }}>Lots: <span style={{ fontFamily:T.fontMono, color:T.green }}>{fmt.num(Math.round(recvWt))} kg received</span></span>
+                    {rejWt>0 && <span style={{ color:T.red }}>— <span style={{ fontFamily:T.fontMono }}>{fmt.num(Math.round(rejWt))} kg rejected/returned</span></span>}
+                    {rejWt>0 && <span style={{ color:T.green, fontWeight:700 }}>Net good: <span style={{ fontFamily:T.fontMono }}>{fmt.num(Math.round(netWt))} kg</span></span>}
+                  </div>
+                );
+              })()}
             </div>
           ))}
         </div>
       )}
 
       {/* GRN Modal */}
-      {grnModal && (
-        <Modal title={`Raise GRN — ${po.id}`} onClose={()=>{setGrnModal(false);setGrnForm({lines:[]});}} width={800}>
-          {/* Batch number preview */}
-          {grnForm.batchNo && (
-            <div style={{ background:T.surface2, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", marginBottom:14, display:"flex", alignItems:"center", gap:12 }}>
-              <div style={{ fontSize:11, color:T.textMid }}>BATCH NUMBER</div>
-              <span style={{ fontFamily:T.fontMono, fontSize:16, fontWeight:800, color:T.accentHi }}>{grnForm.batchNo}</span>
-              <span style={{ fontSize:11, color:T.textLow }}>This batch number will be assigned to all stock lots created by this GRN</span>
-            </div>
-          )}
-          <G2>
-            <Field label="Vehicle No"><Input value={grnForm.vehicleNo||""} onChange={e=>setGrnForm(f=>({...f,vehicleNo:e.target.value}))} placeholder="MH-31-AB-1234" /></Field>
-            <Field label="Challan No"><Input value={grnForm.challanNo||""} onChange={e=>setGrnForm(f=>({...f,challanNo:e.target.value}))} /></Field>
-            <Field label="Supplier DC No"><Input value={grnForm.dcNo||""} onChange={e=>setGrnForm(f=>({...f,dcNo:e.target.value}))} /></Field>
-            <Field label="Storage Bay">
-              <Sel value={grnForm.bayId||""} onChange={e=>setGrnForm(f=>({...f,bayId:e.target.value}))}>
-                <option value="">Select bay...</option>
-                {BAYS.map(b=><option key={b.id} value={b.id}>Bay {String(b.number).padStart(2,"0")}</option>)}
-              </Sel>
-            </Field>
-            <Field label="Remarks"><Input value={grnForm.remarks||""} onChange={e=>setGrnForm(f=>({...f,remarks:e.target.value}))} /></Field>
-            {["super_admin","store_admin","store_user"].includes(user.role) && <>
-              <Field label="Supplier Invoice No"><Input value={grnForm.supplierInvoiceNo||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceNo:e.target.value}))} /></Field>
-              <Field label="Supplier Invoice Wt (kg)"><Input type="number" value={grnForm.supplierInvoiceWt||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceWt:+e.target.value}))} /></Field>
-              <Field label="Supplier Invoice Amt (₹)"><Input type="number" value={grnForm.supplierInvoiceAmt||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceAmt:+e.target.value}))} /></Field>
-              <Field label="Reconciliation">
-                <Sel value={grnForm.reconciliationStatus||"pending"} onChange={e=>setGrnForm(f=>({...f,reconciliationStatus:e.target.value}))}>
-                  <option value="pending">Pending</option><option value="matched">Matched</option><option value="variance">Variance</option><option value="dispute">Dispute</option>
+      {grnModal && (()=>{
+        const grnPreviewId = nextGrnId(pos);
+        // Group lines by matCode for Excel-like table
+        const matCodeOf = (l) => po.lines?.find(pl=>pl.id===l.poLineId)?.matCode || l.materialDesc || "Other";
+        const grpMap = {};
+        (grnForm.lines||[]).forEach((l,i)=>{ const mc=matCodeOf(l); if(!grpMap[mc]) grpMap[mc]=[]; grpMap[mc].push({l,i}); });
+        const matCodes = Object.keys(grpMap);
+        const checkedLines = (grnForm.lines||[]).filter(l=>l.checked!==false&&(l.actualWt||0)>0);
+        const totalCalcWt = checkedLines.reduce((s,l)=>s+(l.calculatedWt||0),0);
+        const totalActualWt = checkedLines.reduce((s,l)=>s+(l.actualWt||0),0);
+        const totalVariance = totalActualWt - totalCalcWt;
+        const totalValue = checkedLines.reduce((s,l)=>s+(l.lineValue||0),0);
+        const updLine = (i,patch) => setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],...patch}; return {...f,lines:n}; });
+        return (
+        <Modal title={`Raise GRN — ${po.id}`} onClose={()=>{setGrnModal(false);setGrnForm({lines:[]});setGrnGroupRates({});}} width={960}>
+
+          {/* SECTION A — Header */}
+          <div style={{ background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 16px", marginBottom:16 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:10, letterSpacing:"0.06em" }}>SECTION A — GRN HEADER</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+              <div><div style={css.label}>GRN No (auto)</div><div style={{ fontFamily:T.fontMono, fontSize:13, fontWeight:800, color:T.accentHi }}>{grnPreviewId}</div></div>
+              <div><div style={css.label}>Against PO</div><div style={{ fontFamily:T.fontMono, fontSize:13, fontWeight:700, color:T.text }}>{po.id}</div></div>
+              <div><div style={css.label}>Received By</div><div style={{ fontSize:12, color:T.text }}>{user.name}</div></div>
+              <Field label="Date"><Input type="date" value={grnForm.date||today()} onChange={e=>setGrnForm(f=>({...f,date:e.target.value}))} /></Field>
+              <Field label="Vehicle No"><Input value={grnForm.vehicleNo||""} onChange={e=>setGrnForm(f=>({...f,vehicleNo:e.target.value}))} placeholder="MH-31-AB-1234" /></Field>
+              <Field label="Challan No"><Input value={grnForm.challanNo||""} onChange={e=>setGrnForm(f=>({...f,challanNo:e.target.value}))} /></Field>
+              <Field label="Supplier DC No"><Input value={grnForm.dcNo||""} onChange={e=>setGrnForm(f=>({...f,dcNo:e.target.value}))} /></Field>
+              <Field label="Storage Bay">
+                <Sel value={grnForm.bayId||""} onChange={e=>setGrnForm(f=>({...f,bayId:e.target.value}))}>
+                  <option value="">Select bay...</option>
+                  {BAYS.map(b=><option key={b.id} value={b.id}>Bay {String(b.number).padStart(2,"0")}</option>)}
                 </Sel>
               </Field>
-            </>}
-          </G2>
-          {(grnForm.lines||[]).some(l=>l.inspStatus==="hold") && (
-            <Field label="Hold Reason"><Input value={grnForm.holdReason||""} onChange={e=>setGrnForm(f=>({...f,holdReason:e.target.value}))} placeholder="Reason for hold..." /></Field>
-          )}
-          <SectionHd title="Mill Test Certificates" action={
-            <button onClick={()=>setGrnForm(f=>({...f,mtcs:[...(f.mtcs||[]),{id:`MTC-${Date.now()}`,mtcNo:"",heatNo:"",grade:"",driveLink:""}]}))} style={css.btn.sm}>+ Add MTC</button>
-          } />
-          {(grnForm.mtcs||[]).length===0 && (
-            <div style={{ fontSize:12, color:T.textLow, padding:"4px 0 10px" }}>No MTCs added. Add MTC certificates received with this delivery.</div>
-          )}
-          {(grnForm.mtcs||[]).map((m,mi)=>{ const updMtc=(field,val)=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],[field]:val}; return {...f,mtcs:ms}; }); return (
-            <div key={m.id} style={{ ...css.card, background:T.bg, marginBottom:6 }}>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 2fr auto", gap:8, alignItems:"end" }}>
+              <Field label="Remarks"><Input value={grnForm.remarks||""} onChange={e=>setGrnForm(f=>({...f,remarks:e.target.value}))} /></Field>
+            </div>
+            {grnForm.batchNo && <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:11, color:T.textMid }}>BATCH NO:</span>
+              <span style={{ fontFamily:T.fontMono, fontSize:14, fontWeight:800, color:T.accentHi }}>{grnForm.batchNo}</span>
+            </div>}
+            {["super_admin","store_admin","store_user"].includes(user.role) && (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
+                <Field label="Supplier Invoice No"><Input value={grnForm.supplierInvoiceNo||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceNo:e.target.value}))} /></Field>
+                <Field label="Inv Wt (kg)"><Input type="number" value={grnForm.supplierInvoiceWt||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceWt:+e.target.value}))} /></Field>
+                <Field label="Inv Amt (₹)"><Input type="number" value={grnForm.supplierInvoiceAmt||""} onChange={e=>setGrnForm(f=>({...f,supplierInvoiceAmt:+e.target.value}))} /></Field>
+                <Field label="Reconciliation">
+                  <Sel value={grnForm.reconciliationStatus||"pending"} onChange={e=>setGrnForm(f=>({...f,reconciliationStatus:e.target.value}))}>
+                    <option value="pending">Pending</option><option value="matched">Matched</option><option value="variance">Variance</option><option value="dispute">Dispute</option>
+                  </Sel>
+                </Field>
+              </div>
+            )}
+          </div>
+
+          {/* SECTION B — MTC Definition */}
+          <div style={{ background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 16px", marginBottom:16 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, letterSpacing:"0.06em" }}>SECTION B — MILL TEST CERTIFICATES</div>
+              <button onClick={()=>setGrnForm(f=>({...f,mtcs:[...(f.mtcs||[]),{id:`MTC-${Date.now()}`,mtcNo:"",heatNo:"",grade:"",driveLink:""}]}))} style={css.btn.sm}>+ Add MTC</button>
+            </div>
+            {(grnForm.mtcs||[]).length===0 && <div style={{ fontSize:12, color:T.textLow }}>No MTCs added. Add MTC certificates received with this delivery.</div>}
+            {(grnForm.mtcs||[]).map((m,mi)=>{ const updMtc=(field,val)=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],[field]:val}; return {...f,mtcs:ms}; }); return (
+              <div key={m.id} style={{ display:"grid", gridTemplateColumns:"auto 1fr 1fr 1fr 2fr auto", gap:8, alignItems:"end", marginBottom:6 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:T.accent, paddingBottom:6 }}>MTC-{mi+1}</div>
                 <Field label="MTC No"><Input value={m.mtcNo} onChange={e=>updMtc('mtcNo',e.target.value)} placeholder="MTC-001" /></Field>
                 <Field label="Heat No"><Input value={m.heatNo} onChange={e=>updMtc('heatNo',e.target.value)} placeholder="JSW-HEAT-001" /></Field>
                 <Field label="Grade"><Input value={m.grade} onChange={e=>updMtc('grade',e.target.value)} placeholder="IS 2062 E250" /></Field>
                 <Field label="Drive Link"><Input value={m.driveLink} onChange={e=>updMtc('driveLink',e.target.value)} placeholder="https://drive.google.com/..." /></Field>
                 <button onClick={()=>setGrnForm(f=>({...f,mtcs:(f.mtcs||[]).filter((_,j)=>j!==mi)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
               </div>
-            </div>
-          ); })}
-          {(grnForm.mtcs||[]).length>0 && (
-            <div style={{ textAlign:"right", marginBottom:12 }}>
-              <button onClick={()=>setGrnForm(f=>({...f,lines:(f.lines||[]).map(l=>({...l,mtcId:(f.mtcs||[])[0]?.id||""}))}))} style={css.btn.sm}>Apply MTC-1 to all lines</button>
-            </div>
-          )}
-          <SectionHd title="Received Lines" action={
-            <button onClick={()=>setGrnForm(f=>({...f,lines:[...(f.lines||[]),{poLineId:"",materialDesc:"",qtyReceived:0,calculatedWt:0,actualWt:0,variance:0,wtReceived:0,heatNo:"",mtcId:"",condition:"good",inspStatus:"approved"}]}))} style={css.btn.sm}>+ Add Line</button>
-          } />
-          {(grnForm.lines||[]).map((l,i)=>(
-            <div key={i} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
-              <div>
-                <div style={{ display:"grid", gridTemplateColumns:"3fr 1fr 1fr 1fr", gap:8, alignItems:"end", marginBottom:6 }}>
-                  <Field label="PO Line Ref">
-                    <Sel value={l.poLineId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===e.target.value); const wtPU=calcGrnWtPU(pl,materials); const cw=n[i].qtyReceived>0&&wtPU>0?Math.round(n[i].qtyReceived*wtPU):0; n[i]={...n[i],poLineId:e.target.value,materialDesc:pl?.itemCode||pl?.matCode||`${pl?.sectionType||pl?.section||""} ${pl?.size||""}`.trim(),calculatedWt:Math.round(cw),actualWt:Math.round(cw),wtReceived:Math.round(cw),variance:0}; return {...f,lines:n}; })}>
-                      <option value="">Select PO line...</option>
-                      {po.lines?.map(pl=><option key={pl.id} value={pl.id}>{pl.id} — {pl.itemCode||pl.matCode||`${pl.sectionType||pl.section||""} ${pl.size||""}`.trim()} (Bal: {fmt.num((pl.wtOrdered||0)-(pl.wtReceived||0))} kg)</option>)}
-                    </Sel>
-                  </Field>
-                  <Field label="Qty Received"><Input type="number" value={l.qtyReceived||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const pl=po.lines?.find(x=>x.id===n[i].poLineId); const wtPU=calcGrnWtPU(pl,materials); const qr=+e.target.value; const cw=wtPU>0?Math.round(qr*wtPU):0; n[i]={...n[i],qtyReceived:qr,calculatedWt:cw,actualWt:cw,wtReceived:cw,variance:0}; return {...f,lines:n}; })} placeholder="Bars / Pcs" /></Field>
-                  <Field label="Calc Wt (kg)"><Input value={l.calculatedWt||""} readOnly style={{opacity:0.6,cursor:"default",fontFamily:T.fontMono,fontSize:12}} /></Field>
-                  <Field label="Weighbridge (kg)"><Input type="number" value={l.actualWt||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const aw=+e.target.value; const vr=Math.round(aw-(n[i].calculatedWt||0)); n[i]={...n[i],actualWt:aw,wtReceived:aw,variance:vr}; return {...f,lines:n}; })} placeholder={`Calc: ${l.calculatedWt||0}`} /></Field>
+            ); })}
+            {(grnForm.mtcs||[]).length>0 && (
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
+                <span style={{ fontSize:11, color:T.textMid, alignSelf:"center" }}>Quick assign:</span>
+                <button onClick={()=>setGrnForm(f=>({...f,lines:(f.lines||[]).map(l=>({...l,mtcId:(f.mtcs||[])[0]?.id||""}))}))
+                } style={css.btn.sm}>MTC-1 → ALL lines</button>
+                {matCodes.map(mc=>(
+                  <button key={mc} onClick={()=>setGrnForm(f=>({...f,lines:(f.lines||[]).map(l=>matCodeOf(l)===mc?{...l,mtcId:(f.mtcs||[])[0]?.id||""}:l)}))} style={{ ...css.btn.sm, fontSize:10 }}>MTC-1 → {mc.split("/").slice(-2).join("/")}</button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* SECTION C — Line Items Table */}
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:10, letterSpacing:"0.06em" }}>SECTION C — LINE ITEMS</div>
+          {matCodes.map(mc=>{
+            const groupItems = grpMap[mc];
+            const poLineForGroup = po.lines?.find(pl=>pl.id===groupItems[0]?.l?.poLineId);
+            const groupPoWt = groupItems.reduce((s,{l})=>{ const pl=po.lines?.find(x=>x.id===l.poLineId); return s+(pl?.wtOrdered||0); },0);
+            const groupRate = grnGroupRates[mc]||"";
+            return (
+              <div key={mc} style={{ marginBottom:16, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+                <div style={{ background:T.bgCard, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
+                  <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi, fontSize:12 }}>{mc}</span>
+                  <span style={{ fontSize:11, color:T.textMid }}>{groupItems.length} line{groupItems.length!==1?"s":""} · {fmt.num(Math.round(groupPoWt))} kg PO</span>
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginLeft:"auto" }}>
+                    <span style={{ fontSize:10, color:T.textMid }}>Rate ₹/kg:</span>
+                    <input type="number" min={0} value={groupRate} placeholder="Enter rate..."
+                      onChange={e=>{
+                        const r=e.target.value;
+                        setGrnGroupRates(gr=>({...gr,[mc]:r}));
+                        setGrnForm(f=>{
+                          const n=[...f.lines];
+                          groupItems.forEach(({i})=>{ if(n[i].checked!==false&&!n[i].manualRate) { const aw=n[i].actualWt||0; n[i]={...n[i],rate:parseFloat(r)||0,lineValue:Math.round(aw*(parseFloat(r)||0)*100)/100}; } });
+                          return {...f,lines:n};
+                        });
+                      }}
+                      style={{ width:80, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 6px", color:T.text, fontFamily:T.fontMono, fontSize:11 }} />
+                    <button onClick={()=>{
+                      const r=parseFloat(grnGroupRates[mc])||0;
+                      setGrnForm(f=>{ const n=[...f.lines]; groupItems.forEach(({i})=>{ const aw=n[i].actualWt||0; n[i]={...n[i],rate:r,manualRate:false,lineValue:Math.round(aw*r*100)/100}; }); return {...f,lines:n}; });
+                    }} style={{ ...css.btn.sm, fontSize:10 }}>Apply to group</button>
+                  </div>
                 </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr auto", gap:8, alignItems:"end" }}>
-                  {(()=>{ const vp=l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0; const vc=vp<=2?T.green:vp<=5?T.amber:T.red; return (
-                    <Field label="Variance"><Input value={l.variance!==undefined&&l.variance!==null&&l.calculatedWt>0?`${(l.variance>0?"+":"")}${l.variance} kg (${vp.toFixed(1)}%)`:"—"} readOnly style={{opacity:0.9,cursor:"default",fontFamily:T.fontMono,color:vc,fontSize:11}} /></Field>
-                  ); })()}
-                  <Field label={<span>MTC {!(grnForm.mtcs||[]).length&&<span style={{color:T.textLow,fontSize:10}}>(no MTCs)</span>}</span>}>{(grnForm.mtcs||[]).length>0?(<Sel value={l.mtcId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const mtc=(f.mtcs||[]).find(m=>m.id===e.target.value); n[i]={...n[i],mtcId:e.target.value,heatNo:mtc?.heatNo||n[i].heatNo}; return {...f,lines:n}; })}><option value="">— Select MTC —</option>{(grnForm.mtcs||[]).map(m=><option key={m.id} value={m.id}>{m.mtcNo||"MTC"} · {m.heatNo||"no heat"}</option>)}</Sel>):(<Input value={l.heatNo||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],heatNo:e.target.value}; return {...f,lines:n}; })} placeholder="Heat no..." />)}</Field>
-                  <Field label="Condition"><Sel value={l.condition||"good"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],condition:e.target.value}; return {...f,lines:n}; })}><option value="good">Good</option><option value="damaged">Damaged</option><option value="short">Short</option></Sel></Field>
-                  <Field label="Insp"><Sel value={l.inspStatus||"approved"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],inspStatus:e.target.value}; return {...f,lines:n}; })}><option value="approved">Approved</option><option value="hold">Hold</option><option value="rejected">Rejected</option></Sel></Field>
-                  <button onClick={()=>setGrnForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
+                <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                  <thead><tr style={{ background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
+                    <th style={{ padding:"4px 8px", width:28 }}>☑</th>
+                    <th style={{ padding:"4px 8px", textAlign:"left", color:T.textMid, fontWeight:600 }}>Dimensions</th>
+                    <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>PO Qty</th>
+                    <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Rcvg Qty</th>
+                    <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Calc Wt</th>
+                    <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Actual Wt</th>
+                    <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Variance</th>
+                    <th style={{ padding:"4px 8px", textAlign:"center", color:T.textMid, fontWeight:600 }}>MTC</th>
+                    <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Rate ₹/kg</th>
+                    <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Value</th>
+                  </tr></thead>
+                  <tbody>
+                    {groupItems.map(({l,i})=>{
+                      const pl = po.lines?.find(x=>x.id===l.poLineId)||{};
+                      const poQty = (pl.qtyOrdered||pl.qty||0);
+                      const vp = l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0;
+                      const vc = vp<=2?T.green:vp<=5?T.amber:T.red;
+                      const isChecked = l.checked!==false;
+                      return (
+                        <tr key={i} style={{ background:isChecked?"transparent":`${T.red}08`, opacity:isChecked?1:0.6, borderBottom:`1px solid ${T.border}` }}>
+                          <td style={{ padding:"4px 8px", textAlign:"center" }}>
+                            <input type="checkbox" checked={isChecked} onChange={e=>updLine(i,{checked:e.target.checked})} />
+                          </td>
+                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.text }}>{l.materialDesc||pl.sheetDim||pl.description||pl.size||"—"}</td>
+                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:T.textMid }}>{poQty}</td>
+                          <td style={{ padding:"3px 6px", textAlign:"right" }}>
+                            <input type="number" min={0} max={poQty} value={l.rcvgQty||""} disabled={!isChecked}
+                              onChange={e=>{
+                                const q=Math.min(+e.target.value,poQty);
+                                const wtPS=pl.wtPerSheet||0;
+                                const wtPU=calcGrnWtPU(pl,materials);
+                                const cw=wtPS>0?Math.round(wtPS*q*100)/100:wtPU>0?Math.round(wtPU*q):0;
+                                const vr=Math.round((l.actualWt||cw)-cw);
+                                updLine(i,{rcvgQty:q,calculatedWt:cw,variance:vr,lineValue:Math.round((l.actualWt||cw)*(l.rate||0)*100)/100});
+                              }}
+                              style={{ width:56, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 4px", color:T.text, fontFamily:T.fontMono, fontSize:11, textAlign:"right" }} />
+                          </td>
+                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:T.textMid }}>{fmt.num(l.calculatedWt||0)} kg</td>
+                          <td style={{ padding:"3px 6px", textAlign:"right" }}>
+                            <input type="number" min={0} value={l.actualWt||""} disabled={!isChecked}
+                              onChange={e=>{
+                                const aw=+e.target.value;
+                                const vr=Math.round(aw-(l.calculatedWt||0));
+                                updLine(i,{actualWt:aw,wtReceived:aw,variance:vr,lineValue:Math.round(aw*(l.rate||0)*100)/100});
+                              }}
+                              style={{ width:72, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 4px", color:T.text, fontFamily:T.fontMono, fontSize:11, textAlign:"right" }} />
+                          </td>
+                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:vc, fontSize:11 }}>{l.calculatedWt>0?`${(l.variance||0)>=0?"+":""}${l.variance||0} kg`:"—"}</td>
+                          <td style={{ padding:"3px 6px", textAlign:"center" }}>
+                            {(grnForm.mtcs||[]).length>0
+                              ? <Sel value={l.mtcId||""} onChange={e=>{ const mtc=(grnForm.mtcs||[]).find(m=>m.id===e.target.value); updLine(i,{mtcId:e.target.value,heatNo:mtc?.heatNo||l.heatNo}); }} style={{ fontSize:10, padding:"2px 4px" }}>
+                                  <option value="">—</option>
+                                  {(grnForm.mtcs||[]).map((m,mi)=><option key={m.id} value={m.id}>MTC-{mi+1}</option>)}
+                                </Sel>
+                              : <input value={l.heatNo||""} onChange={e=>updLine(i,{heatNo:e.target.value})} placeholder="Heat…" style={{ width:70, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 4px", color:T.text, fontSize:10 }} />
+                            }
+                          </td>
+                          <td style={{ padding:"3px 6px", textAlign:"right" }}>
+                            <input type="number" min={0} value={l.rate||""} disabled={!isChecked} placeholder="0.00"
+                              onChange={e=>{
+                                const r=parseFloat(e.target.value)||0;
+                                const aw=l.actualWt||0;
+                                updLine(i,{rate:r,manualRate:true,lineValue:Math.round(aw*r*100)/100});
+                              }}
+                              style={{ width:72, background:T.bgInput, border:`1px solid ${!(l.rate>0)&&isChecked?T.amber:T.border}`, borderRadius:4, padding:"2px 4px", color:T.text, fontFamily:T.fontMono, fontSize:11, textAlign:"right" }} />
+                          </td>
+                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:(l.lineValue||0)>0?T.green:T.textLow, fontWeight:(l.lineValue||0)>0?700:400 }}>
+                            {(l.lineValue||0)>0?fmt.currency(l.lineValue):"—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
                 </div>
               </div>
+            );
+          })}
+
+          {/* Totals Footer */}
+          <div style={{ background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 16px", marginBottom:16 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:12, fontSize:12 }}>
+              <div><div style={css.label}>Checked Lines</div><div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.text }}>{checkedLines.length} of {(grnForm.lines||[]).length}</div></div>
+              <div><div style={css.label}>Total Calc Wt</div><div style={{ fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(Math.round(totalCalcWt))} kg</div></div>
+              <div><div style={css.label}>Total Actual Wt</div><div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.num(Math.round(totalActualWt))} kg</div></div>
+              <div><div style={css.label}>Variance</div><div style={{ fontFamily:T.fontMono, fontWeight:700, color:totalVariance===0?T.textMid:totalVariance>0?T.green:T.red }}>{totalVariance>=0?"+":""}{fmt.num(Math.round(totalVariance))} kg</div></div>
+              <div><div style={css.label}>Total Value</div><div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.green }}>{fmt.currency(Math.round(totalValue))}</div></div>
             </div>
-          ))}
-          <InfoBanner color="amber">All received lots start as QC Hold — regardless of visual inspection. Progression through RM QC module.</InfoBanner>
+          </div>
+
+          <InfoBanner color="amber">All received lots start as QC Hold regardless of visual inspection. Progress via RM QC module.</InfoBanner>
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
-            <button onClick={()=>{setGrnModal(false);setGrnForm({lines:[]});}} style={css.btn.secondary}>Cancel</button>
-            <button onClick={saveGRN} style={css.btn.primary}>Save GRN</button>
+            <button onClick={()=>{setGrnModal(false);setGrnForm({lines:[]});setGrnGroupRates({});}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={saveGRN} disabled={checkedLines.length===0} style={{ ...css.btn.primary, opacity:checkedLines.length>0?1:0.4 }}>Confirm GRN ({checkedLines.length} lines)</button>
           </div>
         </Modal>
-      )}
+        );
+      })()}
       {/* Hidden file input for PODetail CSV import */}
       <input ref={poImpRef} type="file" accept=".csv" style={{display:"none"}} onChange={handlePOImpFile} />
       {poImpModal && <POLineImportModal
@@ -6835,7 +7116,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                   </div>
                 </>
               : <>
-                  <InfoBanner color="red">Reversing this GRN will remove all stock lots created from it and subtract the received weight from PO line counters.</InfoBanner>
+                  <InfoBanner color="red">Reversing this GRN will mark all stock lots as Rejected and subtract the received weight from PO line counters. Physical material remains in yard — use Return to Vendor or Re-inspect from Stock module.</InfoBanner>
                   <Field label="Reversal Reason (mandatory)">
                     <textarea value={reverseReason} onChange={e=>setReverseReason(e.target.value)} rows={3} style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:6, color:T.text, fontSize:13, padding:"8px 10px", fontFamily:T.font, resize:"vertical", boxSizing:"border-box" }} placeholder="State the reason for reversal..." />
                   </Field>
@@ -7163,6 +7444,8 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
   const [resForm, setResForm] = useState({});
   const [resLot, setResLot] = useState(null);
   const [resRelIdx, setResRelIdx] = useState(-1);
+  const [returnModal, setReturnModal] = useState(null); // lot for Return to Vendor
+  const [returnForm, setReturnForm] = useState({});
 
   const yr = new Date().getFullYear();
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
@@ -7183,7 +7466,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
     return ms && mq;
   });
 
-  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber", partially_reserved:"amber" };
+  const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber", partially_reserved:"amber", rejected:"red", returned:"gray" };
   const openModal = (m,lot) => { setModal(m); setActiveLot(lot); setMForm({}); };
   const closeModal = () => { setModal(null); setActiveLot(null); setMForm({}); };
 
@@ -7398,8 +7681,8 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
           <span style={{ position:"absolute",left:9,top:"50%",transform:"translateY(-50%)",color:T.textLow,fontSize:12 }}>🔍</span>
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Lot, batch, matCode, vendor..." style={{ ...css.input,paddingLeft:28,width:260 }} />
         </div>
-        {[["all","All"],["available","Available"],["reserved","Reserved"],["allocated","Allocated"],["issued","Issued"],["consumed","Consumed"],["qc_hold","QC Hold"],["written_off","Written Off"],["offcuts","Off-cuts"]].map(([f,lbl])=>(
-          <button key={f} onClick={()=>setFilter(f)} style={{ ...css.btn.secondary,...(filter===f?{background:`${T.accent}22`,color:T.accent,borderColor:T.accent}:{}) }}>
+        {[["all","All"],["available","Available"],["reserved","Reserved"],["allocated","Allocated"],["issued","Issued"],["consumed","Consumed"],["qc_hold","QC Hold"],["rejected","Rejected"],["written_off","Written Off"],["offcuts","Off-cuts"]].map(([f,lbl])=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{ ...css.btn.secondary,...(filter===f?{background:`${T.accent}22`,color:T.accent,borderColor:T.accent}:{}), ...(f==="rejected"&&filter===f?{background:`${T.red}22`,color:T.red,borderColor:T.red}:{}) }}>
             {lbl} ({f==="all"?stock.length:f==="offcuts"?stock.filter(s=>s.isOffcut).length:f==="reserved"?stock.filter(s=>(s.reservations||[]).length>0).length:stock.filter(s=>s.status===f).length})
           </button>
         ))}
@@ -7592,6 +7875,12 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
                     )}
                     {user.role==="super_admin"&&(s.status==="available"||s.status==="qc_hold")&&(s.wtAllocated||0)===0&&(
                       <button onClick={e=>{e.stopPropagation();openModal("writeoff",s);}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.redLo}`,fontSize:10 }}>Write Off</button>
+                    )}
+                    {s.status==='rejected'&&canIssue&&(
+                      <button onClick={e=>{e.stopPropagation();setReturnModal(s);setReturnForm({returnDate:today(),vehicleNo:"",returnChallan:""});}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.red}`,fontSize:10 }}>Return to Vendor</button>
+                    )}
+                    {s.status==='rejected'&&canIssue&&(
+                      <button onClick={e=>{e.stopPropagation();setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,status:'qc_hold',wtAvailable:l.wtReceived||0,rmQcStatus:'pending',clientInspStatus:'pending',rejectedAt:undefined,grnReversed:undefined,rejectionReason:undefined}));showToast("Lot returned to QC Hold for re-inspection");}} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Re-inspect</button>
                     )}
                   </div>
                 </TD>
@@ -7898,6 +8187,43 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
               onClick={saveWriteOff}
               style={{ ...css.btn.primary, background:T.red, borderColor:T.red, opacity:(mForm.writeOffReason?.trim()&&+(mForm.writeOffWt||0)>0)?1:0.4 }}>
               Confirm Write-Off
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Return to Vendor Modal */}
+      {returnModal && (
+        <Modal title={`Return to Vendor — ${returnModal.lotNo}`} onClose={()=>{setReturnModal(null);setReturnForm({});}} width={480}>
+          <InfoBanner color="amber">Records the return of this rejected lot to the vendor. Lot status will change to Returned.</InfoBanner>
+          <div style={{ ...css.card, background:T.bg, marginBottom:14, marginTop:12 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:12 }}>
+              {[["Lot No",returnModal.lotNo],["Material",`${returnModal.matType||""} ${returnModal.grade||""}`],["Size",returnModal.size||"—"],["Received Wt",`${fmt.num(returnModal.wtReceived)} kg`]].map(([k,v])=>(
+                <div key={k}><div style={css.label}>{k}</div><div style={{ color:T.text, fontFamily:T.fontMono }}>{v}</div></div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+            <Field label="Return Date" required><Input type="date" value={returnForm.returnDate||""} onChange={e=>setReturnForm(f=>({...f,returnDate:e.target.value}))} /></Field>
+            <Field label="Vehicle No" required><Input value={returnForm.vehicleNo||""} onChange={e=>setReturnForm(f=>({...f,vehicleNo:e.target.value}))} placeholder="MH-31-AB-1234" /></Field>
+            <Field label="Return Challan No"><Input value={returnForm.returnChallan||""} onChange={e=>setReturnForm(f=>({...f,returnChallan:e.target.value}))} placeholder="DC/RET-001" /></Field>
+            <Field label="Remarks"><Input value={returnForm.remarks||""} onChange={e=>setReturnForm(f=>({...f,remarks:e.target.value}))} placeholder="Optional..." /></Field>
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+            <button onClick={()=>{setReturnModal(null);setReturnForm({});}} style={css.btn.secondary}>Cancel</button>
+            <button disabled={!returnForm.vehicleNo?.trim()||!returnForm.returnDate}
+              onClick={()=>{
+                setStock(prev=>prev.map(l=>l.id!==returnModal.id?l:{
+                  ...l, status:'returned',
+                  returnDate:returnForm.returnDate, returnVehicleNo:returnForm.vehicleNo,
+                  returnChallan:returnForm.returnChallan||"", returnRemarks:returnForm.remarks||"",
+                  returnedBy:user.name, returnedAt:new Date().toISOString()
+                }));
+                showToast(`Lot ${returnModal.lotNo} returned to vendor`);
+                setReturnModal(null); setReturnForm({});
+              }}
+              style={{ ...css.btn.primary, background:T.red, opacity:(returnForm.vehicleNo?.trim()&&returnForm.returnDate)?1:0.4 }}>
+              Confirm Return
             </button>
           </div>
         </Modal>
@@ -10193,8 +10519,11 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
   const orderPos = (pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id));
   const orderPoIds = new Set(orderPos.map(p=>p.id));
   const poKg = orderPos.reduce((s,p)=>s+(p.totalKg||p.weightKg||0),0);
-  const orderLots = (stock||[]).filter(l=>(l.reservations||[]).some(r=>r.orderId===order.id)||orderPoIds.has(l.poId));
-  const receivedKg = orderLots.reduce((s,l)=>s+(l.kg||l.weightKg||0),0);
+  const orderLots = (stock||[]).filter(l=>
+    !['rejected','returned','written_off'].includes(l.status) &&
+    ((l.reservations||[]).some(r=>r.orderId===order.id)||orderPoIds.has(l.poId))
+  );
+  const receivedKg = orderLots.reduce((s,l)=>s+(l.wtReceived||0),0);
   const drawingsReceivedKg = fabDrawings.filter(d=>d.receivedDate).reduce((s,d)=>s+(d.totalWt||0),0);
   const PAST_CUTTING = new Set(['fitup','tpi_fitup','welding','tpi_weld','assembly','blasting','tpi_blast','painting','tpi_paint','dispatch','complete']);
   const cuttingDoneKg = fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&PAST_CUTTING.has(inst.currentStage))).reduce((s,d)=>s+(d.totalWt||0),0);
