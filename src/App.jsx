@@ -1356,7 +1356,7 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
       batchNo:grnForm.batchNo||"",
       itemCode:poLine.itemCode||"", matCode:poLine.matCode||"", matLibId:poLine.matLibId||"",
-      matType:poLine.matType||"MS", grade:poLine.grade||"", sectionType:poLine.sectionType||poLine.section||"", size:poLine.size||"",
+      matType:poLine.matType||"MS", grade:poLine.grade||"", sectionType:poLine.sectionType||poLine.section||"", size:poLine.size?poLine.size.replace(/mm$/i,'')+'mm':"",
       heatNo: mtc?.heatNo || l.heatNo || "",
       mtcNo: mtc?.mtcNo || "",
       mtcDoc: mtc?.driveLink || "",
@@ -10131,86 +10131,129 @@ const TabFinance = ({ order, onChange, canEdit }) => {
   );
 };
 // ─── ORDER PROGRESS TRACKER ───────────────────────────────────────────────────
-const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatches, releases, instances, onBack }) => {
+const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatches, releases, instances, purchaseReqs, onBack }) => {
   const [expandedDrg, setExpandedDrg] = useState(null);
+  const [progressView, setProgressView] = useState('weight');
   const q = order.quality || {};
   const tpiHolds = new Set(q.tpiHoldPoints || []);
   const paintCoats = getPaintCoats(q);
   const fabDrawings = (order.drawings || []).filter(d => !['purchase','ga'].includes(d.drawingType||''));
   const pm = order.progressMarkers || {};
 
-  const paintStages = (paintCoats.length > 0 ? paintCoats : [{type:'Paint'}]).map((c,i) => ({
-    key:`paint_coat_${i+1}`, label:c.type||`Coat ${i+1}`, tpi:tpiHolds.has('painting')
-  }));
+  const buildStageList = (ord) => {
+    const q2 = ord.quality || {};
+    const tpi2 = new Set(q2.tpiHoldPoints || []);
+    const coats = getPaintCoats(q2);
+    const paintStageList = (coats.length > 0 ? coats : [{type:'Paint'}]).flatMap((c,i) => [
+      { key:`paint_coat_${i+1}`, label:c.type||`Coat ${i+1}`, calcType:'prod_step_wt', group:'paint', tpi:tpi2.has('painting') },
+      { key:`tpi_paint_${i+1}`,  label:`TPI — Paint ${i+1}`,  calcType:'tpi_done_wt',  group:'paint', autoComplete:!tpi2.has('painting') },
+    ]);
+    const stages = [
+      { key:'mrp_released',      label:'MRP Released',      calcType:'binary',      group:'procurement' },
+      { key:'rm_ordered',        label:'RM Ordered',        calcType:'po_wt',       group:'procurement' },
+      { key:'rm_received',       label:'RM Received',       calcType:'lots_wt',     group:'procurement' },
+      { key:'rm_qc',             label:'RM QC Approved',    calcType:'rm_qc_wt',    group:'procurement' },
+      { key:'nesting_planned',   label:'Nesting Planned',   calcType:'nesting_wt',  group:'procurement' },
+      { key:'nesting_confirmed', label:'Nesting Confirmed', calcType:'nest_bch_wt', group:'procurement' },
+      { key:'cutting_done',      label:'Cutting',           calcType:'cutting_wt',  group:'production' },
+      { key:'fit_up',            label:'Fit-Up',            calcType:'prod_step_wt',group:'production', tpi:tpi2.has('fit_up') },
+      { key:'tpi_fitup',         label:'TPI — Fit-Up',      calcType:'tpi_done_wt', group:'production', autoComplete:!tpi2.has('fit_up') },
+      { key:'welding',           label:'Welding',           calcType:'prod_step_wt',group:'production', tpi:tpi2.has('welding') },
+      { key:'tpi_weld',          label:'TPI — Welding',     calcType:'tpi_done_wt', group:'production', autoComplete:!tpi2.has('welding') },
+      ...(ord.assemblyInspectionRequired ? [{ key:'assembly', label:'Assembly', calcType:'prod_step_wt', group:'production' }] : []),
+      { key:'blasting',          label:'Blasting',          calcType:'prod_step_wt',group:'production', tpi:tpi2.has('blasting') },
+      { key:'tpi_blast',         label:'TPI — Blasting',    calcType:'tpi_done_wt', group:'production', autoComplete:!tpi2.has('blasting') },
+      ...paintStageList,
+      { key:'mdcc_applied',      label:'MDCC Applied',      calcType:'binary',      group:'completion', manual:true },
+      { key:'mdcc_received',     label:'MDCC Received',     calcType:'binary',      group:'completion', manual:true },
+      { key:'dispatch',          label:'Dispatch',          calcType:'dispatch_wt', group:'completion' },
+    ];
+    const groups = [
+      { id:'procurement', label:'Procurement', color:T.accent,  stages:stages.filter(s=>s.group==='procurement') },
+      { id:'production',  label:'Production',  color:T.textMid, stages:stages.filter(s=>s.group==='production') },
+      { id:'paint',       label:'Paint',       color:T.green,   stages:stages.filter(s=>s.group==='paint') },
+      { id:'completion',  label:'Completion',  color:T.amber,   stages:stages.filter(s=>s.group==='completion') },
+    ];
+    return { stages, stageGroups: groups };
+  };
+  const { stages: allStageList, stageGroups } = buildStageList(order);
 
-  const stageGroups = [
-    { id:'procurement', label:'Procurement', color:T.accent,
-      stages:[
-        { key:'mrp_done',    label:'MRP Released', manual:true },
-        { key:'rm_ordered',  label:'RM Ordered',   derived:'pos' },
-        { key:'rm_received', label:'RM Received',  derived:'releases' },
-      ]
-    },
-    { id:'production', label:'Production', color:T.textMid,
-      stages:[
-        { key:'nesting',    label:'Nesting' },
-        { key:'cutting',    label:'Cutting' },
-        { key:'cutting_qc', label:'Cutting QC' },
-        { key:'fit_up',     label:'Fit-Up',   tpi:tpiHolds.has('fit_up') },
-        { key:'welding',    label:'Welding',  tpi:tpiHolds.has('welding') },
-        ...(order.assemblyInspectionRequired ? [{key:'assembly', label:'Assembly'}] : []),
-        { key:'blasting',   label:'Blasting', tpi:tpiHolds.has('blasting') },
-      ]
-    },
-    { id:'paint', label:'Paint', color:T.green, stages:paintStages },
-    { id:'completion', label:'Completion', color:T.amber,
-      stages:[
-        { key:'mdcc_applied',  label:'MDCC Applied',  manual:true },
-        { key:'mdcc_received', label:'MDCC Received', manual:true },
-        { key:'dispatch',      label:'Dispatch' },
-      ]
-    },
-  ];
+  // Pre-computed context for weight calculations
+  const totalOrderKg = (order.orderUnit==='Ton'||order.orderUnit==='MT') ? (order.orderQty||0)*1000 : (order.orderQty||0);
+  const drawingsTotalWt = fabDrawings.reduce((s,d)=>s+(d.totalWt||0),0);
+  const effectiveTotalKg = drawingsTotalWt || totalOrderKg || 1;
+  const orderMarkNos = new Set(fabDrawings.flatMap(d=>(d.parts||[]).map(p=>p.markNo)));
+  const hasNestingPlan = (nestingBatches||[]).some(b=>(b.lots||[]).some(l=>(l.allParts||[]).some(mn=>orderMarkNos.has(mn))));
+  const mrpReleasedOk = hasNestingPlan || !!pm.mrp_done;
+  const orderPos = (pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id));
+  const orderPoIds = new Set(orderPos.map(p=>p.id));
+  const poKg = orderPos.reduce((s,p)=>s+(p.totalKg||p.weightKg||0),0);
+  const orderLots = (stock||[]).filter(l=>(l.reservations||[]).some(r=>r.orderId===order.id)||orderPoIds.has(l.poId));
+  const receivedKg = orderLots.reduce((s,l)=>s+(l.kg||l.weightKg||0),0);
+  const qcApprovedKg = orderLots.filter(l=>l.rmQcStatus==='approved').reduce((s,l)=>s+(l.kg||l.weightKg||0),0);
+  const planBatches = (nestingBatches||[]).filter(b=>b.id?.startsWith('NEST-PLN'));
+  const nestPlanKg = fabDrawings.filter(d=>(d.parts||[]).some(p=>planBatches.some(b=>(b.lots||[]).some(l=>(l.allParts||[]).includes(p.markNo))))).reduce((s,d)=>s+(d.totalWt||0),0);
+  const floorBatches = (nestingBatches||[]).filter(b=>b.id?.startsWith('NEST-BCH')||b.status==='confirmed');
+  const nestConfirmKg = fabDrawings.filter(d=>(d.parts||[]).some(p=>floorBatches.some(b=>(b.lots||[]).some(l=>(l.parts||[]).includes(p.markNo))))).reduce((s,d)=>s+(d.totalWt||0),0);
+  const PAST_CUTTING = new Set(['fitup','tpi_fitup','welding','tpi_weld','assembly','blasting','tpi_blast','painting','tpi_paint','dispatch','complete']);
+  const cuttingDoneKg = fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&PAST_CUTTING.has(inst.currentStage))).reduce((s,d)=>s+(d.totalWt||0),0);
+  const DISPATCH_STAGES = new Set(['dispatch','complete','dispatched']);
+  const dispatchKg = fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&DISPATCH_STAGES.has(inst.currentStage))).reduce((s,d)=>s+(d.totalWt||0),0);
 
-  const calcProgress = (stageKey) => {
-    if (stageKey==='mrp_done') {
-      const markerOk = !!pm.mrp_done;
-      const posOk = (pos||[]).some(p=>p.orderRef===order.id||p.orderId===order.id);
-      const ok = markerOk || posOk;
-      return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'};
+  const calcWeightProgress = (stage) => {
+    const { key, calcType, autoComplete } = stage;
+    if (autoComplete) return { doneKg:effectiveTotalKg, totalKg:effectiveTotalKg, pct:100, status:'completed' };
+    if (calcType==='binary') {
+      const ok = key==='mrp_released'?mrpReleasedOk:key==='mdcc_applied'?!!pm.mdcc_applied:key==='mdcc_received'?!!pm.mdcc_received:false;
+      return { doneKg:ok?effectiveTotalKg:0, totalKg:effectiveTotalKg, pct:ok?100:0, status:ok?'completed':'not_started' };
     }
-    if (stageKey==='rm_ordered') {
-      const n=(pos||[]).filter(p=>
-        p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id)
-      ).length;
-      return {done:n,total:Math.max(n,1),pct:n>0?100:0,status:n>0?'completed':'not_started'};
+    if (calcType==='po_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(poKg/effectiveTotalKg*100)):0; return {doneKg:poKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
+    if (calcType==='lots_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(receivedKg/effectiveTotalKg*100)):0; return {doneKg:receivedKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
+    if (calcType==='rm_qc_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(qcApprovedKg/effectiveTotalKg*100)):0; return {doneKg:qcApprovedKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
+    if (calcType==='nesting_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(nestPlanKg/effectiveTotalKg*100)):0; return {doneKg:nestPlanKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
+    if (calcType==='nest_bch_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(nestConfirmKg/effectiveTotalKg*100)):0; return {doneKg:nestConfirmKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
+    if (calcType==='cutting_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(cuttingDoneKg/effectiveTotalKg*100)):0; return {doneKg:cuttingDoneKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
+    if (calcType==='prod_step_wt') {
+      const doneKg2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='completed').reduce((s,d)=>s+(d.totalWt||0),0);
+      const inProgKg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='in_progress').reduce((s,d)=>s+(d.totalWt||0),0);
+      const pct=effectiveTotalKg>0?Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)):0;
+      return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct>=100?'completed':doneKg2>0||inProgKg>0?'in_progress':'not_started'};
     }
-    if (stageKey==='rm_received') {
-      const orderPoIds = new Set((pos||[]).filter(p=>
-        p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id)
-      ).map(p=>p.id));
-      const relevant=(stock||[]).filter(l=>
-        (l.reservations||[]).some(r=>r.orderId===order.id)||orderPoIds.has(l.poId)
-      );
-      const done=relevant.filter(l=>l.rmQcStatus==='approved').length;
-      const total=relevant.length;
-      const pct=total>0?Math.round(done/total*100):0;
-      return {done,total:Math.max(total,1),pct,status:total===0?'not_started':done===total&&total>0?'completed':total>0?'in_progress':'not_started'};
+    if (calcType==='tpi_done_wt') {
+      const prodKey=key==='tpi_fitup'?'fit_up':key==='tpi_weld'?'welding':key==='tpi_blast'?'blasting':key.replace(/^tpi_paint_/,'paint_coat_');
+      const doneKg2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiDoneAt).reduce((s,d)=>s+(d.totalWt||0),0);
+      const offeredKg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiOfferedAt).reduce((s,d)=>s+(d.totalWt||0),0);
+      const pct=effectiveTotalKg>0?Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)):0;
+      return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct>=100?'completed':offeredKg>0||doneKg2>0?'in_progress':'not_started'};
     }
-    if (stageKey==='mdcc_applied') { const ok=!!pm.mdcc_applied; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
-    if (stageKey==='mdcc_received') { const ok=!!pm.mdcc_received; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
-    const relevant=fabDrawings.filter(d=>(d.productionSteps||[]).some(s=>s.stage===stageKey));
-    const total=relevant.length>0?relevant.length:fabDrawings.length;
-    if (total===0) return {done:0,total:0,pct:0,status:'not_started'};
-    const done=relevant.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stageKey)?.status==='completed').length;
-    const inProg=relevant.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stageKey)?.status==='in_progress').length;
-    const pct=Math.round(done/total*100);
-    return {done,total,pct,status:done===total?'completed':done>0||inProg>0?'in_progress':'not_started'};
+    if (calcType==='dispatch_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(dispatchKg/effectiveTotalKg*100)):0; return {doneKg:dispatchKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
+    return {doneKg:0,totalKg:effectiveTotalKg,pct:0,status:'not_started'};
   };
 
-  const allStages = stageGroups.flatMap(g=>g.stages);
-  const completedCount = allStages.filter(s=>calcProgress(s.key).status==='completed').length;
-  const overallPct = allStages.length>0?Math.round(completedCount/allStages.length*100):0;
+  const calcDrawingProgress = (stage) => {
+    const { key, calcType, autoComplete } = stage;
+    const total = fabDrawings.length;
+    if (autoComplete) return { done:total, total, pct:100, status:'completed' };
+    if (calcType==='binary') {
+      const ok=key==='mrp_released'?mrpReleasedOk:key==='mdcc_applied'?!!pm.mdcc_applied:key==='mdcc_received'?!!pm.mdcc_received:false;
+      return {done:ok?total:0,total,pct:ok?100:0,status:ok?'completed':'not_started'};
+    }
+    if (calcType==='po_wt') { const ok=orderPos.length>0; return {done:ok?total:0,total,pct:ok?100:0,status:ok?'completed':'not_started'}; }
+    if (calcType==='lots_wt') { const done2=orderLots.length>0?Math.round(total*orderLots.filter(l=>l.rmQcStatus).length/Math.max(orderLots.length,1)):0; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='rm_qc_wt') { const done2=Math.round(total*orderLots.filter(l=>l.rmQcStatus==='approved').length/Math.max(orderLots.length,1)); const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='nesting_wt') { const done2=fabDrawings.filter(d=>(d.parts||[]).some(p=>planBatches.some(b=>(b.lots||[]).some(l=>(l.allParts||[]).includes(p.markNo))))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='nest_bch_wt') { const done2=fabDrawings.filter(d=>(d.parts||[]).some(p=>floorBatches.some(b=>(b.lots||[]).some(l=>(l.parts||[]).includes(p.markNo))))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='cutting_wt') { const done2=fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&PAST_CUTTING.has(inst.currentStage))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='prod_step_wt') { const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='completed').length; const inProg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='in_progress').length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0&&inProg===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='tpi_done_wt') { const prodKey=key==='tpi_fitup'?'fit_up':key==='tpi_weld'?'welding':key==='tpi_blast'?'blasting':key.replace(/^tpi_paint_/,'paint_coat_'); const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiDoneAt).length; const offered=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiOfferedAt).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0&&offered===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='dispatch_wt') { const done2=fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&DISPATCH_STAGES.has(inst.currentStage))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
+    return {done:0,total,pct:0,status:'not_started'};
+  };
+
+  const lastPaintTpiStage = allStageList.filter(s=>s.group==='paint'&&s.calcType==='tpi_done_wt').pop();
+  const overallPct = lastPaintTpiStage
+    ? (lastPaintTpiStage.autoComplete ? 100 : calcWeightProgress(lastPaintTpiStage).pct)
+    : Math.round(allStageList.filter(s=>calcWeightProgress(s).status==='completed').length/Math.max(allStageList.length,1)*100);
 
   const endDate = order.endDate ? new Date(order.endDate) : null;
   const daysToEnd = endDate ? Math.floor((endDate-Date.now())/86400000) : null;
@@ -10233,7 +10276,8 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
   };
 
   const handleExport = () => {
-    const rows=stageGroups.map(g=>`<h3>${g.label}</h3><table border="1" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px"><tr><th>Stage</th><th>Done</th><th>Total</th><th>%</th><th>Status</th></tr>${g.stages.map(s=>{const p=calcProgress(s.key);return `<tr><td>${s.label}</td><td>${p.done}</td><td>${p.total}</td><td>${p.pct}%</td><td>${p.status.replace(/_/g,' ')}</td></tr>`;}).join('')}</table>`).join('');
+    const calcFn = progressView==='weight' ? calcWeightProgress : calcDrawingProgress;
+    const rows=stageGroups.map(g=>`<h3>${g.label}</h3><table border="1" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px"><tr><th>Stage</th><th>Done</th><th>Total</th><th>%</th><th>Status</th></tr>${g.stages.map(s=>{const p=calcFn(s);const done=progressView==='weight'?Math.round(p.doneKg||0)+'kg':p.done;const tot=progressView==='weight'?Math.round(p.totalKg||0)+'kg':p.total;return `<tr><td>${s.label}</td><td>${done}</td><td>${tot}</td><td>${p.pct}%</td><td>${p.status.replace(/_/g,' ')}</td></tr>`;}).join('')}</table>`).join('');
     const html=`<!DOCTYPE html><html><head><title>Progress — ${order.id}</title><style>body{font-family:sans-serif;padding:32px}h2{margin-bottom:4px}p{margin:0 0 16px;color:#666}h3{margin:24px 0 8px}th{background:#f5f5f5}</style></head><body><h2>Order Progress — ${order.id}</h2><p>${order.projectDesc||''} | ${order.clientId||''} | Overall: ${overallPct}% | <strong>${trackLabel}</strong></p>${rows}</body></html>`;
     const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
   };
@@ -10258,7 +10302,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
           </div>
         </div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-          {[{v:completedCount,l:"STAGES DONE",c:T.green},{v:allStages.length,l:"TOTAL STAGES",c:T.text},{v:fabDrawings.length,l:"DRAWINGS",c:T.accent}].map(x=>(
+          {[{v:fabDrawings.length,l:"DRAWINGS",c:T.accent},{v:`${Math.round(effectiveTotalKg).toLocaleString()}kg`,l:"TOTAL WEIGHT",c:T.text},{v:allStageList.filter(s=>calcWeightProgress(s).status==='completed').length,l:"STAGES DONE",c:T.green}].map(x=>(
             <div key={x.l} style={{textAlign:"center",padding:"8px 14px",background:T.bgInput,borderRadius:6}}>
               <div style={{fontSize:20,fontWeight:800,color:x.c,fontFamily:T.fontMono}}>{x.v}</div>
               <div style={{fontSize:10,color:T.textMid,fontWeight:600}}>{x.l}</div>
@@ -10266,6 +10310,14 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
           ))}
           <button onClick={handleExport} style={css.btn.ghost}>↗ Export</button>
         </div>
+      </div>
+
+      {/* View toggle */}
+      <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:6,marginBottom:12}}>
+        <span style={{fontSize:11,color:T.textMid}}>View:</span>
+        {[{v:'weight',l:'Weight %'},{v:'drawing',l:'Drawing Count'}].map(opt=>(
+          <button key={opt.v} onClick={()=>setProgressView(opt.v)} style={{...css.btn.ghost,fontSize:11,padding:"3px 10px",background:progressView===opt.v?T.accent:'transparent',color:progressView===opt.v?'#fff':T.textMid,border:`1px solid ${progressView===opt.v?T.accent:T.border}`}}>{opt.l}</button>
+        ))}
       </div>
 
       {/* TPI alerts */}
@@ -10288,30 +10340,36 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
         {stageGroups.map(group=>(
           <div key={group.id} style={css.card}>
             <div style={{fontSize:11,fontWeight:800,color:group.color,marginBottom:10,letterSpacing:"0.08em"}}>{group.label.toUpperCase()}</div>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
               {group.stages.map(stage=>{
-                const p=calcProgress(stage.key);
-                const sc=p.status==='completed'?T.green:p.status==='in_progress'?T.accent:T.textLow;
-                const icon=p.status==='completed'?'✓':p.status==='in_progress'?'⬤':'○';
+                const p = progressView==='weight' ? calcWeightProgress(stage) : calcDrawingProgress(stage);
+                const sc = p.status==='completed'?T.green:p.status==='in_progress'?T.accent:T.textLow;
+                const icon = stage.autoComplete?'➖':p.status==='completed'?'✅':p.status==='in_progress'?'⚡':'⏳';
+                const subtext = progressView==='weight'
+                  ? (p.doneKg>0||p.totalKg>0 ? `${Math.round(p.doneKg)}kg / ${Math.round(p.totalKg)}kg` : '')
+                  : (p.total>0 ? `${p.done} / ${p.total} drawings` : '');
                 return (
-                  <div key={stage.key} style={{display:"grid",gridTemplateColumns:"22px 1fr 90px 50px 80px",alignItems:"center",gap:8}}>
-                    <span style={{color:sc,fontSize:14,fontWeight:700}}>{icon}</span>
-                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <span style={{fontSize:13,color:T.text}}>{stage.label}</span>
-                      {stage.tpi&&<span style={{fontSize:10,color:T.amber,fontWeight:600}}>TPI</span>}
-                      {stage.manual&&canEditMarkers&&onChange&&(
-                        <button onClick={()=>toggleMarker(stage.key)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",color:p.status==='completed'?T.green:T.textMid}}>
-                          {p.status==='completed'?'✓ Done':'Mark Done'}
-                        </button>
-                      )}
-                      {stage.manual&&p.status==='completed'&&pm[stage.key]&&(!canEditMarkers||!onChange)&&(
-                        <span style={{fontSize:10,color:T.green}}>✓ {pm[stage.key]}</span>
-                      )}
+                  <div key={stage.key} style={{display:"grid",gridTemplateColumns:"26px 1fr 80px 48px",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13}}>{icon}</span>
+                    <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        <span style={{fontSize:13,color:T.text}}>{stage.label}</span>
+                        {stage.tpi&&<span style={{fontSize:10,color:T.amber,fontWeight:600,background:`${T.amber}22`,padding:"1px 5px",borderRadius:3}}>TPI</span>}
+                        {stage.autoComplete&&<span style={{fontSize:10,color:T.textLow}}>No TPI Required</span>}
+                        {stage.manual&&canEditMarkers&&onChange&&(
+                          <button onClick={()=>toggleMarker(stage.key)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",color:p.status==='completed'?T.green:T.textMid}}>
+                            {p.status==='completed'?'✓ Done':'Mark Done'}
+                          </button>
+                        )}
+                        {stage.manual&&p.status==='completed'&&pm[stage.key]&&(!canEditMarkers||!onChange)&&(
+                          <span style={{fontSize:10,color:T.green}}>✓ {pm[stage.key]?.byName||'Done'}</span>
+                        )}
+                      </div>
+                      {subtext&&<div style={{fontSize:10,color:T.textMid,fontFamily:T.fontMono}}>{subtext}</div>}
                     </div>
                     <div style={{background:T.bgInput,borderRadius:3,height:5,overflow:"hidden"}}>
                       <div style={{width:`${p.pct}%`,height:"100%",background:sc,transition:"width 0.3s"}}/>
                     </div>
-                    <div style={{textAlign:"right",fontFamily:T.fontMono,fontSize:11,color:T.textMid}}>{p.total>1?`${p.done}/${p.total}`:""}</div>
                     <div style={{textAlign:"right",fontFamily:T.fontMono,fontSize:12,color:sc,fontWeight:700}}>{p.pct}%</div>
                   </div>
                 );
@@ -10375,7 +10433,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
   );
 };
 
-const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances }) => {
+const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs }) => {
   const [activeTab, setActiveTab] = useState("basic");
   const [localOrder, setLocalOrder] = useState(order);
   const [dirty, setDirty] = useState(false);
@@ -10449,7 +10507,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} tpiAgencies={tpiAgencies||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
-      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />}
+      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
       {cancelModal && (
@@ -10558,10 +10616,10 @@ const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
     </div>
   );
 };
-const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances }) => {
+const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs }) => {
   const [selected, setSelected] = useState(null);
   const saveOrder = (updated) => { setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o)); setSelected(updated); };
-  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />;
+  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} />;
   return <OrdersList orders={orders} onOpen={setSelected} user={user} clients={clients} onAddOrder={o=>setOrders(prev=>[...prev,o])} />;
 };
 
@@ -16199,7 +16257,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 // ═══════════════════════════════════════════════════════════════════════════════
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
-                            releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders, pos }) => {
+                            releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders, pos, purchaseReqs }) => {
   const [view, setView]           = useState(() => {
     const forced = sessionStorage.getItem('dev_target_view');
     if (forced) { sessionStorage.removeItem('dev_target_view'); return forced; }
@@ -16252,7 +16310,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       <div style={{ padding:0 }}>
         <OrderProgressTracker order={progOrder}
           onChange={(updated)=>setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o))}
-          user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances}
+          user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances} purchaseReqs={purchaseReqs||[]}
           onBack={()=>{ setView("register"); setSelProgressOrderId(""); }} />
       </div>
     );
@@ -16772,8 +16830,8 @@ export default function App() {
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
-      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} />;
+      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;

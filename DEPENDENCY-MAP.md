@@ -1,6 +1,39 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 2.3 — April 2026
-# Session 4 Phase 3 — Part 5: CSV normalization + GRN header-level MTC entry
+# Version 2.4 — April 2026
+# Session 4 Phase 3 — OrderProgressTracker full redesign + buildStockLots size fix
+# Updated:
+#   ORDER PROGRESS TRACKER REDESIGN:
+#     New stage IDs (replaces old stageGroups):
+#       Procurement: mrp_released, rm_ordered, rm_received, rm_qc,
+#                    nesting_planned, nesting_confirmed
+#       Production:  cutting_done (merged cutting+cutting_qc), fit_up, tpi_fitup,
+#                    welding, tpi_weld, [assembly], blasting, tpi_blast
+#       Paint:       paint_coat_N, tpi_paint_N (per coat)
+#       Completion:  mdcc_applied, mdcc_received, dispatch
+#     Removed: cutting_qc from tracker (still in production workflow/STAGE_NEXT)
+#     NEW: buildStageList(ord) → { stages, stageGroups } inside component
+#     NEW: calcWeightProgress(stage) → { doneKg, totalKg, pct, status }
+#     NEW: calcDrawingProgress(stage) → { done, total, pct, status }
+#     NEW: progressView state ('weight'|'drawing') — toggle UI in JSX
+#     NEW: [Weight %] [Drawing Count] toggle buttons before stage groups
+#     Overall %: last paint coat tpi_done_wt.pct (weight-based), fallback to stage ratio
+#     mrp_released: auto-derives from nestingBatches[].lots[].allParts vs order markNos
+#       (no Mark Done button — manual:true removed; pm.mrp_done still accepted as fallback)
+#     Calc types: binary | po_wt | lots_wt | rm_qc_wt | nesting_wt | nest_bch_wt |
+#                 cutting_wt | prod_step_wt | tpi_done_wt | dispatch_wt
+#     autoComplete on TPI stages when !tpiHolds.has(stage) → shows ➖ "No TPI Required"
+#     Icons: ✅ completed | ⚡ in_progress | ⏳ not_started | ➖ autoComplete
+#     Subtext: kg/kg (weight view) or N/N drawings (drawing view)
+#     handleExport: uses calcWeightProgress or calcDrawingProgress per progressView
+#     Stats row: DRAWINGS count | TOTAL WEIGHT (kg) | STAGES DONE (weight-based count)
+#   PROPS (unchanged from v2.3, added in prior session):
+#     OrderProgressTracker: order, onChange, user, pos, stock, nestingBatches,
+#                           releases, instances, purchaseReqs, onBack
+#   buildStockLots SIZE NORMALIZATION:
+#     lot.size: poLine.size.replace(/mm$/i,'')+'mm' — ensures consistent "mm" suffix
+#       e.g. "100" → "100mm", "100mm" → "100mm", "100MM" → "100mm"
+#
+# Prior: v2.3 — CSV normalization + GRN header-level MTC entry
 # Updated:
 #   CSV NORMALIZATION (FIX 1 — handleNestImport):
 #     matCode: .trim() applied after col() lookup
