@@ -10144,29 +10144,35 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
     const q2 = ord.quality || {};
     const tpi2 = new Set(q2.tpiHoldPoints || []);
     const coats = getPaintCoats(q2);
-    const paintStageList = (coats.length > 0 ? coats : [{type:'Paint'}]).flatMap((c,i) => [
-      { key:`paint_coat_${i+1}`, label:c.type||`Coat ${i+1}`, calcType:'prod_step_wt', group:'paint', tpi:tpi2.has('painting') },
-      { key:`tpi_paint_${i+1}`,  label:`TPI — Paint ${i+1}`,  calcType:'tpi_done_wt',  group:'paint', autoComplete:!tpi2.has('painting') },
-    ]);
+    const tpiPaint = tpi2.has('painting');
+    const paintStageList = (coats.length > 0 ? coats : [{type:'Paint'}]).flatMap((c,i) => {
+      const coatLabel = c.type||`Coat ${i+1}`;
+      return [
+        { key:`paint_coat_${i+1}`,       label:coatLabel,                  calcType:'prod_step_wt',  group:'paint' },
+        { key:`tpi_paint_${i+1}_offered`, label:`${coatLabel} TPI Offered`, calcType:'tpi_offered_wt',group:'paint', tpiNA:!tpiPaint, prodStageKey:`paint_coat_${i+1}` },
+        { key:`tpi_paint_${i+1}_done`,    label:`${coatLabel} TPI Done`,    calcType:'tpi_done_wt',   group:'paint', tpiNA:!tpiPaint, prodStageKey:`paint_coat_${i+1}` },
+      ];
+    });
     const stages = [
-      { key:'mrp_released',      label:'MRP Released',      calcType:'binary',      group:'procurement' },
-      { key:'rm_ordered',        label:'RM Ordered',        calcType:'po_wt',       group:'procurement' },
-      { key:'rm_received',       label:'RM Received',       calcType:'lots_wt',     group:'procurement' },
-      { key:'rm_qc',             label:'RM QC Approved',    calcType:'rm_qc_wt',    group:'procurement' },
-      { key:'nesting_planned',   label:'Nesting Planned',   calcType:'nesting_wt',  group:'procurement' },
-      { key:'nesting_confirmed', label:'Nesting Confirmed', calcType:'nest_bch_wt', group:'procurement' },
-      { key:'cutting_done',      label:'Cutting',           calcType:'cutting_wt',  group:'production' },
-      { key:'fit_up',            label:'Fit-Up',            calcType:'prod_step_wt',group:'production', tpi:tpi2.has('fit_up') },
-      { key:'tpi_fitup',         label:'TPI — Fit-Up',      calcType:'tpi_done_wt', group:'production', autoComplete:!tpi2.has('fit_up') },
-      { key:'welding',           label:'Welding',           calcType:'prod_step_wt',group:'production', tpi:tpi2.has('welding') },
-      { key:'tpi_weld',          label:'TPI — Welding',     calcType:'tpi_done_wt', group:'production', autoComplete:!tpi2.has('welding') },
-      ...(ord.assemblyInspectionRequired ? [{ key:'assembly', label:'Assembly', calcType:'prod_step_wt', group:'production' }] : []),
-      { key:'blasting',          label:'Blasting',          calcType:'prod_step_wt',group:'production', tpi:tpi2.has('blasting') },
-      { key:'tpi_blast',         label:'TPI — Blasting',    calcType:'tpi_done_wt', group:'production', autoComplete:!tpi2.has('blasting') },
+      { key:'drawings_received',  label:'Drawings Received',    calcType:'drawings_wt',    group:'procurement' },
+      { key:'mrp_released',       label:'MRP Released',         calcType:'binary',          group:'procurement' },
+      { key:'rm_ordered',         label:'RM Ordered',           calcType:'po_wt',           group:'procurement' },
+      { key:'rm_received',        label:'RM Received',          calcType:'lots_wt',         group:'procurement' },
+      { key:'cutting_done',       label:'Cutting Done',         calcType:'cutting_wt',      group:'production' },
+      { key:'fit_up',             label:'Fit-Up Done',          calcType:'prod_step_wt',    group:'production' },
+      { key:'tpi_fitup_offered',  label:'Fit-Up TPI Offered',   calcType:'tpi_offered_wt',  group:'production', tpiNA:!tpi2.has('fit_up'),   prodStageKey:'fit_up' },
+      { key:'tpi_fitup_done',     label:'Fit-Up TPI Done',      calcType:'tpi_done_wt',     group:'production', tpiNA:!tpi2.has('fit_up'),   prodStageKey:'fit_up' },
+      { key:'welding',            label:'Welding Done',         calcType:'prod_step_wt',    group:'production' },
+      { key:'tpi_weld_offered',   label:'Welding TPI Offered',  calcType:'tpi_offered_wt',  group:'production', tpiNA:!tpi2.has('welding'),  prodStageKey:'welding' },
+      { key:'tpi_weld_done',      label:'Welding TPI Done',     calcType:'tpi_done_wt',     group:'production', tpiNA:!tpi2.has('welding'),  prodStageKey:'welding' },
+      ...(ord.assemblyInspectionRequired ? [{ key:'assembly', label:'Assembly Done', calcType:'prod_step_wt', group:'production' }] : []),
+      { key:'blasting',           label:'Blasting Done',        calcType:'prod_step_wt',    group:'production' },
+      { key:'tpi_blast_offered',  label:'Blasting TPI Offered', calcType:'tpi_offered_wt',  group:'production', tpiNA:!tpi2.has('blasting'), prodStageKey:'blasting' },
+      { key:'tpi_blast_done',     label:'Blasting TPI Done',    calcType:'tpi_done_wt',     group:'production', tpiNA:!tpi2.has('blasting'), prodStageKey:'blasting' },
       ...paintStageList,
-      { key:'mdcc_applied',      label:'MDCC Applied',      calcType:'binary',      group:'completion', manual:true },
-      { key:'mdcc_received',     label:'MDCC Received',     calcType:'binary',      group:'completion', manual:true },
-      { key:'dispatch',          label:'Dispatch',          calcType:'dispatch_wt', group:'completion' },
+      { key:'mdcc_applied',       label:'MDCC Applied',         calcType:'binary',          group:'completion', manual:true },
+      { key:'mdcc_received',      label:'MDCC Received',        calcType:'binary',          group:'completion', manual:true },
+      { key:'dispatch',           label:'Dispatch',             calcType:'dispatch_wt',     group:'completion' },
     ];
     const groups = [
       { id:'procurement', label:'Procurement', color:T.accent,  stages:stages.filter(s=>s.group==='procurement') },
@@ -10182,36 +10188,29 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
   const totalOrderKg = (order.orderUnit==='Ton'||order.orderUnit==='MT') ? (order.orderQty||0)*1000 : (order.orderQty||0);
   const drawingsTotalWt = fabDrawings.reduce((s,d)=>s+(d.totalWt||0),0);
   const effectiveTotalKg = drawingsTotalWt || totalOrderKg || 1;
-  const orderMarkNos = new Set(fabDrawings.flatMap(d=>(d.parts||[]).map(p=>p.markNo)));
-  const hasNestingPlan = (nestingBatches||[]).some(b=>(b.lots||[]).some(l=>(l.allParts||[]).some(mn=>orderMarkNos.has(mn))));
-  const mrpReleasedOk = hasNestingPlan || !!pm.mrp_done;
+  const orderMarkNosSet = new Set(fabDrawings.flatMap(d=>(d.parts||[]).map(p=>p.markNo)));
+  const mrpReleasedOk = (nestingBatches||[]).some(b=>(b.lots||[]).some(l=>(l.allParts||[]).some(mn=>orderMarkNosSet.has(mn)))) || !!pm.mrp_done;
   const orderPos = (pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id));
   const orderPoIds = new Set(orderPos.map(p=>p.id));
   const poKg = orderPos.reduce((s,p)=>s+(p.totalKg||p.weightKg||0),0);
   const orderLots = (stock||[]).filter(l=>(l.reservations||[]).some(r=>r.orderId===order.id)||orderPoIds.has(l.poId));
   const receivedKg = orderLots.reduce((s,l)=>s+(l.kg||l.weightKg||0),0);
-  const qcApprovedKg = orderLots.filter(l=>l.rmQcStatus==='approved').reduce((s,l)=>s+(l.kg||l.weightKg||0),0);
-  const planBatches = (nestingBatches||[]).filter(b=>b.id?.startsWith('NEST-PLN'));
-  const nestPlanKg = fabDrawings.filter(d=>(d.parts||[]).some(p=>planBatches.some(b=>(b.lots||[]).some(l=>(l.allParts||[]).includes(p.markNo))))).reduce((s,d)=>s+(d.totalWt||0),0);
-  const floorBatches = (nestingBatches||[]).filter(b=>b.id?.startsWith('NEST-BCH')||b.status==='confirmed');
-  const nestConfirmKg = fabDrawings.filter(d=>(d.parts||[]).some(p=>floorBatches.some(b=>(b.lots||[]).some(l=>(l.parts||[]).includes(p.markNo))))).reduce((s,d)=>s+(d.totalWt||0),0);
+  const drawingsReceivedKg = fabDrawings.filter(d=>d.receivedDate).reduce((s,d)=>s+(d.totalWt||0),0);
   const PAST_CUTTING = new Set(['fitup','tpi_fitup','welding','tpi_weld','assembly','blasting','tpi_blast','painting','tpi_paint','dispatch','complete']);
   const cuttingDoneKg = fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&PAST_CUTTING.has(inst.currentStage))).reduce((s,d)=>s+(d.totalWt||0),0);
   const DISPATCH_STAGES = new Set(['dispatch','complete','dispatched']);
   const dispatchKg = fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&DISPATCH_STAGES.has(inst.currentStage))).reduce((s,d)=>s+(d.totalWt||0),0);
 
   const calcWeightProgress = (stage) => {
-    const { key, calcType, autoComplete } = stage;
-    if (autoComplete) return { doneKg:effectiveTotalKg, totalKg:effectiveTotalKg, pct:100, status:'completed' };
+    if (stage.tpiNA) return { tpiNA:true, pct:0, status:'na' };
+    const { key, calcType } = stage;
+    if (calcType==='drawings_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(drawingsReceivedKg/effectiveTotalKg*100)):0; return {doneKg:drawingsReceivedKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
     if (calcType==='binary') {
-      const ok = key==='mrp_released'?mrpReleasedOk:key==='mdcc_applied'?!!pm.mdcc_applied:key==='mdcc_received'?!!pm.mdcc_received:false;
-      return { doneKg:ok?effectiveTotalKg:0, totalKg:effectiveTotalKg, pct:ok?100:0, status:ok?'completed':'not_started' };
+      const ok=key==='mrp_released'?mrpReleasedOk:key==='mdcc_applied'?!!pm.mdcc_applied:key==='mdcc_received'?!!pm.mdcc_received:false;
+      return {doneKg:ok?effectiveTotalKg:0,totalKg:effectiveTotalKg,pct:ok?100:0,status:ok?'completed':'not_started'};
     }
     if (calcType==='po_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(poKg/effectiveTotalKg*100)):0; return {doneKg:poKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
     if (calcType==='lots_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(receivedKg/effectiveTotalKg*100)):0; return {doneKg:receivedKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
-    if (calcType==='rm_qc_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(qcApprovedKg/effectiveTotalKg*100)):0; return {doneKg:qcApprovedKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
-    if (calcType==='nesting_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(nestPlanKg/effectiveTotalKg*100)):0; return {doneKg:nestPlanKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
-    if (calcType==='nest_bch_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(nestConfirmKg/effectiveTotalKg*100)):0; return {doneKg:nestConfirmKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
     if (calcType==='cutting_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(cuttingDoneKg/effectiveTotalKg*100)):0; return {doneKg:cuttingDoneKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
     if (calcType==='prod_step_wt') {
       const doneKg2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='completed').reduce((s,d)=>s+(d.totalWt||0),0);
@@ -10219,41 +10218,46 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
       const pct=effectiveTotalKg>0?Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)):0;
       return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct>=100?'completed':doneKg2>0||inProgKg>0?'in_progress':'not_started'};
     }
-    if (calcType==='tpi_done_wt') {
-      const prodKey=key==='tpi_fitup'?'fit_up':key==='tpi_weld'?'welding':key==='tpi_blast'?'blasting':key.replace(/^tpi_paint_/,'paint_coat_');
-      const doneKg2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiDoneAt).reduce((s,d)=>s+(d.totalWt||0),0);
-      const offeredKg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiOfferedAt).reduce((s,d)=>s+(d.totalWt||0),0);
+    if (calcType==='tpi_offered_wt') {
+      const doneKg2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stage.prodStageKey)?.tpiOfferedAt).reduce((s,d)=>s+(d.totalWt||0),0);
       const pct=effectiveTotalKg>0?Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)):0;
-      return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct>=100?'completed':offeredKg>0||doneKg2>0?'in_progress':'not_started'};
+      return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'};
+    }
+    if (calcType==='tpi_done_wt') {
+      const doneKg2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stage.prodStageKey)?.tpiDoneAt).reduce((s,d)=>s+(d.totalWt||0),0);
+      const pct=effectiveTotalKg>0?Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)):0;
+      return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct>=100?'completed':doneKg2>0?'in_progress':'not_started'};
     }
     if (calcType==='dispatch_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(dispatchKg/effectiveTotalKg*100)):0; return {doneKg:dispatchKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
     return {doneKg:0,totalKg:effectiveTotalKg,pct:0,status:'not_started'};
   };
 
   const calcDrawingProgress = (stage) => {
-    const { key, calcType, autoComplete } = stage;
+    if (stage.tpiNA) return { tpiNA:true, pct:0, status:'na' };
+    const { key, calcType } = stage;
     const total = fabDrawings.length;
-    if (autoComplete) return { done:total, total, pct:100, status:'completed' };
+    if (calcType==='drawings_wt') { const done2=fabDrawings.filter(d=>d.receivedDate).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     if (calcType==='binary') {
       const ok=key==='mrp_released'?mrpReleasedOk:key==='mdcc_applied'?!!pm.mdcc_applied:key==='mdcc_received'?!!pm.mdcc_received:false;
       return {done:ok?total:0,total,pct:ok?100:0,status:ok?'completed':'not_started'};
     }
     if (calcType==='po_wt') { const ok=orderPos.length>0; return {done:ok?total:0,total,pct:ok?100:0,status:ok?'completed':'not_started'}; }
     if (calcType==='lots_wt') { const done2=orderLots.length>0?Math.round(total*orderLots.filter(l=>l.rmQcStatus).length/Math.max(orderLots.length,1)):0; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
-    if (calcType==='rm_qc_wt') { const done2=Math.round(total*orderLots.filter(l=>l.rmQcStatus==='approved').length/Math.max(orderLots.length,1)); const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
-    if (calcType==='nesting_wt') { const done2=fabDrawings.filter(d=>(d.parts||[]).some(p=>planBatches.some(b=>(b.lots||[]).some(l=>(l.allParts||[]).includes(p.markNo))))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
-    if (calcType==='nest_bch_wt') { const done2=fabDrawings.filter(d=>(d.parts||[]).some(p=>floorBatches.some(b=>(b.lots||[]).some(l=>(l.parts||[]).includes(p.markNo))))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     if (calcType==='cutting_wt') { const done2=fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&PAST_CUTTING.has(inst.currentStage))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     if (calcType==='prod_step_wt') { const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='completed').length; const inProg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='in_progress').length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0&&inProg===0?'not_started':done2===total?'completed':'in_progress'}; }
-    if (calcType==='tpi_done_wt') { const prodKey=key==='tpi_fitup'?'fit_up':key==='tpi_weld'?'welding':key==='tpi_blast'?'blasting':key.replace(/^tpi_paint_/,'paint_coat_'); const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiDoneAt).length; const offered=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===prodKey)?.tpiOfferedAt).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0&&offered===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='tpi_offered_wt') { const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stage.prodStageKey)?.tpiOfferedAt).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='tpi_done_wt') { const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stage.prodStageKey)?.tpiDoneAt).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     if (calcType==='dispatch_wt') { const done2=fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&DISPATCH_STAGES.has(inst.currentStage))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     return {done:0,total,pct:0,status:'not_started'};
   };
 
-  const lastPaintTpiStage = allStageList.filter(s=>s.group==='paint'&&s.calcType==='tpi_done_wt').pop();
-  const overallPct = lastPaintTpiStage
-    ? (lastPaintTpiStage.autoComplete ? 100 : calcWeightProgress(lastPaintTpiStage).pct)
-    : Math.round(allStageList.filter(s=>calcWeightProgress(s).status==='completed').length/Math.max(allStageList.length,1)*100);
+  const activeStages = allStageList.filter(s=>!s.tpiNA);
+  const lastPaintTpiDoneStage = allStageList.filter(s=>s.group==='paint'&&s.calcType==='tpi_done_wt'&&!s.tpiNA).pop();
+  const lastPaintCoatStage = allStageList.filter(s=>s.group==='paint'&&s.calcType==='prod_step_wt').pop();
+  const overallRefStage = lastPaintTpiDoneStage || lastPaintCoatStage;
+  const overallPct = overallRefStage
+    ? calcWeightProgress(overallRefStage).pct
+    : Math.round(activeStages.filter(s=>calcWeightProgress(s).status==='completed').length/Math.max(activeStages.length,1)*100);
 
   const endDate = order.endDate ? new Date(order.endDate) : null;
   const daysToEnd = endDate ? Math.floor((endDate-Date.now())/86400000) : null;
@@ -10302,7 +10306,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
           </div>
         </div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-          {[{v:fabDrawings.length,l:"DRAWINGS",c:T.accent},{v:`${Math.round(effectiveTotalKg).toLocaleString()}kg`,l:"TOTAL WEIGHT",c:T.text},{v:allStageList.filter(s=>calcWeightProgress(s).status==='completed').length,l:"STAGES DONE",c:T.green}].map(x=>(
+          {[{v:fabDrawings.length,l:"DRAWINGS",c:T.accent},{v:`${Math.round(effectiveTotalKg).toLocaleString()}kg`,l:"TOTAL WEIGHT",c:T.text},{v:`${activeStages.filter(s=>calcWeightProgress(s).status==='completed').length}/${activeStages.length}`,l:"STAGES DONE",c:T.green}].map(x=>(
             <div key={x.l} style={{textAlign:"center",padding:"8px 14px",background:T.bgInput,borderRadius:6}}>
               <div style={{fontSize:20,fontWeight:800,color:x.c,fontFamily:T.fontMono}}>{x.v}</div>
               <div style={{fontSize:10,color:T.textMid,fontWeight:600}}>{x.l}</div>
@@ -10342,11 +10346,17 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
             <div style={{fontSize:11,fontWeight:800,color:group.color,marginBottom:10,letterSpacing:"0.08em"}}>{group.label.toUpperCase()}</div>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               {group.stages.map(stage=>{
+                if (stage.tpiNA) return (
+                  <div key={stage.key} style={{display:"flex",alignItems:"center",gap:8,padding:"2px 0",opacity:0.45}}>
+                    <span style={{fontSize:13,width:26}}>➖</span>
+                    <span style={{fontSize:12,color:T.textLow,fontStyle:'italic'}}>{stage.label} — N/A (TPI not required)</span>
+                  </div>
+                );
                 const p = progressView==='weight' ? calcWeightProgress(stage) : calcDrawingProgress(stage);
                 const sc = p.status==='completed'?T.green:p.status==='in_progress'?T.accent:T.textLow;
-                const icon = stage.autoComplete?'➖':p.status==='completed'?'✅':p.status==='in_progress'?'⚡':'⏳';
+                const icon = p.status==='completed'?'✅':p.status==='in_progress'?'⚡':'⏳';
                 const subtext = progressView==='weight'
-                  ? (p.doneKg>0||p.totalKg>0 ? `${Math.round(p.doneKg)}kg / ${Math.round(p.totalKg)}kg` : '')
+                  ? (p.doneKg>=0 ? `${Math.round(p.doneKg).toLocaleString()}kg / ${Math.round(p.totalKg).toLocaleString()}kg` : '')
                   : (p.total>0 ? `${p.done} / ${p.total} drawings` : '');
                 return (
                   <div key={stage.key} style={{display:"grid",gridTemplateColumns:"26px 1fr 80px 48px",alignItems:"center",gap:8}}>
@@ -10354,8 +10364,6 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
                     <div style={{display:"flex",flexDirection:"column",gap:1}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                         <span style={{fontSize:13,color:T.text}}>{stage.label}</span>
-                        {stage.tpi&&<span style={{fontSize:10,color:T.amber,fontWeight:600,background:`${T.amber}22`,padding:"1px 5px",borderRadius:3}}>TPI</span>}
-                        {stage.autoComplete&&<span style={{fontSize:10,color:T.textLow}}>No TPI Required</span>}
                         {stage.manual&&canEditMarkers&&onChange&&(
                           <button onClick={()=>toggleMarker(stage.key)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",color:p.status==='completed'?T.green:T.textMid}}>
                             {p.status==='completed'?'✓ Done':'Mark Done'}
