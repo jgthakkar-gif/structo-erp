@@ -5548,7 +5548,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
 
       {pos.filter(po => showCancelled || po.status !== "cancelled").map(po => {
         const totalVal = po.lines.reduce((s,l)=>s+(l.totalPrice||0),0);
-        const totalWtOrd = po.lines.reduce((s,l)=>s+(l.wtOrdered||0),0);
+        const totalWtOrd = po.lines.reduce((s,l)=>s+resolvePoLineWt(l),0);
         const _grnWt = (g) => g.totalActualWt || (g.lines||[]).reduce((s,l)=>s+(l.actualWt||l.wtReceived||0),0);
         const totalWtRec = (po.grns||[]).filter(g=>g.status!=='reversed').reduce((s,g)=>s+_grnWt(g),0);
         return (
@@ -6388,6 +6388,15 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   );
 };
 
+// Resolve wtOrdered for legacy PO lines where wtPerSheet was 0 (sections created before fix)
+const resolvePoLineWt = (pl) => {
+  if (pl.wtOrdered > 0) return pl.wtOrdered;
+  const wps = nestingSheetWt(pl.matCode, pl.sheetDim||pl.description||"");
+  return wps > 0 ? Math.round(wps * (pl.qty||0) * 100) / 100 : 0;
+};
+const resolvePoLineWtPS = (pl) =>
+  pl.wtPerSheet || nestingSheetWt(pl.matCode, pl.sheetDim||pl.description||"");
+
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
 const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials }) => {
   const [tab, setTab] = useState("lines");
@@ -6502,11 +6511,11 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
 
   const reverseGRN = (grnId) => {
     if (!reverseReason.trim()) return;
-    // Step 1 — validate: all lots for this GRN must be qc_hold
+    // Step 1 — validate: cannot reverse if any lot is allocated/issued/consumed (material committed to production)
     const grnLots = (stock||[]).filter(s => s.grnId === grnId);
-    const blockedLot = grnLots.find(s => s.status !== "qc_hold");
+    const blockedLot = grnLots.find(s => ['allocated','issued','consumed'].includes(s.status));
     if (blockedLot) {
-      showToast(`Cannot reverse — lot ${blockedLot.lotNo} has been approved or allocated. Contact administrator.`, "red");
+      showToast(`Cannot reverse — lot ${blockedLot.lotNo} is ${blockedLot.status} (committed to production). Deallocate first.`, "red");
       return;
     }
     // Step 2 — mark lots as rejected (NOT deleted — physical material still in yard)
@@ -6557,7 +6566,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
     onBack();
   };
 
-  const totalWtOrd = po.lines?.reduce((s,l)=>s+(l.wtOrdered||0),0)||0;
+  const totalWtOrd = po.lines?.reduce((s,l)=>s+resolvePoLineWt(l),0)||0;
   const totalVal = po.lines?.reduce((s,l)=>s+(l.totalPrice||0),0)||0;
   // Compute from non-reversed GRNs — always accurate regardless of line wtReceived state
   const grnWt = (g) => g.totalActualWt || (g.lines||[]).reduce((s,l)=>s+(l.actualWt||l.wtReceived||0),0);
@@ -6597,11 +6606,12 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
         {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{
           const yr=new Date().getFullYear();
           const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):"";
-          const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{
+          const autoLines=(po.lines||[]).filter(pl=>resolvePoLineWt(pl)>(pl.wtReceived||0)).map(pl=>{
             const balQty=Math.max(0,(pl.qtyOrdered||pl.qty||0)-(pl.qtyReceived||0));
-            const balWt=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0));
-            const wtPS=pl.wtPerSheet||0;
-            const calcWt=wtPS>0?Math.round(wtPS*balQty*100)/100:balWt;
+            const resolvedWtOrd=resolvePoLineWt(pl);
+            const balWt=Math.round(resolvedWtOrd-(pl.wtReceived||0));
+            const wtPS=resolvePoLineWtPS(pl);
+            const calcWt=wtPS>0?Math.round(wtPS*balQty*100)/100:Math.max(0,balWt);
             return {
               poLineId:pl.id,
               materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),
@@ -6725,8 +6735,8 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                   <TD>{l.grade||"—"}</TD>
                   <TD right mono>
                     {(l.orderMode||"ByUnits")==="ByWeight"
-                      ? <>{fmt.num(l.wtOrdered||0)} kg <span style={{color:T.textLow,fontSize:11}}>(≈ {l.qtyOrdered||l.qty} {l.unit==="KG"?"pcs":l.unit||"pcs"})</span></>
-                      : <>{l.qtyOrdered||l.qty} {l.unit||"MT"} <span style={{color:T.textLow,fontSize:11}}>({fmt.num(Math.round(l.wtOrdered||0))} kg)</span></>
+                      ? <>{fmt.num(resolvePoLineWt(l))} kg <span style={{color:T.textLow,fontSize:11}}>(≈ {l.qtyOrdered||l.qty} {l.unit==="KG"?"pcs":l.unit||"pcs"})</span></>
+                      : <>{l.qtyOrdered||l.qty} {l.unit||"MT"} <span style={{color:T.textLow,fontSize:11}}>({fmt.num(Math.round(resolvePoLineWt(l)))} kg){!l.wtOrdered&&resolvePoLineWt(l)>0&&<span style={{color:T.amber}}> ↻</span>}</span></>
                     }
                   </TD>
                   <TD right mono>{fmt.currency(l.unitPrice)}</TD>
@@ -6736,7 +6746,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                     {l.pricingMethod==="PerKg"&&l.effectiveRateUnit>0&&<div style={{color:T.textLow,fontSize:10}}>₹{fmt.num(Math.round(l.effectiveRateUnit))}/{l.unit||"unit"}</div>}
                   </TD>
                   <TD right mono bold color={T.green}>{fmt.currency(l.totalPrice)}</TD>
-                  <TD right mono>{fmt.num(l.wtOrdered)}</TD>
+                  <TD right mono>{fmt.num(resolvePoLineWt(l))}{!l.wtOrdered&&resolvePoLineWt(l)>0&&<span style={{color:T.amber,fontSize:10,marginLeft:2}}>↻</span>}</TD>
                   <TD right mono color={l.wtReceived>0?T.green:T.textLow}>{fmt.num(l.wtReceived||0)}</TD>
                   <TD><Badge color={l.status==="fully_received"?"green":l.status==="partially_received"?"amber":l.status==="pending"?"gray":"red"}>{l.status?.replace("_"," ")}</Badge>{l.wtSource==="manual"&&<span style={{marginLeft:4}}><Badge color="amber">Manual wt</Badge></span>}</TD>
                 </tr>
