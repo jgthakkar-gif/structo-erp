@@ -1,7 +1,27 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 2.2 — April 2026
-# Session 4 Phase 3 — Part 4: Single-PR convert modal stays on Requisitions tab
+# Version 2.3 — April 2026
+# Session 4 Phase 3 — Part 5: CSV normalization + GRN header-level MTC entry
 # Updated:
+#   CSV NORMALIZATION (FIX 1 — handleNestImport):
+#     matCode: .trim() applied after col() lookup
+#     sheetDim: .trim().toUpperCase() — '1500x9200' and '1500X9200' now merge
+#     sheetNo: parseInt + .toString().trim() before grouping
+#     Effect: duplicate dimension groups from case variants are eliminated
+#   GRN MTC HEADER ENTRY (FIX 2):
+#     grnForm.mtcs = [{id, mtcNo, heatNo, grade, driveLink}] — new header-level array
+#     GRN modal: new "Mill Test Certificates" section with [+ Add MTC] / delete buttons
+#     Each GRN line: mtcId dropdown (from grnForm.mtcs) auto-fills heatNo on selection
+#     "Apply MTC-1 to all lines" shortcut button when ≥1 MTC defined
+#     buildStockLots: lot.heatNo/mtcNo/mtcDoc/mtcUploaded inherited from assigned MTC
+#       (falls back to l.heatNo if no MTC assigned — backward compat)
+#     NEW lot field: lot.mtcNo (string) — MTC document number
+#     NEW lot field: lot.mtcDoc — now set from MTC.driveLink at GRN save (was hardcoded "")
+#     lot.mtcUploaded: now true when MTC.driveLink present (was hardcoded false)
+#     RM QC inspect button: pre-fills form.mtcLink/heatNo/mtcNo from lot at open time
+#     Inspection modal: MTC fields shown read-only when pre-filled; [Override MTC] unlocks
+#     doQC: now saves form.mtcNo back to lot.mtcNo (alongside existing mtcDoc/heatNo save)
+#
+# Prior: v2.2 — single-PR convert modal stays on Requisitions tab
 #   PERSISTENCE (FIX 1):
 #     nestingBatches → localStorage key 'structo_nestingBatches' (was in-memory only)
 #     instances      → localStorage key 'structo_instances'
@@ -41,6 +61,7 @@
 #     STAYS on Requisitions tab after creation
 #     Old "Convert to PO" path (setForm + setModal("new_po") + setPurTab) removed
 #
+# Prior: v2.2 — single-PR convert modal stays on Requisitions tab
 # Prior: v2.0 — consumables, parseNestingMatCode, nestingSheetWt, single+combined PO creation
 # Prior: v1.9 — rmUnitId fractions, normRmMatCode, off-cut fields, PR/PO badges, discard flow
 #
@@ -467,17 +488,43 @@ lot.batchNo
 
 lot.heatNo
   READS:   RM Quality inspection, MDCC dossier, TPI inspection
-  WRITES:  GRN entry, RM Quality inspection confirmation
-  DISPLAYS: Stock module HEAT NO column, lot detail
+  WRITES:  GRN save (via MTC assignment), RM Quality doQC confirmation
+  DISPLAYS: Stock module HEAT NO column, lot detail, QC inspection modal (read-only pre-fill)
   IF CHANGED: Requires super_admin — log reason — alert QC Admin
 
-lot.mtcLink (Google Drive URL)
+lot.mtcNo (string — MTC document number)
+  READS:   RM Quality inspection, MDCC dossier
+  WRITES:  GRN save (from grnLine.mtcId → grnForm.mtcs[n].mtcNo), doQC confirmation
+  DISPLAYS: QC inspection modal MTC No field (read-only pre-fill with override)
+  IF CHANGED: Also update lot.mtcDoc and lot.heatNo for consistency
+
+lot.mtcDoc (Google Drive URL — was lot.mtcLink in earlier sessions)
   READS:   RM Quality, Client inspection, MDCC dossier
-  WRITES:  RM Quality inspection modal
-  DISPLAYS: Stock module MTC column (tick or Missing badge)
-  TRIGGERS: Set → MTC badge turns green tick
+  WRITES:  GRN save (from MTC.driveLink), RM Quality doQC (form.mtcLink saved here)
+  DISPLAYS: Stock module MTC column (tick or Missing badge), QC inspection modal
+  TRIGGERS: Set → mtcUploaded=true, MTC badge turns green tick
              Missing → client inspection blocked
   IF CHANGED: Verify new link accessible and correct document
+  NOTE: field internally named mtcDoc not mtcLink on the lot object
+
+# ─── GRN FORM (transient — not persisted; used during GRN modal) ───
+
+grnForm.mtcs (array of {id, mtcNo, heatNo, grade, driveLink})
+  READS:   buildStockLots — finds mtc by grnLine.mtcId to populate lot fields
+           GRN line MTC dropdown — renders options
+           "Apply MTC-1 to all lines" button — uses mtcs[0].id
+  WRITES:  [+ Add MTC] button, per-MTC field edits, [✕] delete
+  DISPLAYS: GRN modal "Mill Test Certificates" section above Received Lines
+  INITIAL: [] — set in + Raise GRN button onClick and form resets
+  IF CHANGED: All lot fields (heatNo/mtcNo/mtcDoc/mtcUploaded) derived from this at save time
+
+grnLine.mtcId (string — references grnForm.mtcs[n].id)
+  READS:   buildStockLots — looks up mtc from grnForm.mtcs array
+  WRITES:  Per-line MTC dropdown onChange; "Apply MTC-1 to all lines" sets all lines
+           onChange also auto-fills grnLine.heatNo from mtc.heatNo
+  DISPLAYS: GRN line row — MTC dropdown (replaces manual Heat No when MTCs defined)
+  FALLBACK: If no MTCs in grnForm.mtcs, shows manual Heat No input instead
+  IF CHANGED: Re-derive lot.heatNo — buildStockLots prefers mtc.heatNo over l.heatNo
 
 # ═══════════════════════════════════════════════════════════════════
 # PRODUCTION INSTANCE OBJECT

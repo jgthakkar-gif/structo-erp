@@ -1350,15 +1350,19 @@ const nextGrnId = (pos) => {
 const buildStockLots = (grnForm, po, grnId, ts) =>
   (grnForm.lines||[]).filter(l=>(l.wtReceived||0)>0).map((l,idx) => {
     const poLine = po.lines?.find(pl=>pl.id===l.poLineId)||{};
+    const mtc = (grnForm.mtcs||[]).find(m=>m.id===l.mtcId)||null;
     return {
       id:`LOT-${ts}-${idx}`, poId:po.id, poLineId:l.poLineId, grnId,
       vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
       batchNo:grnForm.batchNo||"",
       itemCode:poLine.itemCode||"", matCode:poLine.matCode||"", matLibId:poLine.matLibId||"",
       matType:poLine.matType||"MS", grade:poLine.grade||"", sectionType:poLine.sectionType||poLine.section||"", size:poLine.size||"",
-      heatNo:l.heatNo||"",
+      heatNo: mtc?.heatNo || l.heatNo || "",
+      mtcNo: mtc?.mtcNo || "",
+      mtcDoc: mtc?.driveLink || "",
+      mtcUploaded: !!(mtc?.driveLink),
       wtReceived:l.wtReceived, wtAvailable:l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
-      status:"qc_hold", bayId:grnForm.bayId||"", mtcUploaded:false, mtcDoc:"",
+      status:"qc_hold", bayId:grnForm.bayId||"",
       rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:today(),
       isOffcut:false, parentLotId:"",
       allocations:[], qcHoldReason:(l.inspStatus||"")==="hold"?(grnForm.holdReason||""):"",
@@ -3150,7 +3154,7 @@ const qcStatusBadge   = { approved:"green", pending:"gray", failed:"red", hold:"
 // ═══════════════════════════════════════════════════════════════════════════════
 // MRP MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines }) => {
+const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setMod }) => {
   const [view, setView] = useState("overview");
   const [expand, setExpand] = useState({});
   const [nestModal, setNestModal] = useState(null);
@@ -3185,7 +3189,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
   const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
 
   // Procurement helpers for planning batches
-  const prForBatch = (batchId) => (purchaseReqs||[]).find(r=>r.nestingBatchId===batchId&&r.type==="nesting");
+  const prForBatch = (batchId) => (purchaseReqs||[]).find(r=>r.nestingBatchId===batchId&&r.type==="nesting"&&r.status!=='stale'&&r.status!=='cancelled');
   const poForPr    = (pr) => pr?.poId ? (pos||[]).find(p=>p.id===pr.poId) : null;
 
   const createBatchPr = (batch) => {
@@ -3357,9 +3361,9 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
     // Group rows by Material Code → sheets
     const lotsMap = {};
     nestImportRows.forEach(row=>{
-      const matCode = col(row,"material code","matcode","material_code","mat code");
-      const sheetNo = col(row,"sheet no","sheet_no","sheetno","sheet number");
-      const sheetDim = col(row,"sheet dim lxw","sheet dim","sheetdim","sheet_dim","dims","dimensions","lxw");
+      const matCode = (col(row,"material code","matcode","material_code","mat code")||'').trim();
+      const sheetNo = (col(row,"sheet no","sheet_no","sheetno","sheet number")||'0').toString().trim();
+      const sheetDim = (col(row,"sheet dim lxw","sheet dim","sheetdim","sheet_dim","dims","dimensions","lxw")||'').trim().toUpperCase();
       const markNo   = col(row,"mark no","mark_no","markno","mark number","part");
       const utilisPctStr = col(row,"utilisation %","utilisation%","utilization %","utilization%","utilisation","utilization","util %","util%","util","usage %","usage");
       const utilisPct = parseFloat(utilisPctStr)||0;
@@ -3413,6 +3417,12 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
       status: "Planned",
       lots
     };
+    // Mark existing PRs for this batch ID as stale (reimport case, >24h old)
+    setPurchaseReqs(prev=>prev.map(r=>{
+      if(r.type!=='nesting'||r.nestingBatchId!==batchId||r.status==='converted'||r.status==='cancelled') return r;
+      const ageHours=(Date.now()-new Date(r.createdAt||0).getTime())/3600000;
+      return ageHours>=24?{...r,status:'stale',staleReason:'source batch reimported'}:r;
+    }));
     setNestingBatches(prev=>[...(prev||[]), batch]);
     setNestModal(null);
     setNestImportRows([]); setNestImportReady(false); setNestImportError("");
@@ -3422,7 +3432,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
     showToast(`Batch ${batchId} created — ${lots.length} lots, ${totalSheets} sheets, ${totalRmUnits} RM units`, "green");
   };
 
-  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} machines={machines||[]} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} user={user} />;
+  if (view === "nest_export") return <MRPNestExport onBack={()=>setView("overview")} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} orders={orders} selectedDrawingIds={nestExportSel} machines={machines||[]} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} user={user} />;
 
   // ── Material Requirements computation (View 2) ───────────────────────────
   // Only include parts from drawings with receivedDate (same rule as byOrder overview).
@@ -4264,7 +4274,11 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
               Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
             </div>
             <Field label="Vendor" required>
-              <Input value={convertPoVendor} onChange={e=>setConvertPoVendor(e.target.value)} placeholder="Vendor name..." />
+              <select value={convertPoVendor} onChange={e=>{ if(e.target.value==="__add_new__"){ setConvertPoModal(null); setConvertPoVendor(""); if(setMod) setMod("masters"); } else setConvertPoVendor(e.target.value); }} style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"6px 10px", color:T.text, fontSize:12 }}>
+                <option value="">— Select vendor —</option>
+                {(vendors||[]).filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
+              </select>
             </Field>
             <div style={{ marginBottom:12, marginTop:8 }}>
               <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:6 }}>Lines from PR</div>
@@ -4278,28 +4292,65 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
             <div style={{ fontSize:11, color:T.amber, marginBottom:12 }}>Pricing to be confirmed in the Purchase module after PO creation.</div>
             <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
               <button onClick={()=>setConvertPoModal(null)} style={css.btn.secondary}>Cancel</button>
-              <button disabled={!convertPoVendor.trim()} onClick={()=>{
+              <button disabled={!convertPoVendor} onClick={()=>{
                 const yr = new Date().getFullYear();
                 const max = (pos||[]).reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; }, 0);
                 const poId = `PO-${yr}-${String(max+1).padStart(3,"0")}`;
+                const vendor = (vendors||[]).find(v=>v.id===convertPoVendor);
                 const newPO = {
-                  id:poId, vendorId:"", vendorCode:"", vendorName:convertPoVendor.trim(),
-                  poDate:today(), expectedDelivery:"", status:"pending",
+                  id:poId, vendorId:convertPoVendor, vendorCode:vendor?.vendorCode||"", vendorName:vendor?.name||convertPoVendor,
+                  poDate:today(), expectedDelivery:"", status:"pending", sourceType:"nesting",
                   servedOrders:[], coveredOrders:[], includesStock:false, remarks:`From ${pr.id} — ${pr.nestingBatchId}`,
                   prId:pr.id,
-                  lines:(pr.lots||[]).map((l,i)=>({
-                    id:`POL-${Date.now()}-${i}`, matCode:l.matCode, sectionType:"", size:"", grade:"E250", matType:"MS",
-                    isPlate:false, orderMode:"ByUnits", qty:l.sheetCount||0, qtyOrdered:l.sheetCount||0, unit:"Sheets",
-                    pricingMethod:"PerUnit", unitPrice:0, wtOrdered:0, wtRequired:0, totalPrice:0,
-                    wtReceived:0, status:"pending", qtyReceived:0, itemCode:l.matCode,
-                  })),
+                  lines:(pr.lots||[]).flatMap((l,li)=>{
+                    const segs = l.matCode.split('/');
+                    const sectionType = segs[0]||'';
+                    const matType = segs[1]||'MS';
+                    const grade = segs[2]||'E350';
+                    const rawSize = segs[3]||'';
+                    const size = rawSize ? rawSize.replace(/mm$/i,'')+'mm' : '';
+                    const thickness = parseFloat(rawSize)||0;
+                    const dimLines = l.lines||[];
+                    if(dimLines.length===0){
+                      return [{
+                        id:`POL-${Date.now()}-${li}-0`, matCode:l.matCode,
+                        sectionType, matType, grade, size,
+                        isPlate:sectionType.toUpperCase()==='PLATE',
+                        orderMode:'ByUnits', qty:l.sheetCount||0, qtyOrdered:l.sheetCount||0, unit:'Sheets', description:'', sheetDim:'',
+                        pricingMethod:'PerKg', unitPrice:0, wtPerSheet:0, wtOrdered:0, wtRequired:0, totalPrice:0,
+                        wtReceived:0, status:'pending', qtyReceived:0, itemCode:l.matCode,
+                        category:'raw_material', prId:pr.id, nestingBatchId:pr.nestingBatchId,
+                      }];
+                    }
+                    return dimLines.map((d,di)=>{
+                      const dimStr = d.sheetDim||'';
+                      const dimParts = dimStr.toUpperCase().split('X');
+                      const dimL = parseFloat(dimParts[1]||dimParts[0]||0);
+                      const dimW = parseFloat(dimParts[0]||0);
+                      const wtPerSheet = (sectionType.toUpperCase()==='PLATE' && thickness>0 && dimL>0 && dimW>0)
+                        ? Math.round(dimL*dimW*thickness*7.85/1000000*10)/10 : 0;
+                      const totalWt = Math.round(wtPerSheet*d.qty*10)/10;
+                      return {
+                        id:`POL-${Date.now()}-${li}-${di}`, matCode:l.matCode,
+                        sectionType, matType, grade, size,
+                        isPlate:sectionType.toUpperCase()==='PLATE',
+                        orderMode:'ByUnits', description:dimStr, sheetDim:dimStr,
+                        qty:d.qty, qtyOrdered:d.qty, unit:'Sheets',
+                        pricingMethod:'PerKg', unitPrice:0,
+                        wtPerSheet, wtOrdered:totalWt, wtRequired:totalWt,
+                        totalPrice:0, wtReceived:0, status:'pending', qtyReceived:0,
+                        itemCode:l.matCode, category:'raw_material',
+                        prId:pr.id, prLineRef:dimStr, nestingBatchId:pr.nestingBatchId,
+                      };
+                    });
+                  }),
                   grns:[], createdBy:user.name, createdDate:today(),
                 };
                 setPos(prev=>[...(prev||[]), newPO]);
                 setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"converted",poId}));
                 setConvertPoModal(null); setConvertPoVendor("");
                 showToast(`${poId} created`);
-              }} style={{ ...css.btn.primary, opacity:convertPoVendor.trim()?1:0.4 }}>Create PO</button>
+              }} style={{ ...css.btn.primary, opacity:convertPoVendor?1:0.4 }}>Create PO</button>
             </div>
           </Modal>
         );
@@ -4309,7 +4360,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
 };
 
 // ─── MRP NESTING EXPORT VIEW ─────────────────────────────────────────────────
-const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds, machines, nestingBatches, setNestingBatches, user }) => {
+const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, selectedDrawingIds, machines, nestingBatches, setNestingBatches, user }) => {
   const [sheet, setSheet] = useState("S1");
   const sheets = [
     { id:"S1", label:"Sheet 1 — Drawing Register" },
@@ -4630,6 +4681,12 @@ const MRPNestExport = ({ onBack, purchaseReqs, stock, orders, selectedDrawingIds
       apiJobs: [],
       lots,
     };
+    // Mark existing PRs for this batch ID as stale (reimport case, >24h old)
+    if (setPurchaseReqs) setPurchaseReqs(prev=>prev.map(r=>{
+      if(r.type!=='nesting'||r.nestingBatchId!==finalId||r.status==='converted'||r.status==='cancelled') return r;
+      const ageHours=(Date.now()-new Date(r.createdAt||0).getTime())/3600000;
+      return ageHours>=24?{...r,status:'stale',staleReason:'source batch reimported'}:r;
+    }));
     setNestingBatches(prev=>[...(prev||[]), batch]);
     setNestConfirmed(true);
   };
@@ -5211,7 +5268,7 @@ const nestingSheetWt = (matCode, sheetDim) => {
   return (L && W && t) ? Math.round(L * W * t * 7.85 / 1e6 * 100) / 100 : 0;
 };
 
-const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials, paint, consumables }) => {
+const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, materials, setMaterials, paint, consumables, setMod }) => {
   const [purTab, setPurTab] = useState("pos"); // "pos" | "requisitions"
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -5229,6 +5286,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [selectedPrs, setSelectedPrs] = useState([]);   // Part 3: multi-PR combine
   const [combineModal, setCombineModal] = useState(false);
   const [combineForm, setCombineForm] = useState({});
+  const [convertSingleModal, setConvertSingleModal] = useState(null); // PR object
+  const [convertSingleForm, setConvertSingleForm] = useState({});    // vendorId/poDate/notes/rates
   const [linePickerModal, setLinePickerModal] = useState(null); // Part 4: null | {category:null|"rm"|"paint"|"consumable"}
   const [linePickerForm, setLinePickerForm] = useState({});
 
@@ -5341,7 +5400,51 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     setPurchaseReqs(prev=>prev.map(r=>selectedPrs.includes(r.id)?{...r,status:"converted",poId:newPoId}:r));
     showToast(`${newPoId} created from ${selectedPrs.length} requisitions`);
     setCombineModal(false); setCombineForm({}); setSelectedPrs([]);
-    setPurTab("pos"); setSelected(newPoId);
+    // Stay on Requisitions tab — user can click "View PO" on the PR cards
+  };
+
+  const saveSingleConvertPO = () => {
+    const pr = convertSingleModal;
+    const csf = convertSingleForm;
+    if (!pr || !csf.vendorId) return;
+    const yr = new Date().getFullYear();
+    const maxSeq = pos.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
+    const newPoId = `PO-${yr}-${String(maxSeq+1).padStart(3,"0")}`;
+    const v = vendors.find(x=>x.id===csf.vendorId);
+    const ts = Date.now();
+    const lines = (pr.lots||[]).flatMap((l,li)=>
+      (l.lines||[]).map((ln,di)=>{
+        const p = parseNestingMatCode(l.matCode);
+        const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
+        const qty = ln.qty||0;
+        const rate = parseFloat(csf.rates?.[l.matCode])||0;
+        const totalWt = Math.round(wtPerSheet*qty*100)/100;
+        return {
+          id:`POL-${ts}-${li}-${di}`,
+          matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
+          sheetDim:ln.sheetDim||ln.dims, description:ln.sheetDim||ln.dims, isPlate:true,
+          orderMode:'ByUnits', qty, qtyOrdered:qty, unit:'Sheets',
+          pricingMethod:'PerKg', unitPrice:rate,
+          wtPerSheet, wtOrdered:totalWt, wtRequired:totalWt,
+          totalPrice:Math.round(totalWt*rate*100)/100,
+          wtReceived:0, qtyReceived:0, status:'pending',
+          sourceType:'nesting', prId:pr.id,
+          itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
+        };
+      })
+    );
+    const newPO = {
+      id:newPoId, vendorId:csf.vendorId, vendorCode:v?.vendorCode||"",
+      vendorName:v?.name||"", poDate:csf.poDate||today(),
+      expectedDelivery:csf.expectedDelivery||"", remarks:csf.notes||"",
+      status:"pending", sourceType:"nesting", prId:pr.id,
+      servedOrders:[], coveredOrders:[], includesStock:false,
+      lines, grns:[], createdBy:user.name, createdDate:today(),
+    };
+    setPos(prev=>[...prev, newPO]);
+    setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"converted",poId:newPoId}));
+    setConvertSingleModal(null); setConvertSingleForm({});
+    showToast(`${newPoId} created`);
   };
 
   const saveGRN = (poId) => {
@@ -5473,7 +5576,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {/* Requisitions Tab */}
       {purTab === "requisitions" && (()=>{
         const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting").sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
-        const prStatusBadge = { pending:"amber", converted:"green", cancelled:"gray" };
+        const prStatusBadge = { pending:"amber", converted:"green", cancelled:"gray", stale:"red" };
         return (
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -5515,31 +5618,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                       {pr.status==="pending" && canEdit && (
                         <>
                           <button onClick={()=>{
-                            const nestLines = (pr.lots||[]).flatMap((l,lotIdx)=>
-                              (l.lines||[]).map((ln,lineIdx)=>{
-                                const p = parseNestingMatCode(l.matCode);
-                                const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
-                                const qty = ln.qty||0;
-                                const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
-                                return {
-                                  id:`POL-${Date.now()}-${lotIdx}-${lineIdx}`,
-                                  matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
-                                  sheetDim:ln.sheetDim||ln.dims, isPlate:true,
-                                  sheetLength:dimParts[0]||0, sheetWidth:dimParts[1]||0,
-                                  orderMode:"ByUnits", qty, qtyOrdered:qty, unit:"Sheets",
-                                  pricingMethod:"PerUnit", unitPrice:0,
-                                  wtPerSheet, wtOrdered:Math.round(wtPerSheet*qty*100)/100,
-                                  wtRequired:Math.round(wtPerSheet*qty*100)/100,
-                                  totalPrice:0, wtReceived:0, qtyReceived:0, status:"pending",
-                                  sourceType:"nesting", itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
-                                };
-                              })
-                            );
-                            setForm({vendorId:"",vendorCode:"",vendorName:"",poDate:today(),expectedDelivery:"",status:"pending",servedOrders:[],coveredOrders:[],includesStock:false,
-                              remarks:`From ${pr.id} — ${pr.nestingBatchId}`, prId:pr.id, sourceType:"nesting",
-                              lines:nestLines, grns:[],createdBy:user.name,createdDate:today(),
-                            });
-                            setModal("new_po"); setPurTab("pos");
+                            setConvertSingleModal(pr);
+                            setConvertSingleForm({vendorId:'',poDate:today(),expectedDelivery:'',notes:'',rates:{}});
                           }} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO</button>
                           <button onClick={()=>{
                             if (!window.confirm("Cancel this purchase requisition?")) return;
@@ -5617,9 +5697,10 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           </div>
           <G2>
             <Field label="Vendor" required>
-              <Sel value={combineForm.vendorId||""} onChange={e=>{ const v=vendors.find(x=>x.id===e.target.value); setCombineForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); }}>
+              <Sel value={combineForm.vendorId||""} onChange={e=>{ if(e.target.value==="__add_new__"){ setCombineModal(false); if(setMod) setMod("masters"); } else { const v=vendors.find(x=>x.id===e.target.value); setCombineForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); } }}>
                 <option value="">Select vendor...</option>
-                {vendors.filter(v=>v.vendorType==="RM").map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                {vendors.filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
               </Sel>
             </Field>
             <Field label="PO Date"><Input type="date" value={combineForm.poDate||""} onChange={e=>setCombineForm(f=>({...f,poDate:e.target.value}))} /></Field>
@@ -5633,14 +5714,103 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         </Modal>
       )}
 
+      {/* Single PR → Convert to PO Modal */}
+      {convertSingleModal && (()=>{
+        const pr = convertSingleModal;
+        const csf = convertSingleForm;
+        const lineGroups = (pr.lots||[]).map(l=>{
+          const dimLines = (l.lines||[]).map(d=>{
+            const wt = nestingSheetWt(l.matCode, d.sheetDim);
+            return { ...d, wt, totalWt:Math.round(wt*(d.qty||0)*100)/100 };
+          });
+          const subtotalQty = dimLines.reduce((s,d)=>s+(d.qty||0),0);
+          const subtotalWt  = dimLines.reduce((s,d)=>s+(d.totalWt||0),0);
+          const rate = parseFloat(csf.rates?.[l.matCode])||0;
+          return { matCode:l.matCode, dimLines, subtotalQty, subtotalWt, groupTotal:Math.round(subtotalWt*rate*100)/100 };
+        });
+        const grandWt    = lineGroups.reduce((s,g)=>s+g.subtotalWt,0);
+        const grandTotal = lineGroups.reduce((s,g)=>s+g.groupTotal,0);
+        return (
+          <Modal title={`Convert ${pr.id} to Purchase Order`} onClose={()=>setConvertSingleModal(null)} width={640}>
+            <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
+              Source batch: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
+            </div>
+            <G2>
+              <Field label="Vendor" required>
+                <Sel value={csf.vendorId||""} onChange={e=>{ if(e.target.value==="__add_new__"){ setConvertSingleModal(null); if(setMod) setMod("masters"); } else setConvertSingleForm(f=>({...f,vendorId:e.target.value})); }}>
+                  <option value="">Select vendor...</option>
+                  {vendors.filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                  <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
+                </Sel>
+              </Field>
+              <Field label="PO Date"><Input type="date" value={csf.poDate||""} onChange={e=>setConvertSingleForm(f=>({...f,poDate:e.target.value}))} /></Field>
+              <Field label="Expected Delivery"><Input type="date" value={csf.expectedDelivery||""} onChange={e=>setConvertSingleForm(f=>({...f,expectedDelivery:e.target.value}))} /></Field>
+              <Field label="Notes"><Input value={csf.notes||""} onChange={e=>setConvertSingleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional..." /></Field>
+            </G2>
+            <div style={{ marginTop:14 }}>
+              {lineGroups.map(g=>(
+                <div key={g.matCode} style={{ marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+                  <div style={{ background:T.bgCard, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi, fontSize:12 }}>{g.matCode}</span>
+                    <span style={{ fontSize:11, color:T.textMid }}>{g.subtotalQty} sheets · {fmt.num(g.subtotalWt)} kg</span>
+                  </div>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead><tr style={{ borderBottom:`1px solid ${T.border}` }}>
+                      <th style={{ padding:"3px 10px", textAlign:"left", color:T.textMid, fontWeight:600 }}>Dims</th>
+                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Sheets</th>
+                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Wt/Sheet</th>
+                      <th style={{ padding:"3px 10px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Total Wt</th>
+                    </tr></thead>
+                    <tbody>
+                      {g.dimLines.map((d,i)=>(
+                        <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
+                          <td style={{ padding:"3px 10px", fontFamily:T.fontMono, color:T.text }}>{d.sheetDim}</td>
+                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono }}>{d.qty}</td>
+                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono, color:T.textMid }}>{fmt.num(d.wt)} kg</td>
+                          <td style={{ padding:"3px 10px", textAlign:"right", fontFamily:T.fontMono }}>{fmt.num(d.totalWt)} kg</td>
+                        </tr>
+                      ))}
+                      <tr style={{ background:T.bgInput }}>
+                        <td colSpan={2} style={{ padding:"4px 10px", fontSize:11, color:T.textMid, fontWeight:700 }}>Subtotal</td>
+                        <td />
+                        <td style={{ padding:"4px 10px", textAlign:"right", fontFamily:T.fontMono, fontWeight:700 }}>{fmt.num(g.subtotalWt)} kg</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div style={{ padding:"7px 12px", display:"flex", alignItems:"center", gap:10, borderTop:`1px solid ${T.border}`, background:T.bgCard }}>
+                    <span style={{ fontSize:11, color:T.textMid }}>Unit Price ₹/kg:</span>
+                    <input type="number" min={0} value={csf.rates?.[g.matCode]||""} placeholder="0.00"
+                      onChange={e=>setConvertSingleForm(f=>({...f,rates:{...(f.rates||{}),[g.matCode]:e.target.value}}))}
+                      style={{ width:90, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"3px 7px", color:T.text, fontFamily:T.fontMono, fontSize:11 }} />
+                    <span style={{ fontSize:11, fontWeight:700, color:T.green, marginLeft:"auto" }}>Group Total: {fmt.currency(g.groupTotal)}</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{ background:T.bgCard, borderRadius:6, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center", fontSize:12, fontWeight:700 }}>
+                <span style={{ color:T.textMid }}>Grand Total</span>
+                <div style={{ display:"flex", gap:24 }}>
+                  <span style={{ fontFamily:T.fontMono }}>{fmt.num(grandWt)} kg</span>
+                  <span style={{ fontFamily:T.fontMono, color:T.green }}>{fmt.currency(grandTotal)}</span>
+                </div>
+              </div>
+            </div>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+              <button onClick={()=>setConvertSingleModal(null)} style={css.btn.secondary}>Cancel</button>
+              <button onClick={saveSingleConvertPO} disabled={!csf.vendorId} style={{ ...css.btn.primary, opacity:csf.vendorId?1:0.4 }}>Create PO</button>
+            </div>
+          </Modal>
+        );
+      })()}
+
       {/* New PO Modal */}
       {modal==="new_po" && (
         <Modal title="New Purchase Order" onClose={()=>setModal(null)} width={720}>
           <G2>
             <Field label="Vendor" required>
-              <Sel value={form.vendorId||""} onChange={e=>{ const v=vendors.find(x=>x.id===e.target.value); setForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); }}>
+              <Sel value={form.vendorId||""} onChange={e=>{ if(e.target.value==="__add_new__"){ setModal(null); if(setMod) setMod("masters"); } else { const v=vendors.find(x=>x.id===e.target.value); setForm(f=>({...f,vendorId:e.target.value,vendorName:v?.name||""})); } }}>
                 <option value="">Select vendor...</option>
-                {vendors.filter(v=>v.vendorType==="RM").map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                {vendors.filter(v=>v.active!==false).sort((a,b)=>a.name.localeCompare(b.name)).map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                <option value="__add_new__">+ Add New Vendor (goes to Masters)</option>
               </Sel>
             </Field>
             <Field label="PO Date" required><Input type="date" value={form.poDate||""} onChange={e=>setForm(f=>({...f,poDate:e.target.value}))} /></Field>
@@ -6343,7 +6513,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
         {user.role==="super_admin" && po.status!=="cancelled" && !((po.grns||[]).length===0 && po.status==="pending") && (
           <button onClick={()=>{ setCancelReason(""); setCancelModal(true); }} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}` }}>Cancel PO</button>
         )}
-        {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
+        {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{ const yr=new Date().getFullYear(); const preview=po.vendorCode?genBatchNo(po.vendorCode,pos,yr):""; const autoLines=(po.lines||[]).filter(pl=>(pl.wtOrdered||0)>(pl.wtReceived||0)).map(pl=>{ const bal=Math.round((pl.wtOrdered||0)-(pl.wtReceived||0)); return {poLineId:pl.id,materialDesc:pl.itemCode||pl.matCode||`${pl.sectionType||""} ${pl.size||""}`.trim(),qtyReceived:pl.qty||0,calculatedWt:bal,actualWt:bal,wtReceived:bal,variance:0,heatNo:"",condition:"good",inspStatus:"approved"}; }); setGrnForm({lines:autoLines,batchNo:preview,mtcs:[]}); setGrnModal(true); }} style={css.btn.primary}>+ Raise GRN</button>}
         {canEdit && tab==="lines" && po.status==="pending" && (
           <div style={{ display:"flex", gap:6 }}>
             <button onClick={downloadPOTemplate} style={css.btn.secondary}>⬇ Template</button>
@@ -6358,7 +6528,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           {po.lines?.some(l=>l.wtSource==="manual") && (
             <InfoBanner color="amber">One or more lines have manually entered weights — verify with vendor before raising GRN.</InfoBanner>
           )}
-          {po.sourceType==="nesting" ? (()=>{
+          {(po.sourceType==="nesting"||(po.lines||[]).some(l=>l.prId)) ? (()=>{
             // GROUP by matCode for nesting POs
             const grpMap = {};
             (po.lines||[]).forEach(l => {
@@ -6559,8 +6729,30 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           {(grnForm.lines||[]).some(l=>l.inspStatus==="hold") && (
             <Field label="Hold Reason"><Input value={grnForm.holdReason||""} onChange={e=>setGrnForm(f=>({...f,holdReason:e.target.value}))} placeholder="Reason for hold..." /></Field>
           )}
+          <SectionHd title="Mill Test Certificates" action={
+            <button onClick={()=>setGrnForm(f=>({...f,mtcs:[...(f.mtcs||[]),{id:`MTC-${Date.now()}`,mtcNo:"",heatNo:"",grade:"",driveLink:""}]}))} style={css.btn.sm}>+ Add MTC</button>
+          } />
+          {(grnForm.mtcs||[]).length===0 && (
+            <div style={{ fontSize:12, color:T.textLow, padding:"4px 0 10px" }}>No MTCs added. Add MTC certificates received with this delivery.</div>
+          )}
+          {(grnForm.mtcs||[]).map((m,mi)=>(
+            <div key={m.id} style={{ ...css.card, background:T.bg, marginBottom:6 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 2fr auto", gap:8, alignItems:"end" }}>
+                <Field label="MTC No"><Input value={m.mtcNo} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],mtcNo:e.target.value}; return {...f,mtcs:ms}; })} placeholder="MTC-001" /></Field>
+                <Field label="Heat No"><Input value={m.heatNo} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],heatNo:e.target.value}; return {...f,mtcs:ms}; })} placeholder="JSW-HEAT-001" /></Field>
+                <Field label="Grade"><Input value={m.grade} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],grade:e.target.value}; return {...f,mtcs:ms}; })} placeholder="IS 2062 E250" /></Field>
+                <Field label="Drive Link"><Input value={m.driveLink} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],driveLink:e.target.value}; return {...f,mtcs:ms}; })} placeholder="https://drive.google.com/..." /></Field>
+                <button onClick={()=>setGrnForm(f=>({...f,mtcs:(f.mtcs||[]).filter((_,j)=>j!==mi)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
+              </div>
+            </div>
+          ))}
+          {(grnForm.mtcs||[]).length>0 && (
+            <div style={{ textAlign:"right", marginBottom:12 }}>
+              <button onClick={()=>setGrnForm(f=>({...f,lines:(f.lines||[]).map(l=>({...l,mtcId:(f.mtcs||[])[0]?.id||""}))}))} style={css.btn.sm}>Apply MTC-1 to all lines</button>
+            </div>
+          )}
           <SectionHd title="Received Lines" action={
-            <button onClick={()=>setGrnForm(f=>({...f,lines:[...(f.lines||[]),{poLineId:"",materialDesc:"",qtyReceived:0,calculatedWt:0,actualWt:0,variance:0,wtReceived:0,heatNo:"",condition:"good",inspStatus:"approved"}]}))} style={css.btn.sm}>+ Add Line</button>
+            <button onClick={()=>setGrnForm(f=>({...f,lines:[...(f.lines||[]),{poLineId:"",materialDesc:"",qtyReceived:0,calculatedWt:0,actualWt:0,variance:0,wtReceived:0,heatNo:"",mtcId:"",condition:"good",inspStatus:"approved"}]}))} style={css.btn.sm}>+ Add Line</button>
           } />
           {(grnForm.lines||[]).map((l,i)=>(
             <div key={i} style={{ ...css.card, background:T.bg, marginBottom:8 }}>
@@ -6580,7 +6772,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                   {(()=>{ const vp=l.calculatedWt>0?Math.abs(l.variance||0)/l.calculatedWt*100:0; const vc=vp<=2?T.green:vp<=5?T.amber:T.red; return (
                     <Field label="Variance"><Input value={l.variance!==undefined&&l.variance!==null&&l.calculatedWt>0?`${(l.variance>0?"+":"")}${l.variance} kg (${vp.toFixed(1)}%)`:"—"} readOnly style={{opacity:0.9,cursor:"default",fontFamily:T.fontMono,color:vc,fontSize:11}} /></Field>
                   ); })()}
-                  <Field label={<span>Heat No {!l.heatNo&&<span style={{color:T.amber,fontSize:10}}>⚠</span>}</span>}><Input value={l.heatNo||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],heatNo:e.target.value}; return {...f,lines:n}; })} placeholder="From MTC..." /></Field>
+                  <Field label={<span>MTC {!(grnForm.mtcs||[]).length&&<span style={{color:T.textLow,fontSize:10}}>(no MTCs)</span>}</span>}>{(grnForm.mtcs||[]).length>0?(<Sel value={l.mtcId||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; const mtc=(f.mtcs||[]).find(m=>m.id===e.target.value); n[i]={...n[i],mtcId:e.target.value,heatNo:mtc?.heatNo||n[i].heatNo}; return {...f,lines:n}; })}><option value="">— Select MTC —</option>{(grnForm.mtcs||[]).map(m=><option key={m.id} value={m.id}>{m.mtcNo||"MTC"} · {m.heatNo||"no heat"}</option>)}</Sel>):(<Input value={l.heatNo||""} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],heatNo:e.target.value}; return {...f,lines:n}; })} placeholder="Heat no..." />)}</Field>
                   <Field label="Condition"><Sel value={l.condition||"good"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],condition:e.target.value}; return {...f,lines:n}; })}><option value="good">Good</option><option value="damaged">Damaged</option><option value="short">Short</option></Sel></Field>
                   <Field label="Insp"><Sel value={l.inspStatus||"approved"} onChange={e=>setGrnForm(f=>{ const n=[...f.lines]; n[i]={...n[i],inspStatus:e.target.value}; return {...f,lines:n}; })}><option value="approved">Approved</option><option value="hold">Hold</option><option value="rejected">Rejected</option></Sel></Field>
                   <button onClick={()=>setGrnForm(f=>({...f,lines:f.lines.filter((_,j)=>j!==i)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
@@ -6693,11 +6885,12 @@ const RMQCModule = ({ user, stock, setStock }) => {
   const doQC = (lotId, result, remarks) => {
     const mtcDoc  = form.mtcLink?.trim()||"";
     const heatNo  = form.heatNo?.trim()||"";
+    const mtcNo   = form.mtcNo?.trim()||"";
     setStock(prev=>prev.map(s=>s.id===lotId?{...s,
       rmQcStatus:result, qcRemarks:remarks, qcDate:today(), qcBy:user.name,
       status:result==="failed"?"rejected":s.status,
-      mtcDoc: mtcDoc||s.mtcDoc, heatNo: heatNo||s.heatNo,
-      mtcUploaded: mtcDoc ? true : s.mtcUploaded
+      mtcDoc: mtcDoc||s.mtcDoc, heatNo: heatNo||s.heatNo, mtcNo: mtcNo||s.mtcNo||"",
+      mtcUploaded: (mtcDoc||s.mtcDoc) ? true : s.mtcUploaded
     }:s));
     showToast(result==="approved"?"RM QC Approved — pending client inspection":"RM QC result saved");
     setModal(null);
@@ -6757,7 +6950,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
       <TD>
         <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
           {canQC && type!=="done" && type!=="failed" && (
-            <button onClick={()=>{setForm({lotId:lot.id,type,lot});setModal("inspect");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
+            <button onClick={()=>{setForm({lotId:lot.id,type,lot,mtcLink:lot.mtcDoc||"",heatNo:lot.heatNo||"",mtcNo:lot.mtcNo||"",mtcOverride:false});setModal("inspect");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
               {type==="qc"?"Inspect":"Client Insp"}
             </button>
           )}
@@ -6878,21 +7071,38 @@ const RMQCModule = ({ user, stock, setStock }) => {
           {form.type==="qc" && (
             <div>
               <div style={{ ...css.card, background:T.bg, marginBottom:14 }}>
-                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:10, letterSpacing:"0.06em" }}>MTC DOCUMENT UPLOAD</div>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, letterSpacing:"0.06em" }}>MTC DOCUMENT</div>
+                  {(form.mtcLink||form.heatNo||form.mtcNo) && !form.mtcOverride && (
+                    <button onClick={()=>setForm(f=>({...f,mtcOverride:true}))} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber }}>Override MTC</button>
+                  )}
+                </div>
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                  <div style={{ gridColumn:"span 2" }}>
-                    <label style={css.label}>Drive Link</label>
-                    <input value={form.mtcLink||""} onChange={e=>setForm(f=>({...f,mtcLink:e.target.value}))}
-                      placeholder="https://drive.google.com/..."
-                      style={{ ...css.input, marginTop:4, width:"100%" }} />
+                  <div>
+                    <label style={css.label}>MTC No</label>
+                    <input value={form.mtcNo||""} onChange={e=>setForm(f=>({...f,mtcNo:e.target.value}))}
+                      readOnly={!form.mtcOverride && !!(form.mtcNo)}
+                      placeholder="MTC document number"
+                      style={{ ...css.input, marginTop:4, opacity:(!form.mtcOverride&&form.mtcNo)?0.7:1 }} />
                   </div>
                   <div>
                     <label style={css.label}>Heat Number</label>
                     <input value={form.heatNo||""} onChange={e=>setForm(f=>({...f,heatNo:e.target.value}))}
+                      readOnly={!form.mtcOverride && !!(form.heatNo)}
                       placeholder="e.g. JSW-HEAT-2026-001"
-                      style={{ ...css.input, marginTop:4 }} />
+                      style={{ ...css.input, marginTop:4, opacity:(!form.mtcOverride&&form.heatNo)?0.7:1 }} />
+                  </div>
+                  <div style={{ gridColumn:"span 2" }}>
+                    <label style={css.label}>Drive Link</label>
+                    <input value={form.mtcLink||""} onChange={e=>setForm(f=>({...f,mtcLink:e.target.value}))}
+                      readOnly={!form.mtcOverride && !!(form.mtcLink)}
+                      placeholder="https://drive.google.com/..."
+                      style={{ ...css.input, marginTop:4, width:"100%", opacity:(!form.mtcOverride&&form.mtcLink)?0.7:1 }} />
                   </div>
                 </div>
+                {(form.mtcLink||form.heatNo||form.mtcNo) && !form.mtcOverride && (
+                  <div style={{ fontSize:11, color:T.textLow, marginTop:8 }}>Pre-filled from GRN MTC — click Override MTC to modify</div>
+                )}
               </div>
               <Field label="Inspection Checks">
                 <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -16450,8 +16660,8 @@ export default function App() {
     } catch { return INIT_STOCK; }
   });
   const [nestingRuns, setNestingRuns]       = useState(INIT_NESTING_RUNS);
-  const [nestingBatches, setNestingBatches] = useState([]);
-  const [instances, setInstances]       = useState(INIT_INSTANCES);
+  const [nestingBatches, setNestingBatches] = useState(() => { try { const s=localStorage.getItem('structo_nestingBatches'); if(s){ const p=JSON.parse(s); return Array.isArray(p)?p:[]; } return []; } catch { return []; } });
+  const [instances, setInstances]       = useState(() => { try { const s=localStorage.getItem('structo_instances'); return s?JSON.parse(s):INIT_INSTANCES; } catch { return INIT_INSTANCES; } });
   const [orders, setOrders]             = useState(() => {
     try {
       const s = localStorage.getItem('structo_orders');
@@ -16492,18 +16702,18 @@ export default function App() {
   const [clients, setClients]           = useState(() => { try { const s=localStorage.getItem('structo_clients'); return s?JSON.parse(s):CLIENTS_FULL; } catch { return CLIENTS_FULL; } });
   const [vendors, setVendors]           = useState(() => { try { const s=localStorage.getItem('structo_vendors'); return s?JSON.parse(s):VENDORS; } catch { return VENDORS; } });
   const [contractors, setContractors]   = useState(CONTRACTORS);
-  const [welders, setWelders]           = useState(WELDERS_SEED);
+  const [welders, setWelders]           = useState(() => { try { const s=localStorage.getItem('structo_welders'); return s?JSON.parse(s):WELDERS_SEED; } catch { return WELDERS_SEED; } });
   const [bays, setBays]                 = useState(BAYS_SEED);
   const [materials, setMaterials]       = useState(MATERIALS_LIBRARY);
   const [paint, setPaint]               = useState(PAINT_LIBRARY);
   const [consumables, setConsumables]   = useState(CONSUMABLES_SEED);
   const [tpiAgencies, setTpiAgencies]   = useState(TPI_AGENCIES);
   const [approvedMakes, setApprovedMakes] = useState(APPROVED_MAKES_LIBRARY);
-  const [machines, setMachines]         = useState(MACHINES_SEED);
-  const [releases, setReleases]         = useState([]);
-  const [qcRules, setQcRules]           = useState([]);
-  const [overrideLog, setOverrideLog]   = useState([]);
-  const [issueRequests, setIssueRequests] = useState([]);
+  const [machines, setMachines]         = useState(() => { try { const s=localStorage.getItem('structo_machines'); return s?JSON.parse(s):MACHINES_SEED; } catch { return MACHINES_SEED; } });
+  const [releases, setReleases]         = useState(() => { try { const s=localStorage.getItem('structo_releases'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [qcRules, setQcRules]           = useState(() => { try { const s=localStorage.getItem('structo_qcRules'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [overrideLog, setOverrideLog]   = useState(() => { try { const s=localStorage.getItem('structo_overrideLog'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [issueRequests, setIssueRequests] = useState(() => { try { const s=localStorage.getItem('structo_issueRequests'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [productionStandards, setProductionStandards] = useState({
     blastThresholds: { amberHours: 3, redHours: 4 },
     tiers: [
@@ -16524,14 +16734,22 @@ export default function App() {
     try { const s=localStorage.getItem('structo_company'); return s?JSON.parse(s):defaults; } catch { return defaults; }
   });
 
-  // ── Persist 7 state arrays to localStorage ──
-  useEffect(() => { try { localStorage.setItem('structo_orders',       JSON.stringify(orders));       } catch(e) { console.warn('Storage full',e); } }, [orders]);
-  useEffect(() => { try { localStorage.setItem('structo_clients',      JSON.stringify(clients));      } catch(e) { console.warn('Storage full',e); } }, [clients]);
-  useEffect(() => { try { localStorage.setItem('structo_vendors',      JSON.stringify(vendors));      } catch(e) { console.warn('Storage full',e); } }, [vendors]);
-  useEffect(() => { try { localStorage.setItem('structo_pos',          JSON.stringify(pos));          } catch(e) { console.warn('Storage full',e); } }, [pos]);
-  useEffect(() => { try { localStorage.setItem('structo_stock',        JSON.stringify(stock));        } catch(e) { console.warn('Storage full',e); } }, [stock]);
-  useEffect(() => { try { localStorage.setItem('structo_purchaseReqs', JSON.stringify(purchaseReqs)); } catch(e) { console.warn('Storage full',e); } }, [purchaseReqs]);
-  useEffect(() => { try { localStorage.setItem('structo_company',      JSON.stringify(company));      } catch(e) { console.warn('Storage full',e); } }, [company]);
+  // ── Persist state arrays to localStorage ──
+  useEffect(() => { try { localStorage.setItem('structo_orders',          JSON.stringify(orders));          } catch(e) { console.warn('Storage full',e); } }, [orders]);
+  useEffect(() => { try { localStorage.setItem('structo_clients',         JSON.stringify(clients));         } catch(e) { console.warn('Storage full',e); } }, [clients]);
+  useEffect(() => { try { localStorage.setItem('structo_vendors',         JSON.stringify(vendors));         } catch(e) { console.warn('Storage full',e); } }, [vendors]);
+  useEffect(() => { try { localStorage.setItem('structo_pos',             JSON.stringify(pos));             } catch(e) { console.warn('Storage full',e); } }, [pos]);
+  useEffect(() => { try { localStorage.setItem('structo_stock',           JSON.stringify(stock));           } catch(e) { console.warn('Storage full',e); } }, [stock]);
+  useEffect(() => { try { localStorage.setItem('structo_purchaseReqs',    JSON.stringify(purchaseReqs));    } catch(e) { console.warn('Storage full',e); } }, [purchaseReqs]);
+  useEffect(() => { try { localStorage.setItem('structo_company',         JSON.stringify(company));         } catch(e) { console.warn('Storage full',e); } }, [company]);
+  useEffect(() => { try { localStorage.setItem('structo_nestingBatches',  JSON.stringify(nestingBatches));  } catch(e) { console.warn('Storage full',e); } }, [nestingBatches]);
+  useEffect(() => { try { localStorage.setItem('structo_instances',       JSON.stringify(instances));       } catch(e) { console.warn('Storage full',e); } }, [instances]);
+  useEffect(() => { try { localStorage.setItem('structo_releases',        JSON.stringify(releases));        } catch(e) { console.warn('Storage full',e); } }, [releases]);
+  useEffect(() => { try { localStorage.setItem('structo_qcRules',         JSON.stringify(qcRules));         } catch(e) { console.warn('Storage full',e); } }, [qcRules]);
+  useEffect(() => { try { localStorage.setItem('structo_overrideLog',     JSON.stringify(overrideLog));     } catch(e) { console.warn('Storage full',e); } }, [overrideLog]);
+  useEffect(() => { try { localStorage.setItem('structo_issueRequests',   JSON.stringify(issueRequests));   } catch(e) { console.warn('Storage full',e); } }, [issueRequests]);
+  useEffect(() => { try { localStorage.setItem('structo_welders',         JSON.stringify(welders));         } catch(e) { console.warn('Storage full',e); } }, [welders]);
+  useEffect(() => { try { localStorage.setItem('structo_machines',        JSON.stringify(machines));        } catch(e) { console.warn('Storage full',e); } }, [machines]);
 
   if (!user) return <Login onLogin={u=>{setUser(u);setMod("dashboard");}} />;
 
@@ -16542,8 +16760,8 @@ export default function App() {
   const renderMod = () => {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
-      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} />;
-      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} />;
+      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setMod={setMod} />;
+      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;

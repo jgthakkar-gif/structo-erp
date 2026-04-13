@@ -1350,7 +1350,7 @@ const nextGrnId = (pos) => {
 const buildStockLots = (grnForm, po, grnId, ts) =>
   (grnForm.lines||[]).filter(l=>(l.wtReceived||0)>0).map((l,idx) => {
     const poLine = po.lines?.find(pl=>pl.id===l.poLineId)||{};
-    const mtc = (grnForm.mtcs||[]).find(m=>m.id===l.mtcId)||null;
+    const mtc = (grnForm.mtcs||[]).find(m=>m.id===l.mtcId);
     return {
       id:`LOT-${ts}-${idx}`, poId:po.id, poLineId:l.poLineId, grnId,
       vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
@@ -6735,17 +6735,17 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           {(grnForm.mtcs||[]).length===0 && (
             <div style={{ fontSize:12, color:T.textLow, padding:"4px 0 10px" }}>No MTCs added. Add MTC certificates received with this delivery.</div>
           )}
-          {(grnForm.mtcs||[]).map((m,mi)=>(
+          {(grnForm.mtcs||[]).map((m,mi)=>{ const updMtc=(field,val)=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],[field]:val}; return {...f,mtcs:ms}; }); return (
             <div key={m.id} style={{ ...css.card, background:T.bg, marginBottom:6 }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 2fr auto", gap:8, alignItems:"end" }}>
-                <Field label="MTC No"><Input value={m.mtcNo} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],mtcNo:e.target.value}; return {...f,mtcs:ms}; })} placeholder="MTC-001" /></Field>
-                <Field label="Heat No"><Input value={m.heatNo} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],heatNo:e.target.value}; return {...f,mtcs:ms}; })} placeholder="JSW-HEAT-001" /></Field>
-                <Field label="Grade"><Input value={m.grade} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],grade:e.target.value}; return {...f,mtcs:ms}; })} placeholder="IS 2062 E250" /></Field>
-                <Field label="Drive Link"><Input value={m.driveLink} onChange={e=>setGrnForm(f=>{ const ms=[...(f.mtcs||[])]; ms[mi]={...ms[mi],driveLink:e.target.value}; return {...f,mtcs:ms}; })} placeholder="https://drive.google.com/..." /></Field>
+                <Field label="MTC No"><Input value={m.mtcNo} onChange={e=>updMtc('mtcNo',e.target.value)} placeholder="MTC-001" /></Field>
+                <Field label="Heat No"><Input value={m.heatNo} onChange={e=>updMtc('heatNo',e.target.value)} placeholder="JSW-HEAT-001" /></Field>
+                <Field label="Grade"><Input value={m.grade} onChange={e=>updMtc('grade',e.target.value)} placeholder="IS 2062 E250" /></Field>
+                <Field label="Drive Link"><Input value={m.driveLink} onChange={e=>updMtc('driveLink',e.target.value)} placeholder="https://drive.google.com/..." /></Field>
                 <button onClick={()=>setGrnForm(f=>({...f,mtcs:(f.mtcs||[]).filter((_,j)=>j!==mi)}))} style={{ ...css.btn.ghost, color:T.red, paddingTop:20 }}>✕</button>
               </div>
             </div>
-          ))}
+          ); })}
           {(grnForm.mtcs||[]).length>0 && (
             <div style={{ textAlign:"right", marginBottom:12 }}>
               <button onClick={()=>setGrnForm(f=>({...f,lines:(f.lines||[]).map(l=>({...l,mtcId:(f.mtcs||[])[0]?.id||""}))}))} style={css.btn.sm}>Apply MTC-1 to all lines</button>
@@ -6890,7 +6890,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
       rmQcStatus:result, qcRemarks:remarks, qcDate:today(), qcBy:user.name,
       status:result==="failed"?"rejected":s.status,
       mtcDoc: mtcDoc||s.mtcDoc, heatNo: heatNo||s.heatNo, mtcNo: mtcNo||s.mtcNo||"",
-      mtcUploaded: (mtcDoc||s.mtcDoc) ? true : s.mtcUploaded
+      mtcUploaded: !!(mtcDoc||s.mtcDoc) || s.mtcUploaded
     }:s));
     showToast(result==="approved"?"RM QC Approved — pending client inspection":"RM QC result saved");
     setModal(null);
@@ -7073,7 +7073,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
               <div style={{ ...css.card, background:T.bg, marginBottom:14 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
                   <div style={{ fontSize:11, fontWeight:700, color:T.textMid, letterSpacing:"0.06em" }}>MTC DOCUMENT</div>
-                  {(form.mtcLink||form.heatNo||form.mtcNo) && !form.mtcOverride && (
+                  {(form.mtcLink||form.heatNo||form.mtcNo)&&!form.mtcOverride&&(
                     <button onClick={()=>setForm(f=>({...f,mtcOverride:true}))} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber }}>Override MTC</button>
                   )}
                 </div>
@@ -7100,7 +7100,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
                       style={{ ...css.input, marginTop:4, width:"100%", opacity:(!form.mtcOverride&&form.mtcLink)?0.7:1 }} />
                   </div>
                 </div>
-                {(form.mtcLink||form.heatNo||form.mtcNo) && !form.mtcOverride && (
+                {(form.mtcLink||form.heatNo||form.mtcNo)&&!form.mtcOverride&&(
                   <div style={{ fontSize:11, color:T.textLow, marginTop:8 }}>Pre-filled from GRN MTC — click Override MTC to modify</div>
                 )}
               </div>
@@ -10131,7 +10131,7 @@ const TabFinance = ({ order, onChange, canEdit }) => {
   );
 };
 // ─── ORDER PROGRESS TRACKER ───────────────────────────────────────────────────
-const OrderProgressTracker = ({ order, onChange, user, pos, nestingBatches, releases, instances, onBack }) => {
+const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatches, releases, instances, onBack }) => {
   const [expandedDrg, setExpandedDrg] = useState(null);
   const q = order.quality || {};
   const tpiHolds = new Set(q.tpiHoldPoints || []);
@@ -10180,15 +10180,22 @@ const OrderProgressTracker = ({ order, onChange, user, pos, nestingBatches, rele
       return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'};
     }
     if (stageKey==='rm_ordered') {
-      const n=(pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id).length;
+      const n=(pos||[]).filter(p=>
+        p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id)
+      ).length;
       return {done:n,total:Math.max(n,1),pct:n>0?100:0,status:n>0?'completed':'not_started'};
     }
     if (stageKey==='rm_received') {
-      const rels=(releases||[]).filter(r=>r.orderId===order.id);
-      const done=rels.filter(r=>r.status==='completed').length;
-      const total=rels.length;
+      const orderPoIds = new Set((pos||[]).filter(p=>
+        p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id)
+      ).map(p=>p.id));
+      const relevant=(stock||[]).filter(l=>
+        (l.reservations||[]).some(r=>r.orderId===order.id)||orderPoIds.has(l.poId)
+      );
+      const done=relevant.filter(l=>l.rmQcStatus==='approved').length;
+      const total=relevant.length;
       const pct=total>0?Math.round(done/total*100):0;
-      return {done,total:Math.max(total,1),pct,status:total===0?'not_started':done===total?'completed':done>0?'in_progress':'not_started'};
+      return {done,total:Math.max(total,1),pct,status:total===0?'not_started':done===total&&total>0?'completed':total>0?'in_progress':'not_started'};
     }
     if (stageKey==='mdcc_applied') { const ok=!!pm.mdcc_applied; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
     if (stageKey==='mdcc_received') { const ok=!!pm.mdcc_received; return {done:ok?1:0,total:1,pct:ok?100:0,status:ok?'completed':'not_started'}; }
@@ -10442,7 +10449,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} tpiAgencies={tpiAgencies||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
-      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />}
+      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
       {cancelModal && (
@@ -16192,7 +16199,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 // ═══════════════════════════════════════════════════════════════════════════════
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
-                            releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders }) => {
+                            releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders, pos }) => {
   const [view, setView]           = useState(() => {
     const forced = sessionStorage.getItem('dev_target_view');
     if (forced) { sessionStorage.removeItem('dev_target_view'); return forced; }
@@ -16245,7 +16252,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       <div style={{ padding:0 }}>
         <OrderProgressTracker order={progOrder}
           onChange={(updated)=>setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o))}
-          user={user} pos={[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances}
+          user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances}
           onBack={()=>{ setView("register"); setSelProgressOrderId(""); }} />
       </div>
     );
@@ -16766,7 +16773,7 @@ export default function App() {
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
