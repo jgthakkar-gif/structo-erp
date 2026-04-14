@@ -5273,7 +5273,9 @@ const nestingSheetWt = (matCode, sheetDim) => {
   } else {
     const barLengthM = (parseFloat(sheetDim)||0) / 1000;
     const matEntry = MATERIALS_LIBRARY.find(m =>
-      (m.sectionType||"").toUpperCase() === sectionType && m.size === size && !m.isPlate
+      (m.sectionType||"").toUpperCase() === sectionType &&
+      (m.size||"").toUpperCase() === (size||"").toUpperCase() &&
+      !m.isPlate
     );
     const wtPerMetre = matEntry?.wtPerMetre || 0;
     return (barLengthM > 0 && wtPerMetre > 0) ? Math.round(barLengthM * wtPerMetre * 100) / 100 : 0;
