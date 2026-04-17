@@ -10555,6 +10555,210 @@ const TabQuality = ({ order, onChange, canEdit, vendors, tpiAgencies }) => {
     </div>
   );
 };
+const TabMaterialBalance = ({ order, stock, releases, instances, pos, nestingBatches }) => {
+  const [expanded, setExpanded] = React.useState({});
+  const toggleExpand = key => setExpanded(prev => ({...prev, [key]: !prev[key]}));
+
+  // Gather all rmUnitAssignments for this order
+  const orderReleases = (releases||[]).filter(r =>
+    (r.drawings||[]).some(d=>d.orderId===order.id)
+  );
+  const allRmAssignments = orderReleases.flatMap(r =>
+    (r.rmUnitAssignments||[]).map(ru => ({...ru, releaseId: r.id, releaseNo: r.releaseNo||r.id}))
+  );
+
+  // Build per-matCode buckets
+  const matMap = {};
+  allRmAssignments.forEach(ru => {
+    const mc = normMatCode(ru.matCode||"") || ru.matCode || "Unknown";
+    if (!matMap[mc]) matMap[mc] = {matCode: ru.matCode||mc, rmUnits: [], plannedKg: 0, issuedKg: 0, offcutKg: 0};
+    matMap[mc].rmUnits.push(ru);
+    matMap[mc].plannedKg += ru.sheetWt || 0;
+  });
+
+  // Gather issue transactions from stock lots
+  (stock||[]).forEach(lot => {
+    const mc = normMatCode(lot.matCode||"") || lot.matCode || "Unknown";
+    if (!matMap[mc]) return;
+    (lot.issues||[]).forEach(iss => {
+      // Only count issues linked to this order's releases
+      const isOrderRelease = orderReleases.some(r => r.id === iss.releaseId) ||
+        allRmAssignments.some(ru => ru.rmUnitId === iss.rmUnitId);
+      if (isOrderRelease || iss.releaseId) {
+        matMap[mc].issuedKg += iss.wt || 0;
+        if (!matMap[mc].issues) matMap[mc].issues = [];
+        matMap[mc].issues.push({...iss, lotNo: lot.lotNo||lot.id, lotId: lot.id});
+      }
+    });
+    // Offcut lots linked to this order
+    if (lot.type === "offcut" || lot.isOffcut) {
+      const linked = allRmAssignments.some(ru => ru.stockLotId === lot.parentLotId || ru.stockLotId === lot.id);
+      if (linked) {
+        matMap[mc].offcutKg += lot.wtReceived || lot.wtAvailable || 0;
+        if (!matMap[mc].offcuts) matMap[mc].offcuts = [];
+        matMap[mc].offcuts.push(lot);
+      }
+    }
+  });
+
+  const rows = Object.values(matMap);
+  const totals = rows.reduce((acc, r) => {
+    acc.planned += r.plannedKg;
+    acc.issued += r.issuedKg;
+    acc.offcut += r.offcutKg;
+    return acc;
+  }, {planned: 0, issued: 0, offcut: 0});
+  totals.consumed = Math.max(0, totals.issued - totals.offcut);
+  totals.variance = totals.issued - totals.planned;
+
+  const colHdr = {padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`1px solid ${T.border}`, background:T.bg, whiteSpace:"nowrap"};
+  const colCell = {padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:12};
+
+  const SummaryCard = ({label, value, color, sub}) => (
+    <div style={{ ...css.card, flex:1, minWidth:120, textAlign:"center" }}>
+      <div style={{ fontSize:11, color:T.textMid, marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize:20, fontWeight:800, color: color||T.text, fontFamily:T.fontMono }}>{(value||0).toFixed(1)}</div>
+      <div style={{ fontSize:10, color:T.textLow }}>kg</div>
+      {sub && <div style={{ fontSize:10, color:T.textMid, marginTop:4 }}>{sub}</div>}
+    </div>
+  );
+
+  if (rows.length === 0) return (
+    <div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:32 }}>
+      No material releases found for this order. Release drawings first.
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Summary cards */}
+      <div style={{ display:"flex", gap:10, marginBottom:20, flexWrap:"wrap" }}>
+        <SummaryCard label="Planned (Released)" value={totals.planned} color={T.accent} />
+        <SummaryCard label="Issued from Store" value={totals.issued} color={T.blue||T.accent} />
+        <SummaryCard label="Offcut Returned" value={totals.offcut} color={T.textMid} />
+        <SummaryCard label="Net Consumed" value={totals.consumed} color={T.green} />
+        <SummaryCard label="Variance (Issued−Planned)" value={totals.variance}
+          color={totals.variance > 0 ? T.red : totals.variance < -0.5 ? T.amber : T.green}
+          sub={totals.variance > 0 ? "Over plan" : totals.variance < -0.5 ? "Under-issued" : "On plan"} />
+      </div>
+
+      {/* Per-matCode table */}
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+          <thead>
+            <tr>
+              {["Material","RM Units","Planned (kg)","Issued (kg)","Offcut (kg)","Consumed (kg)","Variance","Utilisation"].map(h =>
+                <th key={h} style={colHdr}>{h}</th>
+              )}
+              <th style={colHdr}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => {
+              const consumed = Math.max(0, r.issuedKg - r.offcutKg);
+              const variance = r.issuedKg - r.plannedKg;
+              const utilisPct = r.plannedKg > 0 ? Math.round(consumed / r.plannedKg * 100) : 0;
+              const isOpen = expanded[r.matCode];
+              return (
+                <React.Fragment key={r.matCode}>
+                  <tr style={{ background:"transparent" }}>
+                    <td style={{...colCell, color:T.text, fontWeight:600, fontFamily:"inherit"}}>{r.matCode}</td>
+                    <td style={{...colCell, textAlign:"center"}}>{r.rmUnits.length}</td>
+                    <td style={colCell}>{r.plannedKg.toFixed(1)}</td>
+                    <td style={{...colCell, color: r.issuedKg > 0 ? T.text : T.textLow}}>{r.issuedKg.toFixed(1)}</td>
+                    <td style={{...colCell, color:T.textMid}}>{r.offcutKg.toFixed(1)}</td>
+                    <td style={{...colCell, color:T.green, fontWeight:600}}>{consumed.toFixed(1)}</td>
+                    <td style={{...colCell, color: variance > 0.5 ? T.red : variance < -0.5 ? T.amber : T.green}}>
+                      {variance > 0 ? "+" : ""}{variance.toFixed(1)}
+                    </td>
+                    <td style={colCell}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <div style={{ flex:1, height:6, background:T.border, borderRadius:3, minWidth:60 }}>
+                          <div style={{ width:`${Math.min(100,utilisPct)}%`, height:"100%", background:utilisPct>=90?T.green:utilisPct>=70?T.amber:T.red, borderRadius:3 }} />
+                        </div>
+                        <span style={{ fontSize:11, color:T.textMid, minWidth:32 }}>{utilisPct}%</span>
+                      </div>
+                    </td>
+                    <td style={{...colCell, textAlign:"center"}}>
+                      {((r.issues||[]).length > 0 || (r.offcuts||[]).length > 0) && (
+                        <button onClick={() => toggleExpand(r.matCode)} style={{...css.btn.ghost, fontSize:11, padding:"2px 8px"}}>
+                          {isOpen ? "▲" : "▼"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {isOpen && (r.issues||[]).length > 0 && (
+                    <tr>
+                      <td colSpan={9} style={{ padding:"0 0 8px 24px", background:T.bg }}>
+                        <div style={{ fontSize:11, color:T.textMid, fontWeight:700, padding:"6px 0 4px" }}>Issue Transactions</div>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                          <thead>
+                            <tr>{["Issue Note","Date","Lot No","RM Unit","Qty (kg)","Issued To"].map(h =>
+                              <th key={h} style={{...colHdr, fontSize:9}}>{h}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(r.issues||[]).map((iss,i) => (
+                              <tr key={i}>
+                                <td style={{...colCell, fontSize:11, color:T.accentHi}}>{iss.issueNoteNo||iss.issueId||"—"}</td>
+                                <td style={{...colCell, fontSize:11}}>{fmt.date(iss.issueDate)}</td>
+                                <td style={{...colCell, fontSize:11}}>{iss.lotNo||iss.lotId||"—"}</td>
+                                <td style={{...colCell, fontSize:10, color:T.textMid, maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{iss.rmUnitId||"—"}</td>
+                                <td style={{...colCell, fontSize:11}}>{(iss.wt||0).toFixed(1)}</td>
+                                <td style={{...colCell, fontSize:11, color:T.textMid}}>{iss.issuedTo||"—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                  {isOpen && (r.offcuts||[]).length > 0 && (
+                    <tr>
+                      <td colSpan={9} style={{ padding:"0 0 8px 24px", background:T.bg }}>
+                        <div style={{ fontSize:11, color:T.textMid, fontWeight:700, padding:"6px 0 4px" }}>Offcut Lots</div>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                          <thead>
+                            <tr>{["Lot No","Material","Wt (kg)","Status"].map(h =>
+                              <th key={h} style={{...colHdr, fontSize:9}}>{h}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(r.offcuts||[]).map((lot,i) => (
+                              <tr key={i}>
+                                <td style={{...colCell, fontSize:11, color:T.accentHi}}>{lot.lotNo||lot.id}</td>
+                                <td style={{...colCell, fontSize:11}}>{lot.matCode}</td>
+                                <td style={{...colCell, fontSize:11}}>{(lot.wtReceived||lot.wtAvailable||0).toFixed(1)}</td>
+                                <td style={{...colCell, fontSize:11}}><Badge color="blue">{lot.status||"offcut"}</Badge></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+            {/* Totals row */}
+            <tr style={{ background:T.bg, fontWeight:700 }}>
+              <td style={{...colCell, color:T.text}}>TOTAL</td>
+              <td style={{...colCell, textAlign:"center"}}>{rows.reduce((a,r)=>a+r.rmUnits.length,0)}</td>
+              <td style={colCell}>{totals.planned.toFixed(1)}</td>
+              <td style={colCell}>{totals.issued.toFixed(1)}</td>
+              <td style={colCell}>{totals.offcut.toFixed(1)}</td>
+              <td style={{...colCell, color:T.green}}>{totals.consumed.toFixed(1)}</td>
+              <td style={{...colCell, color: totals.variance > 0.5 ? T.red : totals.variance < -0.5 ? T.amber : T.green}}>
+                {totals.variance > 0 ? "+" : ""}{totals.variance.toFixed(1)}
+              </td>
+              <td colSpan={2} />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
 const TabFinance = ({ order, onChange, canEdit }) => {
   const [modal, setModal] = useState(null); const [form, setForm] = useState({});
   const amds = order.amendments||[];
@@ -10950,6 +11154,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
     {id:"parts",label:"Drawing Part List",planningOnly:true},{id:"quality",label:"Quality",planningOnly:true},
     {id:"assemblies",label:"Assemblies",planningOnly:true},
     {id:"progress",label:"Progress",planningOnly:true},
+    {id:"material_balance",label:"Material Balance",planningOnly:true},
     {id:"finance",label:"Finance & Amendments"},
   ];
   const tabs = allTabs.filter(t=>!t.planningOnly||!isFinanceRole);
@@ -10995,6 +11200,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} tpiAgencies={tpiAgencies||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} />}
+      {activeTab==="material_balance" && <TabMaterialBalance order={localOrder} stock={stock||[]} releases={releases||[]} instances={instances||[]} pos={pos||[]} nestingBatches={nestingBatches||[]} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
       {cancelModal && (
@@ -14306,7 +14512,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const activeReleaseDrawingIds = new Set(activeReleaseDrawingMap.keys());
 
   const allEligible = orders.flatMap(order=>
-    (order.drawings||[]).filter(d=>d.receivedDate&&!activeReleaseDrawingIds.has(d.id))
+    (order.drawings||[]).filter(d=>d.receivedDate)
       .map(d=>({drawingId:d.id,orderId:order.id,drawing:d,order}))
   ).map(e=>{
     let tier={id:"simple",label:"Simple"}; let score=999;
@@ -14317,13 +14523,31 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const noDateDrawings = orders.flatMap(order=>(order.drawings||[]).filter(d=>!d.receivedDate).map(d=>({drawing:d,order})));
   const alreadyReleasedDrawings = orders.flatMap(order=>(order.drawings||[]).filter(d=>d.receivedDate&&activeReleaseDrawingIds.has(d.id)).map(d=>({drawing:d,order,releaseId:activeReleaseDrawingMap.get(d.id)||""})));
 
-  const toggleDrw = key => setSelDrawings(prev=>{
-    const exists=prev.find(s=>s.drawingId===key.drawingId&&s.orderId===key.orderId);
-    if(exists) return prev.filter(s=>!(s.drawingId===key.drawingId&&s.orderId===key.orderId));
-    const alreadyReleased=releases.filter(r=>r.status==="in_progress").flatMap(r=>r.drawings).filter(d=>d.drawingId===key.drawingId&&d.orderId===key.orderId).length;
-    const unitsToRelease=Math.max(1,(key.drawing?.qty||1)-alreadyReleased);
-    return [...prev,{...key,unitsToRelease}];
-  });
+  const toggleDrw = key => {
+    const exists=selDrawings.find(s=>s.drawingId===key.drawingId&&s.orderId===key.orderId);
+    if(exists){
+      setSelDrawings(prev=>prev.filter(s=>!(s.drawingId===key.drawingId&&s.orderId===key.orderId)));
+      return;
+    }
+    // Warn if drawing is in an active release with unstarted rmUnits
+    const inActiveRelease=activeReleaseDrawingIds.has(key.drawingId);
+    if(inActiveRelease){
+      const releaseId=activeReleaseDrawingMap.get(key.drawingId)||"";
+      const hasUnstartedRmUnits=(releases||[]).find(r=>r.id===releaseId)
+        ?.rmUnitAssignments?.some(ru=>
+          (key.drawing?ru.parts?.some(mn=>(key.order.parts||[]).filter(p=>p.drawingId===key.drawingId).map(p=>p.markNo).includes(mn)):false)
+          &&ru.status==="pending"
+        );
+      if(hasUnstartedRmUnits){
+        const proceed=window.confirm(
+          `Drawing ${key.drawing?.drawingNo} has unstarted rmUnits in release ${releaseId}.\n\nAdding it again may create duplicate cutting jobs. Proceed anyway?`
+        );
+        if(!proceed) return;
+      }
+    }
+    const unitsToRelease=Math.max(1,(key.drawing?.qty||1));
+    setSelDrawings(prev=>[...prev,{...key,unitsToRelease}]);
+  };
   const isSelected=(drawingId,orderId)=>selDrawings.some(s=>s.drawingId===drawingId&&s.orderId===orderId);
 
   // ── Step 2 compute ──
@@ -14604,6 +14828,35 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     const totalDrawings=(selectedOrder?.drawings||[]).length;
     const alreadyInRelease=alreadyReleasedDrawings.filter(d=>d.order?.id===selectedOrderId).length;
     const filteredDrawings=selectedOrderId?allEligible.filter(d=>d.orderId===selectedOrderId):[];
+
+    // Build set of all rmUnitIds needed by currently selected drawings
+    const selDrawingMarkNos=new Set(selDrawings.flatMap(({drawing,order})=>
+      (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").map(p=>p.markNo)
+    ));
+    const selRmUnitIds=new Set(
+      (nestingBatches||[]).flatMap(b=>(b.lots||[]).flatMap(l=>
+        (l.sheets||[]).filter(sh=>sh.rmUnitId&&(sh.parts||[]).some(mn=>selDrawingMarkNos.has(mn)))
+          .map(sh=>sh.rmUnitId)
+      ))
+    );
+    // For each unselected drawing, compute how many of its rmUnits overlap with selRmUnitIds
+    const sharedRmUnitMap={}; // drawingId -> {sharedRmUnits, sharedParts}
+    if(selRmUnitIds.size>0){
+      filteredDrawings.forEach(({drawingId,drawing,order})=>{
+        if(isSelected(drawingId,order.id)) return;
+        const drgMnos=new Set((order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").map(p=>p.markNo));
+        const drgRmUnits=(nestingBatches||[]).flatMap(b=>(b.lots||[]).flatMap(l=>
+          (l.sheets||[]).filter(sh=>sh.rmUnitId&&(sh.parts||[]).some(mn=>drgMnos.has(mn)))
+        ));
+        const sharedSheets=drgRmUnits.filter(sh=>selRmUnitIds.has(sh.rmUnitId));
+        if(sharedSheets.length===0) return;
+        const sharedPartMarkNos=new Set(sharedSheets.flatMap(sh=>(sh.parts||[]).filter(mn=>drgMnos.has(mn))));
+        sharedRmUnitMap[drawingId]={
+          sharedRmUnits:sharedSheets.length,
+          sharedParts:sharedPartMarkNos.size,
+        };
+      });
+    }
     // Assembly map for highlighting
     const assemblyMap={}; // drawingId -> assemblyName
     const assemblyColorMap={}; // assemblyId -> color
@@ -14633,12 +14886,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
               {totalDrawings>0&&<span>{totalDrawings} drawings</span>}
               {selectedOrder.orderQty>0&&<span>{selectedOrder.orderQty} {selectedOrder.orderUnit||"T"}</span>}
               {selectedOrder.endDate&&<span>Due {fmt.date(selectedOrder.endDate)}</span>}
-              {alreadyInRelease>0&&<span style={{color:T.amber}}>{alreadyInRelease} drawings already in active release</span>}
+              {activeReleaseDrawingIds.size>0&&<span style={{color:T.amber}}>{activeReleaseDrawingIds.size} drawings have active releases</span>}
             </div>
           )}
         </div>
         {!selectedOrderId&&<div style={{padding:"32px 20px",textAlign:"center",color:T.textLow,fontSize:13,background:T.bgCard,borderRadius:8,border:`1px solid ${T.border}`}}>Select an order above to see its drawings</div>}
-        {selectedOrderId&&filteredDrawings.length===0&&<InfoBanner color="amber">No eligible drawings found. Drawings must have a Received Date and must not already be in an active release.</InfoBanner>}
+        {selectedOrderId&&filteredDrawings.length===0&&<InfoBanner color="amber">No eligible drawings found. Drawings must have a Received Date set in the Drawing Register.</InfoBanner>}
         {filteredDrawings.length>0&&(
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,overflow:"hidden"}}>
@@ -14672,13 +14925,24 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   const drawingWtT=drawing.totalWt>0?(drawing.totalWt/1000).toFixed(2):null;
                   const orderTotalWtT=(selectedOrder?.orderQty||0);
                   const drawingPct=orderTotalWtT>0&&drawing.totalWt>0?((drawing.totalWt/1000)/orderTotalWtT*100).toFixed(1):null;
+                  const shared=!sel?sharedRmUnitMap[drawingId]:null;
+                  const inActive=!sel&&activeReleaseDrawingIds.has(drawingId);
+                  const rowBg=sel?`${T.accent}18`:shared?`${T.amber}12`:asmBg;
                   return (
                     <React.Fragment key={drawingId+orderId}>
-                      <tr style={{cursor:"pointer",background:sel?`${T.accent}18`:asmBg}}>
+                      <tr style={{cursor:"pointer",background:rowBg}}>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}} onClick={()=>toggleDrw({drawingId,orderId,drawing,order,tier,score})}>
                           <input type="checkbox" checked={sel} readOnly style={{cursor:"pointer"}} />
                         </td>
-                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>{drawing.drawingNo}</td>
+                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>
+                          {drawing.drawingNo}
+                          {shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:T.amberBg,color:T.amber,borderRadius:3,fontFamily:T.font,fontWeight:700,border:`1px solid ${T.amber}44`}}>
+                            {shared.sharedRmUnits} rmUnit{shared.sharedRmUnits!==1?"s":""} · {shared.sharedParts} part{shared.sharedParts!==1?"s":""} covered
+                          </span>}
+                          {inActive&&!shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:`${T.accent}22`,color:T.accent,borderRadius:3,fontFamily:T.font,fontWeight:700}}>
+                            In active release
+                          </span>}
+                        </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.textMid}}>{asmName||"—"}</td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,whiteSpace:"nowrap"}}>
                           {drawingWtT
@@ -14735,19 +14999,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             </table>
           </div>
         )}
-        {alreadyReleasedDrawings.length>0&&(
-          <div style={{marginTop:14}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6}}>EXCLUDED — ALREADY IN ACTIVE RELEASE</div>
-            {alreadyReleasedDrawings.map(({drawing,order,releaseId})=>(
-              <div key={drawing.id} style={{display:"flex",gap:8,alignItems:"center",padding:"5px 8px",background:T.bgInput,borderRadius:4,marginBottom:4,fontSize:11,opacity:0.65}}>
-                <span style={{fontFamily:T.fontMono,color:T.accentHi,minWidth:120}}>{drawing.drawingNo}</span>
-                <span style={{color:T.textMid}}>{order.id}</span>
-                {releaseId&&<Badge color="blue">{releaseId}</Badge>}
-                <span style={{color:T.amber}}>Complete or cancel that release first</span>
-              </div>
-            ))}
-          </div>
-        )}
+
         {noDateDrawings.length>0&&(
           <div style={{marginTop:14}}>
             <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6}}>EXCLUDED — NO RECEIVED DATE</div>
