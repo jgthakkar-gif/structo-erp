@@ -1351,10 +1351,14 @@ const nextGrnId = (pos) => {
   const next = String(thisYear.length + 1).padStart(3, '0');
   return `GRN-${year}-${next}`;
 };
-const buildStockLots = (grnForm, po, grnId, ts) =>
-  (grnForm.lines||[]).filter(l=>(l.wtReceived||0)>0).map((l,idx) => {
+const buildStockLots = (grnForm, po, grnId, ts) => {
+  const baseLots = (grnForm.lines||[]).filter(l=>(l.wtReceived||0)>0).map((l,idx) => {
     const poLine = po.lines?.find(pl=>pl.id===l.poLineId)||{};
     const mtc = (grnForm.mtcs||[]).find(m=>m.id===l.mtcId);
+    const matCode = poLine.matCode||"";
+    // Check if this matCode has heat splits
+    const heatSplits = (grnForm.heatSplits||{})[matCode]?.filter(hs=>hs.wt>0)||[];
+    if(heatSplits.length>0) return null; // will be handled by heat split lots below
     return {
       id:`LOT-${ts}-${idx}`, poId:po.id, poLineId:l.poLineId, grnId,
       vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
@@ -1362,15 +1366,15 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       itemCode:poLine.itemCode||"", matCode:poLine.matCode||"", matLibId:poLine.matLibId||"",
       matType:poLine.matType||"MS", grade:poLine.grade||"", sectionType:poLine.sectionType||poLine.section||"", size:poLine.size?poLine.size.replace(/mm$/i,'')+'mm':"",
       heatNo: mtc?.heatNo || l.heatNo || "",
-      mtcNo: mtc?.mtcNo || "",
+      mtcNo: mtc?.mtcNo || l.mtcNo || "",
       mtcDoc: mtc?.driveLink || "",
       mtcUploaded: !!(mtc?.driveLink),
       wtReceived:l.actualWt||l.wtReceived, wtAvailable:l.actualWt||l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
       unitPrice:l.rate||0, lineValue:l.lineValue||Math.round((l.actualWt||l.wtReceived||0)*(l.rate||0)*100)/100,
       status:"qc_hold", bayId:grnForm.bayId||"",
-      rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:today(),
+      rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:grnForm.date||today(),
       isOffcut:false, parentLotId:"",
-      allocations:[], qcHoldReason:(l.inspStatus||"")==="hold"?(grnForm.holdReason||""):"",
+      allocations:[], reservations:[], qcHoldReason:"",
       qtyReceived: l.qtyReceived||0,
       unit: poLine.unit||"MT",
       length: poLine.length||null,
@@ -1379,7 +1383,45 @@ const buildStockLots = (grnForm, po, grnId, ts) =>
       actualWt: l.actualWt||l.wtReceived||0,
       variance: l.variance||0,
     };
+  }).filter(Boolean);
+
+  // Add heat split lots
+  const heatSplitLots = [];
+  let hsIdx = 1000; // offset to avoid id collision
+  Object.entries(grnForm.heatSplits||{}).forEach(([matCode, splits])=>{
+    const poLine = po.lines?.find(pl=>pl.matCode===matCode)||{};
+    const grnLine = (grnForm.lines||[]).find(l=>{
+      const pl=po.lines?.find(x=>x.id===l.poLineId);
+      return pl?.matCode===matCode;
+    })||{};
+    splits.filter(hs=>hs.wt>0).forEach(hs=>{
+      heatSplitLots.push({
+        id:`LOT-${ts}-${hsIdx++}`, poId:po.id, poLineId:poLine.id||"", grnId,
+        vendorId:po.vendorId, vendorName:po.vendorName, vendorCode:po.vendorCode||"",
+        batchNo:grnForm.batchNo||"",
+        itemCode:poLine.itemCode||"", matCode, matLibId:poLine.matLibId||"",
+        matType:poLine.matType||"MS", grade:poLine.grade||"",
+        sectionType:poLine.sectionType||poLine.section||"",
+        size:poLine.size?poLine.size.replace(/mm$/i,'')+'mm':"",
+        heatNo:hs.heatNo||"",
+        mtcNo:hs.mtcNo||"",
+        mtcDoc:"", mtcUploaded:false,
+        wtReceived:hs.wt, wtAvailable:hs.wt, wtAllocated:0, wtIssued:0, wtConsumed:0,
+        unitPrice:grnLine.rate||0,
+        lineValue:Math.round(hs.wt*(grnLine.rate||0)*100)/100,
+        status:"qc_hold", bayId:grnForm.bayId||"",
+        rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:grnForm.date||today(),
+        isOffcut:false, parentLotId:"",
+        allocations:[], reservations:[], qcHoldReason:"",
+        qtyReceived:hs.qty||0,
+        unit:poLine.unit||"MT",
+        length:poLine.length||null, width:poLine.width||null,
+        calculatedWt:hs.wt, actualWt:hs.wt, variance:0,
+      });
+    });
   });
+  return [...baseLots, ...heatSplitLots];
+};
 
 // Helper: returns 0 for lots that are rejected/returned/written_off — use everywhere lot weight is summed
 const activeLotWt = (lot) =>
@@ -5294,6 +5336,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [form, setForm] = useState({});
   const [grnModal, setGrnModal] = useState(null);
   const [grnForm, setGrnForm] = useState({ lines:[] });
+  const [editGrnModal, setEditGrnModal] = useState(null); // {poId, grnId}
+  const [editGrnForm, setEditGrnForm] = useState({});
   const [toast, setToast] = useState(null);
   const [poImpModal, setPoImpModal] = useState(false);
   const [poImpRows,  setPoImpRows]  = useState([]);
@@ -5467,6 +5511,34 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     showToast(`${newPoId} created`);
   };
 
+  const saveEditGRN = () => {
+    if (!editGrnModal) return;
+    const {poId, grnId} = editGrnModal;
+    setPos(prev=>prev.map(p=>{
+      if(p.id!==poId) return p;
+      return {...p, grns:(p.grns||[]).map(g=>g.id!==grnId?g:{...g,...editGrnForm,id:grnId})};
+    }));
+    // Update stock lots linked to this GRN
+    setStock(prev=>prev.map(lot=>{
+      if(lot.grnId!==grnId) return lot;
+      // Find matching edited line by poLineId
+      const editedLine=(editGrnForm.lines||[]).find(l=>l.poLineId===lot.poLineId&&(!l.heatNo||l.heatNo===lot.heatNo||!lot.heatNo));
+      if(!editedLine) return lot;
+      const newWt=editedLine.actualWt||editedLine.wtReceived||lot.wtReceived;
+      return {...lot,
+        wtReceived:newWt,
+        wtAvailable:Math.max(0,newWt-(lot.wtIssued||0)),
+        heatNo:editedLine.heatNo||lot.heatNo||"",
+        mtcNo:editedLine.mtcNo||lot.mtcNo||"",
+        bayId:editGrnForm.bayId||lot.bayId,
+        receivedDate:editGrnForm.date||lot.receivedDate,
+        qtyReceived:editedLine.qtyReceived||lot.qtyReceived||0,
+      };
+    }));
+    showToast("GRN updated successfully");
+    setEditGrnModal(null);
+    setEditGrnForm({});
+  };
   const saveGRN = (poId) => {
     const po = pos.find(p=>p.id===poId);
     const ts = Date.now();
@@ -5510,7 +5582,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     setGrnForm({lines:[]});
   };
 
-  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} />;
+  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} />;
 
   return (
     <div>
@@ -6404,7 +6476,7 @@ const resolvePoLineWtPS = (pl) =>
   pl.wtPerSheet || nestingSheetWt(pl.matCode, pl.sheetDim||pl.description||"");
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
-const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials }) => {
+const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN }) => {
   const [tab, setTab] = useState("lines");
   const [grnModal, setGrnModal] = useState(false);
   const [grnForm, setGrnForm] = useState({ lines:[] });
@@ -6791,7 +6863,13 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                   {grn.status==="reversed" && <div style={{ fontSize:11, color:T.red, marginTop:4 }}>Reversed by {grn.reversedBy} on {fmt.date(grn.reversedDate)} — {grn.reversalReason}</div>}
                 </div>
                 {user.role==="super_admin" && grn.status!=="reversed" && (
+                  <>
+                  <button onClick={()=>{
+                    setEditGrnModal({poId:po.id, grnId:grn.id});
+                    setEditGrnForm({...grn});
+                  }} style={{ ...css.btn.ghost, fontSize:11 }}>Edit GRN</button>
                   <button onClick={()=>{ setReverseReason(""); setReverseModal(grn.id); }} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}`, alignSelf:"flex-start", fontSize:11 }}>Reverse GRN</button>
+                  </>
                 )}
               </div>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
@@ -7058,6 +7136,34 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                         </tr>
                       );
                     })}
+                    {/* Heat split rows */}
+                    {(grnForm.heatSplits||{})[mc]?.map((hs,hsi)=>(
+                      <tr key={`hs-${hsi}`} style={{borderBottom:`1px solid ${T.border}`,background:`${T.accent}08`}}>
+                        <td style={{padding:"4px 8px",textAlign:"center"}}>
+                          <span style={{fontSize:9,color:T.accent,fontWeight:700}}>HEAT {hsi+1}</span>
+                        </td>
+                        <td style={{padding:"4px 8px"}}>
+                          <input value={hs.heatNo||""} onChange={e=>setGrnForm(f=>{const sp={...(f.heatSplits||{})};sp[mc]=[...sp[mc]];sp[mc][hsi]={...sp[mc][hsi],heatNo:e.target.value};return {...f,heatSplits:sp};})} placeholder="Heat No" style={{width:"100%",background:T.bgInput,border:`1px solid ${T.accent}44`,borderRadius:4,padding:"2px 4px",color:T.text,fontSize:11}} />
+                        </td>
+                        <td style={{padding:"4px 8px"}}>
+                          <input value={hs.mtcNo||""} onChange={e=>setGrnForm(f=>{const sp={...(f.heatSplits||{})};sp[mc]=[...sp[mc]];sp[mc][hsi]={...sp[mc][hsi],mtcNo:e.target.value};return {...f,heatSplits:sp};})} placeholder="MTC No" style={{width:"100%",background:T.bgInput,border:`1px solid ${T.accent}44`,borderRadius:4,padding:"2px 4px",color:T.text,fontSize:11}} />
+                        </td>
+                        <td style={{padding:"4px 6px"}} colSpan={2}>
+                          <input type="number" value={hs.qty||""} onChange={e=>setGrnForm(f=>{const sp={...(f.heatSplits||{})};sp[mc]=[...sp[mc]];sp[mc][hsi]={...sp[mc][hsi],qty:+e.target.value};return {...f,heatSplits:sp};})} placeholder="Qty" style={{width:56,background:T.bgInput,border:`1px solid ${T.accent}44`,borderRadius:4,padding:"2px 4px",color:T.text,fontSize:11,marginRight:4}} />
+                          <input type="number" value={hs.wt||""} onChange={e=>setGrnForm(f=>{const sp={...(f.heatSplits||{})};sp[mc]=[...sp[mc]];sp[mc][hsi]={...sp[mc][hsi],wt:+e.target.value};return {...f,heatSplits:sp};})} placeholder="Wt (kg)" style={{width:72,background:T.bgInput,border:`1px solid ${T.accent}44`,borderRadius:4,padding:"2px 4px",color:T.text,fontFamily:T.fontMono,fontSize:11}} />
+                        </td>
+                        <td colSpan={4} style={{padding:"4px 8px",textAlign:"right"}}>
+                          <button onClick={()=>setGrnForm(f=>{const sp={...(f.heatSplits||{})};sp[mc]=sp[mc].filter((_,j)=>j!==hsi);return {...f,heatSplits:sp};})} style={{...css.btn.ghost,color:T.red,fontSize:10,padding:"1px 6px"}}>✕</button>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={10} style={{padding:"4px 8px"}}>
+                        <button onClick={()=>setGrnForm(f=>{const sp={...(f.heatSplits||{})};if(!sp[mc])sp[mc]=[];sp[mc]=[...sp[mc],{heatNo:"",mtcNo:"",qty:0,wt:0}];return {...f,heatSplits:sp};})} style={{...css.btn.ghost,fontSize:10,color:T.accent,padding:"2px 8px"}}>
+                          + Add Heat Split for {mc.split("/").slice(-2).join("/")}
+                        </button>
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
                 </div>
@@ -7118,6 +7224,64 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
         </Modal>
       )}
 
+      {/* Edit GRN Modal */}
+      {editGrnModal&&(
+        <Modal title={`Edit GRN — ${editGrnModal.grnId}`} onClose={()=>{setEditGrnModal(null);setEditGrnForm({});}} width={800}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+            <Field label="Date"><Input type="date" value={editGrnForm.date||""} onChange={e=>setEditGrnForm(f=>({...f,date:e.target.value}))} /></Field>
+            <Field label="Vehicle No"><Input value={editGrnForm.vehicleNo||""} onChange={e=>setEditGrnForm(f=>({...f,vehicleNo:e.target.value}))} /></Field>
+            <Field label="Challan No"><Input value={editGrnForm.challanNo||""} onChange={e=>setEditGrnForm(f=>({...f,challanNo:e.target.value}))} /></Field>
+            <Field label="Supplier DC No"><Input value={editGrnForm.dcNo||""} onChange={e=>setEditGrnForm(f=>({...f,dcNo:e.target.value}))} /></Field>
+            <Field label="Storage Bay">
+              <Sel value={editGrnForm.bayId||""} onChange={e=>setEditGrnForm(f=>({...f,bayId:e.target.value}))}>
+                <option value="">Select bay...</option>
+                {BAYS.map(b=><option key={b.id} value={b.id}>Bay {String(b.number).padStart(2,"0")}</option>)}
+              </Sel>
+            </Field>
+            <Field label="Remarks"><Input value={editGrnForm.remarks||""} onChange={e=>setEditGrnForm(f=>({...f,remarks:e.target.value}))} /></Field>
+          </div>
+          <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>LINE ITEMS</div>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:16}}>
+            <thead>
+              <tr style={{background:T.bgInput}}>
+                {["Material","Qty","Actual Wt (kg)","Heat No","MTC No","Bay"].map(h=>(
+                  <th key={h} style={{padding:"6px 8px",textAlign:"left",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}`}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(editGrnForm.lines||[]).map((l,i)=>(
+                <tr key={i} style={{borderBottom:`1px solid ${T.border}33`}}>
+                  <td style={{padding:"4px 8px",fontFamily:T.fontMono,fontSize:10,color:T.accentHi}}>{l.materialDesc||l.poLineId}</td>
+                  <td style={{padding:"4px 6px"}}>
+                    <input type="number" value={l.qtyReceived||""} onChange={e=>setEditGrnForm(f=>{const n=[...f.lines];n[i]={...n[i],qtyReceived:+e.target.value};return {...f,lines:n};})} style={{width:56,background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:4,padding:"2px 4px",color:T.text,fontSize:11}} />
+                  </td>
+                  <td style={{padding:"4px 6px"}}>
+                    <input type="number" value={l.actualWt||l.wtReceived||""} onChange={e=>setEditGrnForm(f=>{const n=[...f.lines];n[i]={...n[i],actualWt:+e.target.value,wtReceived:+e.target.value};return {...f,lines:n};})} style={{width:80,background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:4,padding:"2px 4px",color:T.text,fontFamily:T.fontMono,fontSize:11}} />
+                  </td>
+                  <td style={{padding:"4px 6px"}}>
+                    <input value={l.heatNo||""} onChange={e=>setEditGrnForm(f=>{const n=[...f.lines];n[i]={...n[i],heatNo:e.target.value};return {...f,lines:n};})} placeholder="Heat No" style={{width:90,background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:4,padding:"2px 4px",color:T.text,fontSize:11}} />
+                  </td>
+                  <td style={{padding:"4px 6px"}}>
+                    <input value={l.mtcNo||""} onChange={e=>setEditGrnForm(f=>{const n=[...f.lines];n[i]={...n[i],mtcNo:e.target.value};return {...f,lines:n};})} placeholder="MTC No" style={{width:90,background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:4,padding:"2px 4px",color:T.text,fontSize:11}} />
+                  </td>
+                  <td style={{padding:"4px 6px"}}>
+                    <Sel value={l.bayId||editGrnForm.bayId||""} onChange={e=>setEditGrnForm(f=>{const n=[...f.lines];n[i]={...n[i],bayId:e.target.value};return {...f,lines:n};})} style={{fontSize:10,padding:"2px 4px"}}>
+                      <option value="">Default</option>
+                      {BAYS.map(b=><option key={b.id} value={b.id}>Bay {String(b.number).padStart(2,"0")}</option>)}
+                    </Sel>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <InfoBanner color="amber">Editing GRN will update stock lot weights and heat numbers. Issued quantities are preserved.</InfoBanner>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12}}>
+            <button onClick={()=>{setEditGrnModal(null);setEditGrnForm({});}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={saveEditGRN} style={css.btn.primary}>Save Changes</button>
+          </div>
+        </Modal>
+      )}
       {/* Reverse GRN Modal */}
       {reverseModal && (()=>{
         const grnLots = (stock||[]).filter(s => s.grnId === reverseModal);
