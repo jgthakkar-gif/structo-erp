@@ -7388,12 +7388,22 @@ const RMQCModule = ({ user, stock, setStock }) => {
     showToast("Lot returned to RM QC Pending for re-inspection","green");
   };
 
-  const QCRow = ({ lot, type, actions }) => (
+  const QCRow = ({ lot, type, actions }) => {
+    // Build dimension display from lot data
+    const dimStr = lot.length && lot.width
+      ? `${lot.length}×${lot.width}mm`
+      : lot.length
+      ? `L:${lot.length}mm`
+      : lot.size||"—";
+    const piecesStr = lot.qtyReceived>0 ? `${lot.qtyReceived} pcs` : "—";
+    return (
     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
       <TD mono>{lot.lotNo}</TD>
       <TD>{lot.matType} {lot.grade}</TD>
       <TD>{lot.sectionType||lot.section}</TD>
       <TD mono>{lot.size}</TD>
+      <TD mono style={{fontSize:10,color:T.textMid}}>{dimStr}</TD>
+      <TD right mono style={{fontSize:11,color:T.amber,fontWeight:600}}>{piecesStr}</TD>
       <TD right mono bold color={T.gold}>{fmt.num(lot.wtReceived)}</TD>
       <TD><Badge color="teal">{lot.bayId}</Badge></TD>
       <TD>{lot.vendorName}</TD>
@@ -7419,7 +7429,8 @@ const RMQCModule = ({ user, stock, setStock }) => {
         </div>
       </TD>
     </tr>
-  );
+    );
+  };
 
   const Section = ({ title, lots, type, color, actionsFor }) => (
     <div style={{ marginBottom:20 }}>
@@ -7431,7 +7442,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
         ? <div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:20 }}>No items</div>
         : <div style={{ overflowX:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead><tr><TH>Lot No</TH><TH>Material</TH><TH>Section</TH><TH>Size</TH><TH right>Wt (kg)</TH><TH>Bay</TH><TH>Vendor</TH><TH>Received</TH><TH>MTC</TH><TH>Status</TH><TH>Action</TH></tr></thead>
+              <thead><tr><TH>Lot No</TH><TH>Material</TH><TH>Section</TH><TH>Size</TH><TH>Dimensions</TH><TH right>Pieces</TH><TH right>Wt (kg)</TH><TH>Bay</TH><TH>Vendor</TH><TH>Received</TH><TH>MTC</TH><TH>Status</TH><TH>Action</TH></tr></thead>
               <tbody>{lots.map(l=><QCRow key={l.id} lot={l} type={type} actions={actionsFor?actionsFor(l):null} />)}</tbody>
             </table>
           </div>
@@ -7526,6 +7537,14 @@ const RMQCModule = ({ user, stock, setStock }) => {
               {[["Lot No",form.lot?.lotNo],["Material",`${form.lot?.matType} ${form.lot?.grade}`],["Section/Size",`${(form.lot?.sectionType||form.lot?.section||'')} ${form.lot?.size||''}`.trim()],["Wt Received",`${fmt.num(form.lot?.wtReceived)} kg`],["Bay",form.lot?.bayId],["MTC",form.lot?.mtcUploaded?"Uploaded ✓":"⚠ Missing"]].map(([k,v])=>(
                 <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12, color:v?.includes?.("⚠")?T.red:T.text, fontFamily:k.includes("Lot")||k.includes("Wt")||k.includes("Bay")?T.fontMono:T.font }}>{v}</div></div>
               ))}
+            </div>
+            <div style={{ display:"flex", gap:16, marginTop:8, flexWrap:"wrap" }}>
+              {form.lot?.qtyReceived>0&&<span style={{fontSize:12,color:T.text}}>Pieces: <strong>{form.lot.qtyReceived} pcs</strong></span>}
+              {form.lot?.length&&<span style={{fontSize:12,color:T.text}}>Length: <strong>{form.lot.length}mm</strong></span>}
+              {form.lot?.width&&<span style={{fontSize:12,color:T.text}}>Width: <strong>{form.lot.width}mm</strong></span>}
+              {form.lot?.heatNo&&<span style={{fontSize:12,color:T.accent}}>Heat: <strong style={{fontFamily:T.fontMono}}>{form.lot.heatNo}</strong></span>}
+              {form.lot?.mtcNo&&<span style={{fontSize:12,color:T.accent}}>MTC: <strong style={{fontFamily:T.fontMono}}>{form.lot.mtcNo}</strong></span>}
+              {form.lot?.batchNo&&<span style={{fontSize:12,color:T.textMid}}>Batch: <strong style={{fontFamily:T.fontMono}}>{form.lot.batchNo}</strong></span>}
             </div>
           </div>
 
