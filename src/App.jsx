@@ -2377,6 +2377,28 @@ const UsersMaster = ({ user }) => {
 };
 
 // ─── COMPANY MASTER ───────────────────────────────────────────────────────────
+const getFinancialYear = (date) => {
+  const d = date || new Date();
+  const month = d.getMonth(); // 0=Jan, 3=Apr
+  const year = d.getFullYear();
+  if (month >= 3) { // April onwards = new FY
+    const y1 = String(year).slice(-2);
+    const y2 = String(year+1).slice(-2);
+    return `${y1}-${y2}`;
+  } else {
+    const y1 = String(year-1).slice(-2);
+    const y2 = String(year).slice(-2);
+    return `${y1}-${y2}`;
+  }
+};
+
+const genOrderId = (company) => {
+  const prefix = company?.orderPrefix || "FXL";
+  const fy = getFinancialYear(new Date());
+  const nextNo = company?.orderNextNo || 1;
+  return `${prefix}${fy}/${String(nextNo).padStart(4,"0")}`;
+};
+
 const CompanyMaster = ({ user, company, setCompany }) => {
   const [form, setForm] = useState({...company});
   const [dirty, setDirty] = useState(false);
@@ -2424,6 +2446,24 @@ const CompanyMaster = ({ user, company, setCompany }) => {
           <Field label="Bank Name"><Input value={form.bankName} onChange={e=>upd("bankName",e.target.value)} /></Field>
           <Field label="Account Number"><Input value={form.bankAccount} onChange={e=>upd("bankAccount",e.target.value)} /></Field>
           <Field label="IFSC Code"><Input value={form.ifsc} onChange={e=>upd("ifsc",e.target.value)} /></Field>
+        </div>
+      </div>
+      {/* Order Numbering */}
+      <div style={{ ...css.card, marginBottom:16 }}>
+        <SectionHd>Order Numbering</SectionHd>
+        <InfoBanner color="blue">Set your order number prefix and starting number. Format: {(form.orderPrefix||"FXL")}{getFinancialYear(new Date())}/{String(form.orderNextNo||1).padStart(4,"0")} — Next order will use this number.</InfoBanner>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginTop:12 }}>
+          <Field label="Order Prefix">
+            <Input value={form.orderPrefix||"FXL"} onChange={e=>upd("orderPrefix",e.target.value.toUpperCase())} placeholder="FXL" maxLength={6} />
+          </Field>
+          <Field label="Next Order Number">
+            <Input type="number" min={1} value={form.orderNextNo||1} onChange={e=>upd("orderNextNo",parseInt(e.target.value)||1)} placeholder="1" />
+          </Field>
+          <Field label="Preview">
+            <div style={{ fontFamily:T.fontMono, fontSize:14, fontWeight:800, color:T.accentHi, padding:"8px 0" }}>
+              {(form.orderPrefix||"FXL")}{getFinancialYear(new Date())}/{String(form.orderNextNo||1).padStart(4,"0")}
+            </div>
+          </Field>
         </div>
       </div>
       {dirty && (
@@ -11438,7 +11478,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
     </div>
   );
 };
-const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
+const OrdersList = ({ orders, onOpen, user, clients, onAddOrder, company, setCompany }) => {
   const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState("all"); const [modal, setModal] = useState(false); const [form, setForm] = useState({}); const [showCancelled, setShowCancelled] = useState(false);
   const filtered = orders.filter(o=>(showCancelled||o.status!=="cancelled")&&((o.id||'').toLowerCase().includes(search.toLowerCase())||(o.projectDesc||'').toLowerCase().includes(search.toLowerCase())||(o.clientPoNo||'').toLowerCase().includes(search.toLowerCase())||(o.clientId||'').toLowerCase().includes(search.toLowerCase()))&&(statusFilter==="all"||o.status===statusFilter));
   const canCreate = ["super_admin","planning_admin"].includes(user.role);
@@ -11500,15 +11540,25 @@ const OrdersList = ({ orders, onOpen, user, clients, onAddOrder }) => {
         );
       })}
       {filtered.length===0&&<div style={{ textAlign:"center", color:T.textLow, padding:48 }}>No orders found</div>}
-      {modal&&<Modal title="New Order" onClose={()=>setModal(false)} width={600}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div style={{ gridColumn:"span 2" }}><label style={css.label}>Project Description</label><input value={form.projectDesc||""} onChange={e=>setForm({...form,projectDesc:e.target.value})} style={css.input} /></div><div><label style={css.label}>Client</label><select value={form.clientId||""} onChange={e=>setForm({...form,clientId:e.target.value})} style={css.input}><option value="">Select...</option>{(clients||CLIENTS_S2).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div><div><label style={css.label}>Client PO No</label><input value={form.clientPoNo||""} onChange={e=>setForm({...form,clientPoNo:e.target.value})} style={css.input} /></div><div><label style={css.label}>Rate per Unit (₹)</label><input type="number" value={form.ratePerUnit||""} onChange={e=>setForm({...form,ratePerUnit:+e.target.value,orderValue:(+e.target.value)*(form.orderQty||0)})} style={css.input} /></div><div><label style={css.label}>Order Qty (Ton)</label><input type="number" value={form.orderQty||""} onChange={e=>setForm({...form,orderQty:+e.target.value,orderValue:(form.ratePerUnit||0)*(+e.target.value)})} style={css.input} /></div><div><label style={css.label}>Order Date</label><input type="date" value={form.orderDate||""} onChange={e=>setForm({...form,orderDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>End Date</label><input type="date" value={form.endDate||""} onChange={e=>setForm({...form,endDate:e.target.value})} style={css.input} /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(false)} style={css.btn.secondary}>Cancel</button><button onClick={()=>{ if(onAddOrder) onAddOrder({...form,id:`SF-${new Date().getFullYear()}-${String(Date.now()).slice(-4)}`}); setModal(false); }} style={css.btn.primary}>Create Order</button></div></Modal>}
+      {modal&&<Modal title="New Order" onClose={()=>setModal(false)} width={600}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div style={{ gridColumn:"span 2" }}><label style={css.label}>Project Description</label><input value={form.projectDesc||""} onChange={e=>setForm({...form,projectDesc:e.target.value})} style={css.input} /></div><div><label style={css.label}>Client</label><select value={form.clientId||""} onChange={e=>setForm({...form,clientId:e.target.value})} style={css.input}><option value="">Select...</option>{(clients||CLIENTS_S2).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div><div><label style={css.label}>Client PO No</label><input value={form.clientPoNo||""} onChange={e=>setForm({...form,clientPoNo:e.target.value})} style={css.input} /></div><div><label style={css.label}>Rate per Unit (₹)</label><input type="number" value={form.ratePerUnit||""} onChange={e=>setForm({...form,ratePerUnit:+e.target.value,orderValue:(+e.target.value)*(form.orderQty||0)})} style={css.input} /></div><div><label style={css.label}>Order Qty (Ton)</label><input type="number" value={form.orderQty||""} onChange={e=>setForm({...form,orderQty:+e.target.value,orderValue:(form.ratePerUnit||0)*(+e.target.value)})} style={css.input} /></div><div><label style={css.label}>Order Date</label><input type="date" value={form.orderDate||""} onChange={e=>setForm({...form,orderDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>End Date</label><input type="date" value={form.endDate||""} onChange={e=>setForm({...form,endDate:e.target.value})} style={css.input} /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(false)} style={css.btn.secondary}>Cancel</button><button onClick={()=>{
+  const newId = genOrderId(company);
+  if(onAddOrder) onAddOrder({...form, id:newId});
+  // Increment next order number in company settings
+  if(setCompany) setCompany(prev=>{
+    const updated = {...prev, orderNextNo:(prev.orderNextNo||1)+1};
+    localStorage.setItem('structo_company', JSON.stringify(updated));
+    return updated;
+  });
+  setModal(false);
+}} style={css.btn.primary}>Create Order</button></div></Modal>}
     </div>
   );
 };
-const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs }) => {
+const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs, company, setCompany }) => {
   const [selected, setSelected] = useState(null);
   const saveOrder = (updated) => { setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o)); setSelected(updated); };
   if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} />;
-  return <OrdersList orders={orders} onOpen={setSelected} user={user} clients={clients} onAddOrder={o=>setOrders(prev=>[...prev,o])} />;
+  return <OrdersList orders={orders} onOpen={setSelected} user={user} clients={clients} onAddOrder={o=>setOrders(prev=>[...prev,o])} company={company} setCompany={setCompany} />;
 };
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
@@ -18559,7 +18609,7 @@ export default function App() {
     ]
   });
   const [company, setCompany]           = useState(() => {
-    const defaults = { name:"Structo Fabricators", tradingName:"STRUCTO", gstin:"", pan:"", state:"Maharashtra", stateCode:"27", address:"", worksAddress:"", phone:"", email:"", bankName:"", bankAccount:"", ifsc:"", logoUrl:"" };
+    const defaults = { name:"Structo Fabricators", tradingName:"STRUCTO", gstin:"", pan:"", state:"Maharashtra", stateCode:"27", address:"", worksAddress:"", phone:"", email:"", bankName:"", bankAccount:"", ifsc:"", logoUrl:"", orderPrefix:"FXL", orderNextNo:1 };
     try { const s=localStorage.getItem('structo_company'); return s?JSON.parse(s):defaults; } catch { return defaults; }
   });
 
@@ -18596,7 +18646,7 @@ export default function App() {
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
-      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} />;
+      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
