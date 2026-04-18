@@ -975,7 +975,7 @@ const PERMISSIONS = {
   store_admin:     { modules:["dashboard","stock","bays"],                     canApprove:true,  canOverride:false, canManageUsers:false },
   store_user:      { modules:["dashboard","stock"],                            canApprove:false, canOverride:false, canManageUsers:false },
   qc_admin:        { modules:["dashboard","qc","qc_ops","stock","production"],  canApprove:true,  canOverride:true,  canManageUsers:false },
-  qc_user:         { modules:["dashboard","production","qc"],                  canApprove:true,  canOverride:false, canManageUsers:false },
+  qc_user:         { modules:["dashboard","production","qc","qc_ops"],         canApprove:true,  canOverride:false, canManageUsers:false },
   floor_planner:   { modules:["dashboard","mrp","production","stock"],         canApprove:true,  canOverride:false, canManageUsers:false },
   production_engineer:{ modules:["dashboard","production","qc"],               canApprove:true,  canOverride:true,  canManageUsers:false },
   blasting_engineer:  { modules:["dashboard","production"],                    canApprove:false, canOverride:false, canManageUsers:false },
@@ -1680,7 +1680,7 @@ const NAV = [
   { id:"purchase",  label:"Purchase",     icon:"🛒", module:"purchase"   },
   { id:"stock",     label:"Stock",        icon:"📦", module:"stock"      },
   { id:"qc",        label:"RM Quality",   icon:"✓",  module:"qc"         },
-  { id:"qc_ops",    label:"QC Admin",     icon:"🔍", module:"qc_ops"     },
+  { id:"qc_ops",    label:"QC & Inspection", icon:"🔍", module:"qc_ops" },
   { id:"production",label:"Production",   icon:"⚙️", module:"production" },
   { id:"finance",   label:"Finance",      icon:"₹",  module:"finance"    },
   { id:"dispatch",  label:"Dispatch",     icon:"🚚", module:"dispatch"   },
@@ -10858,7 +10858,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
   const batchesForOrder = (nestingBatches||[]).filter(b=>(b.lots||[]).some(l=>(l.parts||[]).some(mn=>orderMarkNosSet.has(mn))));
   const mrpDrawingWt = fabDrawings.filter(d=>(drgPartsMap.get(d.id)||[]).some(p=>batchesForOrder.some(b=>(b.lots||[]).some(l=>(l.parts||[]).includes(p.markNo))))).reduce((s,d)=>s+(d.totalWt||0),0);
   const mrpReleasedOk = mrpDrawingWt >= effectiveTotalKg || !!pm.mrp_done;
-  const orderPos = (pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id));
+  const orderPos = (pos||[]).filter(p=>p.orderRef===order.id||p.orderId===order.id||(p.coveredOrders||[]).includes(order.id)||(p.servedOrders||[]).includes(order.id));
   const orderPoIds = new Set(orderPos.map(p=>p.id));
   const convertedPrBatchIds = new Set((purchaseReqs||[]).filter(pr=>pr.nestingBatchId&&pr.status==='converted').map(pr=>pr.nestingBatchId));
   const batchesWithConvertedPo = batchesForOrder.filter(b=>convertedPrBatchIds.has(b.id));
@@ -10870,7 +10870,19 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
     ((l.reservations||[]).some(r=>r.orderId===order.id)||orderPoIds.has(l.poId))
   );
   const receivedKg = orderLots.reduce((s,l)=>s+(l.wtReceived||0),0);
-  const receivedDrawings = fabDrawings.filter(d=>orderLots.some(l=>(l.reservations||[]).some(r=>r.orderId===order.id&&(!r.drawingId||r.drawingId===d.id))));
+  // Build set of matCodes available in received lots
+  const receivedMatCodes=new Set(orderLots.map(l=>normMatCode(l.matCode)));
+  // A drawing is "received" if ALL its fabricate parts' matCodes have stock received
+  // OR if it has a reservation linking it to this order
+  const receivedDrawings = fabDrawings.filter(d=>{
+    // First try reservation link
+    if(orderLots.some(l=>(l.reservations||[]).some(r=>r.orderId===order.id&&(!r.drawingId||r.drawingId===d.id)))) return true;
+    // Fall back — drawing is received if its parts' matCodes are all in received stock
+    const drgParts=(drgPartsMap.get(d.id)||drgPartsMap.get(d.drawingNo)||[]).filter(p=>p.fabType==="Fabricate"&&p.source?.toLowerCase()==="procure");
+    if(drgParts.length===0) return false;
+    const drgMatCodes=new Set(drgParts.map(p=>normMatCode(p.matCode)));
+    return [...drgMatCodes].every(mc=>receivedMatCodes.has(mc));
+  });
   const receivedDrawingKg = receivedDrawings.reduce((s,d)=>s+(d.totalWt||0),0);
   const receivedDrawingCount = receivedDrawings.length;
   const drawingsReceivedKg = fabDrawings.filter(d=>d.receivedDate).reduce((s,d)=>s+(d.totalWt||0),0);
@@ -12124,7 +12136,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
 // PRODUCTION: DRAWING ASSIGNMENT (Production Manager View)
 // ═══════════════════════════════════════════════════════════════════════════════
 const STAGE_OPTS    = [{v:"fitup",l:"Fit-Up"},{v:"welding",l:"Welding"},{v:"blasting",l:"Blasting"},{v:"painting",l:"Painting"}];
-const STAGE_SEQ_LABELS = { cutting:"Cutting", fitup:"Fit-Up", welding:"Welding", tpi_weld:"TPI Weld", assembly:"Assembly", blasting:"Blasting", painting:"Painting", tpi_paint:"TPI Paint", mdcc:"MDCC", dispatch:"Dispatch" };
+const STAGE_SEQ_LABELS = { cutting:"Cutting", fitup:"Fit-Up", fit_up:"Fit-Up", welding:"Welding", tpi_weld:"TPI Weld", assembly:"Assembly", blasting:"Blasting", painting:"Painting", tpi_paint:"TPI Paint", mdcc:"MDCC", dispatch:"Dispatch" };
 const SUBOPS_CUT    = ["Cut","Grind","Bevel","Drill"];
 const SUBOPS_WELD   = ["SMAW","GMAW","FCAW"];
 
@@ -12476,10 +12488,35 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock })
   const cid = user.contractorId;
   const my      = instances.filter(i => i.assignedContractorId === cid);
   const pending  = my.filter(i => i.currentStatus === "pending_collection");
+  // Ready to collect — cutting QC passed, now at fitup/welding stage pending collection
+  const readyToCollect = my.filter(i =>
+    i.currentStatus === "pending" &&
+    ["fitup","fit_up","welding"].includes(i.currentStage)
+  );
   const inProg   = my.filter(i => i.currentStatus === "in_progress");
   const pendSup  = my.filter(i => i.currentStatus === "pending_supervisor");
   const outbound = my.filter(i => i.currentStatus === "outbound");
   const done     = my.filter(i => i.currentStatus === "completed").slice(-10);
+
+  // Group readyToCollect by rmUnitId/drawingId
+  const readyGroups = {};
+  readyToCollect.forEach(i=>{
+    const k=i.rmUnitId||`${i.drawingId}/${i.orderId}`;
+    if(!readyGroups[k]) readyGroups[k]={
+      key:k, rmUnitId:i.rmUnitId||"", drawingNo:i.drawingNo,
+      orderId:i.orderId, stage:i.currentStage, parts:[]
+    };
+    readyGroups[k].parts.push(i);
+  });
+
+  const doCollectFromQC = (group) => {
+    const ids = group.parts.map(i=>i.instanceId);
+    setInstances(prev=>prev.map(i=>
+      ids.includes(i.instanceId)
+        ?{...i, currentStatus:"in_progress", collectedDate:new Date().toISOString().slice(0,10), collectedBy:user.username}
+        :i
+    ));
+  };
 
   // Group pending_collection by nestingRunId+barRef
   const collGroups = {};
@@ -12494,7 +12531,11 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock })
   const inProgGroups = {};
   inProg.forEach(i => {
     const k = `${i.markNo}/${i.drawingId}/${i.orderId}`;
-    if (!inProgGroups[k]) inProgGroups[k] = { key:k, markNo:i.markNo, desc:i.desc, drawingId:i.drawingId, drawingNo:i.drawingNo, orderId:i.orderId, assignedStage:i.assignedStage||i.currentStage, subOpsRequired:i.subOpsRequired||[], insts:[], lastRejection:null };
+    // Use stage-appropriate sub-ops, not cutting ops carried over from instance creation
+    const stageOps = i.currentStage==='fitup'||i.currentStage==='fit_up' ? [] :
+      i.currentStage==='welding' ? [] :
+      i.subOpsRequired||[];
+    if (!inProgGroups[k]) inProgGroups[k] = { key:k, markNo:i.markNo, desc:i.desc, drawingId:i.drawingId, drawingNo:i.drawingNo, orderId:i.orderId, assignedStage:i.assignedStage||i.currentStage, subOpsRequired:stageOps, insts:[], lastRejection:null };
     inProgGroups[k].insts.push(i);
     // Capture latest rejection reason for current stage
     const rejStageHist = (i.stageHistory||[]).filter(h => h.stage === (i.assignedStage||i.currentStage) && (h.rejections||[]).length > 0);
@@ -12520,7 +12561,12 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock })
       const existIdx = hist.findIndex(h => h.stage === i.currentStage);
       if (existIdx >= 0) hist[existIdx] = { ...hist[existIdx], ...entry };
       else hist.push(entry);
-      return { ...i, currentStatus:"pending_supervisor", subOpsCompleted:completedOps, stageHistory:hist };
+      // After marking done, go to pending_supervisor for QC sign-off
+      // Stage label for what was just completed
+      const completedStageLabel = i.currentStage==='fitup'||i.currentStage==='fit_up' ? 'Fit-Up' :
+        i.currentStage==='welding' ? 'Welding' : i.currentStage;
+      return { ...i, currentStatus:"pending_supervisor", subOpsCompleted:completedOps,
+        lastCompletedStage:completedStageLabel, stageHistory:hist };
     }));
     setSelGroup(null);
     setSubOpChecks(prev => { const n={...prev}; delete n[group.key]; return n; });
@@ -12538,7 +12584,9 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock })
   if (selGD) {
     const checks = subOpChecks[selGD.key] || {};
     const allChecked = selGD.subOpsRequired.length === 0 || selGD.subOpsRequired.every(op => checks[op]);
-    const stageLabel = STAGE_SEQ_LABELS[selGD.assignedStage] || selGD.assignedStage || "Fit-Up";
+    const stageLabel = STAGE_SEQ_LABELS[selGD.assignedStage] ||
+      STAGE_SEQ_LABELS[selGD.insts[0]?.currentStage] ||
+      (selGD.assignedStage==='fit_up'?'Fit-Up':selGD.assignedStage) || "Fit-Up";
     return (
       <div>
         <div style={{ display:"flex",gap:8,alignItems:"center",marginBottom:20 }}>
@@ -12618,8 +12666,6 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock })
     return Object.values(grps);
   };
 
-  const readyToCollect = pending.length;
-
   return (
     <div>
       <div style={{ marginBottom:20 }}>
@@ -12658,6 +12704,46 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock })
           <div style={{ fontSize:15,fontWeight:700,color:T.textMid,marginBottom:6 }}>No work assigned yet</div>
           <div style={{ fontSize:13 }}>Parts will appear here when the production manager assigns them to you.</div>
         </div>
+      )}
+
+      {/* Ready to collect after cutting QC */}
+      {Object.keys(readyGroups).length > 0 && (
+        <>
+          <SectionLabel title="✂ CUTTING COMPLETE — READY TO COLLECT" count={readyToCollect.length} color={T.green} />
+          <div style={{overflowX:"auto",marginBottom:16}}>
+            <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
+              <thead>
+                <tr style={{background:T.bgInput}}>
+                  {["RM Unit / Drawing","Order","Stage","Parts","Action"].map(h=>(
+                    <th key={h} style={{padding:"8px 10px",fontSize:10,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.values(readyGroups).map(g=>(
+                  <tr key={g.key} style={{borderBottom:`1px solid ${T.border}`,background:`${T.green}08`}}>
+                    <td style={{padding:"8px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.green,fontSize:11}}>
+                      {g.rmUnitId||g.drawingNo}
+                    </td>
+                    <td style={{padding:"8px 10px",fontSize:11}}>{g.orderId}</td>
+                    <td style={{padding:"8px 10px"}}>
+                      <Badge color="green">{g.stage.replace(/_/g," ")}</Badge>
+                    </td>
+                    <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>{g.parts.length} parts</td>
+                    <td style={{padding:"8px 10px"}}>
+                      <button
+                        onClick={()=>doCollectFromQC(g)}
+                        style={{...css.btn.green,fontSize:11,padding:"4px 12px"}}
+                      >
+                        ✓ Collect Material
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* ── READY TO COLLECT ── */}
@@ -12969,7 +13055,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
   // Sort: pinned first, then by rejection count desc, then by dispatch date asc (most urgent first)
   const sortedGroups = Object.values(groups)
     // QC engineer sees only their assigned jobs
-    .filter(g => user.role !== 'qc_user' || (g.assignedEngineer === user.id || g.assignedEngineer === user.username))
+    .filter(g => user.role !== 'qc_user' || !g.assignedEngineer || g.assignedEngineer === user.id || g.assignedEngineer === user.username)
     .sort((a,b)=>{
       if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
       if (b.rejCount !== a.rejCount) return b.rejCount - a.rejCount;
@@ -15473,7 +15559,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 // ═══════════════════════════════════════════════════════════════════════════════
 // STEP 6: MACHINE OPERATOR QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, materials, instances, setInstances }) => {
+const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, materials, instances, setInstances, orders, nestingBatches }) => {
   const today = () => new Date().toISOString().slice(0,10);
 
   // Get all rmUnit assignments for this contractor from in_progress releases
@@ -15611,12 +15697,86 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
       };
       setStock(prev=>[...prev, newOffcut]);
     }
-    // Update instances for parts in this rmUnit to cutting_qc stage
-    setInstances(prev=>prev.map(inst=>
-      inst.rmUnitId===ru.rmUnitId&&inst.currentStage==="cutting"
-        ?{...inst,currentStage:"cutting_qc",currentStatus:"pending",cutAt:new Date().toISOString(),cutBy:user.username}
-        :inst
-    ));
+    const ts = new Date().toISOString();
+    // Step 1 — Advance existing instances for this rmUnit to cutting_qc
+    setInstances(prev=>{
+      const updated=prev.map(inst=>
+        inst.rmUnitId===ru.rmUnitId&&inst.currentStage==="cutting"
+          ?{...inst,currentStage:"cutting_qc",currentStatus:"pending_supervisor",cutAt:ts,cutBy:user.username}
+          :inst
+      );
+
+      // Step 2 — Find ALL parts on this sheet from nesting batch
+      const batch=(nestingBatches||[]).find(b=>b.id===ru.batchId);
+      if(!batch) return updated;
+      const lot=(batch.lots||[]).find(l=>l.matCode===ru.matCode);
+      if(!lot) return updated;
+      const sheet=(lot.sheets||[]).find(s=>s.rmUnitId===ru.rmUnitId);
+      if(!sheet) return updated;
+
+      // All markNos on this sheet
+      const allMarkNos=new Set(sheet.parts||[]);
+
+      // MarkNos already handled for THIS specific rmUnit only
+      const existingMarkNos=new Set(updated.filter(i=>i.rmUnitId===ru.rmUnitId).map(i=>i.markNo));
+
+      // Find parts from NON-released drawings that are on this sheet
+      const newInstances=[];
+      const baseTs=Date.now();
+      let idx=0;
+
+      (orders||[]).forEach(order=>{
+        (order.parts||[]).forEach(part=>{
+          if(!allMarkNos.has(part.markNo)) return;
+          if(existingMarkNos.has(part.markNo)) return; // already has instance
+          if(part.fabType?.toLowerCase()!=="fabricate") return;
+          // Create a cut instance for this part
+          const drawing=(order.drawings||[]).find(d=>d.id===part.drawingId);
+          newInstances.push({
+            instanceId:`INST-CUT-${baseTs}-${idx++}`,
+            releaseId:"side_cut", // marks it as a side-effect cut
+            orderId:order.id,
+            orderNo:order.id,
+            drawingId:part.drawingId,
+            drawingNo:drawing?.drawingNo||part.drawingNo||"",
+            markNo:part.markNo,
+            desc:part.description||"",
+            matCode:part.matCode||"",
+            qty:part.qtyPerDrg||1,
+            partWt:part.clientUnitWt||0,
+            requiredOps:part.requiredOps||["Cut"],
+            subOpsRequired:["cut"],
+            assignedContractorId:null,
+            assignedContractorName:"",
+            pinnedEngineerId:"",
+            assignedStage:"fit_up",
+            currentStage:"cutting_qc",
+            currentStatus:"pending_supervisor",
+            rmUnitId:ru.rmUnitId,
+            cuttingContractorId:ru.contractorId||"",
+            cuttingContractorName:ru.contractorName||"",
+            lotId:ru.lotId||"",
+            nestingRunId:null,
+            barRef:null,
+            batchNo:ru.batchId||"",
+            cuttingBayUsed:"",
+            stageHistory:[],
+            defects:[],
+            outboundCount:0,
+            outboundHistory:[],
+            qualityConcernFlag:false,
+            rejectionCount:0,
+            createdAt:ts,
+            createdBy:user.username,
+            cutAt:ts,
+            cutBy:user.username,
+            isSideCut:true, // flag to distinguish from formally released parts
+          });
+        });
+      });
+
+      return [...updated, ...newInstances];
+    });
   };
 
   const startCuttingLegacy = (a) => {
@@ -15761,9 +15921,48 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
               </div>
             )}
             {state===6&&(
-              <div style={{padding:"10px 14px",background:T.greenBg,border:`1px solid ${T.green}44`,borderRadius:6,fontSize:12,color:T.green,textAlign:"center",fontWeight:700}}>
-                ✓ CUTTING COMPLETE — Parts moving to QC
-                {ru.offcutWt>0&&<div style={{fontSize:11,fontWeight:400,marginTop:4}}>Offcut: {ru.offcutWt}kg ({ru.offcutDim||"—"}) added to stock</div>}
+              <div>
+                <div style={{padding:"10px 14px",background:T.greenBg,border:`1px solid ${T.green}44`,borderRadius:6,fontSize:12,color:T.green,textAlign:"center",fontWeight:700,marginBottom:8}}>
+                  ✓ CUTTING COMPLETE — Parts moving to QC
+                  {ru.offcutWt>0&&<div style={{fontSize:11,fontWeight:400,marginTop:4}}>Offcut: {ru.offcutWt}kg ({ru.offcutDim||"—"}) added to stock</div>}
+                </div>
+                {(()=>{
+                  // Show all parts on this rmUnit with assignment status
+                  const allInsts=(instances||[]).filter(i=>i.rmUnitId===ru.rmUnitId);
+                  if(allInsts.length===0) return null;
+                  const assigned=allInsts.filter(i=>i.assignedContractorId);
+                  const unassigned=allInsts.filter(i=>!i.assignedContractorId);
+                  const unique=(arr)=>{const m={};arr.forEach(i=>{if(!m[i.markNo])m[i.markNo]={...i,count:0};m[i.markNo].count++;});return Object.values(m);};
+                  return (
+                    <div style={{fontSize:11,padding:"8px 10px",background:T.bgInput,borderRadius:6,border:`1px solid ${T.border}`}}>
+                      <div style={{fontWeight:700,color:T.text,marginBottom:6}}>Parts on this sheet ({allInsts.length} instances)</div>
+                      {assigned.length>0&&(
+                        <div style={{marginBottom:6}}>
+                          <div style={{fontSize:10,fontWeight:700,color:T.green,marginBottom:3}}>✓ ASSIGNED — READY FOR COLLECTION ({unique(assigned).length} parts)</div>
+                          {unique(assigned).map(p=>(
+                            <div key={p.markNo} style={{display:"flex",gap:8,fontSize:10,padding:"2px 0",color:T.text}}>
+                              <span style={{fontFamily:T.fontMono,color:T.accentHi,minWidth:120}}>{p.markNo}</span>
+                              <span style={{color:T.textMid}}>{p.drawingNo}</span>
+                              <span style={{color:T.green,marginLeft:"auto"}}>{p.assignedContractorName}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {unassigned.length>0&&(
+                        <div>
+                          <div style={{fontSize:10,fontWeight:700,color:T.amber,marginBottom:3}}>⏳ UNASSIGNED — SEND TO HOLDING BAY ({unique(unassigned).length} parts)</div>
+                          {unique(unassigned).map(p=>(
+                            <div key={p.markNo} style={{display:"flex",gap:8,fontSize:10,padding:"2px 0",color:T.amber}}>
+                              <span style={{fontFamily:T.fontMono,minWidth:120}}>{p.markNo}</span>
+                              <span style={{color:T.textMid}}>{p.drawingNo}</span>
+                              <span style={{marginLeft:"auto"}}>→ Holding Bay</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -17003,7 +17202,25 @@ const STAGE_TO_PROCESS = {
 };
 
 const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog }) => {
-  const [tab, setTab] = useState("pending");
+  const isAdmin = ["super_admin","qc_admin"].includes(user.role);
+  const [tab, setTab] = useState("cutting_qc");
+
+  // ── Inspection tabs config ──
+  const INSP_TABS = [
+    { id:"cutting_qc", label:"Cutting QC",    stages:["cutting_qc"] },
+    { id:"fitup",      label:"Fit-Up QC",     stages:["fitup","tpi_fitup"] },
+    { id:"weld",       label:"Weld QC",       stages:["welding","tpi_weld"] },
+    { id:"blast",      label:"Blast QC",      stages:["blasting","tpi_blast"] },
+    { id:"paint",      label:"Paint QC",      stages:["painting","tpi_paint"] },
+    { id:"mdcc",       label:"MDCC",          stages:["mdcc"] },
+  ];
+  const adminTabs = isAdmin ? [
+    { id:"rules",  label:"Assignment Rules" },
+    { id:"log",    label:"Override Log" },
+  ] : [];
+  const allTabs = [...INSP_TABS, ...adminTabs];
+
+  // ── Admin state ──
   const [ruleModal, setRuleModal] = useState(null);
   const [ruleForm, setRuleForm] = useState({});
   const [overrideModal, setOverrideModal] = useState(null);
@@ -17011,16 +17228,9 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
   const [overrideReason, setOverrideReason] = useState("");
   const [overrideEngineer, setOverrideEngineer] = useState("");
 
-  const canEdit = ["super_admin","qc_admin"].includes(user.role);
   const engineers = USERS.filter(u=>["production_engineer","qc_admin","super_admin"].includes(u.role)&&u.active);
 
-  // Pending jobs — instances at pending_supervisor
-  const pendingJobs = instances.filter(i=>i.currentStatus==="pending_supervisor");
-
-  // Get process type from stage
   const getProcessType = (stage) => STAGE_TO_PROCESS[stage]||"";
-
-  // Auto-assign based on qcRules
   const getAssignedEngineer = (stage) => {
     const proc = getProcessType(stage);
     const rule = qcRules.find(r=>r.processType===proc);
@@ -17033,8 +17243,8 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
     setInstances(prev=>prev.map(i=>i.instanceId===inst.instanceId?{...i,assignedEngineer:overrideEngineer}:i));
     setOverrideLog(prev=>[...prev,{
       instanceId:inst.instanceId, markNo:inst.markNo, drawingId:inst.drawingId,
-      overriddenBy:user.username, overriddenAt:today(), reason:overrideReason.trim(),
-      assignedTo:overrideEngineer
+      overriddenBy:user.username, overriddenAt:new Date().toISOString().slice(0,10),
+      reason:overrideReason.trim(), assignedTo:overrideEngineer
     }]);
     setOverrideModal(null); setOverrideInst(null); setOverrideReason(""); setOverrideEngineer("");
   };
@@ -17052,150 +17262,354 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 
   const deleteRule = (id) => setQcRules(prev=>prev.filter(r=>r.id!==id));
 
-  const tabs = [
-    {id:"pending",label:`Pending Jobs (${pendingJobs.length})`},
-    {id:"rules",label:"Assignment Rules"},
-    {id:"log",label:`Override Log (${overrideLog.length})`},
-  ];
+  // ── Inspection Queue Panel ──
+  const InspectionPanel = ({ stages }) => {
+    const myQueue = instances.filter(i=>
+      i.currentStatus==="pending_supervisor" &&
+      stages.includes(i.currentStage) &&
+      (!i.assignedEngineer || i.assignedEngineer===user.id || i.assignedEngineer===user.username)
+    );
 
-  return (
-    <div>
-      <div style={{ fontSize:20, fontWeight:800, color:T.text, marginBottom:16 }}>QC Admin — Assignment</div>
-      <TabBar2 tabs={tabs} active={tab} onChange={setTab} />
+    // Group by rmUnitId first, then by markNo+drawingId
+    const rmUnitGroups = {};
+    myQueue.forEach(i=>{
+      const rmKey = i.rmUnitId||`no-rmunit-${i.drawingId}`;
+      if(!rmUnitGroups[rmKey]) rmUnitGroups[rmKey]={
+        rmUnitId:i.rmUnitId||"",
+        drawingNo:i.drawingNo,
+        orderId:i.orderId,
+        stage:i.currentStage,
+        parts:[],
+      };
+      rmUnitGroups[rmKey].parts.push(i);
+    });
 
-      {tab==="pending" && (
+    const [selRmUnit, setSelRmUnit] = useState(null);
+    const [checks, setChecks] = useState({});
+    const [dimReadings, setDimReadings] = useState({});
+    const [rejectMode, setRejectMode] = useState(false);
+    const [rejectReason, setRejectReason] = useState("");
+
+    const rmGroups = Object.values(rmUnitGroups);
+
+    if(rmGroups.length===0) return (
+      <div style={{padding:"40px 20px",textAlign:"center",color:T.textLow,fontSize:13}}>
+        ✓ No pending {stages[0].replace(/_/g," ")} inspections
+      </div>
+    );
+
+    const selGroup = selRmUnit ? rmGroups.find(g=>g.rmUnitId===selRmUnit||(g.rmUnitId===""&&selRmUnit==="no-rmunit")) : null;
+    const checklist = STAGE_CHECKLISTS[stages[0]]||[];
+
+    if(selGroup){
+      const allChecked = checklist.length>0 && checklist.every(item=>checks[item]);
+      const doApprove = () => {
+        const ts = new Date().toISOString();
+        setInstances(prev=>prev.map(inst=>{
+          if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
+          const nextStage = STAGE_NEXT[inst.currentStage]||inst.currentStage;
+          // After cutting_qc passes, move to fitup and notify weld contractor
+          const nextStatus = nextStage==="fitup"||nextStage==="welding" ? "pending" : "pending";
+          return {...inst,
+            currentStage: nextStage,
+            currentStatus: nextStatus,
+            stageHistory: [...(inst.stageHistory||[]),{
+              stage:inst.currentStage, status:"approved",
+              approvedBy:user.username, approvedAt:ts,
+              checklistItems:Object.keys(checks).filter(k=>checks[k]),
+              dimReadings: dimReadings
+            }]
+          };
+        }));
+        setSelRmUnit(null); setChecks({}); setDimReadings({}); setRejectMode(false); setRejectReason("");
+      };
+      const doReject = () => {
+        if(!rejectReason.trim()) return;
+        const ts = new Date().toISOString();
+        setInstances(prev=>prev.map(inst=>{
+          if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
+          return {...inst,
+            currentStage:"cutting",
+            currentStatus:"pending",
+            stageHistory:[...(inst.stageHistory||[]),{
+              stage:inst.currentStage, status:"rejected",
+              rejectedBy:user.username, rejectedAt:ts,
+              reason:rejectReason
+            }]
+          };
+        }));
+        setSelRmUnit(null); setChecks({}); setRejectMode(false); setRejectReason("");
+      };
+
+      return (
         <div>
-          {pendingJobs.length===0 && (
-            <div style={{ textAlign:"center", padding:48, color:T.textLow }}>No pending QC jobs.</div>
-          )}
-          <div style={{ overflowX:"auto" }}>
-            {pendingJobs.length>0 && (
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                <thead><tr>
-                  {["Mark No","Drawing","Order","Stage","Process Type","Assigned Engineer","Time in Queue","Priority","Action"].map(h=>(
-                    <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:700, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+          <button onClick={()=>{setSelRmUnit(null);setChecks({});setRejectMode(false);}} style={{...css.btn.ghost,marginBottom:16}}>← Back to queue</button>
+          <div style={{...css.card,marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div>
+                <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:14}}>{selGroup.rmUnitId||selGroup.drawingNo}</div>
+                <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{selGroup.drawingNo} · {selGroup.orderId} · <Badge color="blue">{selGroup.stage.replace(/_/g," ")}</Badge></div>
+              </div>
+              <div style={{fontSize:12,color:T.textMid}}>{selGroup.parts.length} part{selGroup.parts.length!==1?"s":""}</div>
+            </div>
+
+            {/* Parts table */}
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:16}}>
+              <thead>
+                <tr style={{background:T.bgInput}}>
+                  {["Mark No","Drawing","Mat Code","Qty","Assignment","Cut By","Cut At"].map(h=>(
+                    <th key={h} style={{padding:"6px 10px",textAlign:"left",color:T.textMid,fontWeight:700,fontSize:10,borderBottom:`1px solid ${T.border}`}}>{h}</th>
                   ))}
-                </tr></thead>
-                <tbody>
-                  {pendingJobs.map(i=>{
-                    const order = orders.find(o=>o.id===i.orderId);
-                    const proc = getProcessType(i.currentStage);
-                    const assignedEng = i.assignedEngineer ? engineers.find(u=>u.id===i.assignedEngineer) : getAssignedEngineer(i.currentStage);
-                    const lastHistEntry = (i.stageHistory||[]).slice(-1)[0];
-                    const markedDate = lastHistEntry?.markedDoneDate||"";
-                    const daysSince = markedDate ? Math.floor((Date.now()-new Date(markedDate).getTime())/86400000) : "?";
-                    const isUrgent = order?.endDate && order.endDate < today();
+                </tr>
+              </thead>
+              <tbody>
+                {(()=>{
+                  // Deduplicate by markNo — show unique parts with qty count
+                  const uniqueParts={};
+                  selGroup.parts.forEach(p=>{
+                    if(!uniqueParts[p.markNo]) uniqueParts[p.markNo]={...p,qty:0};
+                    uniqueParts[p.markNo].qty++;
+                  });
+                  return Object.values(uniqueParts).map(p=>{
+                    const isSideCut=p.isSideCut||p.releaseId==="side_cut";
+                    const isAssigned=!!p.assignedContractorId;
                     return (
-                      <tr key={i.instanceId} style={{ borderBottom:`1px solid ${T.border}`, background:isUrgent?T.redBg:"transparent" }}>
-                        <td style={{ padding:"7px 10px", fontFamily:T.fontMono, fontWeight:700 }}>{i.markNo}</td>
-                        <td style={{ padding:"7px 10px" }}>{i.drawingNo||i.drawingId}</td>
-                        <td style={{ padding:"7px 10px" }}>{i.orderId}</td>
-                        <td style={{ padding:"7px 10px" }}><Badge color="blue">{(i.currentStage||"").replace("_"," ")}</Badge></td>
-                        <td style={{ padding:"7px 10px" }}>{proc||"—"}</td>
-                        <td style={{ padding:"7px 10px", color:assignedEng?T.green:T.amber }}>{assignedEng?.name||"Unassigned"}</td>
-                        <td style={{ padding:"7px 10px", color:T.textMid }}>{daysSince} day{daysSince!==1?"s":""}</td>
-                        <td style={{ padding:"7px 10px" }}>{isUrgent?<Badge color="red">Overdue</Badge>:<Badge color="gray">Normal</Badge>}</td>
-                        <td style={{ padding:"7px 10px" }}>
-                          {canEdit && (
-                            <button onClick={()=>{setOverrideInst(i);setOverrideEngineer(i.assignedEngineer||"");setOverrideReason("");setOverrideModal(true);}} style={css.btn.sm}>Reassign</button>
-                          )}
+                      <tr key={p.markNo} style={{borderBottom:`1px solid ${T.border}33`,background:isSideCut?`${T.amber}08`:"transparent"}}>
+                        <td style={{padding:"5px 10px",fontFamily:T.fontMono,color:isSideCut?T.amber:T.accentHi,fontWeight:600}}>
+                          {p.markNo}
+                          {isSideCut&&<span style={{marginLeft:4,fontSize:9,color:T.amber}}>side cut</span>}
                         </td>
+                        <td style={{padding:"5px 10px",fontFamily:T.fontMono,fontSize:10,color:T.textMid}}>{p.drawingNo}</td>
+                        <td style={{padding:"5px 10px",fontSize:10}}>{p.matCode}</td>
+                        <td style={{padding:"5px 10px",fontSize:10,textAlign:"right",fontWeight:600}}>{p.qty} pcs</td>
+                        <td style={{padding:"5px 10px",fontSize:10}}>
+                          {isAssigned
+                            ?<span style={{color:T.green,fontWeight:600}}>{p.assignedContractorName}</span>
+                            :<span style={{color:T.amber,fontSize:10}}>Unassigned — holding bay</span>}
+                        </td>
+                        <td style={{padding:"5px 10px",fontSize:10}}>{p.cutBy||"—"}</td>
+                        <td style={{padding:"5px 10px",fontSize:10,color:T.textMid}}>{p.cutAt?.slice(0,16).replace("T"," ")||"—"}</td>
                       </tr>
                     );
-                  })}
-                </tbody>
-              </table>
+                  });
+                })()}
+              </tbody>
+            </table>
+
+            {/* Checklist */}
+            {checklist.length>0&&(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>INSPECTION CHECKLIST</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                  {checklist.map(item=>(
+                    <label key={item} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:checks[item]?T.greenBg:T.bgInput,borderRadius:4,cursor:"pointer",border:`1px solid ${checks[item]?T.green:T.border}`,fontSize:12}}>
+                      <input type="checkbox" checked={!!checks[item]} onChange={e=>setChecks(p=>({...p,[item]:e.target.checked}))} />
+                      <span style={{color:checks[item]?T.green:T.text}}>{item}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Dimension readings for cutting QC */}
+            {stages.includes("cutting_qc")&&(
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>DIMENSION READINGS (optional)</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                  {["Length (mm)","Width (mm)","Diagonal (mm)"].map(dim=>(
+                    <div key={dim}>
+                      <label style={{...css.label,fontSize:10}}>{dim}</label>
+                      <input type="number" value={dimReadings[dim]||""} onChange={e=>setDimReadings(p=>({...p,[dim]:e.target.value}))} style={{...css.input,fontSize:11}} placeholder="Actual reading" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            {!rejectMode?(
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={doApprove} disabled={checklist.length>0&&!allChecked} style={{...css.btn.green,flex:1,padding:"10px 0",fontSize:13,opacity:checklist.length>0&&!allChecked?0.45:1}}>
+                  ✓ Approve — {selGroup.parts.length} part{selGroup.parts.length!==1?"s":""}
+                  {checklist.length>0&&!allChecked&&<span style={{fontSize:11,marginLeft:6}}>({checklist.filter(i=>!checks[i]).length} items remaining)</span>}
+                </button>
+                <button onClick={()=>setRejectMode(true)} style={{...css.btn.ghost,color:T.red,padding:"10px 16px"}}>✕ Reject</button>
+              </div>
+            ):(
+              <div style={{padding:"12px",background:T.redBg,borderRadius:6,border:`1px solid ${T.red}44`}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.red,marginBottom:8}}>Rejection Reason</div>
+                <textarea value={rejectReason} onChange={e=>setRejectReason(e.target.value)} rows={2} placeholder="State reason for rejection..." style={{...css.input,width:"100%",resize:"vertical",marginBottom:8}} />
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={doReject} disabled={!rejectReason.trim()} style={{...css.btn.primary,background:T.red,opacity:rejectReason.trim()?1:0.45}}>Confirm Reject</button>
+                  <button onClick={()=>setRejectMode(false)} style={css.btn.ghost}>Cancel</button>
+                </div>
+              </div>
             )}
           </div>
         </div>
-      )}
+      );
+    }
 
-      {tab==="rules" && (
-        <div>
-          {canEdit && (
-            <div style={{ marginBottom:14 }}>
-              <button onClick={()=>{setRuleForm({});setRuleModal("add");}} style={css.btn.primary}>+ Add Rule</button>
-            </div>
-          )}
-          {qcRules.length===0 && <div style={{ color:T.textLow, fontSize:12 }}>No assignment rules. Add a rule to auto-assign engineers to QC stages.</div>}
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead><tr>
-              {["Process Type","Assigned Engineer","Action"].map(h=>(
-                <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:700, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+    // Queue list view
+    return (
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
+          <thead>
+            <tr style={{background:T.bgInput}}>
+              {["RM Unit / Drawing","Order","Stage","Parts","Cut By","Waiting Since","Action"].map(h=>(
+                <th key={h} style={{padding:"8px 10px",fontSize:10,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
               ))}
-            </tr></thead>
-            <tbody>
-              {qcRules.map(r=>{
-                const eng = engineers.find(u=>u.id===r.assignedEngineerId);
-                return (
-                  <tr key={r.id} style={{ borderBottom:`1px solid ${T.border}` }}>
-                    <td style={{ padding:"7px 10px" }}><Badge color="blue">{r.processType}</Badge></td>
-                    <td style={{ padding:"7px 10px" }}>{eng?.name||r.assignedEngineerId}</td>
-                    <td style={{ padding:"7px 10px", display:"flex", gap:6 }}>
-                      {canEdit&&<button onClick={()=>{setRuleForm({...r});setRuleModal("edit");}} style={css.btn.sm}>Edit</button>}
-                      {canEdit&&<button onClick={()=>deleteRule(r.id)} style={{ ...css.btn.sm,color:T.red }}>Delete</button>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {tab==="log" && (
-        <div>
-          {overrideLog.length===0 && <div style={{ color:T.textLow, fontSize:12 }}>No override log entries.</div>}
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead><tr>
-              {["Date","Mark No","Drawing","Assigned To","Override By","Reason"].map(h=>(
-                <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:700, color:T.textMid, borderBottom:`1px solid ${T.border}` }}>{h}</th>
-              ))}
-            </tr></thead>
-            <tbody>
-              {overrideLog.map((entry,i)=>(
-                <tr key={i} style={{ borderBottom:`1px solid ${T.border}` }}>
-                  <td style={{ padding:"7px 10px" }}>{entry.overriddenAt}</td>
-                  <td style={{ padding:"7px 10px", fontFamily:T.fontMono }}>{entry.markNo}</td>
-                  <td style={{ padding:"7px 10px" }}>{entry.drawingId}</td>
-                  <td style={{ padding:"7px 10px" }}>{engineers.find(u=>u.id===entry.assignedTo)?.name||entry.assignedTo}</td>
-                  <td style={{ padding:"7px 10px" }}>{entry.overriddenBy}</td>
-                  <td style={{ padding:"7px 10px" }}>{entry.reason}</td>
+            </tr>
+          </thead>
+          <tbody>
+            {rmGroups.map(g=>{
+              const waitingSince=g.parts[0]?.cutAt||g.parts[0]?.createdAt||"";
+              const hoursWaiting=waitingSince?Math.round((Date.now()-new Date(waitingSince).getTime())/3600000):0;
+              const waitColor=hoursWaiting>24?T.red:hoursWaiting>8?T.amber:T.green;
+              return (
+                <tr key={g.rmUnitId||g.drawingNo} style={{borderBottom:`1px solid ${T.border}`,cursor:"pointer"}} onClick={()=>setSelRmUnit(g.rmUnitId||"no-rmunit")}>
+                  <td style={{padding:"8px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:11}}>{g.rmUnitId||g.drawingNo}</td>
+                  <td style={{padding:"8px 10px",fontSize:11}}>{g.orderId}</td>
+                  <td style={{padding:"8px 10px"}}><Badge color="blue">{g.stage.replace(/_/g," ")}</Badge></td>
+                  <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>{g.parts.length}</td>
+                  <td style={{padding:"8px 10px",fontSize:11,color:T.textMid}}>{g.parts[0]?.cutBy||"—"}</td>
+                  <td style={{padding:"8px 10px",fontSize:11,color:waitColor}}>{hoursWaiting>0?`${hoursWaiting}h ago`:"Just now"}</td>
+                  <td style={{padding:"8px 10px"}}>
+                    <button style={{...css.btn.primary,fontSize:11,padding:"3px 10px"}} onClick={e=>{e.stopPropagation();setSelRmUnit(g.rmUnitId||"no-rmunit");}}>Inspect →</button>
+                  </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // ── Tab bar ──
+  return (
+    <div>
+      <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:16}}>QC & Inspection</div>
+      <div style={{display:"flex",gap:0,marginBottom:20,borderBottom:`1px solid ${T.border}`,flexWrap:"wrap"}}>
+        {allTabs.map(t=>{
+          const isInsp=INSP_TABS.find(x=>x.id===t.id);
+          const pendingCount=isInsp?(instances||[]).filter(i=>
+            i.currentStatus==="pending_supervisor"&&
+            isInsp.stages.includes(i.currentStage)&&
+            (!i.assignedEngineer||i.assignedEngineer===user.id||i.assignedEngineer===user.username)
+          ).length:0;
+          return (
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{
+              padding:"10px 16px",fontSize:12,fontWeight:tab===t.id?700:400,
+              color:tab===t.id?T.accent:T.textMid,background:"transparent",border:"none",
+              borderBottom:tab===t.id?`2px solid ${T.accent}`:"2px solid transparent",
+              cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"
+            }}>
+              {t.label}
+              {pendingCount>0&&<span style={{background:T.amber,color:"#fff",borderRadius:"50%",fontSize:10,padding:"1px 5px",fontWeight:700}}>{pendingCount}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Inspection tabs */}
+      {INSP_TABS.map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
+
+      {/* Admin-only tabs */}
+      {tab==="rules"&&isAdmin&&(
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <div style={{fontSize:14,fontWeight:700,color:T.text}}>Assignment Rules</div>
+            <button onClick={()=>{setRuleForm({});setRuleModal("add");}} style={css.btn.primary}>+ Add Rule</button>
+          </div>
+          {qcRules.length===0&&<InfoBanner color="blue">No assignment rules set. QC jobs go to shared pool.</InfoBanner>}
+          {qcRules.length>0&&(
+            <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
+              <thead>
+                <tr style={{background:T.bgInput}}>
+                  {["Process Type","Assigned Engineer","Actions"].map(h=>(
+                    <th key={h} style={{padding:"8px 10px",fontSize:10,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {qcRules.map(r=>{
+                  const eng=engineers.find(u=>u.id===r.assignedEngineerId);
+                  return (
+                    <tr key={r.id} style={{borderBottom:`1px solid ${T.border}`}}>
+                      <td style={{padding:"8px 10px",fontWeight:600}}>{r.processType}</td>
+                      <td style={{padding:"8px 10px"}}>{eng?.name||r.assignedEngineerId}</td>
+                      <td style={{padding:"8px 10px",display:"flex",gap:8}}>
+                        <button onClick={()=>{setRuleForm({...r});setRuleModal("edit");}} style={{...css.btn.ghost,fontSize:11,padding:"2px 8px"}}>Edit</button>
+                        <button onClick={()=>deleteRule(r.id)} style={{...css.btn.ghost,fontSize:11,padding:"2px 8px",color:T.red}}>Delete</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
-      {/* Rule Modal */}
-      {ruleModal && (
+      {tab==="log"&&isAdmin&&(
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:16}}>Override Log</div>
+          {overrideLog.length===0&&<InfoBanner color="blue">No overrides recorded.</InfoBanner>}
+          {overrideLog.length>0&&(
+            <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
+              <thead>
+                <tr style={{background:T.bgInput}}>
+                  {["Mark No","Drawing","Overridden By","Assigned To","Date","Reason"].map(h=>(
+                    <th key={h} style={{padding:"8px 10px",fontSize:10,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {overrideLog.map((l,i)=>(
+                  <tr key={i} style={{borderBottom:`1px solid ${T.border}`}}>
+                    <td style={{padding:"8px 10px",fontFamily:T.fontMono,color:T.accentHi}}>{l.markNo}</td>
+                    <td style={{padding:"8px 10px",fontFamily:T.fontMono,fontSize:10,color:T.textMid}}>{l.drawingId}</td>
+                    <td style={{padding:"8px 10px"}}>{l.overriddenBy}</td>
+                    <td style={{padding:"8px 10px"}}>{engineers.find(u=>u.id===l.assignedTo)?.name||l.assignedTo}</td>
+                    <td style={{padding:"8px 10px",color:T.textMid}}>{l.overriddenAt?.slice(0,10)}</td>
+                    <td style={{padding:"8px 10px",color:T.textMid}}>{l.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Rule modal */}
+      {ruleModal&&(
         <Modal title={ruleModal==="add"?"Add Assignment Rule":"Edit Assignment Rule"} onClose={()=>{setRuleModal(null);setRuleForm({});}}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            <div><label style={css.label}>Process Type *</label>
-              <select value={ruleForm.processType||""} onChange={e=>setRuleForm(f=>({...f,processType:e.target.value}))} style={css.input}>
-                <option value="">Select...</option>
-                {QC_PROCESS_TYPES.map(p=><option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-            <div><label style={css.label}>Assigned Engineer *</label>
-              <select value={ruleForm.assignedEngineerId||""} onChange={e=>setRuleForm(f=>({...f,assignedEngineerId:e.target.value}))} style={css.input}>
-                <option value="">Select...</option>
-                {engineers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
-            </div>
+          <div style={{marginBottom:12}}>
+            <label style={css.label}>Process Type *</label>
+            <select value={ruleForm.processType||""} onChange={e=>setRuleForm(p=>({...p,processType:e.target.value}))} style={css.input}>
+              <option value="">Select...</option>
+              {QC_PROCESS_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+            </select>
           </div>
-          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+          <div style={{marginBottom:16}}>
+            <label style={css.label}>Assign To *</label>
+            <select value={ruleForm.assignedEngineerId||""} onChange={e=>setRuleForm(p=>({...p,assignedEngineerId:e.target.value}))} style={css.input}>
+              <option value="">Select engineer...</option>
+              {engineers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
             <button onClick={()=>{setRuleModal(null);setRuleForm({});}} style={css.btn.secondary}>Cancel</button>
-            <button onClick={saveRule} disabled={!ruleForm.processType||!ruleForm.assignedEngineerId} style={{ ...css.btn.primary, opacity:(!ruleForm.processType||!ruleForm.assignedEngineerId)?0.4:1 }}>Save Rule</button>
+            <button onClick={saveRule} disabled={!ruleForm.processType||!ruleForm.assignedEngineerId} style={{...css.btn.primary,opacity:(!ruleForm.processType||!ruleForm.assignedEngineerId)?0.4:1}}>Save Rule</button>
           </div>
         </Modal>
       )}
 
-      {/* Override Modal */}
-      {overrideModal && overrideInst && (
+      {/* Override modal */}
+      {overrideModal&&overrideInst&&(
         <Modal title={`Reassign — ${overrideInst.markNo}`} onClose={()=>{setOverrideModal(null);setOverrideInst(null);setOverrideReason("");}}>
-          <div style={{ marginBottom:12 }}>
+          <div style={{marginBottom:12}}>
             <label style={css.label}>Assign To *</label>
             <select value={overrideEngineer} onChange={e=>setOverrideEngineer(e.target.value)} style={css.input}>
               <option value="">Select engineer...</option>
@@ -17204,11 +17618,11 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
           </div>
           <div>
             <label style={css.label}>Reason *</label>
-            <textarea value={overrideReason} onChange={e=>setOverrideReason(e.target.value)} rows={3} placeholder="State reason for reassignment..." style={{ ...css.input, resize:"vertical", width:"100%" }} />
+            <textarea value={overrideReason} onChange={e=>setOverrideReason(e.target.value)} rows={3} placeholder="State reason for reassignment..." style={{...css.input,resize:"vertical",width:"100%"}} />
           </div>
-          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}}>
             <button onClick={()=>{setOverrideModal(null);setOverrideInst(null);setOverrideReason("");}} style={css.btn.secondary}>Cancel</button>
-            <button onClick={doOverride} disabled={!overrideReason.trim()||!overrideEngineer} style={{ ...css.btn.primary, opacity:(!overrideReason.trim()||!overrideEngineer)?0.4:1 }}>Confirm Reassignment</button>
+            <button onClick={doOverride} disabled={!overrideReason.trim()||!overrideEngineer} style={{...css.btn.primary,opacity:(!overrideReason.trim()||!overrideEngineer)?0.4:1}}>Reassign</button>
           </div>
         </Modal>
       )}
@@ -17296,7 +17710,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   // Contractor → own work queue only (after hooks)
   if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} />;
   // Machine operator → machine queue
-  if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} />;
+  if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} orders={orders||[]} nestingBatches={nestingBatches||[]} />;
   // Stage workers (blasting/painting engineers) → stage-filtered work queue
   if (["blasting_engineer","painting_engineer"].includes(user.role)) return <StageWorkerQueue user={user} instances={instances} setInstances={setInstances} />;
 
