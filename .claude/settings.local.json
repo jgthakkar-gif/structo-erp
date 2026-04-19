@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//private/tmp/claude-501/-Users-admin-Projects-structo-deploy/0bd80a23-5dfe-44f8-8f9e-491abba2629b/tasks/**)",
+      "Bash(done)"
+    ]
+  }
+}

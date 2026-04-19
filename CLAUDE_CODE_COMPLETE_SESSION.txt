@@ -1,0 +1,1006 @@
+STRUCTO ERP — COMPLETE SESSION INSTRUCTION
+Session 4 Phase 2 + Production Workflow
+31 March 2026
+
+READ DEPENDENCY-MAP.md COMPLETELY BEFORE STARTING.
+For every field you modify check all listed dependent
+locations and update them all.
+After completing all work update DEPENDENCY-MAP.md.
+
+Use /plan first. Show the complete plan before writing
+any code. Build group by group. Run npm run build after
+each group. Zero errors required before proceeding.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GROUP A — STANDALONE FIXES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─────────────────────────────────────────────────────
+A1. DATE INPUT YEAR BUG FIX
+─────────────────────────────────────────────────────
+All date inputs in the system must:
+  - Use type="date" HTML input
+  - Store as YYYY-MM-DD string — never Date object
+  - Default: new Date().toISOString().slice(0,10)
+  - NEVER use toLocaleDateString() or toLocaleString()
+
+Fix all date inputs in:
+  - Production Step 4 machine assignment (main bug)
+  - GRN date field
+  - PO expected delivery date
+  - Drawing received date
+
+When initialising any state with a date field use:
+  const today = new Date().toISOString().slice(0,10)
+  startDate: today
+  endDate: new Date(Date.now()+2*86400000).toISOString().slice(0,10)
+
+Verify: Step 4 date inputs show 2026-03-31 not 0002.
+
+─────────────────────────────────────────────────────
+A2. TRANSPORT TAB — RESTORE IN ORDER ENTRY
+─────────────────────────────────────────────────────
+Position: between Shipping tab and Payment Milestones.
+Visible to all roles except Finance Admin.
+
+Fields:
+  transportScope: radio
+    'client' | 'we_separate' | 'we_included' | 'per_dispatch'
+    Default: 'per_dispatch'
+    Label: "Who arranges transport to site?"
+
+  Show when scope = we_separate or we_included:
+    preferredTransporter: text
+    vehicleType: dropdown
+      Open body flatbed | Crane-assisted flatbed |
+      Closed body | Low-bed trailer | Own vehicle
+    distanceKm: number
+    freightEstimatePerTrip: number (₹)
+    insuranceRequired: boolean toggle
+    overDimensionalCargo: boolean toggle
+      If true show note: "Obtain OD permit before dispatch"
+    nightMovementRestriction: boolean toggle
+    policeEscortRequired: boolean toggle
+    specialRequirements: textarea
+
+  Show when scope = we_separate:
+    freightBilling: radio
+      'dispatch_line' | 'separate_invoice'
+
+  Show when scope = client:
+    clientTransporterName: text
+    clientVehicleContact: text
+    specialLoadingInstructions: textarea
+
+Save to order.transport object.
+All fields optional except transportScope.
+
+─────────────────────────────────────────────────────
+A3. TPI HOLD POINTS — ADD FIT-UP AND BLASTING
+─────────────────────────────────────────────────────
+Location: Orders → Quality tab → TPI Hold Points.
+
+Current checkboxes: RM Inspection, Welding, Painting
+Add: Fit-Up, Blasting
+
+Store as order.quality.tpiHoldPoints array.
+New values: 'fit_up' | 'blasting'
+
+Production stage gate logic — two layers:
+LAYER 1 (always): Internal QC sign-off — hard gate
+LAYER 2 (conditional): TPI approval — only if stage
+  is in tpiHoldPoints AND order.quality.tpiRequired
+
+TPI approval fields:
+  inspectorName, agencyName, inspectionDate,
+  irnNumber, documentDriveLink, notes
+
+Apply to: fit_up, welding, blasting, painting
+Show TPI status on instance: [Internal ✓] [TPI: Pending/✓/N/A]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GROUP B — ORDER LEVEL CHANGES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─────────────────────────────────────────────────────
+B1. ASSEMBLY INSPECTION — BASIC DETAILS + NEW TAB
+─────────────────────────────────────────────────────
+PART 1: Basic Details tab — add one field:
+  assemblyInspectionRequired: boolean toggle
+  Label: "Assembly Inspection Required"
+  Default: false
+  Position: after order description field
+
+PART 2: Assemblies tab — new tab
+  Visible only when assemblyInspectionRequired = true
+  Position: between Quality tab and Finance & Amendments
+
+  Tab content — list of assembly groups:
+  Each assembly group has:
+    assemblyNumber: auto-generated (Assembly 1, Assembly 2...)
+    assemblyName: text input (e.g. "Column-Beam Assembly")
+    drawingsAssigned: multi-select from order's drawings
+    tpiRequired: boolean toggle per assembly
+    clientContact: text
+    expectedInspectionDate: date input
+    notes: textarea
+
+  Add Assembly button at bottom of list.
+  Delete assembly button (with warning if drawings assigned).
+
+PART 3: Drawing Register tab — add Assembly Group column
+  Position: after Received Date column
+  Dropdown per row: shows all assemblies defined in
+    the Assemblies tab for this order + blank option
+  Blank = drawing has no assembly step
+  This is the same data as Assemblies tab drawing assignment
+  — changing one updates the other (same field: drawing.assemblyGroup)
+
+PART 4: Seed data migration
+  All existing orders: assemblyInspectionRequired = false
+  All existing drawings: assemblyGroup = ''
+
+Finance Admin: Assemblies tab hidden (same as other tabs)
+
+─────────────────────────────────────────────────────
+B2. DRAWING LINE ITEM + REQUIRED OPS FIELDS
+─────────────────────────────────────────────────────
+FIELD 1: Drawing Part List — drawingLineItem
+  Type: number
+  Label: "Drawing Line Item"
+  Position: first column in part list table (before Mark No)
+  CSV template column: "Drawing Line Item" (after Rev No, before Item No)
+  Add to: Add Part modal, Edit modal, CSV import, table display, template
+
+FIELD 2: Drawing Part List — requiredOps
+  Type: array of strings (multi-select)
+  Options: Cut | Bevel | Drill | Grind | Mark | Notch
+  Default for Fabricate parts: ['Cut']
+  Default for Bought Out parts: []
+  Display: badge chips on part row [Cut] [Bevel]
+  CSV column: "Required Ops" — comma separated values
+    e.g. "Cut" or "Cut,Bevel" or "Cut,Drill"
+  Parser: value.split(',').map(s=>s.trim())
+  Add to: Add Part modal, Edit modal, CSV import, table, template
+
+FIELD 3: Drawing Register — poLineItem
+  Type: number
+  Label: "Client PO Line Item"
+  Position: after Received Date, before Drive Link in table and CSV
+  CSV column: "PO Line Item"
+  Add to: Add Drawing modal, Edit modal, CSV import, table, template
+
+Updated CSV column orders:
+  Drawing Register:
+    Drawing No|Title|Qty|Unit Wt (kg)|Total Wt (kg)|Phase|Priority|
+    Rev No|Drawing Date|Received Date|PO Line Item|Drive Link
+
+  Drawing Part List:
+    Drawing No|Rev No|Drawing Line Item|Item No|Mark No|Description|
+    Fab/BO|Mat Type|Grade|Section Type|Size|Length (mm)|Width (mm)|
+    Qty Per Drawing|Client Unit Wt (kg)|Client Total Wt (kg)|
+    Joints Allowed|Source|Required Ops
+
+Seed data migration:
+  Existing drawings: poLineItem = sequential per order (1,2,3...)
+  Existing parts: drawingLineItem = itemNo or sequential per drawing
+  Existing parts: requiredOps = ['Cut'] for Fabricate, [] for Bought Out
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GROUP C — MACHINE MASTERS + PRODUCTION RELEASE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─────────────────────────────────────────────────────
+C1. MACHINE CAPABILITIES IN MASTERS
+─────────────────────────────────────────────────────
+Add to each machine record in Masters → Machines:
+
+Capabilities checkboxes (multi-select):
+  cut_straight | cut_profile | bevel | drill | grind |
+  mark | notch | bend | roll | press_brake |
+  shot_blast | spray_paint
+
+Machine specs:
+  maxThicknessMm: number
+  maxSectionSizeMm: number
+  notes: text (model, maintenance notes)
+
+Update seed machines:
+  Plasma Cutter 1: [cut_straight, cut_profile, bevel, grind], max 25mm
+  Flame Cutter 1:  [cut_straight, cut_profile, bevel], max 100mm
+  Band Saw 1:      [cut_straight, grind], max 200mm
+  MIG Welder 1, MIG Welder 2, SAW: no cut capabilities
+  Pillar Drill 1:  [drill, mark] — ADD THIS MACHINE if not exists
+
+Display capability badges on machine cards in Masters.
+
+─────────────────────────────────────────────────────
+C2. STOCK RESERVATION MODEL
+─────────────────────────────────────────────────────
+Add lot status: Reserved
+
+New field on lot: reservations (array)
+  [{orderId, orderRef, kg, reservedBy, reservedAt}]
+
+New Stock module section: Reservations
+  Shows per lot: existing reservation splits by order
+  Action: Reserve for Order
+    - Select order from dropdown
+    - Enter kg to reserve
+    - System calculates remaining available
+    - Saves to lot.reservations
+
+Lot status rules:
+  Available + reservation added → status = Reserved
+  Reserved + all reservations removed → status = Available
+  Reserved + nesting confirmed → status = Allocated (auto)
+
+Off-cut reservation inheritance:
+  When off-cut created, copy parent lot's reservations
+  to the off-cut lot automatically.
+
+Release reservation:
+  Planning Admin or super_admin can release a reservation
+  back to Available. If lot is already Allocated (nesting
+  confirmed) requires super_admin + logged reason.
+
+─────────────────────────────────────────────────────
+C3. CROSS-ORDER DRAWING REGISTER (Production Module)
+─────────────────────────────────────────────────────
+New view in Production module: Drawing Register tab
+(separate from the per-order Drawing Register in Orders)
+
+This is the master production planning screen.
+Shows all active drawings from all active orders.
+
+Table columns:
+  Drawing No | Order | Client | Assembly Group |
+  Tier | Priority | Parts Cut/Needed | RM Types Cut/Needed |
+  Current Stage | Status | [checkbox]
+
+Parts Cut/Needed calculation:
+  Numerator: instances for this drawing where
+    stage is past Cutting (i.e. at Fit-Up or beyond)
+    OR cutting QC is cleared
+  Denominator: total fabricate parts × drawing.qty
+
+RM Types Cut/Needed:
+  Numerator: matCodes where all instances for that
+    matCode in this drawing are past cutting
+  Denominator: total unique matCodes for this drawing
+
+Filters (show filter bar at top):
+  - By order: dropdown select order ID
+  - By assembly group: dropdown select assembly
+  - Exclude where RM not received: toggle
+    (hides drawings where any required matCode has
+    zero available + reserved stock)
+  - By current stage: dropdown
+  - By contractor: dropdown
+  - By priority: Critical first toggle
+
+Expandable row (click row to expand):
+  Section A — Part status table:
+    Mark No | Description | Stage | Cut Status
+    e.g. COL-101 | Main Column | Cutting | 2/4 cut
+
+  Section B — RM status:
+    RM Type | Lot | Reserved kg | Allocated kg | Cut kg
+    Show reservation status clearly
+
+  Section C — Assignment:
+    Machine: [Plasma Cutter 1 — RHS, Flame Cutter 1 — Plates]
+    Contractor: [Krishna Fabricators]
+    Current activity: [Plasma Cutter 1 cutting RHS Unit 1-3]
+
+Action bar (appears when drawings selected):
+  [Configure Steps] [Create Nesting Runs]
+  [Assign Machines] [Assign Contractors]
+  [Reserve Stock]
+
+─────────────────────────────────────────────────────
+C4. PRODUCTION STEP CONFIGURATION MODAL
+─────────────────────────────────────────────────────
+Triggered from cross-order register: select drawings
+→ click Configure Steps.
+
+Shows per selected drawing:
+  Drawing No, current step sequence
+
+Default step sequence for any new drawing:
+  Cutting → Welding → Blasting → Painting
+
+Step card controls:
+  Each step shows: step name, Internal/Outbound toggle
+  If Outbound: expand to show
+    contractorName, contactPerson, scopeOfWork (textarea)
+    turnaroundDays: number
+
+  + Add Outbound Step button between each pair of steps:
+    Process type: Bending|Rolling|Galvanising|Drilling|
+                  Bevelling|Notching|Other
+    contractorName, contactPerson, scopeOfWork, turnaroundDays
+
+  Assembly step: shown as read-only card if drawing has
+    assemblyGroup set. Label: "Assembly — [Assembly 1]
+    (defined in order Assemblies tab)". Cannot be removed
+    or moved here. Position: always between Welding and Blasting.
+
+Cut/Drill/Bevel confirmation section:
+  For each fabricate part in selected drawings:
+    Show part row: Mark No | Description | [Cut] [Bevel] [Drill] [Grind]
+    Checkboxes use part.requiredOps as default
+    Planner can change here — this becomes the binding value
+  
+  After changes saved: if Drill checked but assigned machine
+    has no drill capability → show warning:
+    "X parts need Drill — assign drilling station in machine assignment"
+
+Save: store step sequence on drawing.productionSteps
+Save: store confirmed ops on part.requiredOps (binding)
+
+─────────────────────────────────────────────────────
+C5. PRODUCTION RELEASE STEP 1 — DRAWING SELECTION
+─────────────────────────────────────────────────────
+NOTE: The cross-order drawing register (C3) IS the new
+Step 1. The New Release wizard is replaced by the
+action flow from the drawing register.
+
+However the existing release wizard should remain
+functional for now. Update Step 1 to add:
+
+Parts column:
+  "N parts — M RM types" with RM type chips below
+
+RM Status column:
+  Green dot: sufficient reserved/available stock
+  Amber dot: partial stock
+  Red dot: no stock
+  Tooltip on hover: matCode and available kg
+
+Progress column (if previously released):
+  "N/T units released — X/Y parts cut"
+  Small progress bar
+
+Release Qty selector per drawing:
+  Number input, min 1, max = qty minus already released
+  Default: all unreleased units
+  If fully released: show "Fully released" — greyed out
+
+Expandable row per drawing:
+  Parts table: Mark No|Description|Section/Size|
+    Qty/Unit|Total(N units)|Already Cut|Remaining|Req Ops
+  RM Required for N units: matCode|Req kg|Avail kg|Lot|Status
+
+─────────────────────────────────────────────────────
+C6. PRODUCTION RELEASE STEP 2 — RM PICTURE
+─────────────────────────────────────────────────────
+Calculate requirements based on unitsToRelease
+from Step 1 selections, not full drawing qty.
+
+For each selected drawing:
+  For each fabricate+procure part:
+    reqKg += part.clientTotalWt × unitsToRelease
+    (clientTotalWt is already qty_per_drawing × unit_wt)
+
+Also calculate Req (m) for sections:
+  reqMetres = reqKg / wtPerMetre (from materials library)
+  Show as "X.X m"
+
+Show material in 3 tiers with colour coding:
+  Reserved for this order(s) — green label
+  Unreserved available — no label
+  Reserved for another order — amber label "Not reserved for this order"
+
+─────────────────────────────────────────────────────
+C7. PRODUCTION RELEASE STEP 3 — SMART SUGGESTIONS
+─────────────────────────────────────────────────────
+Section A — Drawings in progress (partially cut):
+  For drawings with completionPct > 0 and < 100:
+    Show drawing card with completion bar
+    Parts still needed per mark number
+    RM needed to complete
+    Off-cut suggestion if applicable
+
+Section B — Not started, grouped by shared RM type:
+  For each RM type in current release (from Step 2):
+    Show group header: "Also needs [matCode]"
+    Show drawings under each group
+    [+ Add to release] button per drawing
+
+─────────────────────────────────────────────────────
+C8. PRODUCTION RELEASE STEP 4 — MACHINE ASSIGNMENT
+─────────────────────────────────────────────────────
+Machine dropdown: filter to machines with
+  cut_straight OR cut_profile in capabilities
+
+After machine selected per material:
+  Check all parts' confirmedRequiredOps against
+  machine capabilities
+  If machine missing an op:
+    Show amber warning: "X parts need [Drill] —
+    assign drilling station below"
+    Show secondary assignment row for missing op
+    Secondary dropdown: filtered to machines with
+    the missing capability
+
+Date inputs: use todayISO format (fix from A1)
+
+Store machine assignments with:
+  {matCode, primaryMachineId, lotId, startDate, endDate,
+   secondaryAssignments: [{capability, machineId, startDate, endDate}]}
+
+After this machine routing:
+  Dropdown per RM unit: Another machine | QC only | Contractor
+
+─────────────────────────────────────────────────────
+C9. PRODUCTION RELEASE STEP 5 — ASSIGN CONTRACTORS
+─────────────────────────────────────────────────────
+No change to current functionality.
+Verify it still works after other changes.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GROUP D — QC LAYER + CUTTING CONFIRMATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─────────────────────────────────────────────────────
+D1. ENGINEER TIER 2 CHECKLIST — CUTTING SIGN-OFF
+─────────────────────────────────────────────────────
+Expand the engineer's Tier 2 checklist for cutting
+confirmation to include QC dimensional check items:
+
+DIMENSIONAL CHECK:
+  ☐ Length verified against drawing (±2mm structural, ±1mm plates)
+  ☐ Width/height verified (for plates)
+  ☐ All pieces measured — not spot checked only
+
+  Measurement inputs:
+    "Measured length of [markNo]: [____] mm" per part type
+
+SURFACE AND FINISH:
+  ☐ Cut face smooth — no burrs or rough edges
+  ☐ Grinding complete where specified
+  ☐ No heat distortion — parts flat and straight
+
+SECONDARY OPERATIONS:
+  Show only if assigned machine has bevel or drill:
+
+  If bevel in machine capabilities:
+  ☐ Bevel angle correct (verify with gauge)
+  ☐ Root face dimension correct
+  ☐ Bevel face smooth — no gouging
+
+  If drill in machine capabilities:
+  ☐ Hole diameter correct
+  ☐ Hole position correct (±1mm from drawing)
+  ☐ Holes clean — no burring
+  ☐ Hole count matches drawing
+
+PIECE MARKING:
+  ☐ All parts stamped with mark number
+  ☐ Stamp location correct per convention
+  ☐ Mark legible and permanent
+
+─────────────────────────────────────────────────────
+D2. CUTTING CONFIRMATION — SUB-STAGES FROM CAPABILITIES
+─────────────────────────────────────────────────────
+Confirm Bar screen — operations section:
+  Show only what the assigned machine can do.
+
+  If machine has cut_straight or cut_profile:
+    ☐ Parts cut — all pieces from this bar
+
+  If machine has bevel AND any part on this bar
+  has bevel in confirmedRequiredOps:
+    ☐ Bevel complete
+
+  If machine has grind:
+    ☐ Grinding / deburring complete
+
+  If machine has drill AND any part on this bar
+  has drill in confirmedRequiredOps:
+    ☐ Drilling complete
+
+PIECE MARKING (always, always mandatory):
+  ☐ Piece marking complete — all parts stamped
+  Cannot submit without ticking this.
+
+DEFECT ENTRY per part:
+  "Mark defective" button:
+    defectType: Dimension error|Surface defect|
+                Wrong cut|Damaged|Other
+    description: text
+    action: Scrap and recut|Send for rectification|
+            Accept with deviation
+
+SECONDARY STATION ROUTING:
+  If parts need ops the machine cannot do:
+    Show: "⚠ X parts need Drilling — route to
+    [secondary machine] after confirmation"
+    After bar confirmed: those parts get status
+    "Awaiting Secondary Operation" not "Pending Collection"
+
+─────────────────────────────────────────────────────
+D3. FIT-UP CHECKLIST — CONTRACTOR + ENGINEER
+─────────────────────────────────────────────────────
+CONTRACTOR checklist:
+  ☐ All parts present per drawing
+  ☐ All parts stamped with mark number
+  ☐ Dimensions within tolerance
+  ☐ Alignment acceptable
+  ☐ Tack welds placed (minimum per specification)
+  ☐ Bought-out items present and correct
+  ☐ Assembly marked with drawing + serial number
+
+ENGINEER Tier 2 sign-off:
+  DIMENSIONAL:
+  ☐ Overall length verified
+  ☐ Overall width/height verified
+  ☐ Diagonal check (squareness)
+    Diagonal 1: [____] mm   Diagonal 2: [____] mm
+  ☐ Perpendicularity of key members
+  ☐ Position of stiffeners/connection plates
+    Key position measured: [____] mm
+
+  TACK WELD:
+  ☐ Tack weld size adequate
+  ☐ Tack weld number and spacing adequate
+  ☐ No cracks in tack welds
+
+  PIECE MARKING:
+  ☐ All parts stamped and legible
+  ☐ Assembly serial number marked
+
+  WELDING SEQUENCE:
+  ☐ Welding sequence reviewed
+  Note field: "Welding sequence note: [___]"
+
+TPI FIT-UP (show if 'fit_up' in tpiHoldPoints):
+  After engineer sign-off, show TPI banner (amber)
+  Fields: inspector name, agency, date, IRN, Drive link
+  Hard gate: cannot proceed to Welding without this
+
+─────────────────────────────────────────────────────
+D4. WELDING CHECKLIST — ENGINEER + NDT
+─────────────────────────────────────────────────────
+Engineer Tier 2 welding checklist:
+
+VISUAL WELD INSPECTION:
+  ☐ 100% visual inspection completed
+  ☐ Weld size verified with weld gauge
+    Fillet size measured: [____] mm
+  ☐ No undercut exceeding 0.5mm depth
+  ☐ No porosity visible
+  ☐ No cracks
+  ☐ No incomplete fusion
+  ☐ Spatter removed
+  ☐ Flush welds ground smooth where specified
+
+POST-WELD DIMENSIONS:
+  ☐ Post-weld dimensions checked
+  ☐ Distortion within acceptable limits
+  Overall length after welding: [____] mm
+
+NDT (if applicable):
+  NDT Required: Yes/No toggle
+  If Yes:
+    ndtType: UT|MPI|RT|PT (multi-select)
+    ndtReportDriveLink: URL
+    ndtResult: Pass|Fail|Conditional
+    conditionalNotes: text
+
+TPI WELDING (if 'welding' in tpiHoldPoints):
+  Same TPI gate structure as fit-up.
+  Verify existing functionality still works.
+
+─────────────────────────────────────────────────────
+D5. BLASTING CHECKLIST — READINGS + TIMER
+─────────────────────────────────────────────────────
+CONTRACTOR checklist:
+  ☐ Blast standard achieved (Sa 2.5)
+  ☐ Surface profile checked
+  ☐ Salt contamination checked
+  ☐ Dust check done
+  ☐ Re-marking completed after blast
+
+ENGINEER Tier 2 sign-off:
+
+BLAST STANDARD:
+  ☐ Visual standard confirmed Sa 2.5
+
+SURFACE PROFILE:
+  Method: Testex tape|Profile comparator|Other
+  Reading 1: [____] microns
+  Reading 2: [____] microns
+  Reading 3: [____] microns
+  Average: [auto-calculated]
+  Required: 40–70 microns
+  Status: [Pass/Fail — auto]
+
+SALT CONTAMINATION:
+  ☐ Bresle patch test conducted
+  Reading: [____] mg/m²
+  Maximum: 20 mg/m²
+  Status: [Pass/Fail — auto]
+
+DUST CHECK:
+  ☐ Tape test conducted
+  Rating: 1|2|3|4|5 (must be ≤ 2)
+
+TIME TO PRIMER:
+  Show hours elapsed since blasting sign-off timestamp
+  Amber warning at 3 hours
+  Red warning at 4 hours: "Primer overdue — re-blast may be required"
+
+☐ Re-marking verified — all mark numbers visible
+
+TPI BLASTING (if 'blasting' in tpiHoldPoints):
+  Same TPI gate structure as fit-up and welding.
+
+─────────────────────────────────────────────────────
+D6. PAINTING CHECKLIST — ENV CONDITIONS + DFT
+─────────────────────────────────────────────────────
+CONTRACTOR per coat:
+  ☐ Environmental conditions checked
+  ☐ Paint batch number recorded
+  ☐ Mix ratio verified
+  ☐ Pot life not exceeded
+  ☐ Coat applied — full coverage
+
+ENGINEER Tier 2 per coat:
+
+ENVIRONMENTAL CONDITIONS:
+  Temperature: [____] °C
+  Relative Humidity: [____] %
+  Dew Point: [____] °C
+  Surface Temperature: [____] °C
+  Auto check: surface temp must be ≥ dew point + 3°C
+  Status: [Pass/Fail — auto]
+
+Paint batch number: [text]
+
+DFT READINGS (verify existing works, add if missing):
+  Reading 1-5: [____] microns each
+  Average: [auto]
+  Spec minimum: [from order paint spec]
+  Status: [Pass/Fail — auto]
+
+Visual check:
+  ☐ No runs, sags, or pinholes
+  ☐ Colour matches specification
+
+HOLIDAY DETECTION (finish coat only):
+  ☐ Holiday detection test conducted
+  Result: None|Minor (touched up)|Major (recoat required)
+
+TOTAL DFT (after all coats):
+  Primer DFT: [sum of readings]
+  MIO DFT: [sum]
+  Finish DFT: [sum]
+  Total: [sum]
+  Required: [from order paint spec]
+  Status: [Pass/Fail — auto]
+
+Dry time enforcement between coats:
+  Timestamp each coat approval
+  Next coat cannot start until minimum dry time elapsed
+  Show remaining dry time as countdown
+
+TPI PAINTING (if 'painting' in tpiHoldPoints):
+  Existing — verify still works.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GROUP E — CONTRACTOR DASHBOARD + ASSEMBLY STAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─────────────────────────────────────────────────────
+E1. CONTRACTOR DASHBOARD — PART STATUS TABLE
+─────────────────────────────────────────────────────
+When contractor logs in:
+  Summary view: all assigned drawings, one row each
+    Drawing No|Order|Assembly Group|Stage|Parts ready
+
+Per drawing detail — part status table:
+  RM QC done — available: X/15
+  Cut and QC cleared — ready to collect: X/15
+  Cutting in progress: X/15
+  Cut not started: X/15
+
+Status calculation:
+  "RM QC done — available": lot.status = Available or Reserved,
+    instance not yet created (not yet cut)
+  "Cut and QC cleared": instance.qcStatus.cuttingQc = cleared
+  "Cutting in progress": instance created, cutting QC pending
+  "Cut not started": no instance exists yet for this part
+
+Contractor notifications:
+  When a batch of parts becomes Cut and QC Cleared:
+    notify contractor immediately (not wait for all parts)
+    notification shows: which mark numbers, quantity, where to collect
+
+Per drawing — what contractor sees:
+  Drawing link (Google Drive)
+  Weld spec: process, electrode, approved make
+  Total parts and RM types
+  Part status table
+  Current stage checklist
+  Assembly Group label (read-only, if applicable)
+
+EOD update convention:
+  At 5pm daily: if contractor has In Progress drawings
+    with no update in the last 24 hours → prompt
+    "Please update your daily progress for [drawings]"
+  Next morning 8am: if no update received →
+    flag to production engineer:
+    "[Contractor] has not submitted EOD update for [drawings]"
+  This is informational — does NOT block contractor from working
+
+─────────────────────────────────────────────────────
+E2. ASSEMBLY STAGE
+─────────────────────────────────────────────────────
+New production instance stage: Assembly
+  Inserted between Welding QC Cleared and Blasting
+  Only for drawings with assemblyGroup set
+  (derived from order.assemblies — not manual)
+
+Assembly stage activation:
+  When ALL drawings in the same assemblyGroup
+  (within the same order) reach Welding QC Cleared:
+    assemblyGateStatus → ready for all drawings in group
+    Production engineer can see this status
+
+Assembly progress view (production engineer):
+  Per assembly group:
+    "Assembly 1 — 6/9 drawings welding complete"
+    "Assembly 1 — 2/9 drawings at fit-up"
+    "Assembly 1 — 1/9 drawings at cutting"
+
+  Clicking assembly group shows list of drawings and stages
+
+TPI Assembly gate:
+  If order.assemblies[n].tpiRequired = true:
+    After all drawings in group reach Weld QC Cleared:
+      Show TPI Assembly Required banner (amber)
+      Fields: inspector name, agency, date, IRN, Drive link
+      HARD GATE: no drawing in the group moves to Blasting
+      until TPI assembly approval is recorded
+
+Internal sign-off for assembly:
+  Production engineer signs off internally first
+  Then TPI if required
+  Both must be cleared before Blasting
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GROUP F — QC ADMIN + MACHINE OPERATOR UPDATES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─────────────────────────────────────────────────────
+F1. QC ADMIN ASSIGNMENT SCREEN
+─────────────────────────────────────────────────────
+New screen in RM Quality module (or Production → QC tab):
+  Visible to QC Admin only
+
+Pending jobs table:
+  Job type|Drawing|Part/RM Unit|Assigned to|Time in queue|Priority
+
+Assignment rules setup:
+  QC Admin sets rules:
+    ruleType: 'process'|'order'|'dayOfWeek'
+    processType: Cutting QC|Weld QC|Blast QC|Paint QC|Assembly QC
+    assignedEngineer: user dropdown (QC Engineer role)
+
+  Example rules:
+    Cutting QC → Engineer A (always)
+    Weld QC → Engineer B (always)
+
+  When QC job is created:
+    1. Find matching rule
+    2. Auto-assign to engineer
+    3. If no rule: job goes to unassigned queue
+
+Manual override:
+  QC Admin clicks any job → reassign to different engineer
+  Override reason: text field (mandatory)
+  Override logged permanently: who, when, reason
+
+QC Engineer screen:
+  Shows only assigned jobs
+  Each job: what to inspect, relevant checklist
+  Clear → automatic alert to next department
+  Reject → alert to operator/contractor + mandatory reason
+
+─────────────────────────────────────────────────────
+F2. MACHINE OPERATOR OFF-CUT RETURN FLOW
+─────────────────────────────────────────────────────
+Current: off-cut recorded at cutting confirmation,
+no store admin verification step.
+
+Add verification step:
+
+After operator records off-cut in cutting confirmation:
+  1. System sends alert to Store Admin:
+     "Off-cut returning: [dimensions] from [machine]
+     [operator name]. Please verify before accepting."
+
+  2. Off-cut lot is created with status: Pending Verification
+     (not Available yet)
+
+  3. Operator physically returns off-cut to bay
+
+  4. Store Admin opens Stock → Off-cuts Pending Verification
+     Shows: lot number, expected dimensions, from machine
+     Action: Verify and Accept | Reject (dimensions don't match)
+
+  5. If Accepted: off-cut lot status → Available
+     Inherits parent lot reservation automatically
+
+  6. If Rejected: alert back to operator with reason
+     Operator must re-measure and resubmit dimensions
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGRESSION CHECKLIST
+Run all items and report PASS or FAIL for each.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ORDERS MODULE:
+[ ] All 9 tabs visible including Transport and Assemblies
+[ ] Assembly Inspection Required toggle in Basic Details
+[ ] Assemblies tab hidden when No, visible when Yes
+[ ] Assemblies tab: add/edit/delete assembly groups
+[ ] Drawings assigned to assemblies via Assemblies tab
+[ ] Drawing Register: Assembly Group column with dropdown
+[ ] Assembly dropdown options match Assemblies tab
+[ ] Changing assignment in either place updates the other
+[ ] PO Line Item column in Drawing Register
+[ ] Drawing Line Item column in Part List (first column)
+[ ] Required Ops badges on parts
+[ ] CSV import Drawing Register: new column order
+[ ] CSV import Part List: new column order with Req Ops
+[ ] Download Template: correct column order for both
+[ ] TPI hold points: 5 checkboxes (added Fit-Up, Blasting)
+[ ] Transport tab: all 4 scope options work
+[ ] Transport tab: correct conditional fields per scope
+[ ] Finance Admin: Assemblies tab hidden, opens Milestones
+[ ] Cancel Order: super_admin only
+
+PURCHASE:
+[ ] CSV BOM strip (test with file from Mac Numbers)
+[ ] CSV line ending normalisation
+[ ] PerUnit weight correct
+[ ] PerKg weight correct
+[ ] GRN creates lots in QC Hold
+
+RM QUALITY:
+[ ] Inspect → Pass QC → Client Inspection
+[ ] Client Inspection Approve → Available
+[ ] Revert functions (super_admin)
+
+STOCK:
+[ ] Status: Available, Reserved, Allocated, Issued, Consumed
+[ ] Reservation screen: reserve lot for order with kg split
+[ ] Multiple reservations on one lot
+[ ] Release reservation (Planning Admin / super_admin)
+[ ] Off-cuts Pending Verification section
+[ ] Store Admin can verify or reject off-cut return
+[ ] Accepted off-cut → Available, inherits parent reservation
+
+PRODUCTION — CROSS-ORDER REGISTER:
+[ ] Shows all active drawings across all orders
+[ ] Assembly Group column populated from order Assemblies tab
+[ ] Parts Cut/Needed calculates correctly
+[ ] RM Types Cut/Needed calculates correctly
+[ ] All 6 filters work correctly
+[ ] Expandable row: parts, RM status, assignment
+
+PRODUCTION — STEP CONFIGURATION:
+[ ] Assembly group shown read-only (cannot edit here)
+[ ] Assembly step auto-shown if drawing has assembly group
+[ ] No Assembly step if blank assembly group
+[ ] Outbound toggle on any step
+[ ] Add outbound step between any two steps
+[ ] Cut/Drill/Bevel confirmation per part
+[ ] Confirmed ops update part.requiredOps
+
+PRODUCTION — RELEASE WIZARD:
+[ ] Step 1: Parts column, RM dots, progress, qty selector
+[ ] Step 1: Expandable row with parts and RM
+[ ] Step 2: Requirements based on selected units
+[ ] Step 2: Req (m) calculated for sections
+[ ] Step 2: 3-tier material display (green/white/amber)
+[ ] Step 3: Smart suggestions by RM type
+[ ] Step 4: Date inputs show 2026
+[ ] Step 4: Machine dropdown filtered by cut capability
+[ ] Step 4: Secondary assignment for uncovered ops
+[ ] Step 5: Contractor assignment unchanged
+
+PRODUCTION — CUTTING CONFIRMATION:
+[ ] Sub-stage checkboxes from machine capabilities
+[ ] Piece marking mandatory — blocks without it
+[ ] Defect entry per part
+[ ] Secondary station routing for uncovered ops
+[ ] Off-cut triggers store admin alert and Pending Verification
+
+PRODUCTION — APPROVAL QUEUE (ENGINEER):
+[ ] Cutting sign-off: dimensional check items
+[ ] Cutting sign-off: surface and finish items
+[ ] Cutting sign-off: secondary ops (conditional)
+[ ] Cutting sign-off: piece marking items
+[ ] Cutting sign-off: measurement input fields
+[ ] Fit-up sign-off: dimensional measurements + diagonals
+[ ] Fit-up sign-off: tack weld checks
+[ ] Fit-up TPI gate if fit_up in tpiHoldPoints
+[ ] Welding sign-off: visual inspection 9 items
+[ ] Welding sign-off: NDT toggle and fields
+[ ] Welding TPI gate
+[ ] Blasting sign-off: profile readings auto Pass/Fail
+[ ] Blasting sign-off: salt test auto Pass/Fail
+[ ] Blasting sign-off: 4-hour primer timer
+[ ] Blasting TPI gate if blasting in tpiHoldPoints
+[ ] Painting per coat: env conditions auto check
+[ ] Painting: dry time enforcement between coats
+[ ] Painting: total DFT after all coats
+
+ASSEMBLY STAGE:
+[ ] Assembly stage only activates when all group drawings
+    at Weld QC Cleared
+[ ] Progress view: X/9 drawings complete
+[ ] Internal sign-off by production engineer
+[ ] TPI gate if assembly.tpiRequired = true
+[ ] All drawings in group move to Blasting only after
+    assembly approval (internal + TPI if required)
+
+CONTRACTOR DASHBOARD:
+[ ] Part status table: 4 categories with correct counts
+[ ] Batch notification when parts cut and QC cleared
+[ ] Drawing link, weld spec, part count visible
+[ ] Assembly Group label visible (read-only)
+[ ] EOD prompt at 5pm if no update
+[ ] Production engineer flagged at 8am for missing updates
+
+QC ADMIN:
+[ ] QC assignment rules setup screen
+[ ] Rules route jobs automatically
+[ ] Manual override with logged reason
+[ ] Unassigned queue when no rule matches
+[ ] QC Engineer sees only assigned jobs
+
+MASTERS:
+[ ] Machine capabilities checkboxes save
+[ ] Machine capabilities filter production dropdowns
+[ ] Pillar Drill 1 seed machine with [drill, mark]
+[ ] Materials Library 528 entries, search works
+
+ROLE ACCESS:
+[ ] Machine operator: own queue + Tools only
+[ ] Contractor: own drawings + Tools + assembly label
+[ ] Finance Admin: Milestones only, Assemblies hidden
+[ ] Store Admin: Stock (with reservation) + GRN + Dashboard
+[ ] QC Admin: QC screens + assignment rules
+[ ] Super Admin: everything including revert/cancel
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+BUILD AND REPORT REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. /plan first — show complete plan before any code
+
+2. Build groups in order A → B → C → D → E → F
+   npm run build after each group — zero errors required
+
+3. Run complete regression checklist after all groups
+
+4. For any FAIL: fix immediately, re-test, re-report
+
+5. Update DEPENDENCY-MAP.md with any new dependencies
+   added during implementation
+
+6. Final report must include:
+   - Every function added
+   - Every state field added
+   - Every component modified
+   - Confirmation all regression items PASS
+
+Do not mark complete until:
+  npm run build = zero errors AND
+  All regression items = PASS AND
+  DEPENDENCY-MAP.md updated

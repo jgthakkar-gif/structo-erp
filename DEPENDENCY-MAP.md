@@ -1,6 +1,54 @@
 # STRUCTO ERP — DEPENDENCY MAP
-# Version 2.5 — April 2026
-# Session 4 Phase 4 — Purchase module fixes: GRN reversal, rate entry, GRN redesign, lot weight exclusions
+# Version 2.6 — April 2026
+# Session 4 Phase 5 — Production Release Wizard v2: per-RM-unit machine assignment, blasting/painting contractors, TPI checkboxes
+#
+# RELEASE WIZARD v2 CHANGES (ProductionReleaseWizard, confirm(), buildProductionSteps):
+#
+#   machineAsgn state — KEY FORMAT CHANGED:
+#     OLD: { [matCode]: { machineId, lotId, startDate, endDate, secondaryAssignments } }
+#     NEW: { [matCode::lotId]: { lotId, matCode, machineId, machineName, cuttingBy,
+#              startDate, endDate, secondaryAssignments, dxfLink } }
+#     updAsgn(rmUnitKey, field, val) — key is now matCode::lotId
+#     Step 4 UI: per-lot rows grouped by matCode; Cutting By (machine_operator) + DXF Link columns
+#     Bulk assign: dropdown per matCode group → assigns machineId to all available lots in group
+#     missingMachine: at least one lot per matCode must have machineId assigned
+#
+#   machineAssignments[] NEW FIELDS (written by confirm(), read by MachineOperatorQueue):
+#     .cuttingBy (string) — machine operator username
+#     .dxfLink (string) — Google Drive link to cutting DXF
+#     PRESERVED: .id, .lotId, .machineId, .machineName, .matCode,
+#                .cuttingStarted, .cuttingComplete, .releaseId (MachineOperatorQueue reads these)
+#
+#   contAsgn state — NEW FIELDS:
+#     .blastingContractorId (string) — contractor for blasting stage
+#     .paintingContractorId (string) — contractor for painting stage(s)
+#     .tpiStages (string[]) — stages requiring TPI; pre-filled from order.quality.tpiHoldPoints
+#     PRESERVED: .contractorId (fit-up/welding), .stages, .pinnedEngineerId
+#
+#   drawings[] payload NEW FIELDS (written by confirm(), stored in release):
+#     .blastingContractorId, .blastingContractorName
+#     .paintingContractorId, .paintingContractorName
+#     .tpiStages (string[])
+#
+#   buildProductionSteps() CHANGES:
+#     cutting step: now includes dxfLink + cuttingBy fields
+#     blasting step: contractorId ← ca.blastingContractorId (was empty string "")
+#     paint_coat_N steps: contractorId ← ca.paintingContractorId (was same as fit-up contractor)
+#     TPI source: ca.tpiStages (if set) else order.quality.tpiHoldPoints (was only tpiHoldPoints)
+#     machineId lookup: scans Object.entries(machAsgnSnap) for first matching matCode
+#
+#   Step 1 NEW COLUMNS: "Parts", "RM Units", "Stock" (replaces "Parts / RM" + "Progress")
+#     Parts: fab parts count + unique size types
+#     RM Units: count of available lots matching drawing's matCodes (green if >0, amber if 0)
+#     Stock: badge — Sufficient/Partial/Missing based on availKg vs totalReqKg
+#     colSpan in expanded row: 10 (was 9)
+#
+#   Step 2 NEW COLUMN: "Already Cut"
+#     Computed: instances.filter(matching lotId for this matCode).reduce(wtConsumed)
+#     Shows kg already cut from lots assigned to these drawings; gray "—" when zero
+#     colSpan in expanded row: 10 (was 9)
+#
+# Prior: v2.5 — Purchase module fixes: GRN reversal, rate entry, GRN redesign, lot weight exclusions
 # Updated:
 #   FIX 1 — GRN REVERSAL (reverseGRN in PODetail):
 #     OLD: setStock(prev => prev.filter(s => s.grnId !== grnId))  [DELETE]
