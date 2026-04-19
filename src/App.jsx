@@ -17349,7 +17349,7 @@ const STAGE_TO_PROCESS = {
   assembly:'Assembly QC',
 };
 
-const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, qcRules, setQcRules, overrideLog, setOverrideLog }) => {
+const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog }) => {
   const isAdmin = ["super_admin","qc_admin"].includes(user.role);
   const [tab, setTab] = useState("cutting_qc");
 
@@ -17440,69 +17440,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
 
     const rmGroups = Object.values(rmUnitGroups);
 
-    // ── DPR-level QC queue (fitup_qc / weld_qc) ──────────────────────────────
-    const isFitupTab = stages.includes("fitup");
-    const isWeldTab  = stages.includes("welding") || stages.includes("tpi_weld");
-    const dprQcStage = isFitupTab ? "fitup_qc" : isWeldTab ? "weld_qc" : null;
-    const dprQcQueue = dprQcStage ? (dprs||[]).filter(d=>d.currentStage===dprQcStage) : [];
-
-    const [selDprQc,    setSelDprQc]    = useState(null);
-    const [dprChecks,   setDprChecks]   = useState({});
-    const [dprReject,   setDprReject]   = useState(false);
-    const [dprRejectReason, setDprRejectReason] = useState("");
-    const [dprDimReadings,  setDprDimReadings]  = useState({});
-
-    const dprChecklist = isFitupTab ? (STAGE_CHECKLISTS.fitup||[]) : (STAGE_CHECKLISTS.welding||[]);
-    const dprAllChecked = dprChecklist.length===0 || dprChecklist.every(c=>dprChecks[c]);
-
-    const doDprApprove = (dpr) => {
-      const ts = new Date().toISOString();
-      const nextDprStage = isFitupTab ? "welding" : "complete";
-      const nextDprStatus = isFitupTab ? "in_progress" : "complete";
-      setDprs(prev=>prev.map(d=>d.id!==dpr.id?d:{...d,
-        currentStage:nextDprStage, currentStatus:nextDprStatus,
-        ...(isFitupTab?{fitupQcApprovedAt:ts,fitupQcApprovedBy:user.username}:{weldQcApprovedAt:ts,weldQcApprovedBy:user.username}),
-        stageHistory:[...(d.stageHistory||[]),{
-          stage:dprQcStage, action:"approved", by:user.username, at:ts,
-          checklist:Object.keys(dprChecks).filter(k=>dprChecks[k]),
-          dimReadings:dprDimReadings
-        }]
-      }));
-      // Advance instances: fitup_qc approve → instances go to welding/pending; weld_qc → complete
-      setInstances(prev=>prev.map(i=>{
-        if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
-        if(i.currentStatus==="pending_supervisor"&&(isFitupTab?i.currentStage==="fitup":i.currentStage==="welding")) {
-          const ns=isFitupTab?"welding":"complete";
-          return {...i,currentStage:ns,currentStatus:"pending",
-            stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,status:"approved",approvedBy:user.username,approvedAt:ts}]};
-        }
-        return i;
-      }));
-      setSelDprQc(null); setDprChecks({}); setDprReject(false); setDprRejectReason(""); setDprDimReadings({});
-    };
-
-    const doDprReject = (dpr) => {
-      if(!dprRejectReason.trim()) return;
-      const ts = new Date().toISOString();
-      const reworkStage  = isFitupTab ? "fitup" : "welding";
-      setDprs(prev=>prev.map(d=>d.id!==dpr.id?d:{...d,
-        currentStage:reworkStage, currentStatus:"rework",
-        stageHistory:[...(d.stageHistory||[]),{
-          stage:dprQcStage, action:"rejected_rework", by:user.username, at:ts, reason:dprRejectReason
-        }]
-      }));
-      setInstances(prev=>prev.map(i=>{
-        if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
-        if(i.currentStatus==="pending_supervisor") {
-          return {...i,currentStage:reworkStage,currentStatus:"in_progress",rejectionCount:(i.rejectionCount||0)+1,
-            stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,status:"rejected",rejectedBy:user.username,rejectedAt:ts,reason:dprRejectReason}]};
-        }
-        return i;
-      }));
-      setSelDprQc(null); setDprChecks({}); setDprReject(false); setDprRejectReason("");
-    };
-
-    if(rmGroups.length===0&&dprQcQueue.length===0) return (
+    if(rmGroups.length===0) return (
       <div style={{padding:"40px 20px",textAlign:"center",color:T.textLow,fontSize:13}}>
         ✓ No pending {stages[0].replace(/_/g," ")} inspections
       </div>
@@ -17515,16 +17453,14 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
       const allChecked = checklist.length>0 && checklist.every(item=>checks[item]);
       const doApprove = () => {
         const ts = new Date().toISOString();
-        const isFitupQc  = stages.includes("fitup");
-        const isWeldQc   = stages.includes("welding") || stages.includes("tpi_weld");
-
-        // Advance instances
         setInstances(prev=>prev.map(inst=>{
           if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
           const nextStage = STAGE_NEXT[inst.currentStage]||inst.currentStage;
+          // After cutting_qc passes, move to fitup and notify weld contractor
+          const nextStatus = nextStage==="fitup"||nextStage==="welding" ? "pending" : "pending";
           return {...inst,
             currentStage: nextStage,
-            currentStatus: "pending",
+            currentStatus: nextStatus,
             stageHistory: [...(inst.stageHistory||[]),{
               stage:inst.currentStage, status:"approved",
               approvedBy:user.username, approvedAt:ts,
@@ -17533,58 +17469,16 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
             }]
           };
         }));
-
-        // Advance the DPR when fit-up QC or weld QC is approved
-        if ((isFitupQc || isWeldQc) && setDprs) {
-          const drawingId = selGroup.parts[0]?.drawingId;
-          const orderId   = selGroup.parts[0]?.orderId;
-          if (drawingId && orderId) {
-            setDprs(prev=>prev.map(dpr=>{
-              if (dpr.drawingId !== drawingId || dpr.orderId !== orderId) return dpr;
-              if (isFitupQc && dpr.currentStage === "fitup_qc") {
-                return {...dpr,
-                  currentStage:"welding", currentStatus:"in_progress",
-                  fitupQcApprovedAt:ts, fitupQcApprovedBy:user.username,
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"fitup_qc", action:"approved",
-                    by:user.username, at:ts,
-                    checklist:Object.keys(checks).filter(k=>checks[k])
-                  }]
-                };
-              }
-              if (isWeldQc && dpr.currentStage === "weld_qc") {
-                return {...dpr,
-                  currentStage:"complete", currentStatus:"complete",
-                  weldQcApprovedAt:ts, weldQcApprovedBy:user.username,
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"weld_qc", action:"approved",
-                    by:user.username, at:ts,
-                    checklist:Object.keys(checks).filter(k=>checks[k])
-                  }]
-                };
-              }
-              return dpr;
-            }));
-          }
-        }
-
         setSelRmUnit(null); setChecks({}); setDimReadings({}); setRejectMode(false); setRejectReason("");
       };
       const doReject = () => {
         if(!rejectReason.trim()) return;
         const ts = new Date().toISOString();
-        const isFitupQc = stages.includes("fitup");
-        const isWeldQc  = stages.includes("welding") || stages.includes("tpi_weld");
-        // Instances: rework back to fitup (fit-up rejection) or welding (weld rejection)
-        const rejectToStage  = isFitupQc ? "fitup"    : isWeldQc ? "welding"    : "cutting";
-        const rejectToStatus = isFitupQc ? "in_progress" : isWeldQc ? "in_progress" : "pending";
         setInstances(prev=>prev.map(inst=>{
           if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
           return {...inst,
-            currentStage: rejectToStage,
-            currentStatus: rejectToStatus,
-            rejectionCount: (inst.rejectionCount||0)+1,
-            qualityConcernFlag: (inst.rejectionCount||0)>=1,
+            currentStage:"cutting",
+            currentStatus:"pending",
             stageHistory:[...(inst.stageHistory||[]),{
               stage:inst.currentStage, status:"rejected",
               rejectedBy:user.username, rejectedAt:ts,
@@ -17592,35 +17486,6 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
             }]
           };
         }));
-        // DPR: push back to fitup or welding for rework
-        if ((isFitupQc || isWeldQc) && setDprs) {
-          const drawingId = selGroup.parts[0]?.drawingId;
-          const orderId   = selGroup.parts[0]?.orderId;
-          if (drawingId && orderId) {
-            setDprs(prev=>prev.map(dpr=>{
-              if (dpr.drawingId !== drawingId || dpr.orderId !== orderId) return dpr;
-              if (isFitupQc && dpr.currentStage === "fitup_qc") {
-                return {...dpr,
-                  currentStage:"fitup", currentStatus:"rework",
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"fitup_qc", action:"rejected_rework",
-                    by:user.username, at:ts, reason:rejectReason
-                  }]
-                };
-              }
-              if (isWeldQc && dpr.currentStage === "weld_qc") {
-                return {...dpr,
-                  currentStage:"welding", currentStatus:"rework",
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"weld_qc", action:"rejected_rework",
-                    by:user.username, at:ts, reason:rejectReason
-                  }]
-                };
-              }
-              return dpr;
-            }));
-          }
-        }
         setSelRmUnit(null); setChecks({}); setRejectMode(false); setRejectReason("");
       };
 
@@ -17733,146 +17598,9 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
       );
     }
 
-    // Queue list view — DPR section first, then instance section
+    // Queue list view
     return (
-      <div>
-        {/* ── DPR-level QC queue ──────────────────────────────────────────── */}
-        {dprQcQueue.length>0&&(
-          <div style={{marginBottom:24}}>
-            <div style={{fontSize:13,fontWeight:800,color:T.amber,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
-              <span>📋 DRAWING-LEVEL QC — {isFitupTab?"FIT-UP QC":"WELD QC"}</span>
-              <span style={{background:T.amber,color:"#000",fontSize:10,fontWeight:800,borderRadius:8,padding:"1px 6px"}}>{dprQcQueue.length}</span>
-            </div>
-            {selDprQc ? (()=>{
-              const dpr=selDprQc;
-              const order=(orders||[]).find(o=>o.id===dpr.orderId);
-              const drawing=order?(order.drawings||[]).find(d=>d.id===dpr.drawingId):null;
-              const drgParts=order?(order.parts||[]).filter(p=>p.drawingId===dpr.drawingId&&p.fabType==="Fabricate"):[];
-              return (
-                <div style={{...css.card,border:`1px solid ${T.amber}44`}}>
-                  <button onClick={()=>{setSelDprQc(null);setDprChecks({});setDprReject(false);setDprRejectReason("");}} style={{...css.btn.ghost,marginBottom:14}}>← Back to queue</button>
-                  {/* Header */}
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
-                    <div>
-                      <div style={{fontFamily:T.fontMono,fontWeight:800,color:T.accentHi,fontSize:16}}>{dpr.drawingNo}</div>
-                      <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{dpr.orderId} · {order?.clientId||""}</div>
-                      {drawing?.title&&<div style={{fontSize:11,color:T.textLow,marginTop:1}}>{drawing.title}</div>}
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:11,fontWeight:700,color:T.amber,padding:"4px 12px",background:T.amberBg,borderRadius:4,border:`1px solid ${T.amber}44`}}>
-                        {isFitupTab?"Fit-Up QC":"Weld QC"} Pending
-                      </div>
-                      <div style={{fontSize:10,color:T.textMid,marginTop:4}}>{drgParts.length} parts · {(dpr.totalWt/1000).toFixed(2)}T</div>
-                    </div>
-                  </div>
-                  {/* Contractor info */}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16,padding:"10px 14px",background:T.bgInput,borderRadius:6}}>
-                    <div>
-                      <div style={{fontSize:10,color:T.textLow,marginBottom:2}}>FIT-UP CONTRACTOR</div>
-                      <div style={{fontSize:13,fontWeight:600,color:T.text}}>{dpr.fitupContractorName||"—"}</div>
-                      {dpr.fitupStartedAt&&<div style={{fontSize:10,color:T.textLow,marginTop:1}}>Started: {dpr.fitupStartedAt.slice(0,10)}</div>}
-                      {dpr.fitupCompleteAt&&<div style={{fontSize:10,color:T.green,marginTop:1}}>Completed: {dpr.fitupCompleteAt.slice(0,10)}</div>}
-                    </div>
-                    <div>
-                      <div style={{fontSize:10,color:T.textLow,marginBottom:2}}>WELDING CONTRACTOR</div>
-                      <div style={{fontSize:13,fontWeight:600,color:T.text}}>{dpr.weldContractorName||"—"}</div>
-                    </div>
-                  </div>
-                  {/* Parts summary */}
-                  <div style={{marginBottom:16}}>
-                    <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>PARTS IN THIS DRAWING</div>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      {drgParts.map(p=>(
-                        <span key={p.markNo} style={{fontFamily:T.fontMono,fontSize:10,color:T.accentHi,background:`${T.accent}18`,borderRadius:3,padding:"2px 6px",border:`1px solid ${T.accent}33`}}>
-                          {p.markNo}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Checklist */}
-                  <div style={{marginBottom:16}}>
-                    <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>
-                      {isFitupTab?"FIT-UP":"WELDING"} QC CHECKLIST
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                      {dprChecklist.map(item=>(
-                        <label key={item} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",
-                          background:dprChecks[item]?T.greenBg:T.bgInput,borderRadius:4,cursor:"pointer",
-                          border:`1px solid ${dprChecks[item]?T.green:T.border}`,fontSize:12}}>
-                          <input type="checkbox" checked={!!dprChecks[item]} onChange={e=>setDprChecks(p=>({...p,[item]:e.target.checked}))} />
-                          <span style={{color:dprChecks[item]?T.green:T.text}}>{item}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Dimension readings */}
-                  <div style={{marginBottom:16}}>
-                    <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>KEY DIMENSIONS (mm) — optional</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                      {["Overall Length","Overall Width","Overall Height","Diagonal 1","Diagonal 2"].map(dim=>(
-                        <div key={dim}>
-                          <label style={{...css.label,fontSize:10}}>{dim}</label>
-                          <input type="number" value={dprDimReadings[dim]||""} onChange={e=>setDprDimReadings(p=>({...p,[dim]:e.target.value}))}
-                            style={{...css.input,fontSize:11}} placeholder="mm" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Actions */}
-                  {!dprReject?(
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>doDprApprove(dpr)} disabled={!dprAllChecked}
-                        style={{...css.btn.green,flex:1,padding:"12px 0",fontSize:14,opacity:dprAllChecked?1:0.45}}>
-                        ✓ Approve {isFitupTab?"Fit-Up QC → Advance to Welding":"Weld QC → Mark Drawing Complete"}
-                        {!dprAllChecked&&<span style={{fontSize:11,marginLeft:6}}>({dprChecklist.filter(c=>!dprChecks[c]).length} items remaining)</span>}
-                      </button>
-                      <button onClick={()=>setDprReject(true)} style={{...css.btn.ghost,color:T.red,padding:"12px 16px"}}>✕ Reject</button>
-                    </div>
-                  ):(
-                    <div style={{padding:12,background:T.redBg,borderRadius:6,border:`1px solid ${T.red}44`}}>
-                      <div style={{fontSize:12,fontWeight:700,color:T.red,marginBottom:8}}>Rejection Reason — Drawing sent back for rework</div>
-                      <textarea value={dprRejectReason} onChange={e=>setDprRejectReason(e.target.value)}
-                        rows={2} placeholder="State reason for rejection..." style={{...css.input,width:"100%",resize:"vertical",marginBottom:8}} />
-                      <div style={{display:"flex",gap:8}}>
-                        <button onClick={()=>doDprReject(dpr)} disabled={!dprRejectReason.trim()}
-                          style={{...css.btn.primary,background:T.red,opacity:dprRejectReason.trim()?1:0.45}}>Confirm Reject</button>
-                        <button onClick={()=>setDprReject(false)} style={css.btn.ghost}>Cancel</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })():(
-              <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12,marginBottom:16}}>
-                <thead>
-                  <tr style={{background:T.bgInput}}>
-                    {["Drawing No","Order","Fit-Up Contractor","Weld Contractor","Parts","Started","Action"].map(h=>(
-                      <th key={h} style={{padding:"8px 10px",fontSize:10,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {dprQcQueue.map(dpr=>(
-                    <tr key={dpr.id} style={{borderBottom:`1px solid ${T.border}`,cursor:"pointer"}} onClick={()=>{setSelDprQc(dpr);setDprChecks({});setDprReject(false);}}>
-                      <td style={{padding:"8px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.accentHi}}>{dpr.drawingNo}</td>
-                      <td style={{padding:"8px 10px",fontSize:11}}>{dpr.orderId}</td>
-                      <td style={{padding:"8px 10px",fontSize:11}}>{dpr.fitupContractorName||"—"}</td>
-                      <td style={{padding:"8px 10px",fontSize:11}}>{dpr.weldContractorName||"—"}</td>
-                      <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>{dpr.totalParts}</td>
-                      <td style={{padding:"8px 10px",fontSize:11,color:T.textMid}}>{(isFitupTab?dpr.fitupCompleteAt:dpr.weldCompleteAt)?.slice(0,10)||"—"}</td>
-                      <td style={{padding:"8px 10px"}}>
-                        <button style={{...css.btn.amber,fontSize:11,padding:"3px 10px"}} onClick={e=>{e.stopPropagation();setSelDprQc(dpr);setDprChecks({});setDprReject(false);}}>Inspect →</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-        {/* ── Instance-level QC queue (cutting QC only for this tab) ──────── */}
-        {rmGroups.length>0&&(
-        <div style={{overflowX:"auto"}}>
+      <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
           <thead>
             <tr style={{background:T.bgInput}}>
@@ -17902,13 +17630,6 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
             })}
           </tbody>
         </table>
-        </div>
-        )}
-        {rmGroups.length===0&&dprQcQueue.length===0&&(
-          <div style={{padding:"40px 20px",textAlign:"center",color:T.textLow,fontSize:13}}>
-            ✓ No pending {(stages[0]||"").replace(/_/g," ")} inspections
-          </div>
-        )}
       </div>
     );
   };
@@ -17920,16 +17641,11 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
       <div style={{display:"flex",gap:0,marginBottom:20,borderBottom:`1px solid ${T.border}`,flexWrap:"wrap"}}>
         {allTabs.map(t=>{
           const isInsp=INSP_TABS.find(x=>x.id===t.id);
-          const instPending=isInsp?(instances||[]).filter(i=>
+          const pendingCount=isInsp?(instances||[]).filter(i=>
             i.currentStatus==="pending_supervisor"&&
             isInsp.stages.includes(i.currentStage)&&
             (!i.assignedEngineer||i.assignedEngineer===user.id||i.assignedEngineer===user.username)
           ).length:0;
-          // Also count DPRs waiting at the QC gate for fitup/weld tabs
-          const dprPending=isInsp&&(t.id==="fitup"||t.id==="weld")
-            ?(dprs||[]).filter(d=>t.id==="fitup"?d.currentStage==="fitup_qc":d.currentStage==="weld_qc").length
-            :0;
-          const pendingCount=instPending+dprPending;
           return (
             <button key={t.id} onClick={()=>setTab(t.id)} style={{
               padding:"10px 16px",fontSize:12,fontWeight:tab===t.id?700:400,
@@ -18125,39 +17841,187 @@ const RmUnitGroupRow = ({ rmUnitId, insts, T, css, STAGE_SEQ_LABELS }) => {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION ENGINEER SCREEN
-// Cross-order DPR view: drawing-level status, contractor, parts readiness, interventions
+// Bottleneck-first DPR view — one status per drawing showing exactly what's blocking
 // Accessible to production_engineer and super_admin
 // ═══════════════════════════════════════════════════════════════════════════════
-const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setInstances, contractors, onBack }) => {
+const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setInstances, contractors, pos, stock, issueRequests, purchaseReqs, onBack }) => {
   const [filterOrder,      setFilterOrder]      = useState("");
   const [filterStage,      setFilterStage]      = useState("");
   const [filterContractor, setFilterContractor] = useState("");
   const [stuckOnly,        setStuckOnly]        = useState(false);
   const [expanded,         setExpanded]         = useState(new Set());
-  const [reassignModal,    setReassignModal]    = useState(null); // { dprId, field:"fitup"|"weld" }
+  const [reassignModal,    setReassignModal]    = useState(null);
   const [reassignVal,      setReassignVal]      = useState("");
-  const [advanceModal,     setAdvanceModal]     = useState(null); // { dpr }
+  const [advanceModal,     setAdvanceModal]     = useState(null);
   const [advanceNote,      setAdvanceNote]      = useState("");
 
   const today_ms = Date.now();
 
-  // ── Enrich each DPR with computed fields ──────────────────────────────────
+  // ── Bottleneck status ladder ─────────────────────────────────────────────────
+  // Returns the single most-blocking status for a drawing + contextual detail
+  const getBottleneck = (dpr, order, drawing, drgParts, drgInsts) => {
+    const matCodes = [...new Set(drgParts.map(p => p.matCode).filter(Boolean))];
+
+    // 1. RM NOT ORDERED — no PO line covers this matCode
+    const unorderedMats = matCodes.filter(mc => {
+      const hasPo = (pos||[]).some(po =>
+        (po.lines||[]).some(l => normMatCode(l.matCode) === normMatCode(mc) && l.status !== "cancelled")
+      );
+      const hasPr = (purchaseReqs||[]).some(pr =>
+        (pr.lines||[]).some(l => normMatCode(l.matCode) === normMatCode(mc))
+      );
+      return !hasPo && !hasPr;
+    });
+    if (unorderedMats.length > 0) return {
+      code: "rm_not_ordered", priority: 1,
+      color: T.red, bg: T.redBg, icon: "🔴",
+      label: "RM Not Ordered",
+      detail: unorderedMats.join(", "),
+    };
+
+    // 2. RM NOT RECEIVED — PO exists but no GRN
+    const unreceived = matCodes.filter(mc => {
+      const po = (pos||[]).find(p => (p.lines||[]).some(l => normMatCode(l.matCode) === normMatCode(mc)));
+      if (!po) return false;
+      const line = (po.lines||[]).find(l => normMatCode(l.matCode) === normMatCode(mc));
+      return line && (line.wtReceived||0) < (line.wtOrdered||0) * 0.9;
+    });
+    if (unreceived.length > 0) {
+      const poRef = (pos||[]).find(p => (p.lines||[]).some(l => normMatCode(l.matCode) === normMatCode(unreceived[0])))?.id || "—";
+      return {
+        code: "rm_not_received", priority: 2,
+        color: T.red, bg: T.redBg, icon: "🔴",
+        label: "RM Not Received",
+        detail: `${unreceived.join(", ")} · PO: ${poRef}`,
+      };
+    }
+
+    // 3. RM NOT ISSUED — stock exists but no issue request issued
+    const rmUnitIds = drgInsts.map(i => i.rmUnitId).filter(Boolean);
+    const unissued = rmUnitIds.filter(ruId => {
+      const req = (issueRequests||[]).find(r => r.rmUnitId === ruId);
+      return !req || req.status === "pending" || req.status === "rejected";
+    });
+    if (unissued.length > 0 && drgInsts.length > 0) {
+      const pendingReqs = unissued.filter(ruId => {
+        const req = (issueRequests||[]).find(r => r.rmUnitId === ruId);
+        return req?.status === "pending";
+      });
+      return {
+        code: "rm_not_issued", priority: 3,
+        color: T.amber, bg: T.amberBg, icon: "🟡",
+        label: pendingReqs.length > 0 ? "RM Issue Pending (Store)" : "RM Not Issued",
+        detail: `${unissued.length} sheet${unissued.length !== 1 ? "s" : ""} · ${matCodes.join(", ")}`,
+      };
+    }
+
+    // 4-7. Parts tracking — derive from instances
+    const DONE_ST = new Set(["cutting_qc","fitup","fit_up","welding","blasting","painting","dispatch","complete"]);
+    const unique = {};
+    drgInsts.filter(i => !i.isSideCut).forEach(i => {
+      if (!unique[i.markNo]) unique[i.markNo] = i;
+    });
+    const instList = Object.values(unique);
+    const total = drgParts.length;
+
+    if (instList.length === 0 && total > 0) return {
+      code: "not_released", priority: 3,
+      color: T.textMid, bg: "transparent", icon: "⬜",
+      label: "Not Yet Released",
+      detail: `${total} parts planned`,
+    };
+
+    const notStarted   = instList.filter(i => i.currentStage === "cutting" && i.currentStatus === "pending");
+    const inCutting    = instList.filter(i => i.currentStage === "cutting" && i.currentStatus !== "pending");
+    const inCuttingQc  = instList.filter(i => i.currentStage === "cutting_qc" || i.currentStatus === "pending_supervisor" && i.currentStage === "cutting_qc");
+    const cutDone      = instList.filter(i => DONE_ST.has(i.currentStage));
+    const notCollected = instList.filter(i => DONE_ST.has(i.currentStage) && i.currentStatus === "pending_collection");
+
+    // 4. Parts not yet cut
+    if (notStarted.length > 0 && cutDone.length === 0) return {
+      code: "not_cut", priority: 4,
+      color: T.amber, bg: T.amberBg, icon: "🟡",
+      label: "Parts Not Cut",
+      detail: `${notStarted.length} parts not started · ${inCutting.length} in cutting`,
+    };
+
+    // 5. Cutting in progress (partial)
+    if (inCutting.length > 0 && cutDone.length < total) {
+      const cuttingConNames = [...new Set(inCutting.map(i => i.cuttingContractorName).filter(Boolean))];
+      return {
+        code: "cutting_progress", priority: 5,
+        color: T.accent, bg: `${T.accent}12`, icon: "🔵",
+        label: `Cutting in Progress`,
+        detail: `${cutDone.length}/${total} done · ${cuttingConNames.join(", ") || "—"}`,
+        parts: inCutting.map(i => i.markNo),
+        contractor: cuttingConNames[0] || "—",
+      };
+    }
+
+    // 6. Cut parts in QC
+    if (inCuttingQc.length > 0) {
+      const cuttingConNames = [...new Set(inCuttingQc.map(i => i.cuttingContractorName).filter(Boolean))];
+      return {
+        code: "cutting_qc", priority: 6,
+        color: T.amber, bg: T.amberBg, icon: "🟡",
+        label: "Cut Parts in QC",
+        detail: `${inCuttingQc.length} parts pending QC · ${cuttingConNames.join(", ") || "—"}`,
+        parts: inCuttingQc.map(i => i.markNo),
+        contractor: cuttingConNames[0] || "—",
+      };
+    }
+
+    // 7. Cut parts not collected
+    if (notCollected.length > 0) {
+      const collectConNames = [...new Set(notCollected.map(i => i.assignedContractorName).filter(Boolean))];
+      return {
+        code: "not_collected", priority: 7,
+        color: T.amber, bg: T.amberBg, icon: "🟠",
+        label: "Parts Not Collected",
+        detail: `${notCollected.length} parts ready, awaiting collection · ${collectConNames.join(", ") || "—"}`,
+        parts: notCollected.map(i => i.markNo),
+        contractor: collectConNames[0] || "—",
+      };
+    }
+
+    // 8-13. DPR stage
+    const dprStageMap = {
+      pending:    { code:"fitup_pending",  priority:8,  color:T.textMid, bg:"transparent",      icon:"⬜", label:"Awaiting Fit-Up Start" },
+      fitup:      { code:"fitup",          priority:9,  color:T.accent,  bg:`${T.accent}12`,    icon:"🔵", label:"Fit-Up in Progress" },
+      fitup_qc:   { code:"fitup_qc",       priority:10, color:T.amber,   bg:T.amberBg,          icon:"🟡", label:"Fit-Up QC Pending" },
+      welding:    { code:"welding",        priority:11, color:T.accent,  bg:`${T.accent}12`,    icon:"🔵", label:"Welding in Progress" },
+      weld_qc:    { code:"weld_qc",        priority:12, color:T.amber,   bg:T.amberBg,          icon:"🟡", label:"Weld QC Pending" },
+      complete:   { code:"complete",       priority:15, color:T.green,   bg:T.greenBg,          icon:"✅", label:"Complete" },
+    };
+    const dm = dprStageMap[dpr.currentStage];
+    if (dm) {
+      let detail = "";
+      if (dpr.currentStage === "fitup" || dpr.currentStage === "fitup_qc")
+        detail = dpr.fitupContractorName || "—";
+      if (dpr.currentStage === "welding" || dpr.currentStage === "weld_qc")
+        detail = dpr.weldContractorName || "—";
+      return { ...dm, detail };
+    }
+
+    return { code:"unknown", priority:99, color:T.textLow, bg:"transparent", icon:"❓", label:"Unknown", detail:"" };
+  };
+
+  // ── Enrich each DPR ───────────────────────────────────────────────────────
   const enriched = (dprs||[]).map(dpr => {
     const order   = (orders||[]).find(o => o.id === dpr.orderId);
     const drawing = order ? (order.drawings||[]).find(d => d.id === dpr.drawingId) : null;
+    const drgParts= order ? (order.parts||[]).filter(p => p.drawingId === dpr.drawingId && p.fabType === "Fabricate") : [];
+    const drgInsts= (instances||[]).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId);
+    const asmGroup= order && drawing ? (order.assemblies||[]).find(a => a.id === drawing.assemblyGroup) : null;
 
     // Parts readiness
-    const drgParts = order ? (order.parts||[]).filter(p => p.drawingId === dpr.drawingId && p.fabType === "Fabricate") : [];
-    const total    = drgParts.length;
-    const DONE_ST  = new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-    const drgInsts = (instances||[]).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
-    const unique   = {};
-    drgInsts.forEach(i => { if (!unique[i.markNo]) unique[i.markNo] = i.currentStage; });
-    const cutCleared = Object.values(unique).filter(s => DONE_ST.has(s)).length;
+    const DONE_ST = new Set(["cutting_qc","fitup","fit_up","welding","blasting","painting","dispatch","complete"]);
+    const unique  = {};
+    drgInsts.filter(i => !i.isSideCut).forEach(i => { if (!unique[i.markNo]) unique[i.markNo] = i; });
+    const instList   = Object.values(unique);
+    const total      = drgParts.length;
+    const cutCleared = instList.filter(i => DONE_ST.has(i.currentStage)).length;
     const pct        = total > 0 ? Math.round(cutCleared / total * 100) : 0;
-
-    // Assembly group
-    const asmGroup = order && drawing ? (order.assemblies||[]).find(a => a.id === drawing.assemblyGroup) : null;
 
     // Days at current stage
     const lastHistory = (dpr.stageHistory||[]).slice(-1)[0];
@@ -18165,12 +18029,34 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
     const daysAtStage = stageEnteredAt
       ? Math.floor((today_ms - new Date(stageEnteredAt).getTime()) / 86400000)
       : 0;
+    const isStuck = daysAtStage > 5 && dpr.currentStage !== "complete";
 
-    // Stuck flag: >5 days at same non-complete stage
-    const isStuck = daysAtStage > 5 && dpr.currentStage !== 'complete';
+    const bottleneck = getBottleneck(dpr, order, drawing, drgParts, drgInsts);
 
-    return { ...dpr, order, drawing, total, cutCleared, pct, asmGroup, daysAtStage, isStuck };
+    // RM units for this drawing
+    const rmUnits = [...new Set(drgInsts.map(i => i.rmUnitId).filter(Boolean))].map(ruId => {
+      const inst = drgInsts.find(i => i.rmUnitId === ruId);
+      const req  = (issueRequests||[]).find(r => r.rmUnitId === ruId);
+      const lot  = (stock||[]).find(s => s.id === inst?.lotId || s.id === req?.lotId);
+      return { ruId, matCode: inst?.matCode || "", cuttingContractor: inst?.cuttingContractorName || "—",
+        issueStatus: req ? req.status : "not_requested", lotNo: lot?.lotNo || "", bayId: lot?.bayId || "" };
+    });
+
+    return { ...dpr, order, drawing, drgParts, drgInsts, asmGroup,
+      total, cutCleared, pct, daysAtStage, isStuck, bottleneck, rmUnits };
   });
+
+  // ── Stage categories for filter pills ─────────────────────────────────────
+  const STAGE_META = {
+    pending:  { label:"Awaiting Fit-Up", color:T.textMid },
+    fitup:    { label:"Fit-Up",          color:T.accent  },
+    fitup_qc: { label:"Fit-Up QC",       color:T.amber   },
+    welding:  { label:"Welding",         color:T.accent  },
+    weld_qc:  { label:"Weld QC",         color:T.amber   },
+    complete: { label:"Complete",        color:T.green   },
+  };
+  const DPR_STAGE_ORDER = ["pending","fitup","fitup_qc","welding","weld_qc","complete"];
+  const STAGE_NEXT_DPR  = { pending:"fitup", fitup:"fitup_qc", fitup_qc:"welding", welding:"weld_qc", weld_qc:"complete", complete:null };
 
   // ── Filters ───────────────────────────────────────────────────────────────
   let filtered = enriched;
@@ -18179,426 +18065,375 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
   if (filterContractor) filtered = filtered.filter(d =>
     d.fitupContractorId === filterContractor || d.weldContractorId === filterContractor);
   if (stuckOnly)        filtered = filtered.filter(d => d.isStuck);
-
-  // Sort: stuck first, then by order ID
+  // Sort: stuck → bottleneck priority (lower = worse) → orderId
   filtered = [...filtered].sort((a,b) => {
     if (a.isStuck !== b.isStuck) return a.isStuck ? -1 : 1;
+    if (a.bottleneck.priority !== b.bottleneck.priority) return a.bottleneck.priority - b.bottleneck.priority;
     return (a.orderId||"").localeCompare(b.orderId||"");
   });
 
-  // ── Unique values for filter dropdowns ───────────────────────────────────
-  const allOrders       = [...new Set((dprs||[]).map(d => d.orderId))].sort();
-  const allContractorIds= [...new Set((dprs||[]).flatMap(d => [d.fitupContractorId, d.weldContractorId].filter(Boolean)))];
-  const allContractors  = allContractorIds.map(id => (contractors||[]).find(c => c.id === id)).filter(Boolean);
-
-  // ── Stage label / color map ───────────────────────────────────────────────
-  const STAGE_META = {
-    pending:    { label:"Awaiting Parts",    color:T.textMid },
-    fitup:      { label:"Fit-Up",            color:T.accent  },
-    fitup_qc:   { label:"Fit-Up QC",         color:T.amber   },
-    welding:    { label:"Welding",           color:T.accent  },
-    weld_qc:    { label:"Weld QC",           color:T.amber   },
-    complete:   { label:"Complete",          color:T.green   },
-  };
-
-  const DPR_STAGE_ORDER = ["pending","fitup","fitup_qc","welding","weld_qc","complete"];
-
-  // What stage comes next — for PE advance override
-  const STAGE_NEXT_DPR = {
-    pending:"fitup", fitup:"fitup_qc", fitup_qc:"welding", welding:"weld_qc", weld_qc:"complete", complete:null
-  };
-
-  // ── Summary stats bar ─────────────────────────────────────────────────────
-  const stageCountMap = {};
+  const stageCountMap  = {};
   DPR_STAGE_ORDER.forEach(s => { stageCountMap[s] = enriched.filter(d => d.currentStage === s).length; });
-  const stuckCount = enriched.filter(d => d.isStuck).length;
+  const stuckCount     = enriched.filter(d => d.isStuck).length;
+  const allOrders      = [...new Set((dprs||[]).map(d => d.orderId))].sort();
+  const allConIds      = [...new Set((dprs||[]).flatMap(d => [d.fitupContractorId, d.weldContractorId].filter(Boolean)))];
+  const allCons        = allConIds.map(id => (contractors||[]).find(c => c.id === id)).filter(Boolean);
 
-  // ── Reassign contractor ───────────────────────────────────────────────────
+  const toggleExpand   = (id) => { const s = new Set(expanded); s.has(id)?s.delete(id):s.add(id); setExpanded(s); };
+
+  // ── Reassign ──────────────────────────────────────────────────────────────
   const doReassign = () => {
     if (!reassignModal || !reassignVal) return;
     const { dprId, field } = reassignModal;
     const con = (contractors||[]).find(c => c.id === reassignVal);
     const patch = field === "fitup"
-      ? { fitupContractorId: reassignVal, fitupContractorName: con?.name||reassignVal }
-      : { weldContractorId:  reassignVal, weldContractorName:  con?.name||reassignVal };
-    setDprs(prev => prev.map(d => d.id === dprId ? {...d, ...patch,
-      stageHistory:[...(d.stageHistory||[]), {
-        stage: d.currentStage, action:`${field}_reassigned`, by:user.username, at:new Date().toISOString(), to:con?.name||reassignVal
-      }]
-    } : d));
+      ? { fitupContractorId:reassignVal, fitupContractorName:con?.name||reassignVal }
+      : { weldContractorId:reassignVal,  weldContractorName:con?.name||reassignVal  };
+    setDprs(prev => prev.map(d => d.id === dprId ? {...d,...patch,
+      stageHistory:[...(d.stageHistory||[]),{stage:d.currentStage,action:`${field}_reassigned`,by:user.username,at:new Date().toISOString(),to:con?.name||reassignVal}]
+    }:d));
     setReassignModal(null); setReassignVal("");
   };
 
-  // ── PE advance (override) ─────────────────────────────────────────────────
+  // ── Force advance ─────────────────────────────────────────────────────────
   const doAdvance = (dpr) => {
     const nextStage = STAGE_NEXT_DPR[dpr.currentStage];
     if (!nextStage) return;
     const ts = new Date().toISOString();
     const patch = {
-      currentStage: nextStage,
-      currentStatus: nextStage === "complete" ? "complete" : nextStage.endsWith("_qc") ? "pending_qc" : "in_progress",
-      stageHistory: [...(dpr.stageHistory||[]), {
-        stage: dpr.currentStage, action:"pe_override_advance",
-        by: user.username, at: ts, note: advanceNote.trim()||"PE override"
-      }],
+      currentStage:nextStage,
+      currentStatus:nextStage==="complete"?"complete":nextStage.endsWith("_qc")?"pending_qc":"in_progress",
+      stageHistory:[...(dpr.stageHistory||[]),{stage:dpr.currentStage,action:"pe_override_advance",by:user.username,at:ts,note:advanceNote.trim()||"PE override"}],
     };
-    // Stamp timestamps
-    if (dpr.currentStage === "fitup")    patch.fitupCompleteAt   = ts;
-    if (dpr.currentStage === "fitup_qc") patch.fitupQcApprovedAt = ts;
-    if (dpr.currentStage === "welding")  patch.weldCompleteAt    = ts;
-    if (dpr.currentStage === "weld_qc")  patch.weldQcApprovedAt  = ts;
-
-    setDprs(prev => prev.map(d => d.id === dpr.id ? {...d, ...patch} : d));
-
-    // Advance instances too
-    const toInstStage = nextStage === "fitup" ? "fitup"
-      : nextStage === "fitup_qc" ? "fitup"
-      : nextStage === "welding"  ? "welding"
-      : nextStage === "weld_qc"  ? "welding"
-      : "welding";
-    const toInstStatus = nextStage.endsWith("_qc") ? "pending_supervisor" : "in_progress";
+    if (dpr.currentStage==="fitup")    patch.fitupCompleteAt   = ts;
+    if (dpr.currentStage==="fitup_qc") patch.fitupQcApprovedAt = ts;
+    if (dpr.currentStage==="welding")  patch.weldCompleteAt    = ts;
+    if (dpr.currentStage==="weld_qc")  patch.weldQcApprovedAt  = ts;
+    setDprs(prev => prev.map(d => d.id===dpr.id?{...d,...patch}:d));
+    const toInstStage  = ["fitup","fitup_qc"].includes(nextStage)?"fitup":"welding";
+    const toInstStatus = nextStage.endsWith("_qc")?"pending_supervisor":"in_progress";
     setInstances(prev => prev.map(i => {
-      if (i.drawingId !== dpr.drawingId || i.orderId !== dpr.orderId || i.isSideCut) return i;
-      return { ...i, currentStage: toInstStage, currentStatus: toInstStatus,
-        stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,completedAt:ts,completedBy:user.username}]
-      };
+      if (i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
+      return {...i,currentStage:toInstStage,currentStatus:toInstStatus,
+        stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,completedAt:ts,completedBy:user.username}]};
     }));
-
     setAdvanceModal(null); setAdvanceNote("");
   };
 
-  const toggleExpand = (id) => {
-    const s = new Set(expanded);
-    s.has(id) ? s.delete(id) : s.add(id);
-    setExpanded(s);
-  };
-
-  // ── FitUp + Welding contractors for reassign modal ──────────────────────
-  const fitupCons = (contractors||[]).filter(c => (c.type||[]).some(t => ['fit_up','fitup'].includes(t)));
-  const weldCons  = (contractors||[]).filter(c => (c.type||[]).some(t => ['welding'].includes(t)));
+  // ── Contractor filter options ─────────────────────────────────────────────
+  const fitupCons = (contractors||[]).filter(c => (c.type||[]).some(t => ["fit_up","fitup"].includes(t)));
+  const weldCons  = (contractors||[]).filter(c => (c.type||[]).includes("welding"));
 
   return (
     <div>
       {/* Header */}
-      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16 }}>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16}}>
         <button onClick={onBack} style={css.btn.ghost}>← Production</button>
         <div>
-          <div style={{ fontSize:20, fontWeight:800, color:T.text }}>Production Engineer — DPR Control</div>
-          <div style={{ fontSize:12, color:T.textMid }}>Cross-order drawing production records · interventions · reassignment</div>
+          <div style={{fontSize:20,fontWeight:800,color:T.text}}>Production Engineer — Drawing Control</div>
+          <div style={{fontSize:12,color:T.textMid}}>Bottleneck-first view · one status per drawing · logged in as {user.name}</div>
         </div>
       </div>
 
-      {/* Summary stat pills */}
-      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+      {/* Stage pills */}
+      <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
         {DPR_STAGE_ORDER.map(s => {
-          const m = STAGE_META[s];
-          const n = stageCountMap[s];
+          const m = STAGE_META[s]; const n = stageCountMap[s]||0;
           return (
-            <div key={s} onClick={() => setFilterStage(filterStage === s ? "" : s)}
-              style={{ padding:"6px 14px", borderRadius:20, border:`1px solid ${m.color}55`,
-                background: filterStage === s ? `${m.color}22` : "transparent",
-                cursor:"pointer", display:"flex", gap:6, alignItems:"center" }}>
-              <span style={{ fontSize:11, color:m.color, fontWeight:700 }}>{m.label}</span>
-              <span style={{ fontSize:13, color:T.text, fontWeight:800 }}>{n}</span>
+            <div key={s} onClick={()=>setFilterStage(filterStage===s?"":s)}
+              style={{padding:"5px 14px",borderRadius:20,border:`1px solid ${m.color}55`,
+                background:filterStage===s?`${m.color}22`:"transparent",cursor:"pointer",
+                display:"flex",gap:6,alignItems:"center"}}>
+              <span style={{fontSize:11,color:m.color,fontWeight:700}}>{m.label}</span>
+              <span style={{fontSize:13,color:T.text,fontWeight:800}}>{n}</span>
             </div>
           );
         })}
-        {stuckCount > 0 && (
-          <div onClick={() => setStuckOnly(p => !p)}
-            style={{ padding:"6px 14px", borderRadius:20, border:`1px solid ${T.red}88`,
-              background: stuckOnly ? `${T.red}22` : "transparent", cursor:"pointer",
-              display:"flex", gap:6, alignItems:"center" }}>
-            <span style={{ fontSize:11, color:T.red, fontWeight:700 }}>🔴 Stuck (&gt;5d)</span>
-            <span style={{ fontSize:13, color:T.text, fontWeight:800 }}>{stuckCount}</span>
+        {stuckCount>0&&(
+          <div onClick={()=>setStuckOnly(p=>!p)}
+            style={{padding:"5px 14px",borderRadius:20,border:`1px solid ${T.red}88`,
+              background:stuckOnly?`${T.red}22`:"transparent",cursor:"pointer",
+              display:"flex",gap:6,alignItems:"center"}}>
+            <span style={{fontSize:11,color:T.red,fontWeight:700}}>🔴 Stuck &gt;5d</span>
+            <span style={{fontSize:13,color:T.text,fontWeight:800}}>{stuckCount}</span>
           </div>
         )}
       </div>
 
       {/* Filter bar */}
-      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
-        <select value={filterOrder} onChange={e => setFilterOrder(e.target.value)} style={{ ...css.input, width:180 }}>
+      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+        <select value={filterOrder} onChange={e=>setFilterOrder(e.target.value)} style={{...css.input,width:180}}>
           <option value="">All Orders</option>
-          {allOrders.map(o => <option key={o} value={o}>{o}</option>)}
+          {allOrders.map(o=><option key={o} value={o}>{o}</option>)}
         </select>
-        <select value={filterStage} onChange={e => setFilterStage(e.target.value)} style={{ ...css.input, width:160 }}>
+        <select value={filterStage} onChange={e=>setFilterStage(e.target.value)} style={{...css.input,width:160}}>
           <option value="">All Stages</option>
-          {DPR_STAGE_ORDER.map(s => <option key={s} value={s}>{STAGE_META[s].label}</option>)}
+          {DPR_STAGE_ORDER.map(s=><option key={s} value={s}>{STAGE_META[s].label}</option>)}
         </select>
-        <select value={filterContractor} onChange={e => setFilterContractor(e.target.value)} style={{ ...css.input, width:180 }}>
+        <select value={filterContractor} onChange={e=>setFilterContractor(e.target.value)} style={{...css.input,width:180}}>
           <option value="">All Contractors</option>
-          {allContractors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {allCons.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.text, cursor:"pointer" }}>
-          <input type="checkbox" checked={stuckOnly} onChange={e => setStuckOnly(e.target.checked)} style={{ accentColor:T.red }} />
+        <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T.text,cursor:"pointer"}}>
+          <input type="checkbox" checked={stuckOnly} onChange={e=>setStuckOnly(e.target.checked)} style={{accentColor:T.red}} />
           Stuck only
         </label>
-        <span style={{ fontSize:11, color:T.textLow, marginLeft:"auto" }}>{filtered.length} drawing{filtered.length !== 1 ? "s" : ""}</span>
+        <span style={{fontSize:11,color:T.textLow,marginLeft:"auto"}}>{filtered.length} drawing{filtered.length!==1?"s":""}</span>
       </div>
 
-      {/* Table */}
-      {filtered.length === 0 && (
-        <div style={{ ...css.card, textAlign:"center", padding:40, color:T.textLow, fontSize:13 }}>
-          No DPRs match the current filters.
+      {/* Empty state */}
+      {filtered.length===0&&(
+        <div style={{...css.card,textAlign:"center",padding:48,color:T.textLow,fontSize:13}}>
+          {(dprs||[]).length===0
+            ? "No DPRs yet — create a Production Release to begin tracking drawings."
+            : "No drawings match the current filters."}
         </div>
       )}
 
-      {filtered.length > 0 && (
-        <div style={{ overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead>
-              <tr style={{ background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
-                {["","Drawing No","Order","Assembly","DPR Stage","Parts Ready","Days","Fit-Up","Welding","Actions"].map((h,i) => (
-                  <th key={i} style={{ padding:"8px 10px", fontSize:11, color:T.textMid, fontWeight:700,
-                    textAlign:i===0?"center":"left", whiteSpace:"nowrap", borderBottom:`1px solid ${T.border}` }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(dpr => {
-                const isExp = expanded.has(dpr.id);
-                const m     = STAGE_META[dpr.currentStage] || { label: dpr.currentStage, color: T.textMid };
-                const pctColor = dpr.pct >= 80 ? T.green : dpr.pct >= 50 ? T.amber : T.red;
-                const stuckBg  = dpr.isStuck ? `${T.red}0a` : "transparent";
-                const nextStage= STAGE_NEXT_DPR[dpr.currentStage];
+      {/* Drawing rows */}
+      {filtered.map(dpr => {
+        const isExp  = expanded.has(dpr.id);
+        const b      = dpr.bottleneck;
+        const m      = STAGE_META[dpr.currentStage]||{label:dpr.currentStage,color:T.textMid};
+        const pctC   = dpr.pct>=80?T.green:dpr.pct>=50?T.amber:T.red;
+        const nextSt = STAGE_NEXT_DPR[dpr.currentStage];
 
-                return (
-                  <React.Fragment key={dpr.id}>
-                    <tr style={{ background:isExp ? `${T.accent}11` : stuckBg,
-                      borderBottom:`1px solid ${T.border}`, cursor:"pointer" }}
-                      onClick={() => toggleExpand(dpr.id)}>
-
-                      {/* Expand toggle */}
-                      <td style={{ padding:"8px 8px", textAlign:"center", color:T.textLow, width:24 }}>
-                        {isExp ? "▼" : "▶"}
-                      </td>
-
-                      {/* Drawing No */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi }}>
-                          {dpr.drawingNo || dpr.drawingId}
-                        </div>
-                        {dpr.drawingTitle && (
-                          <div style={{ fontSize:10, color:T.textMid, marginTop:1 }}>{dpr.drawingTitle.slice(0,40)}</div>
-                        )}
-                        {dpr.isStuck && (
-                          <span style={{ fontSize:9, color:T.red, fontWeight:800, background:`${T.red}22`,
-                            borderRadius:3, padding:"1px 5px", display:"inline-block", marginTop:2 }}>
-                            STUCK {dpr.daysAtStage}d
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Order */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ fontSize:11, fontFamily:T.fontMono, color:T.text }}>{dpr.orderId}</div>
-                        <div style={{ fontSize:10, color:T.textLow }}>{dpr.order?.clientId||""}</div>
-                      </td>
-
-                      {/* Assembly */}
-                      <td style={{ padding:"8px 10px", fontSize:11, color:T.textMid }}>
-                        {dpr.asmGroup?.assemblyName || dpr.asmGroup?.assemblyNumber || <span style={{ color:T.textLow }}>—</span>}
-                      </td>
-
-                      {/* DPR Stage */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <span style={{ fontSize:11, fontWeight:700, color:m.color,
-                          background:`${m.color}18`, borderRadius:4, padding:"2px 8px",
-                          display:"inline-block", whiteSpace:"nowrap" }}>
-                          {m.label}
-                        </span>
-                      </td>
-
-                      {/* Parts readiness */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                          <div style={{ flex:1, height:5, background:T.border, borderRadius:3, minWidth:48, overflow:"hidden" }}>
-                            <div style={{ height:"100%", width:`${dpr.pct}%`, background:pctColor, borderRadius:3 }} />
-                          </div>
-                          <span style={{ color:pctColor, fontWeight:700, fontSize:11, minWidth:32 }}>{dpr.pct}%</span>
-                        </div>
-                        <div style={{ fontSize:9, color:T.textLow, marginTop:1 }}>{dpr.cutCleared}/{dpr.total} parts</div>
-                      </td>
-
-                      {/* Days at stage */}
-                      <td style={{ padding:"8px 10px", fontSize:11,
-                        color: dpr.daysAtStage > 5 ? T.red : dpr.daysAtStage > 2 ? T.amber : T.textMid,
-                        fontWeight: dpr.daysAtStage > 5 ? 700 : 400 }}>
-                        {dpr.daysAtStage}d
-                      </td>
-
-                      {/* Fit-up contractor */}
-                      <td style={{ padding:"8px 10px", fontSize:11 }}>
-                        {dpr.fitupContractorName || <span style={{ color:T.textLow }}>—</span>}
-                      </td>
-
-                      {/* Weld contractor */}
-                      <td style={{ padding:"8px 10px", fontSize:11 }}>
-                        {dpr.weldContractorName || <span style={{ color:T.textLow }}>—</span>}
-                      </td>
-
-                      {/* Actions */}
-                      <td style={{ padding:"8px 10px" }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
-                          <button
-                            onClick={() => { setReassignModal({ dprId:dpr.id, field:"fitup" }); setReassignVal(dpr.fitupContractorId||""); }}
-                            style={{ ...css.btn.ghost, fontSize:10, padding:"2px 7px" }} title="Reassign fit-up contractor">
-                            ↔ F/U
-                          </button>
-                          <button
-                            onClick={() => { setReassignModal({ dprId:dpr.id, field:"weld" }); setReassignVal(dpr.weldContractorId||""); }}
-                            style={{ ...css.btn.ghost, fontSize:10, padding:"2px 7px" }} title="Reassign welding contractor">
-                            ↔ WLD
-                          </button>
-                          {nextStage && dpr.currentStage !== "complete" && (
-                            <button
-                              onClick={() => { setAdvanceModal(dpr); setAdvanceNote(""); }}
-                              style={{ ...css.btn.amber, fontSize:10, padding:"2px 7px" }} title="Force-advance DPR stage">
-                              ⚡ Advance
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-
-                    {/* Expanded detail row */}
-                    {isExp && (
-                      <tr style={{ background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
-                        <td colSpan={10} style={{ padding:"12px 16px 16px 32px" }}>
-                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
-
-                            {/* Stage history */}
-                            <div>
-                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6, letterSpacing:"0.06em" }}>
-                                STAGE HISTORY
-                              </div>
-                              {(dpr.stageHistory||[]).length === 0 ? (
-                                <div style={{ fontSize:11, color:T.textLow }}>No history yet.</div>
-                              ) : (
-                                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                                  {(dpr.stageHistory||[]).map((h, i) => (
-                                    <div key={i} style={{ fontSize:11, color:T.textMid }}>
-                                      <span style={{ color:T.text, fontWeight:600 }}>{h.stage?.replace(/_/g," ")}</span>
-                                      {" — "}{h.action?.replace(/_/g," ")}
-                                      {h.by && <span style={{ color:T.textLow }}> by {h.by}</span>}
-                                      {h.to && <span style={{ color:T.accent }}> → {h.to}</span>}
-                                      {h.at && <span style={{ color:T.textLow }}> {h.at.slice(0,10)}</span>}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Parts breakdown */}
-                            <div>
-                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6, letterSpacing:"0.06em" }}>
-                                PARTS READINESS
-                              </div>
-                              <div style={{ fontSize:12, color:T.green, marginBottom:3 }}>✅ {dpr.cutCleared} cut &amp; cleared</div>
-                              <div style={{ fontSize:12, color:T.textMid }}>📦 {dpr.total - dpr.cutCleared} not yet cleared</div>
-                              <div style={{ fontSize:12, color:T.text, marginTop:4 }}>
-                                Total parts in drawing: <b>{dpr.total}</b>
-                              </div>
-                              {dpr.totalWt > 0 && (
-                                <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>
-                                  Drawing wt: {(dpr.totalWt/1000).toFixed(2)} T
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Escalation alerts */}
-                            <div>
-                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6, letterSpacing:"0.06em" }}>
-                                ALERTS
-                              </div>
-                              {!dpr.isStuck && dpr.currentStage !== "complete" && (
-                                <div style={{ fontSize:11, color:T.green }}>✓ Progressing normally</div>
-                              )}
-                              {dpr.isStuck && (
-                                <div style={{ padding:"8px 10px", background:T.redBg,
-                                  border:`1px solid ${T.red}55`, borderRadius:6, fontSize:11, color:T.red }}>
-                                  🔴 Stuck at <b>{STAGE_META[dpr.currentStage]?.label}</b> for <b>{dpr.daysAtStage} days</b> — escalation required
-                                </div>
-                              )}
-                              {dpr.currentStage === "pending" && dpr.pct < 50 && (
-                                <div style={{ padding:"8px 10px", background:T.amberBg,
-                                  border:`1px solid ${T.amber}55`, borderRadius:6, fontSize:11, color:T.amber, marginTop:6 }}>
-                                  ⚠ Only {dpr.pct}% parts cut — fit-up not ready
-                                </div>
-                              )}
-                              {dpr.currentStage === "complete" && (
-                                <div style={{ fontSize:11, color:T.green }}>✅ Drawing complete</div>
-                              )}
-                              <div style={{ fontSize:10, color:T.textLow, marginTop:8 }}>
-                                DPR ID: <span style={{ fontFamily:T.fontMono }}>{dpr.id}</span>
-                              </div>
-                              <div style={{ fontSize:10, color:T.textLow }}>
-                                Release: <span style={{ fontFamily:T.fontMono }}>{dpr.releaseId}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Reassign Contractor Modal */}
-      {reassignModal && (() => {
-        const dpr = (dprs||[]).find(d => d.id === reassignModal.dprId);
-        const isF = reassignModal.field === "fitup";
-        const conList = isF ? fitupCons.length > 0 ? fitupCons : (contractors||[]) : weldCons.length > 0 ? weldCons : (contractors||[]);
         return (
-          <Modal title={`Reassign ${isF ? "Fit-Up" : "Welding"} Contractor — ${dpr?.drawingNo||""}`}
-            onClose={() => { setReassignModal(null); setReassignVal(""); }}>
-            <div style={{ marginBottom:14 }}>
-              <div style={{ fontSize:12, color:T.textMid, marginBottom:4 }}>Current: <b style={{ color:T.text }}>{isF ? dpr?.fitupContractorName : dpr?.weldContractorName || "—"}</b></div>
+          <div key={dpr.id} style={{...css.card,marginBottom:8,padding:0,
+            border:`1px solid ${dpr.isStuck?T.red:b.color}44`,
+            borderLeft:`3px solid ${b.color}`}}>
+
+            {/* ── Main row ── */}
+            <div style={{display:"flex",alignItems:"center",gap:0,cursor:"pointer",padding:"10px 12px"}}
+              onClick={()=>toggleExpand(dpr.id)}>
+
+              {/* Expand arrow */}
+              <div style={{width:20,color:T.textLow,fontSize:11,flexShrink:0}}>{isExp?"▼":"▶"}</div>
+
+              {/* Bottleneck status badge */}
+              <div style={{width:220,flexShrink:0,marginRight:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:14}}>{b.icon}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:b.color}}>{b.label}</span>
+                  {dpr.isStuck&&<span style={{fontSize:9,color:T.red,fontWeight:800,background:`${T.red}22`,borderRadius:3,padding:"1px 5px"}}>STUCK {dpr.daysAtStage}d</span>}
+                </div>
+                <div style={{fontSize:10,color:T.textLow,marginTop:1,paddingLeft:22,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={b.detail}>
+                  {b.detail}
+                </div>
+              </div>
+
+              {/* Drawing info */}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                  <span style={{fontFamily:T.fontMono,fontWeight:800,color:T.accentHi,fontSize:13}}>{dpr.drawingNo||dpr.drawingId}</span>
+                  <span style={{fontSize:11,color:T.textMid,fontFamily:T.fontMono}}>{dpr.orderId}</span>
+                  {dpr.asmGroup&&<span style={{fontSize:10,color:T.textLow,background:T.bgInput,borderRadius:3,padding:"1px 6px"}}>{dpr.asmGroup.assemblyName||dpr.asmGroup.assemblyNumber}</span>}
+                </div>
+                {dpr.drawingTitle&&<div style={{fontSize:10,color:T.textLow,marginTop:1}}>{dpr.drawingTitle.slice(0,60)}</div>}
+              </div>
+
+              {/* Parts progress */}
+              <div style={{width:100,flexShrink:0,textAlign:"right",marginRight:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
+                  <div style={{width:60,height:4,background:T.border,borderRadius:2,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${dpr.pct}%`,background:pctC,borderRadius:2}}/>
+                  </div>
+                  <span style={{fontSize:11,color:pctC,fontWeight:700,minWidth:28}}>{dpr.pct}%</span>
+                </div>
+                <div style={{fontSize:9,color:T.textLow,marginTop:1}}>{dpr.cutCleared}/{dpr.total} cut</div>
+              </div>
+
+              {/* DPR stage chip */}
+              <div style={{width:110,flexShrink:0,textAlign:"center",marginRight:8}}>
+                <span style={{fontSize:10,fontWeight:700,color:m.color,background:`${m.color}18`,
+                  borderRadius:4,padding:"3px 8px",display:"inline-block",whiteSpace:"nowrap"}}>
+                  {m.label}
+                </span>
+                <div style={{fontSize:9,color:dpr.daysAtStage>5?T.red:dpr.daysAtStage>2?T.amber:T.textLow,
+                  marginTop:2,fontWeight:dpr.daysAtStage>5?700:400}}>
+                  Day {dpr.daysAtStage}
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div style={{display:"flex",gap:4,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+                <button title="Reassign fit-up contractor"
+                  onClick={()=>{setReassignModal({dprId:dpr.id,field:"fitup"});setReassignVal(dpr.fitupContractorId||"");}}
+                  style={{...css.btn.ghost,fontSize:10,padding:"3px 7px"}}>↔ F/U</button>
+                <button title="Reassign welding contractor"
+                  onClick={()=>{setReassignModal({dprId:dpr.id,field:"weld"});setReassignVal(dpr.weldContractorId||"");}}
+                  style={{...css.btn.ghost,fontSize:10,padding:"3px 7px"}}>↔ WLD</button>
+                {nextSt&&<button title="Force-advance DPR stage"
+                  onClick={()=>{setAdvanceModal(dpr);setAdvanceNote("");}}
+                  style={{...css.btn.amber,fontSize:10,padding:"3px 7px"}}>⚡</button>}
+              </div>
+            </div>
+
+            {/* ── Expanded detail ── */}
+            {isExp&&(
+              <div style={{borderTop:`1px solid ${T.border}`,padding:"12px 16px 16px 36px",background:T.bgInput}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
+
+                  {/* Col 1: RM Units */}
+                  <div>
+                    <div style={{fontSize:11,fontWeight:800,color:T.textMid,letterSpacing:"0.06em",marginBottom:8}}>RM UNITS</div>
+                    {dpr.rmUnits.length===0
+                      ? <div style={{fontSize:11,color:T.textLow}}>No RM units linked yet.</div>
+                      : dpr.rmUnits.map(ru=>{
+                          const issueColor = ru.issueStatus==="issued"?T.green:ru.issueStatus==="pending"?T.amber:T.red;
+                          const issueLabel = ru.issueStatus==="issued"?"Issued":ru.issueStatus==="pending"?"Issue Pending":"Not Requested";
+                          return (
+                            <div key={ru.ruId} style={{marginBottom:8,padding:"6px 10px",background:T.bgCard,borderRadius:5,border:`1px solid ${T.border}`}}>
+                              <div style={{fontFamily:T.fontMono,fontSize:11,color:T.accentHi,fontWeight:700,marginBottom:3}}>{ru.ruId}</div>
+                              <div style={{display:"flex",gap:6,flexWrap:"wrap",fontSize:10}}>
+                                <span style={{color:T.textMid}}>{ru.matCode}</span>
+                                {ru.lotNo&&<span style={{color:T.textLow}}>Lot: {ru.lotNo}</span>}
+                                {ru.bayId&&<span style={{color:T.textLow}}>Bay: {ru.bayId}</span>}
+                              </div>
+                              <div style={{marginTop:4,display:"flex",gap:6,alignItems:"center"}}>
+                                <span style={{fontSize:10,color:issueColor,fontWeight:700,background:`${issueColor}18`,borderRadius:3,padding:"1px 6px"}}>{issueLabel}</span>
+                                {ru.cuttingContractor!=="—"&&<span style={{fontSize:10,color:T.textMid}}>✂ {ru.cuttingContractor}</span>}
+                              </div>
+                            </div>
+                          );
+                        })
+                    }
+                  </div>
+
+                  {/* Col 2: Parts status */}
+                  <div>
+                    <div style={{fontSize:11,fontWeight:800,color:T.textMid,letterSpacing:"0.06em",marginBottom:8}}>PARTS STATUS</div>
+                    {(() => {
+                      const DONE_ST = new Set(["cutting_qc","fitup","fit_up","welding","blasting","painting","dispatch","complete"]);
+                      const unique = {};
+                      dpr.drgInsts.filter(i=>!i.isSideCut).forEach(i=>{if(!unique[i.markNo])unique[i.markNo]=i;});
+                      const instList = Object.values(unique);
+                      if (instList.length===0) return <div style={{fontSize:11,color:T.textLow}}>No instances created yet.</div>;
+
+                      // Group parts by their status category
+                      const groups = {
+                        complete:    instList.filter(i=>DONE_ST.has(i.currentStage)&&i.currentStatus!=="pending_collection"&&i.currentStatus!=="pending_supervisor"),
+                        collected:   instList.filter(i=>DONE_ST.has(i.currentStage)&&i.currentStatus==="pending_collection"),
+                        in_qc:       instList.filter(i=>i.currentStatus==="pending_supervisor"),
+                        cutting:     instList.filter(i=>i.currentStage==="cutting"&&i.currentStatus!=="pending"),
+                        not_started: instList.filter(i=>i.currentStage==="cutting"&&i.currentStatus==="pending"),
+                      };
+                      const GRP = [
+                        {key:"complete",    label:"Cut & Cleared",      color:T.green},
+                        {key:"cutting",     label:"In Cutting",         color:T.accent},
+                        {key:"in_qc",       label:"In QC",              color:T.amber},
+                        {key:"collected",   label:"Awaiting Collection", color:T.amber},
+                        {key:"not_started", label:"Not Started",        color:T.textLow},
+                      ];
+                      return (
+                        <div>
+                          {GRP.filter(g=>groups[g.key].length>0).map(g=>(
+                            <div key={g.key} style={{marginBottom:8}}>
+                              <div style={{fontSize:10,fontWeight:700,color:g.color,marginBottom:3}}>{g.label} ({groups[g.key].length})</div>
+                              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                                {groups[g.key].map(i=>{
+                                  const con = i.cuttingContractorName||i.assignedContractorName;
+                                  return (
+                                    <span key={i.markNo} title={con?`Contractor: ${con}`:""} style={{fontFamily:T.fontMono,fontSize:10,color:g.color,background:`${g.color}18`,borderRadius:3,padding:"1px 5px",border:`1px solid ${g.color}33`}}>
+                                      {i.markNo}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              {/* Show contractor for cutting/qc groups */}
+                              {["cutting","in_qc","collected"].includes(g.key)&&(()=>{
+                                const cons=[...new Set(groups[g.key].map(i=>i.cuttingContractorName||i.assignedContractorName).filter(Boolean))];
+                                return cons.length>0?<div style={{fontSize:10,color:T.textMid,marginTop:2}}>✂ {cons.join(", ")}</div>:null;
+                              })()}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Col 3: Contractors & history */}
+                  <div>
+                    <div style={{fontSize:11,fontWeight:800,color:T.textMid,letterSpacing:"0.06em",marginBottom:8}}>CONTRACTORS & HISTORY</div>
+                    <div style={{marginBottom:10}}>
+                      <div style={{fontSize:10,color:T.textLow,marginBottom:2}}>FIT-UP</div>
+                      <div style={{fontSize:12,color:T.text,fontWeight:600}}>{dpr.fitupContractorName||<span style={{color:T.textLow}}>Not assigned</span>}</div>
+                    </div>
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:10,color:T.textLow,marginBottom:2}}>WELDING</div>
+                      <div style={{fontSize:12,color:T.text,fontWeight:600}}>{dpr.weldContractorName||<span style={{color:T.textLow}}>Not assigned</span>}</div>
+                    </div>
+                    <div style={{fontSize:10,fontWeight:800,color:T.textMid,letterSpacing:"0.06em",marginBottom:6}}>STAGE LOG</div>
+                    {(dpr.stageHistory||[]).length===0
+                      ? <div style={{fontSize:11,color:T.textLow}}>No history yet.</div>
+                      : [...(dpr.stageHistory||[])].reverse().slice(0,5).map((h,i)=>(
+                          <div key={i} style={{fontSize:10,color:T.textMid,marginBottom:3,paddingBottom:3,borderBottom:`1px solid ${T.border}33`}}>
+                            <span style={{color:T.text,fontWeight:600}}>{(h.stage||"").replace(/_/g," ")}</span>
+                            {" → "}{(h.action||"").replace(/_/g," ")}
+                            {h.note&&<span style={{color:T.amber}}> · {h.note}</span>}
+                            {h.to&&<span style={{color:T.accent}}> → {h.to}</span>}
+                            <span style={{color:T.textLow}}> {(h.at||"").slice(0,10)} {h.by}</span>
+                          </div>
+                        ))
+                    }
+                    {(dpr.stageHistory||[]).length>5&&<div style={{fontSize:9,color:T.textLow}}>+{(dpr.stageHistory||[]).length-5} more entries</div>}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Reassign Modal */}
+      {reassignModal&&(()=>{
+        const dpr=(dprs||[]).find(d=>d.id===reassignModal.dprId);
+        const isF=reassignModal.field==="fitup";
+        const conList=(isF?fitupCons:weldCons).length>0?(isF?fitupCons:weldCons):(contractors||[]);
+        return (
+          <Modal title={`Reassign ${isF?"Fit-Up":"Welding"} Contractor — ${dpr?.drawingNo||""}`}
+            onClose={()=>{setReassignModal(null);setReassignVal("");}}>
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:12,color:T.textMid,marginBottom:8}}>
+                Current: <b style={{color:T.text}}>{isF?dpr?.fitupContractorName:dpr?.weldContractorName||"—"}</b>
+              </div>
               <label style={css.label}>NEW CONTRACTOR *</label>
-              <select value={reassignVal} onChange={e => setReassignVal(e.target.value)} style={css.input}>
+              <select value={reassignVal} onChange={e=>setReassignVal(e.target.value)} style={css.input}>
                 <option value="">Select contractor...</option>
-                {conList.map(c => <option key={c.id} value={c.id}>{c.name}{c.isInHouse ? " (In-House)" : ""}</option>)}
+                {conList.map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
               </select>
             </div>
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
-              <button onClick={() => { setReassignModal(null); setReassignVal(""); }} style={css.btn.ghost}>Cancel</button>
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+              <button onClick={()=>{setReassignModal(null);setReassignVal("");}} style={css.btn.ghost}>Cancel</button>
               <button onClick={doReassign} disabled={!reassignVal}
-                style={{ ...css.btn.primary, opacity:reassignVal ? 1 : 0.4 }}>Reassign</button>
+                style={{...css.btn.primary,opacity:reassignVal?1:0.4}}>Reassign</button>
             </div>
           </Modal>
         );
       })()}
 
-      {/* Advance Stage Modal */}
-      {advanceModal && (() => {
-        const dpr      = advanceModal;
-        const nextStage= STAGE_NEXT_DPR[dpr.currentStage];
-        const nextMeta = STAGE_META[nextStage] || { label: nextStage };
+      {/* Advance Modal */}
+      {advanceModal&&(()=>{
+        const dpr=advanceModal;
+        const nextSt=STAGE_NEXT_DPR[dpr.currentStage];
+        const nextM=STAGE_META[nextSt]||{label:nextSt,color:T.textMid};
         return (
-          <Modal title={`Override Advance — ${dpr.drawingNo}`}
-            onClose={() => { setAdvanceModal(null); setAdvanceNote(""); }}>
-            <div style={{ padding:"10px 14px", background:T.amberBg, border:`1px solid ${T.amber}44`,
-              borderRadius:6, marginBottom:14, fontSize:12, color:T.amber }}>
-              ⚠ This is a production engineer override. It will advance the DPR from{" "}
-              <b>{STAGE_META[dpr.currentStage]?.label}</b> to{" "}
-              <b style={{ color:nextMeta.color }}>{nextMeta.label}</b> and update all linked instances.
+          <Modal title={`PE Override Advance — ${dpr.drawingNo}`}
+            onClose={()=>{setAdvanceModal(null);setAdvanceNote("");}}>
+            <div style={{padding:"10px 14px",background:T.amberBg,border:`1px solid ${T.amber}44`,
+              borderRadius:6,marginBottom:14,fontSize:12,color:T.amber}}>
+              ⚠ This will advance DPR from <b>{STAGE_META[dpr.currentStage]?.label}</b> →{" "}
+              <b style={{color:nextM.color}}>{nextM.label}</b> and update all linked instances.
             </div>
-            <div style={{ marginBottom:14 }}>
-              <label style={css.label}>REASON / NOTE (recorded in history)</label>
-              <textarea value={advanceNote} onChange={e => setAdvanceNote(e.target.value)}
-                rows={3} placeholder="State reason for advancing stage..."
-                style={{ ...css.input, width:"100%", resize:"vertical" }} />
+            <div style={{marginBottom:14}}>
+              <label style={css.label}>REASON (recorded in history)</label>
+              <textarea value={advanceNote} onChange={e=>setAdvanceNote(e.target.value)}
+                rows={3} placeholder="State reason for PE override..." style={{...css.input,width:"100%",resize:"vertical"}}/>
             </div>
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
-              <button onClick={() => { setAdvanceModal(null); setAdvanceNote(""); }} style={css.btn.ghost}>Cancel</button>
-              <button onClick={() => doAdvance(dpr)}
-                style={{ ...css.btn.amber }}>
-                ⚡ Force Advance to {nextMeta.label}
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+              <button onClick={()=>{setAdvanceModal(null);setAdvanceNote("");}} style={css.btn.ghost}>Cancel</button>
+              <button onClick={()=>doAdvance(dpr)} style={css.btn.amber}>
+                ⚡ Advance to {nextM.label}
               </button>
             </div>
           </Modal>
@@ -18607,6 +18442,7 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
     </div>
   );
 };
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION MODULE
@@ -18808,7 +18644,9 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   if (view==="pe_screen") return (
     <ProductionEngineerScreen user={user} dprs={dprs||[]} setDprs={setDprs}
       orders={orders} instances={instances} setInstances={setInstances}
-      contractors={contractors||[]} onBack={()=>setView("dashboard")} />
+      contractors={contractors||[]} pos={pos||[]} stock={stock||[]}
+      issueRequests={issueRequests||[]} purchaseReqs={purchaseReqs||[]}
+      onBack={()=>setView("dashboard")} />
   );
 
   // ── Drawing Register view ──
@@ -19345,7 +19183,7 @@ export default function App() {
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setMod={setMod} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
-      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} dprs={dprs||[]} setDprs={setDprs} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
+      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} />;
