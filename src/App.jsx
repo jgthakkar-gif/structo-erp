@@ -12714,7 +12714,7 @@ const StageWorkerQueue = ({ user, instances, setInstances }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION STEP 5: CONTRACTOR WORK QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
-const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock }) => {
+const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, orders, nestingBatches }) => {
   const [selGroup, setSelGroup]       = useState(null);
   const [subOpChecks, setSubOpChecks] = useState({});
 
@@ -12841,6 +12841,193 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock })
             <span>Qty: <span style={{color:T.text,fontWeight:700}}>{selGD.insts.length} pcs</span></span>
           </div>
         </div>
+
+        {(()=>{
+          // Find order and drawing
+          const order=(orders||[]).find(o=>o.id===selGD.orderId);
+          if(!order) return null;
+          const drawing=(order.drawings||[]).find(d=>d.id===selGD.drawingId||d.drawingNo===selGD.drawingNo);
+          if(!drawing) return null;
+
+          // All fabricate parts for this drawing
+          const drgParts=(order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate");
+          const totalParts=drgParts.length;
+          if(totalParts===0) return null;
+
+          const drgMarkNos=new Set(drgParts.map(p=>p.markNo));
+
+          // Part status counts from instances
+          const DONE_STAGES=new Set(['cutting_qc','fit_up','fitup','welding','blasting','painting','dispatch','complete']);
+          const CUTTING_STAGES=new Set(['cutting']);
+          const drgInstances=(instances||[]).filter(i=>i.drawingId===drawing.id&&i.orderId===order.id&&!i.isSideCut);
+
+          // Group by markNo for unique part count
+          const uniqueMarkStatuses={};
+          drgInstances.forEach(i=>{
+            if(!uniqueMarkStatuses[i.markNo]) uniqueMarkStatuses[i.markNo]=i.currentStage;
+          });
+          const cutCleared=Object.values(uniqueMarkStatuses).filter(s=>DONE_STAGES.has(s)).length;
+          const inCutting=Object.values(uniqueMarkStatuses).filter(s=>CUTTING_STAGES.has(s)).length;
+          const notStarted=totalParts-cutCleared-inCutting;
+          const readyPct=totalParts>0?Math.round(cutCleared/totalParts*100):0;
+
+          // Threshold from company settings (default 80)
+          const threshold=80;
+          const suggestion=readyPct>=threshold
+            ?{color:T.green,bg:T.greenBg,icon:"✅",label:"SAFE TO COMMIT TEAM",sub:`${readyPct}% parts cut and cleared`}
+            :readyPct>=50
+            ?{color:T.amber,bg:T.amberBg,icon:"⚠",label:"PARTIAL — MONITOR CLOSELY",sub:`${readyPct}% ready. Major parts arriving, minor parts pending`}
+            :{color:T.red,bg:T.redBg,icon:"❌",label:"HOLD — INSUFFICIENT PARTS",sub:`Only ${readyPct}% parts available. Do not commit team yet`};
+
+          // RM Units for this drawing from nesting batches
+          const rmUnitsForDrg=[];
+          const seenRmUnits=new Set();
+          ;(nestingBatches||[]).forEach(batch=>{
+            (batch.lots||[]).forEach(lot=>{
+              (lot.sheets||[]).forEach(sheet=>{
+                if(!sheet.rmUnitId||seenRmUnits.has(sheet.rmUnitId)) return;
+                const sheetPartsForDrg=(sheet.parts||[]).filter(mn=>drgMarkNos.has(mn));
+                if(sheetPartsForDrg.length===0) return;
+                seenRmUnits.add(sheet.rmUnitId);
+                // Find rmUnit assignment in releases
+                const ruAssignment=(releases||[]).flatMap(r=>r.rmUnitAssignments||[]).find(ru=>ru.rmUnitId===sheet.rmUnitId);
+                // Find instances for this rmUnit
+                const ruInsts=(instances||[]).filter(i=>i.rmUnitId===sheet.rmUnitId);
+                const isCutDone=ruInsts.some(i=>DONE_STAGES.has(i.currentStage)||i.currentStage==='cutting_qc');
+                const isCutting=ruInsts.some(i=>CUTTING_STAGES.has(i.currentStage));
+                const status=isCutDone?'done':isCutting?'cutting':'pending';
+                rmUnitsForDrg.push({
+                  rmUnitId:sheet.rmUnitId,
+                  sheetDim:sheet.sheetDim||"",
+                  partsForDrg:sheetPartsForDrg.length,
+                  totalParts:(sheet.parts||[]).length,
+                  status,
+                  cuttingContractor:ruAssignment?.contractorName||"—",
+                });
+              });
+            });
+          });
+
+          // Assembly siblings
+          const asmGroup=drawing.assemblyGroup;
+          const siblings=asmGroup?(order.drawings||[]).filter(d=>d.assemblyGroup===asmGroup&&d.id!==drawing.id):[];
+          const [showAsm,setShowAsm]=React.useState(false);
+
+          return (
+            <div>
+              {/* Commitment suggestion banner */}
+              <div style={{padding:"12px 16px",background:suggestion.bg,border:`1px solid ${suggestion.color}44`,borderRadius:8,marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
+                <span style={{fontSize:20}}>{suggestion.icon}</span>
+                <div>
+                  <div style={{fontSize:13,fontWeight:800,color:suggestion.color}}>{suggestion.label}</div>
+                  <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{suggestion.sub}</div>
+                </div>
+              </div>
+
+              {/* Parts readiness */}
+              <div style={{...css.card,marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:10,letterSpacing:"0.06em"}}>PARTS READINESS — {drawing.drawingNo}</div>
+                {/* Progress bar */}
+                <div style={{height:8,background:T.border,borderRadius:4,overflow:"hidden",marginBottom:8,display:"flex"}}>
+                  <div style={{width:`${readyPct}%`,background:T.green,transition:"width 0.3s"}} />
+                  <div style={{width:`${totalParts>0?Math.round(inCutting/totalParts*100):0}%`,background:T.amber,transition:"width 0.3s"}} />
+                </div>
+                <div style={{display:"flex",gap:20,fontSize:12,flexWrap:"wrap"}}>
+                  <span><span style={{color:T.green,fontWeight:700,fontSize:14}}>{cutCleared}</span> <span style={{color:T.textMid}}>✅ Cut & Cleared</span></span>
+                  <span><span style={{color:T.amber,fontWeight:700,fontSize:14}}>{inCutting}</span> <span style={{color:T.textMid}}>⏳ Being Cut</span></span>
+                  <span><span style={{color:T.textLow,fontWeight:700,fontSize:14}}>{notStarted}</span> <span style={{color:T.textMid}}>❓ Not Started</span></span>
+                  <span style={{marginLeft:"auto"}}><span style={{fontWeight:700,color:T.text}}>{totalParts}</span> <span style={{color:T.textMid}}>total parts</span></span>
+                </div>
+              </div>
+
+              {/* RM Units status */}
+              {rmUnitsForDrg.length>0&&(
+                <div style={{...css.card,marginBottom:12}}>
+                  <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:10,letterSpacing:"0.06em"}}>RM UNITS ({rmUnitsForDrg.length})</div>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead>
+                      <tr style={{background:T.bgInput}}>
+                        {["RM Unit","Dims","Parts (this drg)","Status","Cutting By"].map(h=>(
+                          <th key={h} style={{padding:"5px 8px",textAlign:"left",color:T.textMid,fontWeight:600,fontSize:10,borderBottom:`1px solid ${T.border}`}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rmUnitsForDrg.map(ru=>{
+                        const statusColor=ru.status==='done'?T.green:ru.status==='cutting'?T.amber:T.textLow;
+                        const statusIcon=ru.status==='done'?'✅':ru.status==='cutting'?'⏳':'❓';
+                        const statusLabel=ru.status==='done'?'Cut & Cleared':ru.status==='cutting'?'Cutting In Progress':'Not Started';
+                        return (
+                          <tr key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.border}33`}}>
+                            <td style={{padding:"5px 8px",fontFamily:T.fontMono,fontSize:10,color:T.accentHi}}>{ru.rmUnitId}</td>
+                            <td style={{padding:"5px 8px",fontSize:10,color:T.textMid}}>{ru.sheetDim||"—"}</td>
+                            <td style={{padding:"5px 8px",fontSize:10,fontWeight:600}}>{ru.partsForDrg}/{ru.totalParts}</td>
+                            <td style={{padding:"5px 8px"}}>
+                              <span style={{fontSize:10,color:statusColor,fontWeight:600}}>{statusIcon} {statusLabel}</span>
+                            </td>
+                            <td style={{padding:"5px 8px",fontSize:10,color:T.textMid}}>{ru.cuttingContractor}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Assembly siblings — informational, collapsed by default */}
+              {siblings.length>0&&(
+                <div style={{...css.card,marginBottom:12}}>
+                  <button onClick={()=>setShowAsm(s=>!s)} style={{...css.btn.ghost,width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0"}}>
+                    <span style={{fontSize:11,fontWeight:700,color:T.textMid,letterSpacing:"0.06em"}}>ASSEMBLY: {asmGroup} ({siblings.length+1} drawings)</span>
+                    <span style={{fontSize:11,color:T.textMid}}>{showAsm?"▲ Hide":"▶ Show"} siblings</span>
+                  </button>
+                  {showAsm&&(
+                    <div style={{marginTop:10}}>
+                      <InfoBanner color="blue">Assembly status is shown for your planning only. Your drawing's commitment threshold is based on its own parts.</InfoBanner>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginTop:8}}>
+                        <thead>
+                          <tr style={{background:T.bgInput}}>
+                            {["Drawing","Parts Ready","Status"].map(h=>(
+                              <th key={h} style={{padding:"5px 8px",textAlign:"left",color:T.textMid,fontWeight:600,fontSize:10,borderBottom:`1px solid ${T.border}`}}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[drawing,...siblings].map(d=>{
+                            const dParts=(order.parts||[]).filter(p=>p.drawingId===d.id&&p.fabType==="Fabricate");
+                            const dInsts=(instances||[]).filter(i=>i.drawingId===d.id&&!i.isSideCut);
+                            const dUnique={};
+                            dInsts.forEach(i=>{if(!dUnique[i.markNo])dUnique[i.markNo]=i.currentStage;});
+                            const dCleared=Object.values(dUnique).filter(s=>DONE_STAGES.has(s)).length;
+                            const dTotal=dParts.length;
+                            const dPct=dTotal>0?Math.round(dCleared/dTotal*100):0;
+                            const isThis=d.id===drawing.id;
+                            return (
+                              <tr key={d.id} style={{borderBottom:`1px solid ${T.border}33`,background:isThis?`${T.accent}10`:"transparent"}}>
+                                <td style={{padding:"5px 8px",fontFamily:T.fontMono,fontSize:10,color:isThis?T.accentHi:T.text,fontWeight:isThis?700:400}}>
+                                  {d.drawingNo}{isThis&&<span style={{marginLeft:4,fontSize:9,color:T.accent}}>← YOU</span>}
+                                </td>
+                                <td style={{padding:"5px 8px",fontSize:10}}>
+                                  <span style={{color:dPct>=80?T.green:dPct>=50?T.amber:T.red,fontWeight:600}}>{dCleared}/{dTotal}</span>
+                                </td>
+                                <td style={{padding:"5px 8px"}}>
+                                  <div style={{height:4,background:T.border,borderRadius:2,width:80,overflow:"hidden"}}>
+                                    <div style={{height:"100%",width:`${dPct}%`,background:dPct>=80?T.green:dPct>=50?T.amber:T.red}} />
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         <div style={{ ...css.card,marginBottom:16 }}>
           <div style={{ fontSize:13,fontWeight:700,color:T.text,marginBottom:14 }}>STAGE: {stageLabel}</div>
           {selGD.subOpsRequired.length > 0 ? (
@@ -17941,7 +18128,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const [selProgressOrderId, setSelProgressOrderId] = useState("");
 
   // Contractor → own work queue only (after hooks)
-  if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} />;
+  if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} orders={orders||[]} nestingBatches={nestingBatches||[]} />;
   // Machine operator → machine queue
   if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} orders={orders||[]} nestingBatches={nestingBatches||[]} />;
   // Stage workers (blasting/painting engineers) → stage-filtered work queue
