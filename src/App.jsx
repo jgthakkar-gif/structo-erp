@@ -18364,7 +18364,39 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
     // Stuck flag: >5 days at same non-complete stage
     const isStuck = daysAtStage > 5 && dpr.currentStage !== 'complete';
 
-    return { ...dpr, order, drawing, total, cutCleared, pct, asmGroup, daysAtStage, isStuck };
+    // ── Bottleneck ladder ──────────────────────────────────────────────────
+    // Finds the single worst thing blocking this drawing right now
+    const drgMarkNos = new Set(drgParts.map(p => p.markNo));
+    const allInsts   = (instances||[]).filter(i => drgMarkNos.has(i.markNo) && !i.isSideCut);
+    const CUT_QC_ST  = new Set(['cutting_qc']);
+    const DONE_ST2   = new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
+    const inCutting  = allInsts.filter(i => i.currentStage === 'cutting').length;
+    const inCutQC    = allInsts.filter(i => CUT_QC_ST.has(i.currentStage) && i.currentStatus==='pending_supervisor').length;
+
+    let bottleneck;
+    if (dpr.currentStage === 'complete') {
+      bottleneck = { label:"✅ Complete", color:T.green, priority:99 };
+    } else if (dpr.currentStage === 'weld_qc') {
+      bottleneck = { label:"🟡 Weld QC Pending", color:T.amber, priority:8 };
+    } else if (dpr.currentStage === 'welding') {
+      const wcon = dpr.weldContractorName||"—";
+      bottleneck = { label:`🔵 Welding in Progress`, sub:wcon, color:T.accent, priority:7 };
+    } else if (dpr.currentStage === 'fitup_qc') {
+      bottleneck = { label:"🟡 Fit-Up QC Pending", color:T.amber, priority:6 };
+    } else if (dpr.currentStage === 'fitup') {
+      const fcon = dpr.fitupContractorName||"—";
+      bottleneck = { label:`🔵 Fit-Up in Progress`, sub:fcon, color:T.accent, priority:5 };
+    } else if (inCutQC > 0) {
+      bottleneck = { label:"🟡 Cut Parts in QC", sub:`${inCutQC} parts awaiting QC`, color:T.amber, priority:4 };
+    } else if (inCutting > 0) {
+      bottleneck = { label:"🔵 Cutting in Progress", sub:`${inCutting}/${total} parts`, color:T.accent, priority:3 };
+    } else if (pct > 0) {
+      bottleneck = { label:"🟡 Parts Not Collected", sub:`${cutCleared}/${total} cut`, color:T.amber, priority:2 };
+    } else {
+      bottleneck = { label:"⬜ Parts Not Cut", sub:`0/${total} started`, color:T.textMid, priority:1 };
+    }
+
+    return { ...dpr, order, drawing, total, cutCleared, pct, asmGroup, daysAtStage, isStuck, bottleneck };
   });
 
   // ── Filters ───────────────────────────────────────────────────────────────
@@ -18596,13 +18628,16 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
                         {dpr.asmGroup?.assemblyName || dpr.asmGroup?.assemblyNumber || <span style={{ color:T.textLow }}>—</span>}
                       </td>
 
-                      {/* DPR Stage */}
+                      {/* DPR Stage — Bottleneck Ladder */}
                       <td style={{ padding:"8px 10px" }}>
-                        <span style={{ fontSize:11, fontWeight:700, color:m.color,
-                          background:`${m.color}18`, borderRadius:4, padding:"2px 8px",
+                        <div style={{ fontSize:11, fontWeight:700, color:dpr.bottleneck?.color||m.color,
+                          background:`${dpr.bottleneck?.color||m.color}18`, borderRadius:4, padding:"2px 8px",
                           display:"inline-block", whiteSpace:"nowrap" }}>
-                          {m.label}
-                        </span>
+                          {dpr.bottleneck?.label||m.label}
+                        </div>
+                        {dpr.bottleneck?.sub&&(
+                          <div style={{ fontSize:10, color:T.textMid, marginTop:2 }}>{dpr.bottleneck.sub}</div>
+                        )}
                       </td>
 
                       {/* Parts readiness */}
