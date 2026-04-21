@@ -13049,11 +13049,85 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
     </div>
   );
 
+  // ── Parts awaiting collection ──────────────────────────────────────────────
+  const awaitingColl = (instances||[]).filter(i=>
+    i.currentStatus==="awaiting_collection" &&
+    i.assignedContractorId===cid
+  );
+  // Group by drawing
+  const collByDrg = {};
+  awaitingColl.forEach(i=>{
+    if(!collByDrg[i.drawingId]) collByDrg[i.drawingId]={
+      drawingId:i.drawingId, drawingNo:i.drawingNo, parts:[],
+      machineBay:i.machineBay||"Machine Bay",
+      since:i.cutQcApprovedAt||i.createdAt
+    };
+    collByDrg[i.drawingId].parts.push(i);
+  });
+  const collGroups=Object.values(collByDrg);
+
+  const markCollected=(drawingId)=>{
+    const ts=new Date().toISOString();
+    setInstances(prev=>prev.map(i=>
+      i.drawingId===drawingId&&i.currentStatus==="awaiting_collection"&&i.assignedContractorId===cid
+        ?{...i,currentStatus:"with_contractor",collectedAt:ts,collectedBy:user.username}
+        :i
+    ));
+  };
+
+  // Auto-mark collected when starting fitup
+  const markCollectedForDpr=(dpr)=>{
+    const ts=new Date().toISOString();
+    setInstances(prev=>prev.map(i=>
+      i.drawingId===dpr.drawingId&&i.orderId===dpr.orderId&&i.currentStatus==="awaiting_collection"
+        ?{...i,currentStatus:"with_contractor",collectedAt:ts,collectedBy:user.username}
+        :i
+    ));
+  };
+
   return (
     <div>
       <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:2}}>My Drawings</div>
-      <div style={{fontSize:12,color:T.textMid,marginBottom:20}}>{user.name}</div>
-      {myDprs.length===0&&(
+      <div style={{fontSize:12,color:T.textMid,marginBottom:16}}>{user.name}</div>
+
+      {/* ⚡ Parts Ready to Collect Banner */}
+      {collGroups.length>0&&(
+        <div style={{background:`${T.amber}12`,border:`1px solid ${T.amber}66`,borderRadius:8,
+          padding:"12px 16px",marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:800,color:T.amber,marginBottom:10}}>
+            ⚡ {awaitingColl.length} part{awaitingColl.length!==1?"s":""} ready to collect
+            across {collGroups.length} drawing{collGroups.length!==1?"s":""}
+          </div>
+          {collGroups.map(g=>{
+            const hrs=g.since?Math.round((Date.now()-new Date(g.since).getTime())/3600000):0;
+            const overdue=hrs>=4;
+            const bayLabel=g.machineBay.replace(/^machine_bay:/,"").replace(/_/g," ");
+            return (
+              <div key={g.drawingId} style={{display:"flex",alignItems:"center",gap:10,
+                padding:"8px 10px",background:T.bgCard,borderRadius:6,marginBottom:6,
+                border:`1px solid ${overdue?T.red:T.border}`}}>
+                <div style={{flex:1}}>
+                  <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:12}}>
+                    {g.drawingNo}
+                  </div>
+                  <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
+                    {g.parts.length} part{g.parts.length!==1?"s":""} · Machine Bay ({bayLabel})
+                    <span style={{marginLeft:8,fontWeight:600,color:overdue?T.red:T.amber}}>
+                      {overdue?`⚠ ${hrs}h — overdue`:`${hrs}h waiting`}
+                    </span>
+                  </div>
+                </div>
+                <button onClick={()=>markCollected(g.drawingId)}
+                  style={{...css.btn.green,fontSize:11,padding:"5px 14px"}}>
+                  ✓ Collected
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {myDprs.length===0&&collGroups.length===0&&(
         <div style={{...css.card,textAlign:"center",padding:40,color:T.textLow,fontSize:13}}>
           No drawings assigned yet. Drawings are assigned in the Production Release Wizard.
         </div>
@@ -14810,12 +14884,21 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             const selStats=getRmUnitPartStats(selParts,allOrderParts);
             const sheetWt=calcSheetWt(sheet.rmUnitId)||0;
             // Check planning/cut status for this RM unit
-            const rmInsts=(instances||[]).filter(i=>i.rmUnitId===sheet.rmUnitId);
             const DONE_ST=new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-            const rmStatus=rmInsts.length===0?"available"
-              :rmInsts.every(i=>DONE_ST.has(i.currentStage))?"cut"
-              :rmInsts.some(i=>i.currentStage==="cutting")?"cutting"
-              :rmInsts.length>0?"planned"
+            // Sheet status: check if all THIS DRAWING's parts on the sheet are cut
+            const sheetSelParts=(sheet.parts||[]).filter(mn=>selMarkNosForMat.has(mn));
+            const allSelCut=sheetSelParts.length>0&&sheetSelParts.every(mn=>
+              (instances||[]).some(i=>i.markNo===mn&&DONE_ST.has(i.currentStage))
+            );
+            const anySelCutting=sheetSelParts.some(mn=>
+              (instances||[]).some(i=>i.markNo===mn&&i.currentStage==="cutting")
+            );
+            const formalInst=(instances||[]).find(i=>
+              i.rmUnitId===sheet.rmUnitId&&i.releaseId&&i.releaseId!=="side_cut"
+            );
+            const rmStatus=allSelCut?"cut"
+              :anySelCutting?"cutting"
+              :formalInst?"planned"
               :"available";
             // Find matching stock lot for this matCode+dim
             const stockLot=(stock||[]).find(s=>{
@@ -15227,11 +15310,19 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   const asmName=assemblyMap[drawingId]||"";
                   const drgMarkNos=new Set((order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").map(p=>p.markNo));
                   const allRmUnitsForDrg=(nestingBatches||[]).flatMap(b=>(b.lots||[]).flatMap(l=>(l.sheets||[]).filter(sh=>sh.rmUnitId&&(sh.parts||[]).some(mn=>drgMarkNos.has(mn)))));
-                  // RM units: use allDrgInsts (markNo-based) for consistency
-                  // planned = cutting OR fitup/pending (just released)
+                  // RM units: a sheet is CUT when all drawing's parts on it are cut
+                  // A sheet is PLANNED only if formally released (not side-cut)
                   const IN_PLAN_STAGES=new Set(['cutting','fitup','fit_up','welding','blasting','painting']);
-                  const cutRmUnits=allRmUnitsForDrg.filter(sh=>allDrgInsts.some(inst=>inst.rmUnitId===sh.rmUnitId&&DONE_STAGES.has(inst.currentStage))).length;
-                  const plannedRmUnits=allRmUnitsForDrg.filter(sh=>allDrgInsts.some(inst=>inst.rmUnitId===sh.rmUnitId&&(IN_PROGRESS_STAGES.has(inst.currentStage)||IN_PLAN_STAGES.has(inst.currentStage)))).length;
+                  const formalInsts=(instances||[]).filter(i=>i.releaseId&&i.releaseId!=="side_cut");
+                  const cutRmUnits=allRmUnitsForDrg.filter(sh=>{
+                    if(formalInsts.some(i=>i.rmUnitId===sh.rmUnitId&&DONE_STAGES.has(i.currentStage))) return true;
+                    const sheetDrgParts=(sh.parts||[]).filter(mn=>drgMarkNos.has(mn));
+                    if(sheetDrgParts.length===0) return false;
+                    return sheetDrgParts.every(mn=>allDrgInsts.some(i=>i.markNo===mn&&DONE_STAGES.has(i.currentStage)));
+                  }).length;
+                  const plannedRmUnits=allRmUnitsForDrg.filter(sh=>
+                    formalInsts.some(i=>i.rmUnitId===sh.rmUnitId&&(IN_PROGRESS_STAGES.has(i.currentStage)||IN_PLAN_STAGES.has(i.currentStage)))
+                  ).length;
                   const drawingWtT=drawing.totalWt>0?(drawing.totalWt/1000).toFixed(2):null;
                   const orderTotalWtT=(selectedOrder?.orderQty||0);
                   const drawingPct=orderTotalWtT>0&&drawing.totalWt>0?((drawing.totalWt/1000)/orderTotalWtT*100).toFixed(1):null;
@@ -15414,17 +15505,33 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                       const gPct=g.sheetWtTotal>0?Math.round(g.selWtTotal/g.sheetWtTotal*100):0;
                       const gColor=gPct>=85?T.green:gPct>=70?T.amber:T.red;
                       const stockLot=g.stockLot||(stock||[]).find(s=>normMatCode(s.matCode)===normMatCode(r.matCode)&&['available','reserved','partially_reserved','qc_hold'].includes(s.status));
+                      // Compute dominant status across all sheets in this dim group
+                      const allCut=g.sheets.length>0&&g.sheets.every(s=>s.rmStatus==="cut");
+                      const anyCutting=g.sheets.some(s=>s.rmStatus==="cutting");
+                      const anyPlanned=g.sheets.some(s=>s.rmStatus==="planned");
+                      const dimBg=allCut?`${T.green}08`:anyCutting?`${T.accent}08`:anyPlanned?`${T.amber}06`:"transparent";
+                      const dimStatusLabel=allCut?"✓ ALL CUT":anyCutting?"✂ CUTTING":anyPlanned?"📋 PLANNED":null;
+                      const dimStatusColor=allCut?T.green:anyCutting?T.accent:T.amber;
                       return (
-                        <div key={g.sheetDim} style={{marginBottom:6,border:`1px solid ${T.border}`,borderRadius:6,overflow:"hidden"}}>
+                        <div key={g.sheetDim} style={{marginBottom:6,border:`1px solid ${allCut?T.green+"44":T.border}`,borderRadius:6,overflow:"hidden"}}>
                           {/* SheetDim header */}
                           <div onClick={()=>setExpandedMat(p=>({...p,[gKey]:!p[gKey]}))}
                             style={{display:"flex",alignItems:"center",gap:10,padding:"7px 12px",
-                              background:gExp?`${T.accent}08`:T.bgInput,cursor:"pointer"}}>
+                              background:gExp?`${T.accent}08`:allCut?`${T.green}06`:T.bgInput,cursor:"pointer",
+                              opacity:allCut?0.75:1}}>
                             <span style={{color:T.textLow,fontSize:10,width:14}}>{gExp?"▼":"▶"}</span>
                             {/* Dim label */}
-                            <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.text,fontSize:12,minWidth:140}}>
+                            <span style={{fontFamily:T.fontMono,fontWeight:700,
+                              color:allCut?T.green:T.text,fontSize:12,minWidth:140}}>
                               {g.sheetDim||"Unknown dim"}
                             </span>
+                            {/* Status badge at dim level */}
+                            {dimStatusLabel&&(
+                              <span style={{fontSize:9,fontWeight:800,color:dimStatusColor,
+                                background:`${dimStatusColor}22`,borderRadius:3,padding:"1px 6px",whiteSpace:"nowrap"}}>
+                                {dimStatusLabel}
+                              </span>
+                            )}
                             {/* Sheet count */}
                             <span style={{fontSize:11,color:T.textMid,minWidth:80}}>
                               {g.sheets.length} sheet{g.sheets.length!==1?"s":""}
@@ -16104,207 +16211,260 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
   const STATE_LABELS = ["","RM NOT ASSIGNED","REQUEST RM FROM STORE","AWAITING STORE","RM IN HAND — READY TO CUT","CUTTING IN PROGRESS","CUTTING COMPLETE"];
   const STATE_COLORS = ["",T.textLow,T.accent,T.amber,T.green,T.accent,T.green];
 
-  const totalJobs = myRmUnits.length + legacyAssignments.length;
+  // ── Tab state ──
+  const [moTab, setMoTab] = React.useState("assigned"); // assigned | cut | completed
+  const [searchCompleted, setSearchCompleted] = React.useState("");
+  const [showOffcutMap, setShowOffcutMap] = React.useState({});
+  const [offcutWtMap, setOffcutWtMap]     = React.useState({});
+  const [offcutDimMap, setOffcutDimMap]   = React.useState({});
+
+  // Split rmUnits into tabs by state
+  const assignedUnits  = myRmUnits.filter(ru=>getRmState(ru)<=3);    // no lot / request rm / awaiting store
+  const cutUnits       = myRmUnits.filter(ru=>[4,5].includes(getRmState(ru))); // rm in hand / cutting
+  const completedUnits = myRmUnits.filter(ru=>getRmState(ru)===6)
+    .sort((a,b)=>(b.cuttingCompleteDate||"").localeCompare(a.cuttingCompleteDate||""))
+    .slice(0,50);
+  const filteredCompleted = searchCompleted
+    ? completedUnits.filter(ru=>
+        ru.rmUnitId?.toLowerCase().includes(searchCompleted.toLowerCase())||
+        ru.matCode?.toLowerCase().includes(searchCompleted.toLowerCase())||
+        (ru.parts||[]).some(p=>(p.markNo||p).toLowerCase().includes(searchCompleted.toLowerCase()))
+      )
+    : completedUnits;
+
+  const TAB_COUNTS = {
+    assigned: assignedUnits.length + legacyAssignments.filter(a=>getLegacyState(a)<=3).length,
+    cut:      cutUnits.length + legacyAssignments.filter(a=>[4,5].includes(getLegacyState(a))).length,
+    completed:completedUnits.length + legacyAssignments.filter(a=>getLegacyState(a)===6).length,
+  };
+
+  const RmUnitCard = ({ru}) => {
+    const state=getRmState(ru);
+    const req=(issueRequests||[]).find(r=>r.rmUnitId===ru.rmUnitId&&r.releaseId===ru.releaseId);
+    const lot=(stock||[]).find(s=>s.id===ru.lotId)||{};
+    const color=STATE_COLORS[state];
+    const showOffcut=showOffcutMap[ru.rmUnitId]||false;
+    const offcutWt=offcutWtMap[ru.rmUnitId]||"";
+    const offcutDim=offcutDimMap[ru.rmUnitId]||"";
+    return (
+      <div key={ru.rmUnitId+ru.releaseId} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${color}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+          <div>
+            <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{ru.rmUnitId}</div>
+            <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{ru.matCode} · {ru.dimensions} · Release {ru.releaseId}</div>
+            <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
+              Parts: <span style={{color:T.text,fontWeight:600}}>{(ru.parts||[]).length}</span>
+              {ru.startDate&&<span> · Cut by: {ru.startDate} → {ru.endDate}</span>}
+            </div>
+          </div>
+          <div style={{background:color,color:state===2?T.text:"#fff",fontSize:10,fontWeight:800,borderRadius:4,padding:"3px 8px",whiteSpace:"nowrap"}}>
+            {STATE_LABELS[state]}
+          </div>
+        </div>
+        {(ru.dxfLink||ru.nestingFile)&&(
+          <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+            {ru.dxfLink&&<a href={ru.dxfLink} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:T.accent,padding:"3px 8px",background:T.bgInput,borderRadius:4,border:`1px solid ${T.border}`,textDecoration:"none"}}>📐 DXF File</a>}
+            {ru.nestingFile&&<a href={ru.nestingFile} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:T.accent,padding:"3px 8px",background:T.bgInput,borderRadius:4,border:`1px solid ${T.border}`,textDecoration:"none"}}>📋 Nesting Layout</a>}
+          </div>
+        )}
+        {ru.lotId&&(
+          <div style={{fontSize:12,color:T.textMid,marginBottom:8,padding:"6px 10px",background:T.bgInput,borderRadius:5}}>
+            Lot: <span style={{color:T.text,fontFamily:T.fontMono}}>{lot.lotNo||ru.lotId}</span>
+            {lot.bayId&&<span> · Bay: <span style={{color:T.text,fontWeight:600}}>{lot.bayId}</span></span>}
+            {lot.wtAvailable>0&&<span> · {lot.wtAvailable.toFixed(0)} kg available</span>}
+          </div>
+        )}
+        {req&&(
+          <div style={{fontSize:11,padding:"6px 10px",background:T.bgInput,borderRadius:5,marginBottom:8}}>
+            Request: <span style={{fontFamily:T.fontMono,color:T.accentHi}}>{req.id}</span>
+            <Badge color={req.status==="issued"?"green":req.status==="rejected"?"red":"amber"} style={{marginLeft:8}}>{req.status}</Badge>
+            {req.issuedBy&&<span style={{color:T.textMid,marginLeft:8}}>Issued by {req.issuedBy} on {req.issueDate}</span>}
+            {req.status==="rejected"&&req.remarks&&<div style={{color:T.red,marginTop:4}}>Reason: {req.remarks}</div>}
+          </div>
+        )}
+        {(ru.parts||[]).length>0&&(
+          <details style={{marginBottom:8}}>
+            <summary style={{fontSize:11,color:T.textMid,cursor:"pointer",padding:"4px 0"}}>Parts on this sheet ({(ru.parts||[]).length})</summary>
+            <div style={{paddingLeft:12,paddingTop:4,display:"flex",flexWrap:"wrap",gap:4}}>
+              {(ru.parts||[]).map(p=>(
+                <span key={p.markNo||p} style={{fontFamily:T.fontMono,fontSize:10,color:T.text}}>{p.markNo||p}</span>
+              ))}
+            </div>
+          </details>
+        )}
+        {state===1&&<InfoBanner color="gray">No lot assigned. Contact production manager.</InfoBanner>}
+        {state===2&&<button onClick={()=>requestRmForUnit(ru)} style={{...css.btn.primary,width:"100%",padding:"10px 0",fontSize:13}}>📦 Request Material Issue from Store</button>}
+        {state===3&&<div style={{padding:"10px 14px",background:`${T.amber}18`,border:`1px solid ${T.amber}44`,borderRadius:6,fontSize:12,color:T.amber,textAlign:"center"}}>⏳ Awaiting store — Request {req?.id} pending</div>}
+        {state===4&&<button onClick={()=>startCuttingRu(ru)} style={{...css.btn.green,width:"100%",padding:"10px 0",fontSize:13}}>✂ Material Received — Start Cutting</button>}
+        {state===5&&(
+          <div>
+            <div style={{fontSize:12,color:T.accent,marginBottom:10,fontWeight:700}}>✂ CUTTING IN PROGRESS</div>
+            {!showOffcut?(
+              <button onClick={()=>setShowOffcutMap(m=>({...m,[ru.rmUnitId]:true}))} style={{...css.btn.primary,width:"100%",padding:"10px 0",fontSize:13}}>✓ Mark Cutting Complete</button>
+            ):(
+              <div style={{padding:"12px",background:T.bgInput,borderRadius:6,border:`1px solid ${T.border}`}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:10}}>Log Offcut Before Completing</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <div>
+                    <label style={css.label}>Offcut Weight (kg)</label>
+                    <input type="number" value={offcutWt} onChange={e=>setOffcutWtMap(m=>({...m,[ru.rmUnitId]:e.target.value}))} placeholder="0" style={{...css.input,fontSize:12}} />
+                  </div>
+                  <div>
+                    <label style={css.label}>Offcut Dimensions (mm)</label>
+                    <input type="text" value={offcutDim} onChange={e=>setOffcutDimMap(m=>({...m,[ru.rmUnitId]:e.target.value}))} placeholder="e.g. 1500X3200" style={{...css.input,fontSize:12}} />
+                  </div>
+                </div>
+                <div style={{fontSize:11,color:T.textMid,marginBottom:10}}>
+                  {parseFloat(offcutWt)>0?`Offcut of ${offcutWt}kg will be added to stock.`:"Enter 0 if no offcut."}
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>completeCuttingRu(ru,offcutWt,offcutDim)} style={{...css.btn.green,flex:1,padding:"10px 0",fontSize:13}}>✓ Confirm Complete</button>
+                  <button onClick={()=>setShowOffcutMap(m=>({...m,[ru.rmUnitId]:false}))} style={{...css.btn.ghost,padding:"10px 16px"}}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div>
-      <div style={{marginBottom:20}}>
+      {/* Header */}
+      <div style={{marginBottom:16}}>
         <div style={{fontSize:22,fontWeight:800,color:T.text}}>My Cutting Jobs</div>
-        <div style={{fontSize:13,color:T.textMid}}>{user.name} — {totalJobs} job{totalJobs!==1?"s":""}</div>
+        <div style={{fontSize:13,color:T.textMid}}>{user.name}</div>
       </div>
-      {totalJobs===0&&<InfoBanner color="blue">No cutting jobs assigned yet. A production release must be created and assigned to you first.</InfoBanner>}
 
-      {/* New rmUnit-based jobs */}
-      {myRmUnits.map(ru=>{
-        const state=getRmState(ru);
-        const req=(issueRequests||[]).find(r=>r.rmUnitId===ru.rmUnitId&&r.releaseId===ru.releaseId);
-        const lot=(stock||[]).find(s=>s.id===ru.lotId)||{};
-        const color=STATE_COLORS[state];
-        const [showOffcut,setShowOffcut]=React.useState(false);
-        const [offcutWt,setOffcutWt]=React.useState("");
-        const [offcutDim,setOffcutDim]=React.useState("");
-        return (
-          <div key={ru.rmUnitId+ru.releaseId} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${color}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-              <div>
-                <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{ru.rmUnitId}</div>
-                <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
-                  {ru.matCode} · {ru.dimensions} · Release {ru.releaseId}
-                </div>
-                <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
-                  Parts: <span style={{color:T.text,fontWeight:600}}>{(ru.parts||[]).length}</span>
-                  {ru.startDate&&<span> · Cut by: {ru.startDate} → {ru.endDate}</span>}
-                </div>
-              </div>
-              <div style={{background:color,color:state===2?T.text:"#fff",fontSize:10,fontWeight:800,borderRadius:4,padding:"3px 8px",whiteSpace:"nowrap",textAlign:"center"}}>
-                {STATE_LABELS[state]}
-              </div>
-            </div>
+      {/* Tab bar */}
+      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
+        {[
+          {id:"assigned", label:"📋 Assigned",   desc:"Request material"},
+          {id:"cut",      label:"✂ Start Cut",   desc:"Mark cutting done"},
+          {id:"completed",label:"✅ Completed",   desc:"Recent 50"},
+        ].map(t=>(
+          <button key={t.id} onClick={()=>setMoTab(t.id)} style={{
+            padding:"10px 20px",fontSize:12,fontWeight:moTab===t.id?700:400,
+            color:moTab===t.id?T.accent:T.textMid,background:"transparent",border:"none",
+            borderBottom:moTab===t.id?`2px solid ${T.accent}`:"2px solid transparent",
+            cursor:"pointer",display:"flex",alignItems:"center",gap:8
+          }}>
+            {t.label}
+            {TAB_COUNTS[t.id]>0&&(
+              <span style={{background:t.id==="assigned"?T.amber:t.id==="cut"?T.accent:T.green,
+                color:"#fff",borderRadius:"50%",fontSize:10,padding:"1px 6px",fontWeight:700}}>
+                {TAB_COUNTS[t.id]}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
 
-            {/* Files */}
-            {(ru.dxfLink||ru.nestingFile)&&(
-              <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                {ru.dxfLink&&<a href={ru.dxfLink} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:T.accent,padding:"3px 8px",background:T.bgInput,borderRadius:4,border:`1px solid ${T.border}`,textDecoration:"none"}}>📐 DXF File</a>}
-                {ru.nestingFile&&<a href={ru.nestingFile} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:T.accent,padding:"3px 8px",background:T.bgInput,borderRadius:4,border:`1px solid ${T.border}`,textDecoration:"none"}}>📋 Nesting Layout</a>}
-              </div>
-            )}
-
-            {/* Lot info */}
-            {ru.lotId&&(
-              <div style={{fontSize:12,color:T.textMid,marginBottom:8,padding:"6px 10px",background:T.bgInput,borderRadius:5}}>
-                Lot: <span style={{color:T.text,fontFamily:T.fontMono}}>{lot.lotNo||ru.lotId}</span>
-                {lot.bayId&&<span> · Bay: <span style={{color:T.text,fontWeight:600}}>{lot.bayId}</span></span>}
-                {lot.wtAvailable>0&&<span> · {lot.wtAvailable.toFixed(0)} kg available</span>}
-              </div>
-            )}
-
-            {/* Issue request status */}
-            {req&&(
-              <div style={{fontSize:11,padding:"6px 10px",background:T.bgInput,borderRadius:5,marginBottom:8}}>
-                Request: <span style={{fontFamily:T.fontMono,color:T.accentHi}}>{req.id}</span>
-                <Badge color={req.status==="issued"?"green":req.status==="rejected"?"red":"amber"} style={{marginLeft:8}}>{req.status}</Badge>
-                {req.issuedBy&&<span style={{color:T.textMid,marginLeft:8}}>Issued by {req.issuedBy} on {req.issueDate}</span>}
-                {req.status==="rejected"&&req.remarks&&<div style={{color:T.red,marginTop:4}}>Reason: {req.remarks}</div>}
-              </div>
-            )}
-
-            {/* Parts list */}
-            {(ru.parts||[]).length>0&&(
-              <details style={{marginBottom:8}}>
-                <summary style={{fontSize:11,color:T.textMid,cursor:"pointer",padding:"4px 0"}}>Parts on this sheet ({(ru.parts||[]).length})</summary>
-                <div style={{paddingLeft:12,paddingTop:4}}>
-                  {(ru.parts||[]).map(p=>(
-                    <span key={p.markNo||p} style={{fontFamily:T.fontMono,fontSize:10,color:T.text,marginRight:8}}>{p.markNo||p}</span>
-                  ))}
-                </div>
-              </details>
-            )}
-
-            {/* Action buttons by state */}
-            {state===1&&<InfoBanner color="gray">No lot assigned. Contact production manager.</InfoBanner>}
-            {state===2&&(
-              <button onClick={()=>requestRmForUnit(ru)} style={{...css.btn.primary,width:"100%",padding:"10px 0",fontSize:13}}>
-                📦 Request Material Issue from Store
-              </button>
-            )}
-            {state===3&&(
-              <div style={{padding:"10px 14px",background:T.amberBg,border:`1px solid ${T.amber}44`,borderRadius:6,fontSize:12,color:T.amber,textAlign:"center"}}>
-                ⏳ Awaiting store — Request {req?.id} pending
-              </div>
-            )}
-            {state===4&&(
-              <button onClick={()=>startCuttingRu(ru)} style={{...css.btn.green,width:"100%",padding:"10px 0",fontSize:13}}>
-                ✂ Material Received — Start Cutting
-              </button>
-            )}
-            {state===5&&(
-              <div>
-                <div style={{fontSize:12,color:T.accent,marginBottom:10,fontWeight:700}}>CUTTING IN PROGRESS</div>
-                {!showOffcut?(
-                  <button onClick={()=>setShowOffcut(true)} style={{...css.btn.primary,width:"100%",padding:"10px 0",fontSize:13}}>
-                    ✓ Mark Cutting Complete
-                  </button>
-                ):(
-                  <div style={{padding:"12px",background:T.bgInput,borderRadius:6,border:`1px solid ${T.border}`}}>
-                    <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:10}}>Log Offcut Before Completing</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                      <div>
-                        <label style={css.label}>Offcut Weight (kg)</label>
-                        <input type="number" value={offcutWt} onChange={e=>setOffcutWt(e.target.value)} placeholder="0" style={{...css.input,fontSize:12}} />
-                      </div>
-                      <div>
-                        <label style={css.label}>Offcut Dimensions (mm)</label>
-                        <input type="text" value={offcutDim} onChange={e=>setOffcutDim(e.target.value)} placeholder="e.g. 1500X3200" style={{...css.input,fontSize:12}} />
-                      </div>
-                    </div>
-                    <div style={{fontSize:11,color:T.textMid,marginBottom:10}}>
-                      {parseFloat(offcutWt)>0?`Offcut of ${offcutWt}kg will be added to stock automatically.`:"Enter 0 if no offcut (full utilisation)."}
-                    </div>
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>completeCuttingRu(ru,offcutWt,offcutDim)} style={{...css.btn.green,flex:1,padding:"10px 0",fontSize:13}}>
-                        ✓ Confirm Complete
-                      </button>
-                      <button onClick={()=>setShowOffcut(false)} style={{...css.btn.ghost,padding:"10px 16px"}}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            {state===6&&(
-              <div>
-                <div style={{padding:"10px 14px",background:T.greenBg,border:`1px solid ${T.green}44`,borderRadius:6,fontSize:12,color:T.green,textAlign:"center",fontWeight:700,marginBottom:8}}>
-                  ✓ CUTTING COMPLETE — Parts moving to QC
-                  {ru.offcutWt>0&&<div style={{fontSize:11,fontWeight:400,marginTop:4}}>Offcut: {ru.offcutWt}kg ({ru.offcutDim||"—"}) added to stock</div>}
-                </div>
-                {(()=>{
-                  // Show all parts on this rmUnit with assignment status
-                  const allInsts=(instances||[]).filter(i=>i.rmUnitId===ru.rmUnitId);
-                  if(allInsts.length===0) return null;
-                  const assigned=allInsts.filter(i=>i.assignedContractorId);
-                  const unassigned=allInsts.filter(i=>!i.assignedContractorId);
-                  const unique=(arr)=>{const m={};arr.forEach(i=>{if(!m[i.markNo])m[i.markNo]={...i,count:0};m[i.markNo].count++;});return Object.values(m);};
-                  return (
-                    <div style={{fontSize:11,padding:"8px 10px",background:T.bgInput,borderRadius:6,border:`1px solid ${T.border}`}}>
-                      <div style={{fontWeight:700,color:T.text,marginBottom:6}}>Parts on this sheet ({allInsts.length} instances)</div>
-                      {assigned.length>0&&(
-                        <div style={{marginBottom:6}}>
-                          <div style={{fontSize:10,fontWeight:700,color:T.green,marginBottom:3}}>✓ ASSIGNED — READY FOR COLLECTION ({unique(assigned).length} parts)</div>
-                          {unique(assigned).map(p=>(
-                            <div key={p.markNo} style={{display:"flex",gap:8,fontSize:10,padding:"2px 0",color:T.text}}>
-                              <span style={{fontFamily:T.fontMono,color:T.accentHi,minWidth:120}}>{p.markNo}</span>
-                              <span style={{color:T.textMid}}>{p.drawingNo}</span>
-                              <span style={{color:T.green,marginLeft:"auto"}}>{p.assignedContractorName}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {unassigned.length>0&&(
-                        <div>
-                          <div style={{fontSize:10,fontWeight:700,color:T.amber,marginBottom:3}}>⏳ UNASSIGNED — SEND TO HOLDING BAY ({unique(unassigned).length} parts)</div>
-                          {unique(unassigned).map(p=>(
-                            <div key={p.markNo} style={{display:"flex",gap:8,fontSize:10,padding:"2px 0",color:T.amber}}>
-                              <span style={{fontFamily:T.fontMono,minWidth:120}}>{p.markNo}</span>
-                              <span style={{color:T.textMid}}>{p.drawingNo}</span>
-                              <span style={{marginLeft:"auto"}}>→ Holding Bay</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Legacy machine assignment jobs */}
-      {legacyAssignments.map(a=>{
-        const state=getLegacyState(a);
-        const req=(issueRequests||[]).find(r=>r.machineAssignmentId===a.id);
-        const lot=(stock||[]).find(s=>s.id===a.lotId)||{};
-        const color=STATE_COLORS[state];
-        return (
-          <div key={a.id} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${color}`,opacity:0.85}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-              <div>
+      {/* Tab 1: Assigned — no lot / request rm / awaiting store */}
+      {moTab==="assigned"&&(
+        <div>
+          {assignedUnits.length===0&&legacyAssignments.filter(a=>getLegacyState(a)<=3).length===0&&(
+            <InfoBanner color="blue">No jobs assigned yet. A production release must be created and assigned to you first.</InfoBanner>
+          )}
+          {assignedUnits.map(ru=><RmUnitCard key={ru.rmUnitId+ru.releaseId} ru={ru} />)}
+          {legacyAssignments.filter(a=>getLegacyState(a)<=3).map(a=>{
+            const state=getLegacyState(a); const req=(issueRequests||[]).find(r=>r.machineAssignmentId===a.id); const lot=(stock||[]).find(s=>s.id===a.lotId)||{};
+            return (
+              <div key={a.id} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${STATE_COLORS[state]}`}}>
                 <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{a.matCode}</div>
-                <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{a.machineName} · Release {a.releaseId}</div>
-                <Badge color="gray" style={{marginTop:4}}>Legacy Assignment</Badge>
+                <div style={{fontSize:11,color:T.textMid}}>{a.machineName} · Release {a.releaseId} <Badge color="gray">Legacy</Badge></div>
+                {a.lotId&&<div style={{fontSize:11,color:T.textMid,margin:"6px 0"}}>Lot: {lot.lotNo||a.lotId}</div>}
+                {req&&<div style={{fontSize:11,margin:"6px 0"}}>Request: {req.id} <Badge color={req.status==="issued"?"green":"amber"}>{req.status}</Badge></div>}
+                {state===2&&<button onClick={()=>requestRmLegacy(a)} style={{...css.btn.primary,width:"100%"}}>📦 Request Issue from Store</button>}
+                {state===3&&<div style={{padding:"10px",background:`${T.amber}18`,borderRadius:6,fontSize:12,color:T.amber,textAlign:"center"}}>⏳ Awaiting store — {req?.id}</div>}
               </div>
-              <div style={{background:color,color:state===2?T.text:"#fff",fontSize:10,fontWeight:800,borderRadius:4,padding:"3px 8px"}}>{STATE_LABELS[state]}</div>
-            </div>
-            {a.lotId&&<div style={{fontSize:12,color:T.textMid,marginBottom:8}}>Lot: <span style={{fontFamily:T.fontMono}}>{lot.lotNo||a.lotId}</span>{lot.bayId&&<span> · Bay: {lot.bayId}</span>}</div>}
-            {req&&<div style={{fontSize:11,padding:"6px 10px",background:T.bgInput,borderRadius:5,marginBottom:8}}>Request: <span style={{fontFamily:T.fontMono,color:T.accentHi}}>{req.id}</span> <Badge color={req.status==="issued"?"green":req.status==="rejected"?"red":"amber"}>{req.status}</Badge></div>}
-            {state===2&&<button onClick={()=>requestRmLegacy(a)} style={{...css.btn.primary,width:"100%"}}>📦 Request Issue from Store</button>}
-            {state===3&&<div style={{padding:"10px",background:T.amberBg,borderRadius:6,fontSize:12,color:T.amber,textAlign:"center"}}>⏳ Awaiting store — {req?.id}</div>}
-            {state===4&&<button onClick={()=>startCuttingLegacy(a)} style={{...css.btn.green,width:"100%"}}>✂ Start Cutting</button>}
-            {state===5&&<button onClick={()=>completeCuttingLegacy(a)} style={{...css.btn.primary,width:"100%",padding:"12px 0",fontSize:15,fontWeight:800}}>✓ MARK CUTTING COMPLETE</button>}
-            {state===6&&<div style={{padding:"10px",background:T.greenBg,borderRadius:6,fontSize:12,color:T.green,textAlign:"center",fontWeight:700}}>✓ CUTTING COMPLETE</div>}
+            );
+          })}
+        </div>
+      )}
+
+      {/* Tab 2: Start Cut — rm in hand / cutting in progress */}
+      {moTab==="cut"&&(
+        <div>
+          {cutUnits.length===0&&legacyAssignments.filter(a=>[4,5].includes(getLegacyState(a))).length===0&&(
+            <InfoBanner color="blue">No sheets ready to cut. Request material from Tab 1 first.</InfoBanner>
+          )}
+          {cutUnits.map(ru=><RmUnitCard key={ru.rmUnitId+ru.releaseId} ru={ru} />)}
+          {legacyAssignments.filter(a=>[4,5].includes(getLegacyState(a))).map(a=>{
+            const state=getLegacyState(a);
+            return (
+              <div key={a.id} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${STATE_COLORS[state]}`}}>
+                <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{a.matCode}</div>
+                <div style={{fontSize:11,color:T.textMid}}>{a.machineName} <Badge color="gray">Legacy</Badge></div>
+                {state===4&&<button onClick={()=>startCuttingLegacy(a)} style={{...css.btn.green,width:"100%",marginTop:8}}>✂ Start Cutting</button>}
+                {state===5&&<button onClick={()=>completeCuttingLegacy(a)} style={{...css.btn.primary,width:"100%",marginTop:8,padding:"12px 0",fontSize:15,fontWeight:800}}>✓ MARK CUTTING COMPLETE</button>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Tab 3: Completed — last 50, searchable */}
+      {moTab==="completed"&&(
+        <div>
+          <div style={{marginBottom:14}}>
+            <input
+              value={searchCompleted}
+              onChange={e=>setSearchCompleted(e.target.value)}
+              placeholder="Search by sheet ID, material code, or mark no..."
+              style={{...css.input,width:"100%",maxWidth:480}}
+            />
           </div>
-        );
-      })}
+          {filteredCompleted.length===0&&(
+            <InfoBanner color="blue">{searchCompleted?"No results found.":"No completed jobs yet."}</InfoBanner>
+          )}
+          {filteredCompleted.map(ru=>{
+            const allInsts=(instances||[]).filter(i=>i.rmUnitId===ru.rmUnitId);
+            const assigned=allInsts.filter(i=>i.assignedContractorId||i.currentStatus==="awaiting_collection");
+            const cutCleared=allInsts.filter(i=>i.currentStatus==="cut_cleared");
+            return (
+              <div key={ru.rmUnitId+ru.releaseId} style={{...css.card,marginBottom:10,borderLeft:`4px solid ${T.green}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{ru.rmUnitId}</div>
+                  <Badge color="green">✓ Cut Complete</Badge>
+                </div>
+                <div style={{fontSize:11,color:T.textMid,marginBottom:6}}>
+                  {ru.matCode} · Release {ru.releaseId}
+                  {ru.cuttingCompleteDate&&<span> · Completed: {ru.cuttingCompleteDate}</span>}
+                  {ru.offcutWt>0&&<span style={{color:T.amber}}> · Offcut: {ru.offcutWt}kg ({ru.offcutDim||"—"})</span>}
+                </div>
+                <details>
+                  <summary style={{fontSize:11,color:T.textMid,cursor:"pointer"}}>
+                    {allInsts.length} instances — {assigned.length} awaiting collection, {cutCleared.length} cut cleared
+                  </summary>
+                  <div style={{paddingTop:8,display:"flex",flexDirection:"column",gap:2}}>
+                    {allInsts.slice(0,30).map(i=>(
+                      <div key={i.instanceId} style={{display:"flex",gap:8,fontSize:10,padding:"2px 0"}}>
+                        <span style={{fontFamily:T.fontMono,color:T.accentHi,minWidth:130}}>{i.markNo}</span>
+                        <span style={{color:T.textMid,minWidth:80}}>{i.drawingNo}</span>
+                        <span style={{color:i.currentStatus==="awaiting_collection"?T.amber:i.currentStatus==="cut_cleared"?T.accent:T.green,marginLeft:"auto"}}>
+                          {i.currentStatus==="awaiting_collection"?"⏳ Awaiting Collection":
+                           i.currentStatus==="cut_cleared"?"📦 Cut Cleared — Machine Bay":
+                           i.currentStage}
+                        </span>
+                      </div>
+                    ))}
+                    {allInsts.length>30&&<div style={{fontSize:10,color:T.textLow}}>+{allInsts.length-30} more</div>}
+                  </div>
+                </details>
+              </div>
+            );
+          })}
+          {/* Legacy completed */}
+          {legacyAssignments.filter(a=>getLegacyState(a)===6).map(a=>(
+            <div key={a.id} style={{...css.card,marginBottom:10,borderLeft:`4px solid ${T.green}`,opacity:0.8}}>
+              <div style={{fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>{a.matCode}</div>
+              <div style={{fontSize:11,color:T.textMid}}>{a.machineName} · <Badge color="gray">Legacy</Badge> · ✓ Complete</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -17574,13 +17734,19 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
 
   // ── Inspection Queue Panel ──
   const InspectionPanel = ({ stages }) => {
+    // Pending instances — these drive the queue
     const myQueue = instances.filter(i=>
       i.currentStatus==="pending_supervisor" &&
       stages.includes(i.currentStage) &&
       (!i.assignedEngineer || i.assignedEngineer===user.id || i.assignedEngineer===user.username)
     );
 
-    // Group by rmUnitId first, then by markNo+drawingId
+    // For cutting QC: collect ALL instances per rmUnit (including already approved side-cuts)
+    // so QC engineer sees the full sheet, not just pending parts
+    const isCuttingTab = stages.includes("cutting_qc");
+    const pendingRmUnitIds = new Set(myQueue.map(i=>i.rmUnitId).filter(Boolean));
+
+    // Group by rmUnitId — one group per physical sheet
     const rmUnitGroups = {};
     myQueue.forEach(i=>{
       const rmKey = i.rmUnitId||`no-rmunit-${i.drawingId}`;
@@ -17589,10 +17755,21 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
         drawingNo:i.drawingNo,
         orderId:i.orderId,
         stage:i.currentStage,
-        parts:[],
+        parts:[],          // pending parts — used for approval
+        allParts:[],       // ALL parts on this sheet — for display only
       };
       rmUnitGroups[rmKey].parts.push(i);
     });
+
+    // For cutting QC: augment each group with ALL instances on that rmUnit
+    if(isCuttingTab){
+      pendingRmUnitIds.forEach(rmUnitId=>{
+        if(!rmUnitGroups[rmUnitId]) return;
+        // Find all instances on this sheet regardless of status
+        const allOnSheet=(instances||[]).filter(i=>i.rmUnitId===rmUnitId);
+        rmUnitGroups[rmUnitId].allParts=allOnSheet;
+      });
+    }
 
     const [selRmUnit, setSelRmUnit] = useState(null);
     const [checks, setChecks] = useState({});
@@ -17682,32 +17859,53 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
         const isFitupQc  = stages.includes("fitup");
         const isWeldQc   = stages.includes("welding") || stages.includes("tpi_weld");
 
-        // Advance instances — skip side-cut instances (they have no DPR/contractor)
-        // Instances going to fitup stage get status "pending" (awaiting contractor, not QC)
+        // Advance ALL instances in this rmUnit group (full sheet approval)
+        // - Released drawing parts → fitup/pending + awaiting_collection
+        // - Side-cut parts (unreleased drawings) → cut_cleared at machine bay
+        const isCuttingQcApproval = stages.includes("cutting_qc");
         setInstances(prev=>prev.map(inst=>{
           if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
-          // Side-cut instances: approved in cutting QC but stay at cutting stage as complete
-          if(inst.isSideCut || inst.releaseId==="side_cut") {
+          if(isCuttingQcApproval){
+            // Side-cut: mark as cut_cleared, store machine bay info
+            if(inst.isSideCut || inst.releaseId==="side_cut") {
+              return {...inst,
+                currentStage:"cutting_qc",
+                currentStatus:"cut_cleared",
+                cutQcApprovedAt:ts,
+                cutQcApprovedBy:user.username,
+                machineBay:`machine_bay:${inst.cutBy||user.username}`,
+                stageHistory:[...(inst.stageHistory||[]),{
+                  stage:"cutting_qc", status:"approved_cut_cleared",
+                  approvedBy:user.username, approvedAt:ts
+                }]
+              };
+            }
+            // Released drawing part → fitup/pending + awaiting collection
             return {...inst,
-              currentStatus: "completed",
-              stageHistory: [...(inst.stageHistory||[]),{
-                stage:inst.currentStage, status:"approved_side_cut",
-                approvedBy:user.username, approvedAt:ts
+              currentStage:"fitup",
+              currentStatus:"awaiting_collection",
+              cutQcApprovedAt:ts,
+              cutQcApprovedBy:user.username,
+              machineBay:`machine_bay:${inst.cutBy||user.username}`,
+              collectionDueBy:new Date(Date.now()+4*3600000).toISOString(),
+              stageHistory:[...(inst.stageHistory||[]),{
+                stage:"cutting_qc", status:"approved",
+                approvedBy:user.username, approvedAt:ts,
+                checklistItems:Object.keys(checks).filter(k=>checks[k]),
+                dimReadings:dimReadings
               }]
             };
           }
+          // Non-cutting QC (fitup/weld) — original flow
           const nextStage = STAGE_NEXT[inst.currentStage]||inst.currentStage;
-          // After cutting_qc → fitup: status is "pending" (waiting for contractor to start)
-          // After fitup → welding: this path is now DPR-only, instances follow DPR
-          const nextStatus = nextStage==="fitup" ? "pending" : "pending";
           return {...inst,
             currentStage: nextStage,
-            currentStatus: nextStatus,
-            stageHistory: [...(inst.stageHistory||[]),{
+            currentStatus: "pending",
+            stageHistory:[...(inst.stageHistory||[]),{
               stage:inst.currentStage, status:"approved",
               approvedBy:user.username, approvedAt:ts,
               checklistItems:Object.keys(checks).filter(k=>checks[k]),
-              dimReadings: dimReadings
+              dimReadings:dimReadings
             }]
           };
         }));
@@ -17811,7 +18009,18 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
                 <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:14}}>{selGroup.rmUnitId||selGroup.drawingNo}</div>
                 <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{selGroup.drawingNo} · {selGroup.orderId} · <Badge color="blue">{selGroup.stage.replace(/_/g," ")}</Badge></div>
               </div>
-              <div style={{fontSize:12,color:T.textMid}}>{selGroup.parts.length} part{selGroup.parts.length!==1?"s":""}</div>
+              <div style={{fontSize:12,color:T.textMid}}>
+                {selGroup.allParts?.length>0?(
+                  <span>
+                    <span style={{color:T.green,fontWeight:700}}>{selGroup.parts.length}</span>
+                    <span style={{color:T.textLow}}> pending / </span>
+                    <span style={{fontWeight:700}}>{selGroup.allParts.length}</span>
+                    <span style={{color:T.textLow}}> total on sheet</span>
+                  </span>
+                ):(
+                  <span>{selGroup.parts.length} part{selGroup.parts.length!==1?"s":""}</span>
+                )}
+              </div>
             </div>
 
             {/* Parts table */}
@@ -17825,20 +18034,28 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
               </thead>
               <tbody>
                 {(()=>{
-                  // Deduplicate by markNo — show unique parts with qty count
+                  // Show allParts if available (cutting QC — all parts on sheet)
+                  // otherwise show parts (pending only)
+                  const displayParts = selGroup.allParts?.length>0 ? selGroup.allParts : selGroup.parts;
+                  const pendingIds = new Set(selGroup.parts.map(p=>p.instanceId));
+                  // Deduplicate by markNo
                   const uniqueParts={};
-                  selGroup.parts.forEach(p=>{
-                    if(!uniqueParts[p.markNo]) uniqueParts[p.markNo]={...p,qty:0};
+                  displayParts.forEach(p=>{
+                    if(!uniqueParts[p.markNo]) uniqueParts[p.markNo]={...p,qty:0,isPending:pendingIds.has(p.instanceId)};
                     uniqueParts[p.markNo].qty++;
+                    if(pendingIds.has(p.instanceId)) uniqueParts[p.markNo].isPending=true;
                   });
                   return Object.values(uniqueParts).map(p=>{
                     const isSideCut=p.isSideCut||p.releaseId==="side_cut";
                     const isAssigned=!!p.assignedContractorId;
                     return (
-                      <tr key={p.markNo} style={{borderBottom:`1px solid ${T.border}33`,background:isSideCut?`${T.amber}08`:"transparent"}}>
+                      <tr key={p.markNo} style={{borderBottom:`1px solid ${T.border}33`,
+                        background:!p.isPending?`${T.green}06`:isSideCut?`${T.amber}08`:"transparent",
+                        opacity:!p.isPending?0.7:1}}>
                         <td style={{padding:"5px 10px",fontFamily:T.fontMono,color:isSideCut?T.amber:T.accentHi,fontWeight:600}}>
                           {p.markNo}
                           {isSideCut&&<span style={{marginLeft:4,fontSize:9,color:T.amber}}>side cut</span>}
+                          {!p.isPending&&<span style={{marginLeft:4,fontSize:9,color:T.green,fontWeight:700}}>✓ done</span>}
                         </td>
                         <td style={{padding:"5px 10px",fontFamily:T.fontMono,fontSize:10,color:T.textMid}}>{p.drawingNo}</td>
                         <td style={{padding:"5px 10px",fontSize:10}}>{p.matCode}</td>
@@ -18086,7 +18303,14 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
                   <td style={{padding:"8px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:11}}>{g.rmUnitId||g.drawingNo}</td>
                   <td style={{padding:"8px 10px",fontSize:11}}>{g.orderId}</td>
                   <td style={{padding:"8px 10px"}}><Badge color="blue">{g.stage.replace(/_/g," ")}</Badge></td>
-                  <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>{g.parts.length}</td>
+                  <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>
+                    {g.allParts?.length>0?(
+                      <span>
+                        <span style={{color:T.green,fontWeight:700}}>{g.parts.length}</span>
+                        <span style={{color:T.textLow}}> / {g.allParts.length} on sheet</span>
+                      </span>
+                    ):g.parts.length}
+                  </td>
                   <td style={{padding:"8px 10px",fontSize:11,color:T.textMid}}>{g.parts[0]?.cutBy||"—"}</td>
                   <td style={{padding:"8px 10px",fontSize:11,color:waitColor}}>{hoursWaiting>0?`${hoursWaiting}h ago`:"Just now"}</td>
                   <td style={{padding:"8px 10px"}}>
@@ -18324,15 +18548,17 @@ const RmUnitGroupRow = ({ rmUnitId, insts, T, css, STAGE_SEQ_LABELS }) => {
 // Accessible to production_engineer and super_admin
 // ═══════════════════════════════════════════════════════════════════════════════
 const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setInstances, contractors, onBack }) => {
+  const [peView,           setPeView]           = useState("dprs"); // "dprs" | "cut_parts"
   const [filterOrder,      setFilterOrder]      = useState("");
   const [filterStage,      setFilterStage]      = useState("");
   const [filterContractor, setFilterContractor] = useState("");
   const [stuckOnly,        setStuckOnly]        = useState(false);
   const [expanded,         setExpanded]         = useState(new Set());
-  const [reassignModal,    setReassignModal]    = useState(null); // { dprId, field:"fitup"|"weld" }
+  const [reassignModal,    setReassignModal]    = useState(null);
   const [reassignVal,      setReassignVal]      = useState("");
-  const [advanceModal,     setAdvanceModal]     = useState(null); // { dpr }
+  const [advanceModal,     setAdvanceModal]     = useState(null);
   const [advanceNote,      setAdvanceNote]      = useState("");
+  const [cutSearch,        setCutSearch]        = useState("");
 
   const today_ms = Date.now();
 
@@ -18390,10 +18616,24 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
       bottleneck = { label:"🟡 Cut Parts in QC", sub:`${inCutQC} parts awaiting QC`, color:T.amber, priority:4 };
     } else if (inCutting > 0) {
       bottleneck = { label:"🔵 Cutting in Progress", sub:`${inCutting}/${total} parts`, color:T.accent, priority:3 };
-    } else if (pct > 0) {
-      bottleneck = { label:"🟡 Parts Not Collected", sub:`${cutCleared}/${total} cut`, color:T.amber, priority:2 };
     } else {
-      bottleneck = { label:"⬜ Parts Not Cut", sub:`0/${total} started`, color:T.textMid, priority:1 };
+      const awaitingCollParts=(instances||[]).filter(i=>
+        drgMarkNos.has(i.markNo)&&i.currentStatus==="awaiting_collection"
+      );
+      const hrs=awaitingCollParts.length>0&&awaitingCollParts[0].cutQcApprovedAt
+        ?Math.round((Date.now()-new Date(awaitingCollParts[0].cutQcApprovedAt).getTime())/3600000):0;
+      const overdue=hrs>=4;
+      if(awaitingCollParts.length>0){
+        bottleneck={
+          label:overdue?"⚠ Collection Overdue":"🟠 Awaiting Collection",
+          sub:`${awaitingCollParts.length} parts · ${hrs}h waiting`,
+          color:overdue?T.red:T.amber, priority:3
+        };
+      } else if(pct>0){
+        bottleneck={label:"🟡 Parts Not Collected",sub:`${cutCleared}/${total} cut`,color:T.amber,priority:2};
+      } else {
+        bottleneck={label:"⬜ Parts Not Cut",sub:`0/${total} started`,color:T.textMid,priority:1};
+      }
     }
 
     return { ...dpr, order, drawing, total, cutCleared, pct, asmGroup, daysAtStage, isStuck, bottleneck };
@@ -18514,6 +18754,102 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
           <div style={{ fontSize:12, color:T.textMid }}>Cross-order drawing production records · interventions · reassignment</div>
         </div>
       </div>
+
+      {/* Tab bar */}
+      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
+        {[
+          {id:"dprs",      label:"📋 DPR Control",    desc:"Drawing production records"},
+          {id:"cut_parts", label:"🔍 Cut Parts Finder", desc:"Find cut material"},
+        ].map(t=>(
+          <button key={t.id} onClick={()=>setPeView(t.id)} style={{
+            padding:"10px 20px",fontSize:12,fontWeight:peView===t.id?700:400,
+            color:peView===t.id?T.accent:T.textMid,background:"transparent",border:"none",
+            borderBottom:peView===t.id?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer"
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* Cut Parts Finder Tab */}
+      {peView==="cut_parts"&&React.createElement(()=>{
+        const cutInsts=(instances||[]).filter(i=>
+          ['cut_cleared','awaiting_collection','with_contractor'].includes(i.currentStatus)
+        );
+        const search=cutSearch.toLowerCase();
+        const filtered=cutSearch?cutInsts.filter(i=>
+          i.markNo?.toLowerCase().includes(search)||
+          i.drawingNo?.toLowerCase().includes(search)||
+          i.rmUnitId?.toLowerCase().includes(search)||
+          i.matCode?.toLowerCase().includes(search)||
+          i.assignedContractorName?.toLowerCase().includes(search)
+        ):cutInsts;
+        const STATUS_META={
+          awaiting_collection:{label:"⚡ Awaiting Collection",color:T.amber},
+          with_contractor:    {label:"✓ With Contractor",     color:T.green},
+          cut_cleared:        {label:"📦 Cut Cleared",         color:T.accent},
+        };
+        return (
+          <div>
+            <div style={{marginBottom:14}}>
+              <input value={cutSearch} onChange={e=>setCutSearch(e.target.value)}
+                placeholder="Search by mark no, drawing no, rmUnitId, matCode, contractor..."
+                style={{...css.input,width:"100%",maxWidth:520}}
+              />
+              <div style={{fontSize:11,color:T.textMid,marginTop:6}}>
+                {filtered.length} instances found
+                {cutSearch&&` for "${cutSearch}"`}
+              </div>
+            </div>
+            {filtered.length===0&&(
+              <InfoBanner color="blue">{cutSearch?"No matches found.":"No cut parts in the system yet."}</InfoBanner>
+            )}
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead>
+                <tr style={{background:T.bgInput}}>
+                  {["Mark No","Drawing","RM Unit","Mat Code","Cut By","Cut At","Status","Contractor","Location"].map(h=>(
+                    <th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,
+                      color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.slice(0,200).map(i=>{
+                  const sm=STATUS_META[i.currentStatus]||{label:i.currentStatus,color:T.textLow};
+                  const hrs=i.cutQcApprovedAt?Math.round((Date.now()-new Date(i.cutQcApprovedAt).getTime())/3600000):null;
+                  const overdue=hrs!==null&&hrs>=4&&i.currentStatus==="awaiting_collection";
+                  return (
+                    <tr key={i.instanceId} style={{borderBottom:`1px solid ${T.border}22`,
+                      background:overdue?`${T.red}08`:"transparent"}}>
+                      <td style={{padding:"6px 10px",fontFamily:T.fontMono,color:T.accentHi,fontSize:11}}>{i.markNo}</td>
+                      <td style={{padding:"6px 10px",fontFamily:T.fontMono,fontSize:11}}>{i.drawingNo}</td>
+                      <td style={{padding:"6px 10px",fontFamily:T.fontMono,fontSize:10,color:T.textMid,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{i.rmUnitId||"—"}</td>
+                      <td style={{padding:"6px 10px",fontSize:11}}>{i.matCode||"—"}</td>
+                      <td style={{padding:"6px 10px",fontSize:11,color:T.textMid}}>{i.cutBy||"—"}</td>
+                      <td style={{padding:"6px 10px",fontSize:11,color:T.textMid}}>{i.cutAt?i.cutAt.slice(0,10):"—"}</td>
+                      <td style={{padding:"6px 10px"}}>
+                        <span style={{fontSize:10,fontWeight:700,color:sm.color,
+                          background:`${sm.color}18`,borderRadius:3,padding:"2px 6px",whiteSpace:"nowrap"}}>
+                          {sm.label}
+                          {hrs!==null&&i.currentStatus==="awaiting_collection"&&
+                            <span style={{marginLeft:4,color:overdue?T.red:T.amber}}>({hrs}h)</span>}
+                        </span>
+                      </td>
+                      <td style={{padding:"6px 10px",fontSize:11}}>{i.assignedContractorName||"—"}</td>
+                      <td style={{padding:"6px 10px",fontSize:11,color:T.textMid}}>
+                        {i.machineBay?i.machineBay.replace(/^machine_bay:/,"Machine Bay — ").replace(/_/g," "):"—"}
+                        {i.currentStatus==="with_contractor"&&i.collectedAt&&
+                          <span style={{color:T.green}}> ✓ {i.collectedAt.slice(0,10)}</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+
+      {/* DPR Control Tab */}
+      {peView==="dprs"&&<>
 
       {/* Summary stat pills */}
       <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
@@ -18834,6 +19170,7 @@ const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setI
           </Modal>
         );
       })()}
+      </> /* end peView==="dprs" */}
     </div>
   );
 };
@@ -18865,9 +19202,12 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const canAssign = ["super_admin","planning_admin","floor_planner"].includes(user.role);
 
   const totalInstances    = instances.length;
-  const readyToCollect    = instances.filter(i=>i.currentStatus==="pending_collection").length;
+  const readyToCollect    = instances.filter(i=>i.currentStatus==="awaiting_collection").length;
   const inProgress        = instances.filter(i=>i.currentStatus==="in_progress").length;
-  const pendingSupervisor = instances.filter(i=>i.currentStatus==="pending_supervisor").length;
+  const pendingSupervisor = instances.filter(i=>
+    i.currentStatus==="pending_supervisor"&&
+    !['cut_cleared','awaiting_collection','with_contractor'].includes(i.currentStatus)
+  ).length;
   const defective         = instances.filter(i=>i.currentStatus==="defective").length;
   const qualityConcerns   = instances.filter(i=>i.qualityConcernFlag).length;
 
@@ -19471,15 +19811,27 @@ export default function App() {
     try {
       const s = localStorage.getItem('structo_instances');
       const loaded = s ? JSON.parse(s) : INIT_INSTANCES;
-      // Migration: instances incorrectly at fitup/welding with pending_supervisor status
+      // Migration 1: instances incorrectly at fitup/welding with pending_supervisor status
       // (from old instance-level flow or test scenarios) — DPR now owns fitup/weld QC
+      // Migration 2: existing fitup/pending instances → awaiting_collection
+      // (so contractor banner and PE bottleneck work for existing data)
+      // Migration 3: side-cut instances past cutting_qc → cut_cleared
       return loaded.map(i => {
         if ((i.currentStage==='fitup'||i.currentStage==='welding') && i.currentStatus==='pending_supervisor') {
           return {...i, currentStatus:'pending'};
         }
-        // Side-cut instances should not advance past cutting_qc
         if (i.isSideCut && ['fitup','welding','blasting','painting'].includes(i.currentStage)) {
-          return {...i, currentStage:'cutting_qc', currentStatus:'completed'};
+          return {...i, currentStage:'cutting_qc', currentStatus:'cut_cleared',
+            machineBay:`machine_bay:${i.cutBy||'operator'}`};
+        }
+        // Existing fitup/pending with assigned contractor → awaiting_collection
+        // (DPR not yet at fitup stage means parts not yet collected)
+        if (i.currentStage==='fitup' && i.currentStatus==='pending' && 
+            i.assignedContractorId && !i.isSideCut && i.releaseId!=='side_cut') {
+          return {...i, currentStatus:'awaiting_collection',
+            cutQcApprovedAt: i.cutAt||i.createdAt||new Date().toISOString(),
+            collectionDueBy: new Date(Date.now()+4*3600000).toISOString(),
+            machineBay:`machine_bay:${i.cutBy||'operator'}`};
         }
         return i;
       });
