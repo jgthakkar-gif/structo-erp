@@ -14722,6 +14722,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const [selDrawings, setSelDrawings] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [rmPicture, setRmPicture] = useState([]);
+  const [expandedDrwId, setExpandedDrwId] = useState(null); // drawing expand in Step1
   const [expandedMat, setExpandedMat] = useState({});
   const [rmUnitAsgn, setRmUnitAsgn] = useState({}); // {rmUnitId: {contractorId, startDate, endDate, ops:{markNo:{op:contractorId}}}}
   const [confirmedOps, setConfirmedOps] = useState({}); // {partId: string[]}
@@ -14974,8 +14975,15 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           if(!sheet.rmUnitId) return;
           if(seen.has(sheet.rmUnitId)) return;
           // Only include sheets that have at least one part from selected drawings
-          const hasSelPart=(sheet.parts||[]).some(mn=>selMarkNos.has(mn));
-          if(!hasSelPart) return;
+          const selPartsOnSheet=(sheet.parts||[]).filter(mn=>selMarkNos.has(mn));
+          if(selPartsOnSheet.length===0) return;
+          // Exclude sheets where ALL selected drawing parts are already cut
+          // (side-cuts from previous releases — no cutting action needed)
+          const DONE_ST=new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
+          const allSelPartsCut=selPartsOnSheet.every(mn=>
+            (instances||[]).some(i=>i.markNo===mn&&DONE_ST.has(i.currentStage))
+          );
+          if(allSelPartsCut) return; // skip — already cut, no action needed
           seen.add(sheet.rmUnitId);
           rmUnits.push({
             rmUnitId: sheet.rmUnitId,
@@ -15331,19 +15339,28 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   const rowBg=sel?`${T.accent}18`:shared?`${T.amber}12`:asmBg;
                   return (
                     <React.Fragment key={drawingId+orderId}>
-                      <tr style={{cursor:"pointer",background:rowBg}}>
-                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}} onClick={()=>toggleDrw({drawingId,orderId,drawing,order,tier,score})}>
-                          <input type="checkbox" checked={sel} readOnly style={{cursor:"pointer"}} />
-                        </td>
-                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>
-                          {drawing.drawingNo}
-                          {shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:T.amberBg,color:T.amber,borderRadius:3,fontFamily:T.font,fontWeight:700,border:`1px solid ${T.amber}44`}}>
-                            {shared.sharedRmUnits} rmUnit{shared.sharedRmUnits!==1?"s":""} · {shared.sharedParts} part{shared.sharedParts!==1?"s":""} covered
-                          </span>}
-                          {inActive&&!shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:`${T.accent}22`,color:T.accent,borderRadius:3,fontFamily:T.font,fontWeight:700}}>
-                            In active release
-                          </span>}
-                        </td>
+                      {/* Drawing row — checkbox selects, drawing no click expands */}
+                      {(()=>{
+                        const drgExpKey=`${drawingId}|${orderId}`;
+                        const isDrgExp=expandedDrwId===drgExpKey;
+                        return (<>
+                        <tr style={{cursor:"pointer",background:rowBg}}>
+                          <td style={{padding:"8px 10px",borderBottom:isDrgExp?"none":`1px solid ${T.border}`}} onClick={e=>{e.stopPropagation();toggleDrw({drawingId,orderId,drawing,order,tier,score});}}>
+                            <input type="checkbox" checked={sel} readOnly style={{cursor:"pointer"}} />
+                          </td>
+                          <td style={{padding:"8px 10px",borderBottom:isDrgExp?"none":`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}
+                            onClick={e=>{e.stopPropagation();setExpandedDrwId(isDrgExp?null:drgExpKey);}}>
+                            <span style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{fontSize:10,color:T.textLow}}>{isDrgExp?"▼":"▶"}</span>
+                              {drawing.drawingNo}
+                            </span>
+                            {shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:T.amberBg,color:T.amber,borderRadius:3,fontFamily:T.font,fontWeight:700,border:`1px solid ${T.amber}44`}}>
+                              {shared.sharedRmUnits} rmUnit{shared.sharedRmUnits!==1?"s":""} · {shared.sharedParts} part{shared.sharedParts!==1?"s":""} covered
+                            </span>}
+                            {inActive&&!shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:`${T.accent}22`,color:T.accent,borderRadius:3,fontFamily:T.font,fontWeight:700}}>
+                              In active release
+                            </span>}
+                          </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.textMid}}>{asmName||"—"}</td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,whiteSpace:"nowrap"}}>
                           {drawingWtT
@@ -15393,6 +15410,108 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                           })()}
                         </td>
                       </tr>
+
+                        {/* ── Expand panel: RM units for this drawing ── */}
+                        {isDrgExp&&(
+                          <tr>
+                            <td colSpan={10} style={{padding:"0 0 12px 0",borderBottom:`1px solid ${T.border}`,background:`${T.accent}06`}}>
+                              <div style={{padding:"12px 16px 8px 40px"}}>
+                                <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8,letterSpacing:"0.05em"}}>
+                                  RM UNITS FOR THIS DRAWING ({allRmUnitsForDrg.length} physical sheets)
+                                </div>
+                                {allRmUnitsForDrg.length===0&&(
+                                  <div style={{fontSize:11,color:T.textLow}}>No nesting data found for this drawing.</div>
+                                )}
+                                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                  {allRmUnitsForDrg.map(sh=>{
+                                    // Determine status for this sheet
+                                    const sheetDrgParts=(sh.parts||[]).filter(mn=>drgMarkNos.has(mn));
+                                    const allCut=sheetDrgParts.length>0&&sheetDrgParts.every(mn=>
+                                      allDrgInsts.some(i=>i.markNo===mn&&DONE_STAGES.has(i.currentStage))
+                                    );
+                                    const inPlan=!allCut&&formalInsts.some(i=>
+                                      i.rmUnitId===sh.rmUnitId&&(IN_PLAN_STAGES.has(i.currentStage)||IN_PROGRESS_STAGES.has(i.currentStage))
+                                    );
+                                    const isCutting=!allCut&&formalInsts.some(i=>i.rmUnitId===sh.rmUnitId&&i.currentStage==="cutting");
+
+                                    // Parse rmUnitId: matCode/sheetDim/n-of-N
+                                    const parts=sh.rmUnitId.split("/");
+                                    const sheetRef=parts[parts.length-1]; // e.g. "1-5"
+                                    const [sheetN,sheetTotal]=sheetRef.split("-");
+                                    const matDimPart=parts.slice(0,-1).join("/");
+
+                                    // Cut instances on this sheet for this drawing
+                                    const cutInsts=allDrgInsts.filter(i=>
+                                      sheetDrgParts.includes(i.markNo)&&DONE_STAGES.has(i.currentStage)
+                                    );
+                                    const cutBy=[...new Set(cutInsts.map(i=>i.cutBy).filter(Boolean))].join(", ");
+                                    const cutAt=cutInsts[0]?.cutAt?.slice(0,10)||"";
+
+                                    const bgColor=allCut?`${T.green}10`:isCutting?`${T.accent}10`:inPlan?`${T.amber}10`:"transparent";
+                                    const borderColor=allCut?`${T.green}44`:isCutting?`${T.accent}44`:inPlan?`${T.amber}44`:`${T.border}`;
+                                    const badge=allCut?{label:"✓ CUT",color:T.green}
+                                      :isCutting?{label:"✂ CUTTING",color:T.accent}
+                                      :inPlan?{label:"📋 IN PLAN",color:T.amber}
+                                      :{label:"⚪ AVAILABLE",color:T.textLow};
+
+                                    return (
+                                      <div key={sh.rmUnitId} style={{
+                                        display:"flex",alignItems:"center",gap:12,
+                                        padding:"7px 12px",borderRadius:6,
+                                        background:bgColor,border:`1px solid ${borderColor}`,
+                                        opacity:allCut?0.75:1
+                                      }}>
+                                        {/* Sheet identity */}
+                                        <div style={{flex:1,minWidth:0}}>
+                                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                            <span style={{fontFamily:T.fontMono,fontSize:11,fontWeight:700,
+                                              color:allCut?T.textMid:T.accentHi,
+                                              textDecoration:allCut?"line-through":"none"}}>
+                                              {matDimPart}
+                                            </span>
+                                            <span style={{fontSize:11,color:T.textMid,fontWeight:600}}>
+                                              Sheet {sheetN} of {sheetTotal}
+                                            </span>
+                                          </div>
+                                          <div style={{fontSize:10,color:T.textLow,marginTop:2,display:"flex",gap:10}}>
+                                            <span>{sheetDrgParts.length} part{sheetDrgParts.length!==1?"s":""} from this drawing</span>
+                                            <span>·</span>
+                                            <span>{(sh.parts||[]).length} total on sheet</span>
+                                            {allCut&&cutBy&&<><span>·</span><span style={{color:T.green}}>Cut by {cutBy}{cutAt?` · ${cutAt}`:""}</span></>}
+                                          </div>
+                                        </div>
+                                        {/* Parts chips */}
+                                        <div style={{display:"flex",gap:3,flexWrap:"wrap",maxWidth:320}}>
+                                          {sheetDrgParts.slice(0,8).map(mn=>{
+                                            const isCutPart=allDrgInsts.some(i=>i.markNo===mn&&DONE_STAGES.has(i.currentStage));
+                                            return (
+                                              <span key={mn} style={{fontFamily:T.fontMono,fontSize:9,
+                                                padding:"1px 5px",borderRadius:3,
+                                                background:isCutPart?`${T.green}22`:`${T.accent}18`,
+                                                color:isCutPart?T.green:T.accentHi,
+                                                textDecoration:isCutPart?"line-through":"none"}}>
+                                                {mn.split("-").slice(-1)[0]}
+                                              </span>
+                                            );
+                                          })}
+                                          {sheetDrgParts.length>8&&<span style={{fontSize:9,color:T.textLow}}>+{sheetDrgParts.length-8}</span>}
+                                        </div>
+                                        {/* Badge */}
+                                        <span style={{fontSize:10,fontWeight:700,color:badge.color,
+                                          background:`${badge.color}18`,borderRadius:4,
+                                          padding:"2px 8px",whiteSpace:"nowrap",minWidth:80,textAlign:"center"}}>
+                                          {badge.label}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </>);
+                      })()}
                     </React.Fragment>
                   );
                 })}
@@ -15440,8 +15559,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             const totalSheetWt=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheetWtTotal,0);
             const overallPct=totalSheetWt>0?Math.round(totalSelWt/totalSheetWt*100):0;
             const pctColor=overallPct>=85?T.green:overallPct>=70?T.amber:T.red;
+              const totalSh=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheets.length,0);
+              const cutSh=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheets.filter(sh=>sh.rmStatus==="cut").length,0);
+              const plannedSh=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheets.filter(sh=>sh.rmStatus==="planned"||sh.rmStatus==="cutting").length,0);
+              const mcStatus=totalSh===0?"no_nesting":cutSh===totalSh?"all_cut":cutSh>0||plannedSh>0?"partial":"not_started";
+              const mcBorder=mcStatus==="all_cut"?T.green:mcStatus==="partial"?T.amber:mcStatus==="not_started"?T.border:T.textLow;
             return (
-              <div key={r.matCode} style={{...css.card,marginBottom:10,padding:0}}>
+              <div key={r.matCode} style={{...css.card,marginBottom:10,padding:0,
+                borderLeft:`4px solid ${mcBorder}`,opacity:mcStatus==="all_cut"?0.6:1}}>
                 {/* ── MatCode header row ── */}
                 <div onClick={()=>setExpandedMat(p=>({...p,[r.matCode]:!p[r.matCode]}))}
                   style={{display:"flex",alignItems:"center",gap:0,cursor:"pointer",padding:"10px 14px",
@@ -15477,6 +15602,17 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   )}
                   {totalSheets===0&&(r.batchesForMat||[]).length===0&&(
                     <span style={{fontSize:11,color:T.amber,marginLeft:"auto"}}>⚠ No nesting batch found</span>
+                  )}
+                  {/* Status pill */}
+                  {mcStatus!=="no_nesting"&&(
+                    <span style={{marginLeft:"auto",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:10,
+                      color:mcStatus==="all_cut"?T.green:mcStatus==="partial"?T.amber:T.textLow,
+                      background:mcStatus==="all_cut"?`${T.green}18`:mcStatus==="partial"?`${T.amber}18`:`${T.border}22`,
+                      whiteSpace:"nowrap"}}>
+                      {mcStatus==="all_cut"?`✓ All ${cutSh} sheet${cutSh!==1?"s":""} cut`
+                        :mcStatus==="partial"?`${cutSh}✓ ${plannedSh>0?plannedSh+"▶ ":""}${totalSh-cutSh-plannedSh>0?(totalSh-cutSh-plannedSh)+"⚪ ":""}of ${totalSh} sheets`
+                        :`${totalSh} sheet${totalSh!==1?"s":""} to cut`}
+                    </span>
                   )}
                 </div>
 
@@ -15610,9 +15746,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                                   return (
                                     <tr key={ru.rmUnitId} style={{
                                       borderBottom:`1px solid ${T.border}33`,
-                                      background:ru.rmStatus==="cut"?`${T.green}0a`:ru.rmStatus==="cutting"?`${T.accent}0a`:ru.rmStatus==="planned"?`${T.amber}0a`:"transparent"
+                                      background:ru.rmStatus==="cut"?`${T.green}0a`:ru.rmStatus==="cutting"?`${T.accent}0a`:ru.rmStatus==="planned"?`${T.amber}0a`:"transparent",
+                                      opacity:ru.rmStatus==="cut"?0.55:1
                                     }}>
-                                      <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:T.accentHi}}>{ru.rmUnitId}</td>
+                                      <td style={{padding:"4px 8px",fontFamily:T.fontMono,
+                                        color:ru.rmStatus==="cut"?T.textMid:T.accentHi,
+                                        textDecoration:ru.rmStatus==="cut"?"line-through":"none"}}>{ru.rmUnitId}</td>
                                       <td style={{padding:"4px 8px"}}>
                                         {ru.rmStatus==="cut"&&<span style={{fontSize:9,fontWeight:800,color:T.green,background:`${T.green}22`,borderRadius:3,padding:"1px 5px"}}>✓ CUT</span>}
                                         {ru.rmStatus==="cutting"&&<span style={{fontSize:9,fontWeight:800,color:T.accent,background:`${T.accent}22`,borderRadius:3,padding:"1px 5px"}}>✂ CUTTING</span>}
@@ -15657,7 +15796,10 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       <div>
         <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>Step 3 — Cutting Assignment</div>
         <div style={{fontSize:12,color:T.textMid,marginBottom:6}}>Assign each RM unit to a cutting contractor. Parts from non-selected drawings shown in amber.</div>
-        {unassignedCount>0&&<InfoBanner color="amber">{unassignedCount} RM unit{unassignedCount!==1?"s":""} not yet assigned. You may proceed and assign later.</InfoBanner>}
+        {unassignedCount>0&&<InfoBanner color="amber">
+          {unassignedCount} RM unit{unassignedCount!==1?"s":""} need cutting contractor assignment.
+          {" "}Sheets where all parts are already cut from previous releases are excluded.
+        </InfoBanner>}
         {rmUnits.length===0&&<InfoBanner color="blue">No RM units found in nesting batches for selected drawings. Check that nesting has been imported for this order.</InfoBanner>}
         {rmUnits.length>0&&(
           <div style={{overflowX:"auto"}}>
