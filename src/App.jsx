@@ -289,17 +289,19 @@ async function buildNestingInput(parts, rawMaterials, machineName, batchId, dxfM
   };
 }
 
-// ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
+// ─── DESIGN TOKENS — Slate Professional (light theme) ────────────────────────
 const T = {
-  bg:"#0A0E1A", bgCard:"#111827", bgHover:"#1A2235", bgInput:"#0D1424",
-  border:"#1E2D45", borderHi:"#2D4A6E",
-  accent:"#3B82F6", accentLo:"#1D4ED8", accentHi:"#60A5FA",
-  gold:"#F59E0B", goldLo:"#D97706",
-  green:"#10B981", greenLo:"#065F46", greenBg:"#022C22",
-  red:"#EF4444", redLo:"#991B1B", redBg:"#1F0707",
-  amber:"#F59E0B", amberBg:"#1C1107",
-  text:"#F1F5F9", textMid:"#94A3B8", textLow:"#475569",
-  surface2:"#161E2E",
+  bg:"#F8FAFC", bgCard:"#FFFFFF", bgHover:"#F1F5F9", bgInput:"#F1F5F9",
+  bgSidebar:"#1E3A5F", bgSidebarActive:"rgba(59,130,246,0.18)",
+  border:"#E2E8F0", borderHi:"#CBD5E1",
+  accent:"#1D4ED8", accentLo:"#1E40AF", accentHi:"#3B82F6",
+  gold:"#D97706", goldLo:"#B45309",
+  green:"#15803D", greenLo:"#166534", greenBg:"#DCFCE7",
+  red:"#DC2626", redLo:"#991B1B", redBg:"#FEE2E2",
+  amber:"#B45309", amberBg:"#FEF3C7",
+  text:"#0F172A", textMid:"#475569", textLow:"#94A3B8",
+  sidebarText:"#93C5FD", sidebarTextActive:"#FFFFFF",
+  surface2:"#F1F5F9",
   font:"'IBM Plex Sans', sans-serif", fontMono:"'IBM Plex Mono', monospace",
 };
 
@@ -363,6 +365,8 @@ const USERS = [
   { id:"U033", name:"Ajay Kadam",           username:"ajay.kadam",      password:"machine123", role:"machine_operator",   active:true },
   { id:"U034", name:"Ravi Thakur",          username:"ravi.thakur",     password:"machine123", role:"machine_operator",   active:true },
   { id:"USR-008", name:"Arjun Patil",       username:"arjun.qc",        password:"qc123",      role:"qc_user",            active:true },
+  { id:"U035", name:"In-House Team A",      username:"inhouse.a",       password:"con123",     role:"contractor",         active:true, contractorId:"CON-005" },
+  { id:"U036", name:"In-House Team B",      username:"inhouse.b",       password:"con123",     role:"contractor",         active:true, contractorId:"CON-006" },
 ];
 
 // ─── CONTRACTORS ──────────────────────────────────────────────────────────────
@@ -1379,7 +1383,6 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
       unit: poLine.unit||"MT",
       length: poLine.length||null,
       width: poLine.width||null,
-      sheetDim: l.sheetDim||(poLine.sheetDim||""),
       calculatedWt: l.calculatedWt||l.wtReceived||0,
       actualWt: l.actualWt||l.wtReceived||0,
       variance: l.variance||0,
@@ -1658,14 +1661,14 @@ const css = {
     danger:    { background:T.redLo,   color:T.red,      border:`1px solid ${T.redLo}`,     borderRadius:6, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:T.font },
     ghost:     { background:"transparent", color:T.textLow, border:"none",                  borderRadius:4, padding:"4px 8px",  fontSize:11, cursor:"pointer", fontFamily:T.font },
     sm:        { background:T.accent,  color:"#fff",     border:"none",                     borderRadius:4, padding:"4px 10px", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:T.font },
-    amber:     { background:T.amberBg, color:T.amber,    border:`1px solid ${T.amber}`,     borderRadius:6, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:T.font },
-    green:     { background:T.greenLo, color:T.green,    border:`1px solid ${T.green}`,     borderRadius:6, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:T.font },
+    amber:     { background:"#D97706", color:"#fff",      border:"none",                     borderRadius:6, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:T.font },
+    green:     { background:"#15803D", color:"#fff",      border:"none",                     borderRadius:6, padding:"7px 14px", fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:T.font },
   },
 };
 
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 const Badge = ({ children, color="blue" }) => {
-  const C = { blue:{bg:"#1D3A5F",text:T.accentHi}, green:{bg:T.greenLo,text:T.green}, amber:{bg:"#3D2A00",text:T.amber}, red:{bg:T.redLo,text:T.red}, gray:{bg:"#1E293B",text:T.textMid}, gold:{bg:"#3D2A00",text:T.gold}, purple:{bg:"#2D1B69",text:"#A78BFA"}, teal:{bg:"#0D3340",text:"#22D3EE"} };
+  const C = { blue:{bg:"#DBEAFE",text:"#1E40AF"}, green:{bg:"#DCFCE7",text:"#166534"}, amber:{bg:"#FEF3C7",text:"#92400E"}, red:{bg:"#FEE2E2",text:"#991B1B"}, gray:{bg:"#F1F5F9",text:"#475569"}, gold:{bg:"#FEF3C7",text:"#92400E"}, purple:{bg:"#EDE9FE",text:"#5B21B6"}, teal:{bg:"#CFFAFE",text:"#155E75"} };
   const c=C[color]||C.blue;
   return <span style={{ background:c.bg, color:c.text, borderRadius:4, padding:"2px 7px", fontSize:11, fontWeight:700, letterSpacing:"0.03em", whiteSpace:"nowrap" }}>{children}</span>;
 };
@@ -1710,7 +1713,7 @@ const SectionHd = ({ title, action, sub }) => (
 const TH = ({ children, right, mono }) => <th style={{ padding:"7px 10px", textAlign:right?"right":"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap", fontFamily:mono?T.fontMono:T.font }}>{children}</th>;
 const TD = ({ children, right, mono, bold, color, style:s }) => <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, textAlign:right?"right":"left", fontFamily:mono?T.fontMono:T.font, fontWeight:bold?700:400, color:color||T.text, ...s }}>{children}</td>;
 const InfoBanner = ({ color="amber", children }) => {
-  const C = { amber:{bg:T.amberBg,border:T.amber,text:T.amber}, green:{bg:T.greenBg,border:T.green,text:T.green}, red:{bg:T.redBg,border:T.redLo,text:T.red}, blue:{bg:"#0D1E3A",border:T.borderHi,text:T.accentHi} };
+  const C = { amber:{bg:T.amberBg,border:T.amber,text:"#92400E"}, green:{bg:T.greenBg,border:T.green,text:"#065F46"}, red:{bg:T.redBg,border:T.redLo,text:"#991B1B"}, blue:{bg:"#DBEAFE",border:T.borderHi,text:"#1E40AF"} };
   const c=C[color]||C.amber;
   return <div style={{ background:c.bg, border:`1px solid ${c.border}`, borderRadius:6, padding:"10px 14px", fontSize:12, color:c.text, marginBottom:14 }}>{children}</div>;
 };
@@ -5574,7 +5577,6 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         bayId:editGrnForm.bayId||lot.bayId,
         receivedDate:editGrnForm.date||lot.receivedDate,
         qtyReceived:editedLine.qtyReceived||lot.qtyReceived||0,
-        sheetDim:editedLine.sheetDim||lot.sheetDim||"",
       };
     }));
     showToast("GRN updated successfully");
@@ -6743,8 +6745,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
               variance:0,
               rate:pl.unitPrice||0, manualRate:false,
               lineValue:Math.round(calcWt*(pl.unitPrice||0)*100)/100,
-              heatNo:"", mtcId:"", condition:"good", inspStatus:"approved",
-              sheetDim: pl.sheetDim||"", // carry dim from PO line automatically
+              heatNo:"", mtcId:"", condition:"good", inspStatus:"approved"
             };
           });
           setGrnGroupRates({});
@@ -7131,7 +7132,6 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                             <input type="checkbox" checked={isChecked} onChange={e=>updLine(i,{checked:e.target.checked})} />
                           </td>
                           <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.text }}>{l.materialDesc||pl.sheetDim||pl.description||pl.size||"—"}</td>
-
                           <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:T.textMid }}>{poQty}</td>
                           <td style={{ padding:"3px 6px", textAlign:"right" }}>
                             <input type="number" min={0} max={poQty} value={l.rcvgQty||""} disabled={!isChecked}
@@ -7676,8 +7676,7 @@ const RMQCModule = ({ user, stock, setStock }) => {
 const StockModule = ({ user, stock, setStock, orders, contractors, materials, issueRequests=[], setIssueRequests }) => {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [expandedId, setExpandedId] = useState(null);   // matCode level
-  const [expandedDimId, setExpandedDimId] = useState(null); // sheetDim level
+  const [expandedId, setExpandedId] = useState(null);
   const [modal, setModal] = useState(null);
   const [activeLot, setActiveLot] = useState(null);
   const [mForm, setMForm] = useState({});
@@ -8048,175 +8047,165 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
         );
       })()}
 
-      {/* ── Grouped Stock Display: matCode → sheetDim → GRN lots ── */}
-      {(()=>{
-        // Build groups: matCode → { lots[], totalAvail, totalReceived, isPlate }
-        const matGroups = {};
-        filtered.forEach(s => {
-          const mc = s.matCode || `${s.sectionType||s.section||""}/${s.size||""}`;
-          if (!matGroups[mc]) matGroups[mc] = {
-            matCode: mc, section: s.sectionType||s.section||"",
-            grade: s.grade||"", lots: [], isPlate: (s.sectionType||s.section||"").toUpperCase()==="PLATE"
-          };
-          matGroups[mc].lots.push(s);
-        });
-
-        const groups = Object.values(matGroups);
-        if (groups.length === 0) return <div style={{padding:32,textAlign:"center",color:T.textLow,fontSize:12}}>No stock found</div>;
-
-        return groups.map(g => {
-          const totalAvail = g.lots.reduce((s,l)=>s+(l.wtAvailable||0),0);
-          const totalRcvd  = g.lots.reduce((s,l)=>s+(l.wtReceived||0),0);
-          const totalIssued= g.lots.reduce((s,l)=>s+(l.wtIssued||0),0);
-          const hasOffcut  = g.lots.some(l=>l.isOffcut);
-          const statuses   = [...new Set(g.lots.map(l=>l.status))];
-          const overallStatus = statuses.every(s=>s==="available")?"available":statuses.some(s=>s==="qc_hold")?"qc_hold":statuses.some(s=>s==="issued")?"issued":"mixed";
-          const statusColor = overallStatus==="available"?T.green:overallStatus==="qc_hold"?T.amber:overallStatus==="issued"?"#A78BFA":T.textMid;
-          const mcKey = `mc::${g.matCode}`;
-          const mcExp = expandedId===mcKey;
-
-          // Group lots by sheetDim within this matCode
-          const dimGroups = {};
-          g.lots.forEach(l => {
-            const dim = l.sheetDim||(l.isOffcut?"offcut":"no_dim");
-            const dimLabel = l.isOffcut&&!l.sheetDim?"🟡 Offcut (dim unknown)":!l.sheetDim?"Dimension not recorded":l.sheetDim;
-            if (!dimGroups[dim]) dimGroups[dim] = { dim, dimLabel, lots:[], isOffcut:l.isOffcut&&!l.sheetDim };
-            dimGroups[dim].lots.push(l);
-          });
-          const dims = Object.values(dimGroups);
-
-          return (
-            <div key={g.matCode} style={{...css.card,marginBottom:8,padding:0,overflow:"hidden"}}>
-              {/* ── Level 1: MatCode header ── */}
-              <div onClick={()=>setExpandedId(mcExp?null:mcKey)}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",
-                  cursor:"pointer",background:mcExp?`${T.accent}0a`:"transparent"}}>
-                <span style={{color:T.textLow,fontSize:11,width:16}}>{mcExp?"▼":"▶"}</span>
-                <span style={{fontFamily:T.fontMono,fontWeight:800,color:T.accentHi,fontSize:13,minWidth:220}}>{g.matCode}</span>
-                <span style={{fontSize:11,color:T.textMid,minWidth:60}}>{g.grade}</span>
-                <span style={{fontSize:11,color:T.textMid,minWidth:60}}>{g.section}</span>
-                <span style={{fontSize:12,fontWeight:700,color:statusColor,minWidth:100}}>{fmt.wtT(totalAvail)}</span>
-                <span style={{fontSize:11,color:T.textMid,minWidth:80}}>avail</span>
-                {totalIssued>0&&<span style={{fontSize:11,color:"#A78BFA",minWidth:100}}>{fmt.num(Math.round(totalIssued))} kg issued</span>}
-                {hasOffcut&&<Badge color="teal">OC</Badge>}
-                <span style={{fontSize:11,color:T.textMid,marginLeft:"auto"}}>{g.lots.length} lot{g.lots.length!==1?"s":""} · {dims.length} dim{dims.length!==1?"s":""}</span>
-              </div>
-
-              {/* ── Level 2: SheetDim rows ── */}
-              {mcExp&&(
-                <div style={{borderTop:`1px solid ${T.border}`}}>
-                  {dims.map(dg => {
-                    const dAvail = dg.lots.reduce((s,l)=>s+(l.wtAvailable||0),0);
-                    const dRcvd  = dg.lots.reduce((s,l)=>s+(l.wtReceived||0),0);
-                    const dKey = `dim::${g.matCode}::${dg.dim}`;
-                    const dExp = expandedDimId===dKey;
-                    const dHasOffcut = dg.lots.some(l=>l.isOffcut);
-                    return (
-                      <div key={dg.dim} style={{borderBottom:`1px solid ${T.border}33`}}>
-                        {/* Level 2 header */}
-                        <div onClick={e=>{e.stopPropagation();setExpandedDimId(dExp?null:dKey);}}
-                          style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px 8px 30px",
-                            cursor:"pointer",background:dExp?`${T.accent}06`:T.bgInput}}>
-                          <span style={{color:T.textLow,fontSize:10,width:14}}>{dExp?"▼":"▶"}</span>
-                          <span style={{fontFamily:T.fontMono,fontWeight:700,color:dHasOffcut?T.amber:T.text,fontSize:12,minWidth:160}}>
-                            {dg.dimLabel}
-                          </span>
-                          <span style={{fontSize:11,color:T.textMid,minWidth:80}}>{dg.lots.length} lot{dg.lots.length!==1?"s":""}</span>
-                          {(()=>{
-                            const sheets=dg.lots.reduce((s,l)=>{
-                              // Try qtyReceived first, then rcvgQty, then derive from weight
-                              const qty=l.qtyReceived||l.rcvgQty||0;
-                              if(qty>0) return s+qty;
-                              // Derive: wtReceived / sheet weight (L×W×t×density)
-                              const dim=l.sheetDim||"";
-                              const m=dim.match(/^(\d+)[Xx](\d+)$/);
-                              if(m){
-                                const parts=l.matCode.split("/");
-                                // Thickness: match "16mm", "16MM", or bare "16" in last numeric segment
-                                const thkSeg=parts.find(p=>/^\d+(\.\d+)?mm$/i.test(p))||parts.find(p=>/^\d+(\.\d+)?$/.test(p)&&parseFloat(p)<=100);
-                                const thk=thkSeg?parseFloat(thkSeg)/1000:0;
-                                const w=parseInt(m[1])/1000,len=parseInt(m[2])/1000;
-                                const shWt=w*len*thk*7850;
-                                if(shWt>0) return s+Math.round((l.wtReceived||0)/shWt);
-                              }
-                              return s;
-                            },0);
-                            return sheets>0&&<span style={{fontSize:11,color:T.textMid,minWidth:80}}>{sheets} sheet{sheets!==1?"s":""}</span>;
-                          })()}
-                          <span style={{fontSize:12,fontWeight:700,color:T.green,minWidth:100}}>{fmt.num(Math.round(dAvail))} kg</span>
-                          <span style={{fontSize:11,color:T.textMid}}>avail of {fmt.num(Math.round(dRcvd))} kg</span>
-                          <span style={{fontSize:11,color:T.textMid,marginLeft:"auto"}}>
-                            {[...new Set(dg.lots.map(l=>l.bayId).filter(Boolean))].map(b=><Badge key={b} color="teal">{b}</Badge>)}
-                          </span>
-                        </div>
-
-                        {/* ── Level 3: Individual GRN lots ── */}
-                        {dExp&&(
-                          <div style={{padding:"0 0 8px 44px"}}>
-                            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                              <thead>
-                                <tr style={{background:T.bgCard}}>
-                                  {["Lot No","GRN / Batch","Vendor","Bay","Rcvd kg","Avail kg","Alloc kg","Issued kg","MTC","Heat No","RM QC","Client","Status","Actions"].map(h=>(
-                                    <th key={h} style={{padding:"4px 8px",textAlign:"left",color:T.textLow,fontWeight:600,fontSize:10,borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {dg.lots.map(s=>(
-                                  <tr key={s.id} style={{borderBottom:`1px solid ${T.border}22`,background:s.isOffcut?`${T.accent}08`:"transparent"}}>
-                                    <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:T.accentHi,fontSize:11}}>
-                                      {s.lotNo}
-                                      {s.isOffcut&&<Badge color="teal" style={{marginLeft:4,fontSize:9}}>OC</Badge>}
-                                    </td>
-                                    <td style={{padding:"4px 8px",fontFamily:T.fontMono,fontSize:10,color:T.textMid}}>{s.grnId||s.batchNo||"—"}</td>
-                                    <td style={{padding:"4px 8px",fontSize:11}}>{s.vendorName||"—"}</td>
-                                    <td style={{padding:"4px 8px"}}><Badge color="teal">{s.bayId||"—"}</Badge></td>
-                                    <td style={{padding:"4px 8px",fontFamily:T.fontMono,textAlign:"right"}}>{fmt.num(s.wtReceived||0)}</td>
-                                    <td style={{padding:"4px 8px",fontFamily:T.fontMono,fontWeight:700,color:T.green,textAlign:"right"}}>{fmt.num(s.wtAvailable||0)}</td>
-                                    <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:T.accent,textAlign:"right"}}>{fmt.num(s.wtAllocated||0)}</td>
-                                    <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:"#A78BFA",textAlign:"right"}}>{fmt.num(s.wtIssued||0)}</td>
-                                    <td style={{padding:"4px 8px"}} onClick={e=>e.stopPropagation()}>
-                                      {s.mtcUploaded
-                                        ? <a href={s.mtcDoc} target="_blank" rel="noopener noreferrer" style={{color:T.green,fontSize:10,textDecoration:"none"}}>MTC✓</a>
-                                        : <span style={{color:T.red,fontSize:10}}>Missing</span>}
-                                    </td>
-                                    <td style={{padding:"4px 8px",fontFamily:T.fontMono,fontSize:10,color:T.textMid}}>{s.heatNo||"—"}</td>
-                                    <td style={{padding:"4px 8px"}}><Badge color={s.rmQcStatus==="approved"?"green":s.rmQcStatus==="pending"?"amber":"red"}>{s.rmQcStatus||"pending"}</Badge></td>
-                                    <td style={{padding:"4px 8px"}}><Badge color={s.clientInspStatus==="approved"?"green":s.clientInspStatus==="pending"?"amber":"red"}>{s.clientInspStatus||"pending"}</Badge></td>
-                                    <td style={{padding:"4px 8px"}}><Badge color={s.status==="available"?"green":s.status==="qc_hold"?"amber":s.status==="issued"?"purple":"gray"}>{s.status?.replace(/_/g," ")||"—"}</Badge></td>
-                                    <td style={{padding:"4px 8px"}} onClick={e=>e.stopPropagation()}>
-                                      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                                        {['available','reserved','partially_reserved'].includes(s.status)&&(
-                                          <button onClick={()=>openModal("allocate",s)} style={{...css.btn.ghost,fontSize:9,padding:"1px 5px",color:T.accent}}>Allo</button>
-                                        )}
-                                        {(s.wtAllocated||0)>0&&(
-                                          <button onClick={()=>openModal("release",s)} style={{...css.btn.ghost,fontSize:9,padding:"1px 5px",color:T.amber}}>Rel</button>
-                                        )}
-                                        {['available','reserved','partially_reserved','allocated'].includes(s.status)&&(
-                                          <button onClick={()=>openModal("issue",s)} style={{...css.btn.ghost,fontSize:9,padding:"1px 5px",color:"#A78BFA"}}>Issue</button>
-                                        )}
-                                        {s.rmQcStatus!=="approved"&&(
-                                          <button onClick={()=>openModal("inspect",s)} style={{...css.btn.ghost,fontSize:9,padding:"1px 5px",color:T.amber}}>QC</button>
-                                        )}
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
+          <thead>
+            <tr>
+              <TH></TH>
+              <TH>Lot No</TH><TH>Batch No</TH><TH>Mat Code</TH><TH>Section / Size</TH><TH>Grade</TH>
+              <TH>Vendor</TH><TH>Bay</TH>
+              <TH right>Rcvd kg</TH><TH right>Avail kg</TH><TH right>Alloc kg</TH><TH right>Issued kg</TH>
+              <TH>MTC</TH><TH>Heat No</TH><TH>RM QC</TH><TH>Client</TH><TH>Status</TH><TH>Actions</TH>
+            </tr>
+          </thead>
+          {filtered.length===0 && <tbody><tr><td colSpan={18} style={{ padding:32,textAlign:"center",color:T.textLow }}>No stock found</td></tr></tbody>}
+          {filtered.map(s=>(
+            <tbody key={s.id}>
+              <tr style={{ background:expandedId===s.id?`${T.accent}11`:"transparent",borderBottom:`1px solid ${T.border}`,cursor:"pointer" }} onClick={()=>setExpandedId(expandedId===s.id?null:s.id)}>
+                <TD><span style={{ color:T.textLow,fontSize:10 }}>{expandedId===s.id?"▼":"▶"}</span></TD>
+                <TD mono>{s.lotNo}{s.isOffcut&&<span style={{ marginLeft:4 }}><Badge color="teal">OC</Badge></span>}</TD>
+                <TD mono>{s.batchNo}</TD>
+                <TD mono>{s.matCode||`${(s.sectionType||s.section)||""}/${s.size||""}`}</TD>
+                <TD>{s.sectionType||s.section} {s.size}</TD>
+                <TD><Badge color="gray">{s.grade}</Badge></TD>
+                <TD>{s.vendorName}</TD>
+                <TD><Badge color="teal">{s.bayId}</Badge></TD>
+                <TD right mono>{fmt.num(s.wtReceived)}</TD>
+                <TD right mono bold color={T.green}>{fmt.num(s.wtAvailable)}</TD>
+                <TD right mono color={T.accent}>{fmt.num(s.wtAllocated)}</TD>
+                <TD right mono color="#A78BFA">{fmt.num(s.wtIssued||0)}</TD>
+                <TD onClick={e=>e.stopPropagation()}>
+                  {s.mtcUploaded
+                    ? <a href={s.mtcDoc} target="_blank" rel="noreferrer" style={{ fontSize:10,color:T.green,fontWeight:700 }}>MTC ✓</a>
+                    : <div>
+                        <span style={{ fontSize:10,color:T.red,fontWeight:700 }}>⚠ Missing</span>
+                        {mtcUploadId!==s.id
+                          ? <button onClick={()=>{setMtcUploadId(s.id);setMtcForm({});}} style={{ ...css.btn.sm,fontSize:9,marginLeft:4,padding:"1px 6px",background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}` }}>Upload</button>
+                          : <div style={{ marginTop:4, display:"flex", flexDirection:"column", gap:4, minWidth:180 }}>
+                              <input value={mtcForm.link||""} onChange={e=>setMtcForm(f=>({...f,link:e.target.value}))}
+                                placeholder="Drive link..." style={{ ...css.input,fontSize:10,padding:"3px 6px" }} />
+                              <input value={mtcForm.heatNo||""} onChange={e=>setMtcForm(f=>({...f,heatNo:e.target.value}))}
+                                placeholder="Heat number..." style={{ ...css.input,fontSize:10,padding:"3px 6px" }} />
+                              <div style={{ display:"flex",gap:4 }}>
+                                <button disabled={!(mtcForm.link||"").trim()} onClick={()=>{
+                                  if (!(mtcForm.link||"").trim()) return;
+                                  setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,mtcDoc:mtcForm.link.trim(),heatNo:mtcForm.heatNo||l.heatNo,mtcUploaded:true}));
+                                  setMtcUploadId(null); setMtcForm({});
+                                  showToast("MTC uploaded","green");
+                                }} style={{ ...css.btn.sm,fontSize:9,padding:"2px 8px",opacity:(mtcForm.link||"").trim()?1:0.4 }}>Save</button>
+                                <button onClick={()=>setMtcUploadId(null)} style={{ ...css.btn.sm,fontSize:9,padding:"2px 8px",background:"transparent",color:T.textMid,border:`1px solid ${T.border}` }}>✕</button>
+                              </div>
+                            </div>
+                        }
                       </div>
-                    );
-                  })}
-                </div>
+                  }
+                </TD>
+                <TD mono>{s.heatNo||<span style={{ color:T.textLow }}>—</span>}</TD>
+                <TD><Badge color={qcStatusBadge[s.rmQcStatus]||"gray"}>{s.rmQcStatus}</Badge></TD>
+                <TD><Badge color={qcStatusBadge[s.clientInspStatus]||"gray"}>{s.clientInspStatus}</Badge></TD>
+                <TD><Badge color={stCol[s.status]||"gray"}>{s.status?.replace("_"," ")}</Badge></TD>
+                <TD onClick={e=>e.stopPropagation()}>
+                  <div style={{ display:"flex",gap:4,flexWrap:"wrap" }}>
+                    {canAllocate&&s.status==="available"&&s.rmQcStatus==="approved"&&s.clientInspStatus==="approved"&&(
+                      <button onClick={()=>openModal("allocate",s)} style={{ ...css.btn.sm,fontSize:10 }}>Alloc</button>
+                    )}
+                    {canRelease&&(s.allocations||[]).length>0&&(
+                      <button onClick={()=>openModal("release",s)} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Release</button>
+                    )}
+                    {canRelease&&(s.allocations||[]).length>0&&(s.wtIssued||0)===0&&(
+                      <button onClick={()=>openModal("transfer",s)} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>Transfer</button>
+                    )}
+                    {canIssue&&s.status==="allocated"&&s.clientInspStatus==="approved"&&(
+                      <button onClick={()=>openModal("issue",s)} style={{ ...css.btn.sm,background:"#2D1B69",color:"#A78BFA",border:"1px solid #A78BFA",fontSize:10 }}>Issue</button>
+                    )}
+                    {canIssue&&s.status==="issued"&&(
+                      <button onClick={()=>openModal("offcut",s)} style={{ ...css.btn.sm,background:"#0D3340",color:"#22D3EE",border:"1px solid #22D3EE",fontSize:10 }}>Off-cut</button>
+                    )}
+                    {(s.issues||[]).length>0&&(
+                      <button onClick={e=>{e.stopPropagation();const iss=s.issues[s.issues.length-1];setMForm({issNoteNo:iss.issueNoteNo,issEntry:iss,lotSnap:s,contractorName:iss.issuedTo});setModal("print");}} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>ISN↗</button>
+                    )}
+                    {canRelease && s.status!=="consumed" && s.status!=="written_off" && s.status!=="issued" && (
+                      <button onClick={e=>{e.stopPropagation();setResLot(s);setResForm({});setResModal("add");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}`, fontSize:10 }}>Reserve</button>
+                    )}
+                    {user.role==="super_admin"&&(s.status==="available"||s.status==="qc_hold")&&(s.wtAllocated||0)===0&&(
+                      <button onClick={e=>{e.stopPropagation();openModal("writeoff",s);}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.redLo}`,fontSize:10 }}>Write Off</button>
+                    )}
+                    {s.status==='rejected'&&canIssue&&(
+                      <button onClick={e=>{e.stopPropagation();setReturnModal(s);setReturnForm({returnDate:today(),vehicleNo:"",returnChallan:""});}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.red}`,fontSize:10 }}>Return to Vendor</button>
+                    )}
+                    {s.status==='rejected'&&canIssue&&(
+                      <button onClick={e=>{e.stopPropagation();setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,status:'qc_hold',wtAvailable:l.wtReceived||0,rmQcStatus:'pending',clientInspStatus:'pending',rejectedAt:undefined,grnReversed:undefined,rejectionReason:undefined}));showToast("Lot returned to QC Hold for re-inspection");}} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Re-inspect</button>
+                    )}
+                  </div>
+                </TD>
+              </tr>
+              {expandedId===s.id&&(
+                <tr>
+                  <td colSpan={18} style={{ background:`${T.accent}08`,padding:"12px 20px",borderBottom:`1px solid ${T.border}` }}>
+                    <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:12 }}>
+                      {[["PO",s.poId||"—"],["GRN",s.grnId||"—"],["Received",fmt.date(s.receivedDate)],["Bay",s.bayId||"—"],["Heat No",s.heatNo||"—"],["Batch No",s.batchNo||"—"],["Item Code",s.itemCode||"—"],["Off-cut",s.isOffcut?`Yes${s.parentLotId?" — parent: "+s.parentLotId:""}` :"No"],...(s.isOffcut&&s.parentRmUnitId?[["Parent RM Unit",s.parentRmUnitId]]:[]),(s.isOffcut&&s.offcutSequence?[["OC Sequence",s.offcutSequence]]:[])].map(([k,v])=>(
+                        <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12,color:T.text,fontFamily:T.fontMono }}>{v}</div></div>
+                      ))}
+                    </div>
+                    {(s.qcHoldReason||s.status==="qc_hold")&&<div style={{ background:T.amberBg,border:`1px solid ${T.amber}`,borderRadius:6,padding:"6px 10px",fontSize:12,color:T.amber,marginBottom:10 }}>🔒 Hold reason: {s.qcHoldReason||"Pending QC inspection"}</div>}
+                    {(s.allocations||[]).length>0&&(
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>ALLOCATIONS</div>
+                        <table style={{ width:"100%",fontSize:11,borderCollapse:"collapse" }}>
+                          <thead><tr>{["Order","Drawing","Mark No","Weight (kg)","Reserved By","Date","Status"].map(h=><th key={h} style={{ textAlign:"left",padding:"3px 8px",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                          <tbody>{(s.allocations||[]).map((a,i)=>(
+                            <tr key={i}><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{a.orderId}</td><td style={{ padding:"4px 8px" }}>{a.drawingNo||a.drawingId||"—"}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{a.markNo||"—"}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{fmt.num(a.wt)}</td><td style={{ padding:"4px 8px" }}>{a.reservedBy||"—"}</td><td style={{ padding:"4px 8px" }}>{a.reservedDate||"—"}</td><td style={{ padding:"4px 8px" }}><Badge color={a.status==="issued"?"purple":a.status==="consumed"?"gray":"blue"}>{a.status||"allocated"}</Badge></td></tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
+                    )}
+                    {(s.issues||[]).length>0&&(
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>ISSUE HISTORY</div>
+                        <table style={{ width:"100%",fontSize:11,borderCollapse:"collapse" }}>
+                          <thead><tr>{["ISN No","Date","Issued To","Order","Weight (kg)","DXF"].map(h=><th key={h} style={{ textAlign:"left",padding:"3px 8px",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                          <tbody>{(s.issues||[]).map((iss,i)=>(
+                            <tr key={i}><td style={{ padding:"4px 8px",fontFamily:T.fontMono,color:T.accent }}>{iss.issueNoteNo}</td><td style={{ padding:"4px 8px" }}>{iss.issueDate}</td><td style={{ padding:"4px 8px" }}>{iss.issuedTo}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{iss.orderId}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{fmt.num(iss.wt)}</td><td style={{ padding:"4px 8px" }}>{iss.dxfLink?<a href={iss.dxfLink} target="_blank" rel="noreferrer" style={{ color:T.accent }}>DXF↗</a>:"—"}</td></tr>
+                          ))}</tbody>
+                        </table>
+                      </div>
+                    )}
+                    {/* Reservations */}
+                    {(s.reservations||[]).length>0&&(
+                      <div style={{ marginTop:8, padding:"8px 12px", background:T.amberBg+"44", borderRadius:6 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginBottom:6 }}>RESERVATIONS</div>
+                        {(s.reservations||[]).map((r,ri)=>(
+                          <div key={ri} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"3px 0", borderBottom:`1px solid ${T.border}` }}>
+                            <span style={{ fontSize:11, color:T.text }}>{r.orderRef} — {fmt.num(r.kg)} kg — by {r.reservedBy} on {r.reservedAt}</span>
+                            {(user.role==="super_admin"||user.role==="planning_admin") && (
+                              <button onClick={()=>releaseReservation(s,ri)} style={{ ...css.btn.sm, fontSize:9, color:T.red, padding:"1px 6px" }}>Release</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(s.auditLog||[]).length>0&&(
+                      <div>
+                        <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>AUDIT LOG</div>
+                        {[...(s.auditLog||[])].reverse().map((e,i)=>(
+                          <div key={i} style={{ fontSize:11,color:T.textLow,display:"flex",gap:10,marginBottom:3 }}>
+                            <span style={{ color:T.accent,fontFamily:T.fontMono,minWidth:90 }}>{e.date}</span>
+                            <Badge color="gray">{e.action}</Badge>
+                            {e.wt>0&&<span>{fmt.num(e.wt)} kg</span>}
+                            {e.orderId&&<span style={{ fontFamily:T.fontMono }}>{e.orderId}</span>}
+                            <span>by {e.by}</span>
+                            {e.reason&&<span>· {e.reason}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                </tr>
               )}
-            </div>
-          );
-        });
-      })()}
-
-      
+            </tbody>
+          ))}
+        </table>
+      </div>
 
       {/* ALLOCATE MODAL */}
       {modal==="allocate"&&activeLot&&(
@@ -11033,7 +11022,7 @@ const TabFinance = ({ order, onChange, canEdit }) => {
   );
 };
 // ─── ORDER PROGRESS TRACKER ───────────────────────────────────────────────────
-const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatches, releases, instances, purchaseReqs, onBack }) => {
+const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatches, releases, instances, purchaseReqs, onBack, dprs }) => {
   const [expandedDrg, setExpandedDrg] = useState(null);
   const [progressView, setProgressView] = useState('weight');
   const q = order.quality || {};
@@ -11146,6 +11135,33 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
     if (calcType==='lots_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(receivedDrawingKg/effectiveTotalKg*100)):0; return {doneKg:receivedDrawingKg,totalKg:effectiveTotalKg,pct,drawingCount:receivedDrawingCount,totalDrawings:fabDrawings.length,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
     if (calcType==='cutting_wt') { const pct=effectiveTotalKg>0?Math.min(100,Math.round(cuttingDoneKg/effectiveTotalKg*100)):0; return {doneKg:cuttingDoneKg,totalKg:effectiveTotalKg,pct,status:pct===0?'not_started':pct>=100?'completed':'in_progress'}; }
     if (calcType==='prod_step_wt') {
+      // fit_up and welding are tracked at DPR level — use DPR stages
+      if (key === 'fit_up') {
+        const orderDprs = (dprs||[]).filter(d => d.orderId === order.id);
+        const doneKg2 = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && ['welding','weld_qc','tpi_weld','complete'].includes(dpr.currentStage);
+        }).reduce((s,d) => s+(d.totalWt||0), 0);
+        const inProgKg = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && dpr.currentStage === 'fitup';
+        }).reduce((s,d) => s+(d.totalWt||0), 0);
+        const pct = effectiveTotalKg>0 ? Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)) : 0;
+        return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct>=100?'completed':doneKg2>0||inProgKg>0?'in_progress':'not_started'};
+      }
+      if (key === 'welding') {
+        const orderDprs = (dprs||[]).filter(d => d.orderId === order.id);
+        const doneKg2 = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && ['weld_qc','tpi_weld','complete'].includes(dpr.currentStage);
+        }).reduce((s,d) => s+(d.totalWt||0), 0);
+        const inProgKg = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && dpr.currentStage === 'welding';
+        }).reduce((s,d) => s+(d.totalWt||0), 0);
+        const pct = effectiveTotalKg>0 ? Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)) : 0;
+        return {doneKg:doneKg2,totalKg:effectiveTotalKg,pct,status:pct>=100?'completed':doneKg2>0||inProgKg>0?'in_progress':'not_started'};
+      }
       const doneKg2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='completed').reduce((s,d)=>s+(d.totalWt||0),0);
       const inProgKg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='in_progress').reduce((s,d)=>s+(d.totalWt||0),0);
       const pct=effectiveTotalKg>0?Math.min(100,Math.round(doneKg2/effectiveTotalKg*100)):0;
@@ -11177,7 +11193,36 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
     if (calcType==='po_wt') { const ok=orderPos.length>0; return {done:ok?total:0,total,pct:ok?100:0,status:ok?'completed':'not_started'}; }
     if (calcType==='lots_wt') { const done2=orderLots.length>0?Math.round(total*orderLots.filter(l=>l.rmQcStatus).length/Math.max(orderLots.length,1)):0; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     if (calcType==='cutting_wt') { const done2=fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&PAST_CUTTING.has(inst.currentStage))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
-    if (calcType==='prod_step_wt') { const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='completed').length; const inProg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='in_progress').length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0&&inProg===0?'not_started':done2===total?'completed':'in_progress'}; }
+    if (calcType==='prod_step_wt') {
+      // fit_up and welding tracked at DPR level
+      if (key === 'fit_up') {
+        const orderDprs = (dprs||[]).filter(d => d.orderId === order.id);
+        const done2 = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && ['welding','weld_qc','tpi_weld','complete'].includes(dpr.currentStage);
+        }).length;
+        const inProg = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && dpr.currentStage === 'fitup';
+        }).length;
+        const pct=total>0?Math.round(done2/total*100):0;
+        return {done:done2,total,pct,status:done2===0&&inProg===0?'not_started':done2===total?'completed':'in_progress'};
+      }
+      if (key === 'welding') {
+        const orderDprs = (dprs||[]).filter(d => d.orderId === order.id);
+        const done2 = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && ['weld_qc','tpi_weld','complete'].includes(dpr.currentStage);
+        }).length;
+        const inProg = fabDrawings.filter(d => {
+          const dpr = orderDprs.find(dp => dp.drawingId === d.id);
+          return dpr && dpr.currentStage === 'welding';
+        }).length;
+        const pct=total>0?Math.round(done2/total*100):0;
+        return {done:done2,total,pct,status:done2===0&&inProg===0?'not_started':done2===total?'completed':'in_progress'};
+      }
+      const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='completed').length; const inProg=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===key)?.status==='in_progress').length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0&&inProg===0?'not_started':done2===total?'completed':'in_progress'};
+    }
     if (calcType==='tpi_offered_wt') { const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stage.prodStageKey)?.tpiOfferedAt).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     if (calcType==='tpi_done_wt') { const done2=fabDrawings.filter(d=>(d.productionSteps||[]).find(s=>s.stage===stage.prodStageKey)?.tpiDoneAt).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
     if (calcType==='dispatch_wt') { const done2=fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&DISPATCH_STAGES.has(inst.currentStage))).length; const pct=total>0?Math.round(done2/total*100):0; return {done:done2,total,pct,status:done2===0?'not_started':done2===total?'completed':'in_progress'}; }
@@ -11214,7 +11259,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
 
   const handleExport = () => {
     const calcFn = progressView==='weight' ? calcWeightProgress : calcDrawingProgress;
-    const rows=stageGroups.map(g=>`<h3>${g.label}</h3><table border="1" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px"><tr><th>Stage</th><th>Done</th><th>Total</th><th>%</th><th>Status</th></tr>${g.stages.map(s=>{const p=calcFn(s);const done=progressView==='weight'?Math.round(p.doneKg||0)+'kg':p.done;const tot=progressView==='weight'?Math.round(p.totalKg||0)+'kg':p.total;return `<tr><td>${s.label}</td><td>${done}</td><td>${tot}</td><td>${p.pct}%</td><td>${p.status.replace(/_/g,' ')}</td></tr>`;}).join('')}</table>`).join('');
+    const rows=stageGroups.map(g=>`<h3>${g.label}</h3><table border="1" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:13px"><tr><th>Stage</th><th>Done</th><th>Total</th><th>%</th><th>Status</th></tr>${g.stages.map(s=>{const p=calcFn(s);const done=progressView==='weight'?((p.doneKg||0)/1000).toFixed(2)+'T':p.done;const tot=progressView==='weight'?((p.totalKg||0)/1000).toFixed(2)+'T':p.total;return `<tr><td>${s.label}</td><td>${done}</td><td>${tot}</td><td>${p.pct}%</td><td>${p.status.replace(/_/g,' ')}</td></tr>`;}).join('')}</table>`).join('');
     const html=`<!DOCTYPE html><html><head><title>Progress — ${order.id}</title><style>body{font-family:sans-serif;padding:32px}h2{margin-bottom:4px}p{margin:0 0 16px;color:#666}h3{margin:24px 0 8px}th{background:#f5f5f5}</style></head><body><h2>Order Progress — ${order.id}</h2><p>${order.projectDesc||''} | ${order.clientId||''} | Overall: ${overallPct}% | <strong>${trackLabel}</strong></p>${rows}</body></html>`;
     const w=window.open('','_blank'); if(w){w.document.write(html);w.document.close();}
   };
@@ -11239,7 +11284,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
           </div>
         </div>
         <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-          {[{v:fabDrawings.length,l:"DRAWINGS",c:T.accent},{v:`${Math.round(effectiveTotalKg).toLocaleString()}kg`,l:"TOTAL WEIGHT",c:T.text},{v:`${activeStages.filter(s=>calcWeightProgress(s).status==='completed').length}/${activeStages.length}`,l:"STAGES DONE",c:T.green}].map(x=>(
+          {[{v:fabDrawings.length,l:"DRAWINGS",c:T.accent},{v:`${(effectiveTotalKg/1000).toFixed(2)}T`,l:"TOTAL WEIGHT",c:T.text},{v:`${activeStages.filter(s=>calcWeightProgress(s).status==='completed').length}/${activeStages.length}`,l:"STAGES DONE",c:T.green}].map(x=>(
             <div key={x.l} style={{textAlign:"center",padding:"8px 14px",background:T.bgInput,borderRadius:6}}>
               <div style={{fontSize:20,fontWeight:800,color:x.c,fontFamily:T.fontMono}}>{x.v}</div>
               <div style={{fontSize:10,color:T.textMid,fontWeight:600}}>{x.l}</div>
@@ -11289,7 +11334,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
                 const sc = p.status==='completed'?T.green:p.status==='in_progress'?T.accent:T.textLow;
                 const icon = p.status==='completed'?'✅':p.status==='in_progress'?'⚡':'⏳';
                 const subtext = progressView==='weight'
-                  ? (p.doneKg>=0 ? `${Math.round(p.doneKg).toLocaleString()}kg / ${Math.round(p.totalKg).toLocaleString()}kg` : '')
+                  ? (p.doneKg>=0 ? `${(p.doneKg/1000).toFixed(2)}T / ${(p.totalKg/1000).toFixed(2)}T` : '')
                   : (p.total>0 ? `${p.done} / ${p.total} drawings` : '');
                 return (
                   <div key={stage.key} style={{display:"grid",gridTemplateColumns:"26px 1fr 80px 48px",alignItems:"center",gap:8}}>
@@ -11374,7 +11419,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
   );
 };
 
-const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs }) => {
+const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs, dprs }) => {
   const [activeTab, setActiveTab] = useState("basic");
   const [localOrder, setLocalOrder] = useState(order);
   const [dirty, setDirty] = useState(false);
@@ -11449,7 +11494,7 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
       {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} tpiAgencies={tpiAgencies||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
-      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} />}
+      {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} dprs={dprs||[]} />}
       {activeTab==="material_balance" && <TabMaterialBalance order={localOrder} stock={stock||[]} releases={releases||[]} instances={instances||[]} pos={pos||[]} nestingBatches={nestingBatches||[]} />}
       {activeTab==="finance"    && <TabFinance       order={localOrder} onChange={update} canEdit={canEditFinance} />}
 
@@ -11569,10 +11614,10 @@ const OrdersList = ({ orders, onOpen, user, clients, onAddOrder, company, setCom
     </div>
   );
 };
-const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs, company, setCompany }) => {
+const OrdersModule = ({ user, orders, setOrders, clients, materials, stock, vendors, tpiAgencies, pos, nestingBatches, releases, instances, purchaseReqs, company, setCompany, dprs }) => {
   const [selected, setSelected] = useState(null);
   const saveOrder = (updated) => { setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o)); setSelected(updated); };
-  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} />;
+  if (selected) return <OrderDetail order={selected} onBack={()=>setSelected(null)} onSave={saveOrder} user={user} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} dprs={dprs||[]} />;
   return <OrdersList orders={orders} onOpen={setSelected} user={user} clients={clients} onAddOrder={o=>setOrders(prev=>[...prev,o])} company={company} setCompany={setCompany} />;
 };
 
@@ -11610,7 +11655,7 @@ const Login = ({ onLogin }) => {
           <div style={{ marginTop:18, padding:12, background:T.bg, borderRadius:8 }}>
             <div style={{ fontSize:10, color:T.textMid, fontWeight:700, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.05em" }}>Quick Logins</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
-              {[["Super Admin","rajesh.kumar","admin123"],["Planning Admin","vikram.singh","plan123"],["Planning User","neha.gupta","plan123"],["Purchase","deepak.rao","pur123"],["Store Admin","mohan.das","store123"],["QC Admin","priya.mehta","qc123"],["Floor Planner","suresh.patel","prod123"],["Finance Admin","sameer.shah","fin123"],["Dispatch","ramesh.kulkarni","disp123"],["Contractor","krishna.fab","con123"],["Machine Op","ajay.kadam","machine123"]].map(([role,un,pw])=>(
+              {[["Super Admin","rajesh.kumar","admin123"],["Planning Admin","vikram.singh","plan123"],["Planning User","neha.gupta","plan123"],["Purchase","deepak.rao","pur123"],["Store Admin","mohan.das","store123"],["QC Admin","priya.mehta","qc123"],["Floor Planner","suresh.patel","prod123"],["Finance Admin","sameer.shah","fin123"],["Dispatch","ramesh.kulkarni","disp123"],["Contractor","krishna.fab","con123"],["Machine Op","ajay.kadam","machine123"],["In-House A","inhouse.a","con123"],["In-House B","inhouse.b","con123"]].map(([role,un,pw])=>(
                 <button key={role} onClick={()=>{setU(un);setP(pw);}} style={{ ...css.btn.ghost, textAlign:"left", fontSize:11, background:T.bgCard, borderRadius:4, border:`1px solid ${T.border}`, padding:"4px 8px" }}>{role}</button>
               ))}
             </div>
@@ -12730,414 +12775,473 @@ const StageWorkerQueue = ({ user, instances, setInstances }) => {
 // PRODUCTION STEP 5: CONTRACTOR WORK QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
 const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, orders, nestingBatches, dprs, setDprs }) => {
+  const [tab,    setTab]    = useState("fitup");   // "fitup" | "welding" | "complete"
   const [selDpr, setSelDpr] = useState(null);
   const [showAsm, setShowAsm] = useState(false);
   const cid = user.contractorId;
 
-  const myDprs = (dprs||[]).filter(d=>
-    d.fitupContractorId===cid || d.weldContractorId===cid
+  const myDprs = (dprs||[]).filter(d =>
+    d.fitupContractorId === cid || d.weldContractorId === cid
   );
 
-  const updDpr = (dprId, patch) => setDprs(prev=>prev.map(d=>d.id===dprId?{...d,...patch}:d));
+  const updDpr = (dprId, patch) =>
+    setDprs(prev => prev.map(d => d.id === dprId ? { ...d, ...patch } : d));
 
-  const advanceDrawingInstances = (dpr, toStage, toStatus="pending_supervisor") => {
-    setInstances(prev=>prev.map(i=>{
-      if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId) return i;
-      if(i.isSideCut) return i;
-      return {...i, currentStage:toStage, currentStatus:toStatus,
-        stageHistory:[...(i.stageHistory||[]),{
-          stage:i.currentStage, completedAt:new Date().toISOString(),
-          completedBy:user.username
+  const advanceDrawingInstances = (dpr, toStage, toStatus = "in_progress") => {
+    setInstances(prev => prev.map(i => {
+      if (i.drawingId !== dpr.drawingId || i.orderId !== dpr.orderId || i.isSideCut) return i;
+      return { ...i, currentStage: toStage, currentStatus: toStatus,
+        stageHistory: [...(i.stageHistory||[]), {
+          stage: i.currentStage, completedAt: new Date().toISOString(), completedBy: user.username
         }]
       };
     }));
   };
 
   const getPartsReadiness = (dpr) => {
-    const order=(orders||[]).find(o=>o.id===dpr.orderId);
-    if(!order) return {total:0,cutCleared:0,inCutting:0,notStarted:0,pct:0};
-    const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId);
-    if(!drawing) return {total:0,cutCleared:0,inCutting:0,notStarted:0,pct:0};
-    const drgParts=(order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate");
-    const total=drgParts.length;
-    const DONE=new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-    const CUTTING=new Set(['cutting']);
-    const drgInsts=(instances||[]).filter(i=>i.drawingId===drawing.id&&i.orderId===order.id&&!i.isSideCut);
-    const unique={};
-    drgInsts.forEach(i=>{if(!unique[i.markNo])unique[i.markNo]=i.currentStage;});
-    const cutCleared=Object.values(unique).filter(s=>DONE.has(s)).length;
-    const inCutting=Object.values(unique).filter(s=>CUTTING.has(s)).length;
-    const notStarted=total-cutCleared-inCutting;
-    const pct=total>0?Math.round(cutCleared/total*100):0;
-    return {total,cutCleared,inCutting,notStarted,pct,drgParts,order,drawing};
-  };
-
-  const getRmStatus = (dpr) => {
-    const result=[];
-    const seen=new Set();
-    const order=(orders||[]).find(o=>o.id===dpr.orderId);
-    if(!order) return result;
-    const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId);
-    if(!drawing) return result;
-    const drgMarkNos=new Set((order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").map(p=>p.markNo));
-    const DONE=new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-    const CUTTING=new Set(['cutting']);
-    ;(nestingBatches||[]).forEach(batch=>{
-      (batch.lots||[]).forEach(lot=>{
-        (lot.sheets||[]).forEach(sheet=>{
-          if(!sheet.rmUnitId||seen.has(sheet.rmUnitId)) return;
-          const sheetPartsForDrg=(sheet.parts||[]).filter(mn=>drgMarkNos.has(mn));
-          if(sheetPartsForDrg.length===0) return;
-          seen.add(sheet.rmUnitId);
-          const ruInsts=(instances||[]).filter(i=>i.rmUnitId===sheet.rmUnitId);
-          const ruAssign=(releases||[]).flatMap(r=>r.rmUnitAssignments||[]).find(ru=>ru.rmUnitId===sheet.rmUnitId);
-          const isCutDone=ruInsts.some(i=>DONE.has(i.currentStage)||i.currentStage==='cutting_qc');
-          const isCutting=ruInsts.some(i=>CUTTING.has(i.currentStage));
-          result.push({
-            rmUnitId:sheet.rmUnitId,
-            sheetDim:sheet.sheetDim||"",
-            partsForDrg:sheetPartsForDrg.length,
-            totalParts:(sheet.parts||[]).length,
-            status:isCutDone?'done':isCutting?'cutting':'pending',
-            cuttingContractor:ruAssign?.contractorName||"—",
-          });
-        });
-      });
-    });
-    return result;
-  };
-
-  const getDprStatus = (dpr) => {
-    const {pct,total}=getPartsReadiness(dpr);
-    if(total===0) return {color:T.textLow,label:"No Parts",action:null};
-    if(dpr.currentStage==='complete') return {color:T.green,label:"Complete",action:null};
-    if(dpr.currentStage==='weld_qc') return {color:T.amber,label:"Awaiting Weld QC",action:null};
-    if(dpr.currentStage==='welding') return {color:T.accent,label:"Welding In Progress",action:dpr.weldContractorId===cid?"mark_weld_complete":null};
-    if(dpr.currentStage==='fitup_qc') return {color:T.amber,label:"Awaiting Fit-Up QC",action:null};
-    if(dpr.currentStage==='fitup') return {color:T.accent,label:"Fit-Up In Progress",action:dpr.fitupContractorId===cid?"mark_fitup_complete":null};
-    if(pct>=80) return {color:T.green,label:"Ready — Start Fit-Up",action:dpr.fitupContractorId===cid?"start_fitup":null};
-    if(pct>=50) return {color:T.amber,label:`Partial (${pct}%)`,action:null};
-    return {color:T.red,label:`Awaiting Parts (${pct}%)`,action:null};
+    const order = (orders||[]).find(o => o.id === dpr.orderId);
+    if (!order) return { total:0, cutCleared:0, inCutting:0, pct:0 };
+    const drawing = (order.drawings||[]).find(d => d.id === dpr.drawingId);
+    if (!drawing) return { total:0, cutCleared:0, inCutting:0, pct:0 };
+    const drgParts = (order.parts||[]).filter(p => p.drawingId === drawing.id && p.fabType === "Fabricate");
+    const total = drgParts.length;
+    const DONE = new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
+    const CUTTING = new Set(['cutting']);
+    const drgInsts = (instances||[]).filter(i => i.drawingId === drawing.id && i.orderId === order.id && !i.isSideCut);
+    const unique = {};
+    drgInsts.forEach(i => { if (!unique[i.markNo]) unique[i.markNo] = i.currentStage; });
+    const cutCleared = Object.values(unique).filter(s => DONE.has(s)).length;
+    const inCutting  = Object.values(unique).filter(s => CUTTING.has(s)).length;
+    const pct = total > 0 ? Math.round(cutCleared / total * 100) : 0;
+    return { total, cutCleared, inCutting, pct, order, drawing };
   };
 
   const doAction = (dpr, action) => {
-    const ts=new Date().toISOString();
-    if(action==='start_fitup'){
-      updDpr(dpr.id,{currentStage:'fitup',currentStatus:'in_progress',fitupStartedAt:ts,
-        stageHistory:[...(dpr.stageHistory||[]),{stage:'fitup',action:'started',by:user.username,at:ts}]});
-      advanceDrawingInstances(dpr,'fitup','in_progress');
-    } else if(action==='mark_fitup_complete'){
-      updDpr(dpr.id,{currentStage:'fitup_qc',currentStatus:'pending_qc',fitupCompleteAt:ts,
-        stageHistory:[...(dpr.stageHistory||[]),{stage:'fitup',action:'completed',by:user.username,at:ts}]});
-      advanceDrawingInstances(dpr,'fitup','pending_supervisor');
-    } else if(action==='start_welding'){
-      updDpr(dpr.id,{currentStage:'welding',currentStatus:'in_progress',weldStartedAt:ts,
-        stageHistory:[...(dpr.stageHistory||[]),{stage:'welding',action:'started',by:user.username,at:ts}]});
-      advanceDrawingInstances(dpr,'welding','in_progress');
-    } else if(action==='mark_weld_complete'){
-      updDpr(dpr.id,{currentStage:'weld_qc',currentStatus:'pending_qc',weldCompleteAt:ts,
-        stageHistory:[...(dpr.stageHistory||[]),{stage:'welding',action:'completed',by:user.username,at:ts}]});
-      advanceDrawingInstances(dpr,'welding','pending_supervisor');
+    const ts = new Date().toISOString();
+    if (action === 'start_fitup') {
+      updDpr(dpr.id, { currentStage:'fitup', currentStatus:'in_progress', fitupStartedAt:ts,
+        stageHistory:[...(dpr.stageHistory||[]), { stage:'fitup', action:'started', by:user.username, at:ts }] });
+      advanceDrawingInstances(dpr, 'fitup', 'in_progress');
+    } else if (action === 'mark_fitup_complete') {
+      updDpr(dpr.id, { currentStage:'fitup_qc', currentStatus:'pending_qc', fitupCompleteAt:ts,
+        stageHistory:[...(dpr.stageHistory||[]), { stage:'fitup', action:'completed', by:user.username, at:ts }] });
+      advanceDrawingInstances(dpr, 'fitup', 'pending_supervisor');
+      setTab("welding");
+    } else if (action === 'start_welding') {
+      updDpr(dpr.id, { currentStage:'welding', currentStatus:'in_progress', weldStartedAt:ts,
+        stageHistory:[...(dpr.stageHistory||[]), { stage:'welding', action:'started', by:user.username, at:ts }] });
+      advanceDrawingInstances(dpr, 'welding', 'in_progress');
+    } else if (action === 'mark_weld_complete') {
+      updDpr(dpr.id, { currentStage:'weld_qc', currentStatus:'pending_qc', weldCompleteAt:ts,
+        stageHistory:[...(dpr.stageHistory||[]), { stage:'welding', action:'completed', by:user.username, at:ts }] });
+      advanceDrawingInstances(dpr, 'welding', 'pending_supervisor');
+      setTab("complete");
     }
     setSelDpr(null);
   };
 
-  if(selDpr){
-    const dpr=selDpr;
-    const {pct,cutCleared,inCutting,notStarted,total,drgParts,order,drawing}=getPartsReadiness(dpr);
-    const rmStatus=getRmStatus(dpr);
-    const status=getDprStatus(dpr);
-    const threshold=80;
-    const suggestion=pct>=threshold
-      ?{color:T.green,bg:T.greenBg,icon:"✅",label:"SAFE TO COMMIT TEAM",sub:`${pct}% parts cut and cleared`}
-      :pct>=50
-      ?{color:T.amber,bg:T.amberBg,icon:"⚠",label:"PARTIAL — MONITOR CLOSELY",sub:`${pct}% ready. Parts still incoming`}
-      :{color:T.red,bg:T.redBg,icon:"❌",label:"HOLD — INSUFFICIENT PARTS",sub:`Only ${pct}% parts available`};
-    const DONE=new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-    const CUTTING=new Set(['cutting']);
-    const asmGroup=drawing?.assemblyGroup;
-    const siblings=asmGroup&&order?(order.drawings||[]).filter(d=>d.assemblyGroup===asmGroup&&d.id!==dpr.drawingId):[];
+  // ── Bucket classification ──────────────────────────────────────────────────
+  // Tab 1 — Fit-Up: pending (ready) + in fitup + rejected back from fitup_qc
+  const tab1 = myDprs.filter(d =>
+    d.fitupContractorId === cid &&
+    ['pending','fitup'].includes(d.currentStage)
+  );
+  // Tab 2 — Welding: awaiting fitup QC + in welding (incl rejected from weld_qc)
+  const tab2_awaitingQc = myDprs.filter(d => d.currentStage === 'fitup_qc');
+  const tab2_welding    = myDprs.filter(d =>
+    d.weldContractorId === cid && d.currentStage === 'welding'
+  );
+  // Tab 3 — Complete: awaiting weld inspection (weld_qc + tpi_weld) + cleared
+  const tab3_awaitingInsp = myDprs.filter(d => ['weld_qc','tpi_weld'].includes(d.currentStage));
+  const tab3_cleared      = myDprs.filter(d => d.currentStage === 'complete');
+
+  // ── Shared drawing card (keeps existing part-readiness display intact) ──────
+  const DprCard = ({ dpr, onClick, accent }) => {
+    const { pct, cutCleared, total } = getPartsReadiness(dpr);
+    const order = (orders||[]).find(o => o.id === dpr.orderId) || {};
+    const borderColor = accent || T.accent;
+    const scope = dpr.fitupContractorId === cid && dpr.weldContractorId === cid
+      ? "Fit-Up + Welding"
+      : dpr.fitupContractorId === cid ? "Fit-Up" : "Welding";
+    return (
+      <div onClick={onClick}
+        style={{ ...css.card, marginBottom:8, cursor: onClick ? "pointer" : "default",
+          borderLeft:`3px solid ${borderColor}` }}
+        onMouseEnter={e => { if(onClick) e.currentTarget.style.background = T.bgHover; }}
+        onMouseLeave={e => { if(onClick) e.currentTarget.style.background = T.bgCard; }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+          <div>
+            <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo}</div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+              {order.orderNo || dpr.orderId} · {dpr.totalParts||total} parts · {dpr.totalWt>0?(dpr.totalWt/1000).toFixed(2)+"T":"—"}
+            </div>
+          </div>
+          <div style={{ textAlign:"right" }}>
+            {total > 0 && (
+              <div style={{ marginTop:4, height:4, background:T.border, borderRadius:2, width:80, overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${pct}%`, background:pct>=80?T.green:pct>=50?T.amber:T.red }} />
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:12, marginTop:6, fontSize:11, color:T.textMid }}>
+          <span>✅ {cutCleared}/{total} parts ready</span>
+          <span style={{ color:T.accentLo }}>{scope}</span>
+        </div>
+      </div>
+    );
+  };
+
+  // ── Section label ──────────────────────────────────────────────────────────
+  const SL = ({ title, count, color, sub }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, marginTop:20 }}>
+      <div style={{ fontSize:11, fontWeight:800, color:color||T.textMid, letterSpacing:"0.08em" }}>{title}</div>
+      {count > 0 && <div style={{ background:color||T.textMid, color:"#fff", fontSize:10,
+        fontWeight:800, borderRadius:8, padding:"1px 6px" }}>{count}</div>}
+      {sub && <div style={{ fontSize:11, color:T.textLow }}>{sub}</div>}
+    </div>
+  );
+
+  // ── Detail view (shared across tabs) ──────────────────────────────────────
+  if (selDpr) {
+    const dpr = selDpr;
+    const { pct, cutCleared, inCutting, total, order, drawing } = getPartsReadiness(dpr);
+    const threshold = 80;
+    const suggestion = pct >= threshold
+      ? { color:T.green,  bg:T.greenBg,  icon:"✅", label:"SAFE TO COMMIT TEAM",       sub:`${pct}% parts cut and cleared` }
+      : pct >= 50
+      ? { color:T.amber,  bg:T.amberBg,  icon:"⚠",  label:"PARTIAL — MONITOR CLOSELY", sub:`${pct}% ready. Parts still incoming` }
+      : { color:T.red,    bg:T.redBg,    icon:"❌", label:"HOLD — INSUFFICIENT PARTS",  sub:`Only ${pct}% parts available` };
+
+    const asmGroup  = drawing?.assemblyGroup;
+    const siblings  = asmGroup ? (order?.drawings||[]).filter(d => d.assemblyGroup === asmGroup && d.id !== dpr.drawingId) : [];
+
+    // What actions are available?
+    const canStartFitup      = dpr.currentStage === 'pending'  && dpr.fitupContractorId === cid && pct >= 80;
+    const canMarkFitupDone   = dpr.currentStage === 'fitup'    && dpr.fitupContractorId === cid;
+    const awaitingFitupQc    = dpr.currentStage === 'fitup_qc';
+    const canStartWeld       = dpr.currentStage === 'welding'  && dpr.weldContractorId  === cid && !selDpr._weldStarted;
+    const weldInProgress     = dpr.currentStage === 'welding'  && dpr.weldStartedAt;
+    const canMarkWeldDone    = dpr.currentStage === 'welding'  && dpr.weldContractorId  === cid;
+    const awaitingWeldInsp   = ['weld_qc','tpi_weld'].includes(dpr.currentStage);
+    const isComplete         = dpr.currentStage === 'complete';
+
     return (
       <div>
-        <button onClick={()=>setSelDpr(null)} style={{...css.btn.ghost,marginBottom:16}}>← Back to My Drawings</button>
-        <div style={{...css.card,marginBottom:12}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
+        <button onClick={() => { setSelDpr(null); setShowAsm(false); }}
+          style={{ ...css.btn.ghost, marginBottom:16 }}>← Back</button>
+
+        {/* Header */}
+        <div style={{ ...css.card, marginBottom:14 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
             <div>
-              <div style={{fontFamily:T.fontMono,fontWeight:800,color:T.accentHi,fontSize:16}}>{dpr.drawingNo}</div>
-              <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{dpr.drawingTitle||""}</div>
-              <div style={{display:"flex",gap:16,marginTop:6,flexWrap:"wrap",fontSize:12}}>
-                <span style={{color:T.textMid}}>Order: <span style={{color:T.text,fontFamily:T.fontMono}}>{dpr.orderId}</span></span>
-                <span style={{color:T.textMid}}>Parts: <span style={{color:T.text,fontWeight:700}}>{dpr.totalParts}</span></span>
-                <span style={{color:T.textMid}}>Weight: <span style={{color:T.text,fontWeight:700}}>{dpr.totalWt>0?(dpr.totalWt/1000).toFixed(2)+"T":"—"}</span></span>
-                <span style={{color:T.textMid}}>Qty: <span style={{color:T.text,fontWeight:700}}>{dpr.qty}</span></span>
+              <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:16 }}>{dpr.drawingNo}</div>
+              <div style={{ fontSize:12, color:T.textMid, marginTop:3 }}>
+                {order?.orderNo || dpr.orderId} · {order?.clientName || ""}
               </div>
             </div>
-            <div style={{fontSize:12,fontWeight:700,color:status.color}}>{status.label}</div>
+            <Badge color={
+              isComplete ? "green" :
+              awaitingFitupQc || awaitingWeldInsp ? "amber" :
+              dpr.currentStage === 'fitup' || dpr.currentStage === 'welding' ? "blue" : "gray"
+            }>
+              {isComplete ? "Complete" :
+               awaitingFitupQc ? "Awaiting Fit-Up QC" :
+               awaitingWeldInsp ? "Awaiting Inspection" :
+               dpr.currentStage === 'fitup' ? "Fit-Up In Progress" :
+               dpr.currentStage === 'welding' ? "Welding In Progress" :
+               dpr.currentStage === 'pending' ? "Pending" : dpr.currentStage}
+            </Badge>
           </div>
-        </div>
-        {(dpr.currentStage==='pending'||dpr.currentStage==='fitup')&&(
-          <div style={{padding:"12px 16px",background:suggestion.bg,border:`1px solid ${suggestion.color}44`,borderRadius:8,marginBottom:12,display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:20}}>{suggestion.icon}</span>
-            <div>
-              <div style={{fontSize:13,fontWeight:800,color:suggestion.color}}>{suggestion.label}</div>
-              <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{suggestion.sub}</div>
+
+          {/* Parts readiness */}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:T.textMid, marginBottom:4 }}>
+              <span>Parts Readiness</span>
+              <span style={{ fontWeight:700, color:pct>=80?T.green:pct>=50?T.amber:T.red }}>{pct}%</span>
+            </div>
+            <div style={{ height:8, background:T.border, borderRadius:99, overflow:"hidden" }}>
+              <div style={{ height:"100%", width:`${pct}%`,
+                background:pct>=80?T.green:pct>=50?T.amber:T.red, borderRadius:99 }} />
+            </div>
+            <div style={{ display:"flex", gap:16, marginTop:6, fontSize:11, color:T.textLow }}>
+              <span>✅ {cutCleared} cleared</span>
+              {inCutting > 0 && <span>✂ {inCutting} in cutting</span>}
+              <span>Total: {total}</span>
             </div>
           </div>
-        )}
-        {order?.quality&&(
-          <details style={{...css.card,marginBottom:12}}>
-            <summary style={{fontSize:11,fontWeight:700,color:T.textMid,cursor:"pointer",letterSpacing:"0.06em"}}>WELDING GUIDELINES</summary>
-            <div style={{marginTop:10,display:"flex",gap:20,flexWrap:"wrap",fontSize:12}}>
-              {order.quality.wpsRef&&<span>WPS: <strong>{order.quality.wpsRef}</strong></span>}
-              {order.quality.preheatTemp&&<span>Preheat: <strong>{order.quality.preheatTemp}°C</strong></span>}
-              {order.quality.fillerMaterial&&<span>Filler: <strong>{order.quality.fillerMaterial}</strong></span>}
-              {order.quality.weldingSequence&&<span>Sequence: <strong>{order.quality.weldingSequence}</strong></span>}
-              {order.quality.tpiHoldPoints?.length>0&&<span>TPI: <strong>{order.quality.tpiHoldPoints.join(", ")}</strong></span>}
-            </div>
-          </details>
-        )}
-        <div style={{...css.card,marginBottom:12}}>
-          <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:10,letterSpacing:"0.06em"}}>PARTS READINESS</div>
-          <div style={{height:8,background:T.border,borderRadius:4,overflow:"hidden",marginBottom:8,display:"flex"}}>
-            <div style={{width:`${total>0?Math.round(cutCleared/total*100):0}%`,background:T.green,transition:"width 0.3s"}} />
-            <div style={{width:`${total>0?Math.round(inCutting/total*100):0}%`,background:T.amber,transition:"width 0.3s"}} />
+
+          {/* Readiness suggestion */}
+          <div style={{ background:suggestion.bg, border:`1px solid ${suggestion.color}44`,
+            borderRadius:6, padding:"8px 12px", fontSize:11 }}>
+            <span style={{ fontWeight:700, color:suggestion.color }}>{suggestion.icon} {suggestion.label}</span>
+            <span style={{ color:suggestion.color, marginLeft:8 }}>{suggestion.sub}</span>
           </div>
-          <div style={{display:"flex",gap:20,fontSize:12,flexWrap:"wrap",marginBottom:12}}>
-            <span><span style={{color:T.green,fontWeight:700,fontSize:14}}>{cutCleared}</span> <span style={{color:T.textMid}}>✅ Cut & Cleared</span></span>
-            <span><span style={{color:T.amber,fontWeight:700,fontSize:14}}>{inCutting}</span> <span style={{color:T.textMid}}>⏳ Being Cut</span></span>
-            <span><span style={{color:T.textLow,fontWeight:700,fontSize:14}}>{notStarted}</span> <span style={{color:T.textMid}}>❓ Not Started</span></span>
-            <span style={{marginLeft:"auto"}}><span style={{fontWeight:700}}>{total}</span> <span style={{color:T.textMid}}>total parts</span></span>
-          </div>
-          {(drgParts||[]).length>0&&(
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-              <thead>
-                <tr style={{background:T.bgInput}}>
-                  {["Mark No","Section","Size","Wt (kg)","Cut Status"].map(h=>(
-                    <th key={h} style={{padding:"5px 8px",textAlign:"left",color:T.textMid,fontWeight:600,fontSize:10,borderBottom:`1px solid ${T.border}`}}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(()=>{
-                  const unique={};
-                  ;(instances||[]).filter(i=>i.drawingId===dpr.drawingId&&i.orderId===dpr.orderId&&!i.isSideCut).forEach(i=>{
-                    if(!unique[i.markNo])unique[i.markNo]=i.currentStage;
-                  });
-                  return (drgParts||[]).map(p=>{
-                    const stage=unique[p.markNo];
-                    const isDone=DONE.has(stage);
-                    const isCutting=CUTTING.has(stage);
-                    return (
-                      <tr key={p.markNo} style={{borderBottom:`1px solid ${T.border}33`}}>
-                        <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:T.accentHi,fontSize:10}}>{p.markNo}</td>
-                        <td style={{padding:"4px 8px",fontSize:10}}>{p.sectionType||p.section||"—"}</td>
-                        <td style={{padding:"4px 8px",fontSize:10,color:T.textMid}}>{p.size||"—"}</td>
-                        <td style={{padding:"4px 8px",fontSize:10,textAlign:"right"}}>{(p.clientUnitWt||0).toFixed(1)}</td>
-                        <td style={{padding:"4px 8px",fontSize:10,color:isDone?T.green:isCutting?T.amber:T.textLow,fontWeight:600}}>
-                          {isDone?'✅ Cut & Cleared':isCutting?'⏳ Being Cut':'❓ Not Started'}
-                        </td>
-                      </tr>
-                    );
-                  });
-                })()}
-              </tbody>
-            </table>
-          )}
         </div>
-        {rmStatus.length>0&&(
-          <div style={{...css.card,marginBottom:12}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:10,letterSpacing:"0.06em"}}>RM UNITS ({rmStatus.length})</div>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-              <thead>
-                <tr style={{background:T.bgInput}}>
-                  {["RM Unit","Dims","Parts (drg)","Status","Cutting By"].map(h=>(
-                    <th key={h} style={{padding:"5px 8px",textAlign:"left",color:T.textMid,fontWeight:600,fontSize:10,borderBottom:`1px solid ${T.border}`}}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rmStatus.map(ru=>{
-                  const sc=ru.status==='done'?T.green:ru.status==='cutting'?T.amber:T.textLow;
-                  const si=ru.status==='done'?'✅':ru.status==='cutting'?'⏳':'❓';
-                  return (
-                    <tr key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.border}33`}}>
-                      <td style={{padding:"5px 8px",fontFamily:T.fontMono,fontSize:9,color:T.accentHi}}>{ru.rmUnitId}</td>
-                      <td style={{padding:"5px 8px",fontSize:10,color:T.textMid}}>{ru.sheetDim||"—"}</td>
-                      <td style={{padding:"5px 8px",fontSize:10,fontWeight:600}}>{ru.partsForDrg}/{ru.totalParts}</td>
-                      <td style={{padding:"5px 8px",fontSize:10,color:sc,fontWeight:600}}>{si} {ru.status==='done'?'Cut & Cleared':ru.status==='cutting'?'Cutting In Progress':'Not Started'}</td>
-                      <td style={{padding:"5px 8px",fontSize:10,color:T.textMid}}>{ru.cuttingContractor}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {siblings.length>0&&(
-          <div style={{...css.card,marginBottom:12}}>
-            <button onClick={()=>setShowAsm(s=>!s)} style={{...css.btn.ghost,width:"100%",textAlign:"left",display:"flex",justifyContent:"space-between",padding:"4px 0"}}>
-              <span style={{fontSize:11,fontWeight:700,color:T.textMid,letterSpacing:"0.06em"}}>ASSEMBLY: {asmGroup} ({siblings.length+1} drawings)</span>
-              <span style={{fontSize:11,color:T.textMid}}>{showAsm?"▲ Hide":"▶ Show"} siblings</span>
+
+        {/* Assembly siblings */}
+        {asmGroup && siblings.length > 0 && (
+          <div style={{ ...css.card, marginBottom:14 }}>
+            <button onClick={() => setShowAsm(s => !s)}
+              style={{ ...css.btn.ghost, width:"100%", textAlign:"left", display:"flex",
+                justifyContent:"space-between", padding:"4px 0" }}>
+              <span style={{ fontSize:11, fontWeight:700, color:T.textMid, letterSpacing:"0.06em" }}>
+                ASSEMBLY: {asmGroup} ({siblings.length + 1} drawings)
+              </span>
+              <span style={{ fontSize:11, color:T.textMid }}>{showAsm ? "▲ Hide" : "▶ Show"} siblings</span>
             </button>
-            {showAsm&&<InfoBanner color="blue">Assembly status shown for planning only. Your commitment is based on this drawing's parts.</InfoBanner>}
+            {showAsm && (
+              <InfoBanner color="blue">Assembly status shown for planning only. Your commitment is based on this drawing's parts.</InfoBanner>
+            )}
           </div>
         )}
-        <div style={{display:"flex",gap:10,marginTop:8,flexWrap:"wrap"}}>
-          {status.action==='start_fitup'&&(
-            <button onClick={()=>doAction(dpr,'start_fitup')} style={{...css.btn.green,flex:1,padding:"12px 0",fontSize:14}}>▶ Start Fit-Up</button>
+
+        {/* Actions */}
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+          {canStartFitup && (
+            <button onClick={() => doAction(dpr, 'start_fitup')}
+              style={{ ...css.btn.green, flex:1, padding:"12px 0", fontSize:14 }}>
+              ▶ Start Fit-Up
+            </button>
           )}
-          {status.action==='mark_fitup_complete'&&(
-            <button onClick={()=>doAction(dpr,'mark_fitup_complete')} style={{...css.btn.primary,flex:1,padding:"12px 0",fontSize:14}}>✓ Mark Fit-Up Complete</button>
+          {dpr.currentStage === 'pending' && pct < 80 && (
+            <div style={{ flex:1, padding:"12px 16px", background:T.amberBg,
+              border:`1px solid ${T.amber}44`, borderRadius:8, textAlign:"center",
+              fontSize:13, color:T.amber, fontWeight:600 }}>
+              ⏳ Waiting for parts — {pct}% ready
+            </div>
           )}
-          {dpr.currentStage==='fitup_qc'&&(
-            <div style={{flex:1,padding:"12px 16px",background:T.amberBg,border:`1px solid ${T.amber}44`,borderRadius:8,textAlign:"center",fontSize:13,color:T.amber,fontWeight:700}}>⏳ Awaiting Fit-Up QC Sign-Off</div>
+          {canMarkFitupDone && (
+            <button onClick={() => doAction(dpr, 'mark_fitup_complete')}
+              style={{ ...css.btn.primary, flex:1, padding:"12px 0", fontSize:14 }}>
+              ✓ Mark Fit-Up Complete
+            </button>
           )}
-          {status.action==='start_welding'&&(
-            <button onClick={()=>doAction(dpr,'start_welding')} style={{...css.btn.green,flex:1,padding:"12px 0",fontSize:14}}>▶ Start Welding</button>
+          {awaitingFitupQc && (
+            <div style={{ flex:1, padding:"12px 16px", background:T.amberBg,
+              border:`1px solid ${T.amber}44`, borderRadius:8, textAlign:"center",
+              fontSize:13, color:T.amber, fontWeight:700 }}>
+              ⏳ Awaiting Fit-Up QC Sign-Off
+            </div>
           )}
-          {status.action==='mark_weld_complete'&&(
-            <button onClick={()=>doAction(dpr,'mark_weld_complete')} style={{...css.btn.primary,flex:1,padding:"12px 0",fontSize:14}}>✓ Mark Welding Complete</button>
+          {dpr.currentStage === 'welding' && !dpr.weldStartedAt && dpr.weldContractorId === cid && (
+            <button onClick={() => doAction(dpr, 'start_welding')}
+              style={{ ...css.btn.green, flex:1, padding:"12px 0", fontSize:14 }}>
+              ▶ Start Welding
+            </button>
           )}
-          {dpr.currentStage==='weld_qc'&&(
-            <div style={{flex:1,padding:"12px 16px",background:T.amberBg,border:`1px solid ${T.amber}44`,borderRadius:8,textAlign:"center",fontSize:13,color:T.amber,fontWeight:700}}>⏳ Awaiting Weld QC Sign-Off</div>
+          {dpr.currentStage === 'welding' && dpr.weldStartedAt && dpr.weldContractorId === cid && (
+            <button onClick={() => doAction(dpr, 'mark_weld_complete')}
+              style={{ ...css.btn.primary, flex:1, padding:"12px 0", fontSize:14 }}>
+              ✓ Mark Welding Complete
+            </button>
+          )}
+          {awaitingWeldInsp && (
+            <div style={{ flex:1, padding:"12px 16px", background:T.amberBg,
+              border:`1px solid ${T.amber}44`, borderRadius:8, textAlign:"center",
+              fontSize:13, color:T.amber, fontWeight:700 }}>
+              ⏳ Awaiting Inspection / TPI Sign-Off
+            </div>
+          )}
+          {isComplete && (
+            <div style={{ flex:1, padding:"12px 16px", background:T.greenBg,
+              border:`1px solid ${T.green}44`, borderRadius:8, textAlign:"center",
+              fontSize:13, color:T.green, fontWeight:700 }}>
+              ✅ Job Complete — QC Cleared
+            </div>
           )}
         </div>
       </div>
     );
   }
 
-  const pending=myDprs.filter(d=>d.currentStage==='pending');
-  const inFitup=myDprs.filter(d=>d.currentStage==='fitup');
-  const fitupQc=myDprs.filter(d=>d.currentStage==='fitup_qc');
-  const inWelding=myDprs.filter(d=>d.currentStage==='welding');
-  const weldQc=myDprs.filter(d=>d.currentStage==='weld_qc');
-  const done=myDprs.filter(d=>d.currentStage==='complete');
+  // ── Tab counts for header badges ───────────────────────────────────────────
+  const tab1Count = tab1.length;
+  const tab2Count = tab2_awaitingQc.length + tab2_welding.length;
+  const tab3Count = tab3_awaitingInsp.length + tab3_cleared.length;
 
-  const DprCard = ({dpr}) => {
-    const {pct,cutCleared,total}=getPartsReadiness(dpr);
-    const status=getDprStatus(dpr);
-    return (
-      <div onClick={()=>setSelDpr(dpr)} style={{...css.card,marginBottom:8,cursor:"pointer",borderLeft:`3px solid ${status.color}`}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-          <div>
-            <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:13}}>{dpr.drawingNo}</div>
-            <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{dpr.orderId} · {dpr.totalParts} parts · {dpr.totalWt>0?(dpr.totalWt/1000).toFixed(2)+"T":"—"}</div>
-          </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontSize:11,fontWeight:700,color:status.color}}>{status.label}</div>
-            {total>0&&(
-              <div style={{marginTop:4,height:4,background:T.border,borderRadius:2,width:80,overflow:"hidden"}}>
-                <div style={{height:"100%",width:`${pct}%`,background:pct>=80?T.green:pct>=50?T.amber:T.red}} />
-              </div>
-            )}
-          </div>
-        </div>
-        <div style={{display:"flex",gap:12,marginTop:6,fontSize:11,color:T.textMid}}>
-          <span>✅ {cutCleared}/{total} parts ready</span>
-          {dpr.fitupContractorId===cid&&dpr.weldContractorId===cid&&<span style={{color:T.accent}}>Fit-Up + Welding</span>}
-          {dpr.fitupContractorId===cid&&dpr.weldContractorId!==cid&&<span style={{color:T.accent}}>Fit-Up</span>}
-          {dpr.weldContractorId===cid&&dpr.fitupContractorId!==cid&&<span style={{color:T.accent}}>Welding</span>}
-        </div>
-      </div>
-    );
-  };
-
-  const SL = ({title,count,color}) => (
-    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,marginTop:20}}>
-      <div style={{fontSize:11,fontWeight:800,color:color||T.textMid,letterSpacing:"0.08em"}}>{title}</div>
-      {count>0&&<div style={{background:color||T.textMid,color:"#000",fontSize:10,fontWeight:800,borderRadius:8,padding:"1px 6px"}}>{count}</div>}
-    </div>
-  );
-
-  // ── Parts awaiting collection ──────────────────────────────────────────────
-  const awaitingColl = (instances||[]).filter(i=>
-    i.currentStatus==="awaiting_collection" &&
-    i.assignedContractorId===cid
-  );
-  // Group by drawing
-  const collByDrg = {};
-  awaitingColl.forEach(i=>{
-    if(!collByDrg[i.drawingId]) collByDrg[i.drawingId]={
-      drawingId:i.drawingId, drawingNo:i.drawingNo, parts:[],
-      machineBay:i.machineBay||"Machine Bay",
-      since:i.cutQcApprovedAt||i.createdAt
-    };
-    collByDrg[i.drawingId].parts.push(i);
-  });
-  const collGroups=Object.values(collByDrg);
-
-  const markCollected=(drawingId)=>{
-    const ts=new Date().toISOString();
-    setInstances(prev=>prev.map(i=>
-      i.drawingId===drawingId&&i.currentStatus==="awaiting_collection"&&i.assignedContractorId===cid
-        ?{...i,currentStatus:"with_contractor",collectedAt:ts,collectedBy:user.username}
-        :i
-    ));
-  };
-
-  // Auto-mark collected when starting fitup
-  const markCollectedForDpr=(dpr)=>{
-    const ts=new Date().toISOString();
-    setInstances(prev=>prev.map(i=>
-      i.drawingId===dpr.drawingId&&i.orderId===dpr.orderId&&i.currentStatus==="awaiting_collection"
-        ?{...i,currentStatus:"with_contractor",collectedAt:ts,collectedBy:user.username}
-        :i
-    ));
-  };
+  // ── Tab bar ────────────────────────────────────────────────────────────────
+  const TABS = [
+    { id:"fitup",    label:"Fit-Up",   count:tab1Count,  alertColor: tab1.some(d=>d.currentStage==='fitup')?T.accent:T.textMid },
+    { id:"welding",  label:"Welding",  count:tab2Count,  alertColor: tab2_welding.length>0?T.accent:tab2_awaitingQc.length>0?T.amber:T.textMid },
+    { id:"complete", label:"Complete", count:tab3Count,  alertColor: tab3_cleared.length>0?T.green:tab3_awaitingInsp.length>0?T.amber:T.textMid },
+  ];
 
   return (
     <div>
-      <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:2}}>My Drawings</div>
-      <div style={{fontSize:12,color:T.textMid,marginBottom:16}}>{user.name}</div>
+      {/* Header */}
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>My Drawings</div>
+        <div style={{ fontSize:12, color:T.textMid }}>{user.name}</div>
+      </div>
 
-      {/* ⚡ Parts Ready to Collect Banner */}
-      {collGroups.length>0&&(
-        <div style={{background:`${T.amber}12`,border:`1px solid ${T.amber}66`,borderRadius:8,
-          padding:"12px 16px",marginBottom:20}}>
-          <div style={{fontSize:13,fontWeight:800,color:T.amber,marginBottom:10}}>
-            ⚡ {awaitingColl.length} part{awaitingColl.length!==1?"s":""} ready to collect
-            across {collGroups.length} drawing{collGroups.length!==1?"s":""}
-          </div>
-          {collGroups.map(g=>{
-            const hrs=g.since?Math.round((Date.now()-new Date(g.since).getTime())/3600000):0;
-            const overdue=hrs>=4;
-            const bayLabel=g.machineBay.replace(/^machine_bay:/,"").replace(/_/g," ");
-            return (
-              <div key={g.drawingId} style={{display:"flex",alignItems:"center",gap:10,
-                padding:"8px 10px",background:T.bgCard,borderRadius:6,marginBottom:6,
-                border:`1px solid ${overdue?T.red:T.border}`}}>
-                <div style={{flex:1}}>
-                  <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:12}}>
-                    {g.drawingNo}
-                  </div>
-                  <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
-                    {g.parts.length} part{g.parts.length!==1?"s":""} · Machine Bay ({bayLabel})
-                    <span style={{marginLeft:8,fontWeight:600,color:overdue?T.red:T.amber}}>
-                      {overdue?`⚠ ${hrs}h — overdue`:`${hrs}h waiting`}
-                    </span>
-                  </div>
-                </div>
-                <button onClick={()=>markCollected(g.drawingId)}
-                  style={{...css.btn.green,fontSize:11,padding:"5px 14px"}}>
-                  ✓ Collected
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {myDprs.length===0&&collGroups.length===0&&(
-        <div style={{...css.card,textAlign:"center",padding:40,color:T.textLow,fontSize:13}}>
+      {myDprs.length === 0 ? (
+        <div style={{ ...css.card, textAlign:"center", padding:40, color:T.textLow, fontSize:13 }}>
           No drawings assigned yet. Drawings are assigned in the Production Release Wizard.
         </div>
+      ) : (
+        <>
+          {/* Tab bar */}
+          <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                padding:"10px 20px", fontSize:13, fontWeight: tab===t.id ? 700 : 400,
+                color: tab===t.id ? T.accent : T.textMid,
+                background:"transparent", border:"none",
+                borderBottom: tab===t.id ? `2px solid ${T.accent}` : "2px solid transparent",
+                cursor:"pointer", display:"flex", alignItems:"center", gap:7
+              }}>
+                {t.label}
+                {t.count > 0 && (
+                  <span style={{ background: tab===t.id ? T.accent : t.alertColor,
+                    color:"#fff", borderRadius:10, fontSize:11,
+                    fontWeight:800, padding:"1px 7px", minWidth:20, textAlign:"center" }}>
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* ── TAB 1: FIT-UP ── */}
+          {tab === "fitup" && (
+            <div>
+              {tab1.length === 0 ? (
+                <div style={{ textAlign:"center", padding:48, color:T.textLow, fontSize:13 }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>🔧</div>
+                  No fit-up work currently assigned
+                </div>
+              ) : (
+                <>
+                  {tab1.filter(d => d.currentStage === 'fitup').length > 0 && (
+                    <>
+                      <SL title="IN FIT-UP" count={tab1.filter(d=>d.currentStage==='fitup').length} color={T.accent} />
+                      {tab1.filter(d => d.currentStage === 'fitup').map(d => (
+                        <DprCard key={d.id} dpr={d} accent={T.accent} onClick={() => setSelDpr(d)} />
+                      ))}
+                    </>
+                  )}
+                  {tab1.filter(d => d.currentStage === 'pending').length > 0 && (
+                    <>
+                      <SL title="PENDING — AWAITING PARTS" count={tab1.filter(d=>d.currentStage==='pending').length}
+                        color={T.textMid} sub="80% parts needed before fit-up can start" />
+                      {tab1.filter(d => d.currentStage === 'pending').map(d => (
+                        <DprCard key={d.id} dpr={d} accent={T.textLow} onClick={() => setSelDpr(d)} />
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── TAB 2: WELDING ── */}
+          {tab === "welding" && (
+            <div>
+              {tab2_awaitingQc.length === 0 && tab2_welding.length === 0 ? (
+                <div style={{ textAlign:"center", padding:48, color:T.textLow, fontSize:13 }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>🔥</div>
+                  No welding work at this stage
+                </div>
+              ) : (
+                <>
+                  {/* Section A — Awaiting Fit-Up QC (read-only) */}
+                  {tab2_awaitingQc.length > 0 && (
+                    <>
+                      <SL title="AWAITING FIT-UP QC" count={tab2_awaitingQc.length} color={T.amber}
+                        sub="— QC team to approve before welding proceeds" />
+                      {tab2_awaitingQc.map(d => (
+                        <div key={d.id} style={{ ...css.card, marginBottom:8,
+                          borderLeft:`3px solid ${T.amber}`, opacity:0.85 }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <div>
+                              <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{d.drawingNo}</div>
+                              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                                {(orders||[]).find(o=>o.id===d.orderId)?.orderNo || d.orderId}
+                              </div>
+                            </div>
+                            <Badge color="amber">Awaiting Fit-Up QC</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Section B — Proceed to Weld */}
+                  {tab2_welding.length > 0 && (
+                    <>
+                      <SL title="PROCEED TO WELD" count={tab2_welding.length} color={T.accent}
+                        sub="— Fit-Up QC cleared" />
+                      {tab2_welding.map(d => (
+                        <DprCard key={d.id} dpr={d} accent={T.accent} onClick={() => setSelDpr(d)} />
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── TAB 3: COMPLETE ── */}
+          {tab === "complete" && (
+            <div>
+              {tab3_awaitingInsp.length === 0 && tab3_cleared.length === 0 ? (
+                <div style={{ textAlign:"center", padding:48, color:T.textLow, fontSize:13 }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>✅</div>
+                  No completed jobs yet
+                </div>
+              ) : (
+                <>
+                  {/* Section A — Awaiting Inspection */}
+                  {tab3_awaitingInsp.length > 0 && (
+                    <>
+                      <SL title="AWAITING INSPECTION / TPI" count={tab3_awaitingInsp.length} color={T.amber}
+                        sub="— QC / TPI sign-off pending" />
+                      {tab3_awaitingInsp.map(d => (
+                        <div key={d.id} style={{ ...css.card, marginBottom:8,
+                          borderLeft:`3px solid ${T.amber}` }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <div>
+                              <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{d.drawingNo}</div>
+                              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                                {(orders||[]).find(o=>o.id===d.orderId)?.orderNo || d.orderId}
+                              </div>
+                            </div>
+                            <Badge color="amber">
+                              {d.currentStage === 'tpi_weld' ? 'TPI Hold' : 'Weld QC'}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Section B — QC Cleared */}
+                  {tab3_cleared.length > 0 && (
+                    <>
+                      <SL title="QC CLEARED" count={tab3_cleared.length} color={T.green} />
+                      {tab3_cleared.map(d => (
+                        <div key={d.id} style={{ ...css.card, marginBottom:8,
+                          borderLeft:`3px solid ${T.green}` }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <div>
+                              <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{d.drawingNo}</div>
+                              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                                {(orders||[]).find(o=>o.id===d.orderId)?.orderNo || d.orderId}
+                              </div>
+                            </div>
+                            <Badge color="green">Complete ✓</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </>
       )}
-      {inFitup.length>0&&<><SL title="IN FIT-UP" count={inFitup.length} color={T.accent} />{inFitup.map(d=><DprCard key={d.id} dpr={d} />)}</>}
-      {fitupQc.length>0&&<><SL title="AWAITING FIT-UP QC" count={fitupQc.length} color={T.amber} />{fitupQc.map(d=><DprCard key={d.id} dpr={d} />)}</>}
-      {inWelding.length>0&&<><SL title="IN WELDING" count={inWelding.length} color={T.accent} />{inWelding.map(d=><DprCard key={d.id} dpr={d} />)}</>}
-      {weldQc.length>0&&<><SL title="AWAITING WELD QC" count={weldQc.length} color={T.amber} />{weldQc.map(d=><DprCard key={d.id} dpr={d} />)}</>}
-      {pending.length>0&&<><SL title="PENDING — AWAITING PARTS" count={pending.length} color={T.textMid} />{pending.map(d=><DprCard key={d.id} dpr={d} />)}</>}
-      {done.length>0&&<><SL title="COMPLETE" count={done.length} color={T.green} />{done.map(d=><DprCard key={d.id} dpr={d} />)}</>}
     </div>
   );
 };
@@ -13169,8 +13273,8 @@ const STAGE_CHECKLISTS = {
 };
 
 const SUPERVISOR_STAGES = {
-  super_admin:         ["cutting_qc","tpi_fitup","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"],
-  production_engineer: ["cutting_qc","assembly","blasting"],
+  super_admin:         ["cutting_qc","fitup","welding","tpi_fitup","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"],
+  production_engineer: ["cutting_qc","fitup","welding","assembly","blasting"],
   blasting_engineer:   ["blasting"],
   painting_engineer:   ["painting"],
   qc_admin:            ["cutting_qc","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
@@ -14722,7 +14826,6 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const [selDrawings, setSelDrawings] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [rmPicture, setRmPicture] = useState([]);
-  const [expandedDrwId, setExpandedDrwId] = useState(null); // drawing expand in Step1
   const [expandedMat, setExpandedMat] = useState({});
   const [rmUnitAsgn, setRmUnitAsgn] = useState({}); // {rmUnitId: {contractorId, startDate, endDate, ops:{markNo:{op:contractorId}}}}
   const [confirmedOps, setConfirmedOps] = useState({}); // {partId: string[]}
@@ -14811,31 +14914,22 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   };
   const isSelected=(drawingId,orderId)=>selDrawings.some(s=>s.drawingId===drawingId&&s.orderId===orderId);
 
-  // ── Step 2 compute — grouped by matCode/sheetDim (RM_Item_Key level) ──
-  // Normalise sheet dim: uppercase, trim, consistent X separator
-  const normSheetDim = d => (d||"").trim().toUpperCase().replace(/x/g,"X");
-  const normMatKey   = (mc,dim) => `${(mc||"").trim()}${dim?"/"+normSheetDim(dim):""}`;
-
+  // ── Step 2 compute ──
   const computeRmPicture = () => {
-    // Step A: collect all selected parts grouped by matCode (for stock check & ordering)
-    const byMatCode={};
+    const byMat={};
     selDrawings.forEach(entry=>{
       const {drawing,order}=entry;
       const unitsToRelease=entry.unitsToRelease??(drawing.qty||1);
-      (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure").forEach(p=>{
+      const drawingParts=(order.parts||[]).filter(p=>p.drawingId===drawing.id);
+      drawingParts.filter(p=>p.fabType?.toLowerCase()==="fabricate"&&p.source?.toLowerCase()==="procure").forEach(p=>{
         const sec=p.sectionType||p.section||"";
-        const mc=p.matCode||sec||"Unknown";
-        if(!byMatCode[mc]) byMatCode[mc]={matCode:mc,section:sec,grade:p.grade||"",requiredKg:0,drawings:[],markNos:new Set()};
-        byMatCode[mc].requiredKg+=(p.clientTotalWt||0)*unitsToRelease;
-        byMatCode[mc].drawings.push({drawingNo:drawing.drawingNo,orderId:order.id,kg:(p.clientTotalWt||0)*unitsToRelease,qty:unitsToRelease});
-        byMatCode[mc].markNos.add(p.markNo);
+        const key=p.matCode||sec||"Unknown";
+        if(!byMat[key]) byMat[key]={matCode:key,section:sec,grade:p.grade||"",requiredKg:0,drawings:[],lots:[]};
+        byMat[key].requiredKg+=(p.clientTotalWt||0)*unitsToRelease;
+        byMat[key].drawings.push({drawingNo:drawing.drawingNo,orderId:order.id,kg:(p.clientTotalWt||0)*unitsToRelease,qty:unitsToRelease});
       });
     });
-
-    const allOrderParts=selDrawings.flatMap(({order})=>order.parts||[]);
-
-    const rows=Object.values(byMatCode).map(row=>{
-      // Stock availability at matCode level (for ordering)
+    const rows=Object.values(byMat).map(row=>{
       const availLots=stock.filter(s=>{
         const sNorm=normMatCode(s.matCode),rNorm=normMatCode(row.matCode);
         const secMatch=(s.sectionType||s.section||"").toUpperCase()===(row.section||"").toUpperCase();
@@ -14847,7 +14941,6 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       if(availKg>=row.requiredKg&&row.requiredKg>0) status="Sufficient";
       else if(availKg>0&&availKg<row.requiredKg) status="Partial";
       else if(availLots.some(l=>l.status==="qc_hold")) status="QC Pending";
-
       const libEntry=(materials||[]).find(m=>m.matCode===row.matCode);
       let requiredM=0,reqDisplay="—";
       const isPlate=row.section?.toUpperCase()==="PLATE"||(libEntry?.isPlate)||false;
@@ -14860,88 +14953,42 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       } else if(isPlate&&(libEntry?.wtPerM2||0)>0){
         requiredM=row.requiredKg/libEntry.wtPerM2;
         reqDisplay=`${requiredM.toFixed(2)} m²`;
-      } else if(isPlate){ reqDisplay="— (m² rate not set)"; }
-
-      // Step B: collect RM units per sheetDim for this matCode
-      // Key: matCode/sheetDim — one row per physical sheet type
-      const bySheetDim={};
-      const batchesForMat=new Set();
-      const selMarkNosForMat=row.markNos;
-      (nestingBatches||[]).forEach(batch=>{
+      } else if(isPlate){
+        reqDisplay="— (m² rate not set)";
+      }
+      // Find nesting batches covering this matCode for selected drawings
+      const selMarkNosForMat=new Set(selDrawings.flatMap(({drawing,order})=>(order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.matCode===row.matCode&&p.fabType==="Fabricate").map(p=>p.markNo)));
+      const batchesForMat=(nestingBatches||[]).filter(b=>(b.lots||[]).some(l=>l.matCode===row.matCode&&(l.parts||[]).some(mn=>selMarkNosForMat.has(mn))));
+      const allOrderParts=selDrawings.flatMap(({order})=>order.parts||[]);
+      const rmUnitsForMat=[];
+      batchesForMat.forEach(batch=>{
         (batch.lots||[]).forEach(lot=>{
-          if(normMatCode(lot.matCode)!==normMatCode(row.matCode)) return;
+          if(lot.matCode!==row.matCode) return;
           (lot.sheets||[]).forEach(sheet=>{
             if(!sheet.rmUnitId) return;
             const selParts=(sheet.parts||[]).filter(mn=>selMarkNosForMat.has(mn));
             if(selParts.length===0) return;
-            batchesForMat.add(batch.id);
-            const dim=normSheetDim(sheet.sheetDim||"");
-            const dimKey=dim||"unknown";
-            if(!bySheetDim[dimKey]) bySheetDim[dimKey]={
-              sheetDim:dim, sheets:[], selPartsTotal:0, totalPartsTotal:0,
-              selWtTotal:0, sheetWtTotal:0, utilisPctAvg:0, stockLot:null
-            };
             const allSheetParts=(sheet.parts||[]);
+            const allStats=getRmUnitPartStats(allSheetParts,allOrderParts);
             const selStats=getRmUnitPartStats(selParts,allOrderParts);
             const sheetWt=calcSheetWt(sheet.rmUnitId)||0;
-            // Check planning/cut status for this RM unit
-            const DONE_ST=new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-            // Sheet status: check if all THIS DRAWING's parts on the sheet are cut
-            const sheetSelParts=(sheet.parts||[]).filter(mn=>selMarkNosForMat.has(mn));
-            const allSelCut=sheetSelParts.length>0&&sheetSelParts.every(mn=>
-              (instances||[]).some(i=>i.markNo===mn&&DONE_ST.has(i.currentStage))
-            );
-            const anySelCutting=sheetSelParts.some(mn=>
-              (instances||[]).some(i=>i.markNo===mn&&i.currentStage==="cutting")
-            );
-            const formalInst=(instances||[]).find(i=>
-              i.rmUnitId===sheet.rmUnitId&&i.releaseId&&i.releaseId!=="side_cut"
-            );
-            const rmStatus=allSelCut?"cut"
-              :anySelCutting?"cutting"
-              :formalInst?"planned"
-              :"available";
-            // Find matching stock lot for this matCode+dim
-            const stockLot=(stock||[]).find(s=>{
-              const sNorm=normMatCode(s.matCode),rNorm=normMatCode(row.matCode);
-              const mc_match=(sNorm&&rNorm&&sNorm===rNorm);
-              const dim_match=!s.sheetDim||normSheetDim(s.sheetDim)===dim||s.sheetDim==="";
-              return mc_match&&dim_match&&['available','reserved','partially_reserved','qc_hold'].includes(s.status);
-            });
-            bySheetDim[dimKey].sheets.push({
+            const utilisPct=sheet.utilisPct||0;
+            rmUnitsForMat.push({
               rmUnitId:sheet.rmUnitId,
               batchId:batch.id,
-              sheetDim:dim,
+              sheetDim:sheet.sheetDim||"",
               selPartCount:selParts.length,
               totalPartCount:allSheetParts.length,
               selPartWt:selStats.totalWt,
+              allPartWt:allStats.totalWt,
               sheetWt,
-              utilisPct:sheet.utilisPct||0,
+              utilisPct,
               lotId:lot.lotId,
-              stockLot,
-              rmStatus,
             });
-            bySheetDim[dimKey].selPartsTotal+=selParts.length;
-            bySheetDim[dimKey].totalPartsTotal+=allSheetParts.length;
-            bySheetDim[dimKey].selWtTotal+=selStats.totalWt;
-            bySheetDim[dimKey].sheetWtTotal+=sheetWt;
-            if(stockLot&&!bySheetDim[dimKey].stockLot) bySheetDim[dimKey].stockLot=stockLot;
           });
         });
       });
-
-      const sheetDimGroups=Object.values(bySheetDim);
-      // rmUnitsForMat: flat list for backward compat with Step 3
-      const rmUnitsForMat=sheetDimGroups.flatMap(g=>g.sheets);
-
-      return {
-        ...row,
-        availableKg:availKg, status, lots:availLots, requiredM, reqDisplay,
-        batchesForMat:[...batchesForMat].map(id=>({id})),
-        rmUnitsForMat,
-        sheetDimGroups, // NEW — grouped by sheetDim for display
-        isPlate,
-      };
+      return {...row,availableKg:availKg,status,lots:availLots,requiredM,reqDisplay,batchesForMat,rmUnitsForMat};
     });
     setRmPicture(rows);
   };
@@ -14975,15 +15022,8 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           if(!sheet.rmUnitId) return;
           if(seen.has(sheet.rmUnitId)) return;
           // Only include sheets that have at least one part from selected drawings
-          const selPartsOnSheet=(sheet.parts||[]).filter(mn=>selMarkNos.has(mn));
-          if(selPartsOnSheet.length===0) return;
-          // Exclude sheets where ALL selected drawing parts are already cut
-          // (side-cuts from previous releases — no cutting action needed)
-          const DONE_ST=new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-          const allSelPartsCut=selPartsOnSheet.every(mn=>
-            (instances||[]).some(i=>i.markNo===mn&&DONE_ST.has(i.currentStage))
-          );
-          if(allSelPartsCut) return; // skip — already cut, no action needed
+          const hasSelPart=(sheet.parts||[]).some(mn=>selMarkNos.has(mn));
+          if(!hasSelPart) return;
           seen.add(sheet.rmUnitId);
           rmUnits.push({
             rmUnitId: sheet.rmUnitId,
@@ -15190,26 +15230,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   };
 
   // ── UI ──
-  // ── Stable drawing list — computed outside Step1 so selection doesn't cause remount ──
-  const step1ActiveOrders=React.useMemo(()=>
-    (orders||[]).filter(o=>(o.status||"").toLowerCase()==="active")
-      .slice().sort((a,b)=>new Date(a.endDate||"9999")-new Date(b.endDate||"9999"))
-  ,[orders]);
-  const step1RawFiltered=React.useMemo(()=>
-    selectedOrderId?allEligible.filter(d=>d.orderId===selectedOrderId):[]
-  ,[selectedOrderId,allEligible]);
-  const step1FilteredDrawings=React.useMemo(()=>[
-    ...step1RawFiltered.filter(d=>isSelected(d.drawingId,d.orderId)),
-    ...step1RawFiltered.filter(d=>!isSelected(d.drawingId,d.orderId)),
-  // eslint-disable-next-line
-  ],[step1RawFiltered,selDrawings]);
-
   const Step1 = () => {
-    const activeOrders=step1ActiveOrders;
+    const activeOrders=(orders||[]).filter(o=>(o.status||"").toLowerCase()==="active").slice().sort((a,b)=>new Date(a.endDate||"9999")-new Date(b.endDate||"9999"));
     const selectedOrder=activeOrders.find(o=>o.id===selectedOrderId);
     const totalDrawings=(selectedOrder?.drawings||[]).length;
     const alreadyInRelease=alreadyReleasedDrawings.filter(d=>d.order?.id===selectedOrderId).length;
-    const filteredDrawings=step1FilteredDrawings;
+    const filteredDrawings=selectedOrderId?allEligible.filter(d=>d.orderId===selectedOrderId):[];
 
     // Build set of all rmUnitIds needed by currently selected drawings
     const selDrawingMarkNos=new Set(selDrawings.flatMap(({drawing,order})=>
@@ -15290,25 +15316,9 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   const fabParts=(order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate");
                   const DONE_STAGES=new Set(['cutting_qc','fit_up','welding','blasting','painting','dispatch','complete']);
                   const IN_PROGRESS_STAGES=new Set(['cutting']);
-                  // Count cut/planned by markNo membership (covers both direct and side-cut instances)
-                  // A mark no is "cut" if ANY non-side-cut instance for it is past cutting
-                  const drgMarkNosSet=new Set((order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").map(p=>p.markNo));
-                  // Include side-cut instances for progress display — physically cut = counts
-                  const allDrgInsts=(instances||[]).filter(i=>drgMarkNosSet.has(i.markNo));
-                  // planned = cutting (active cutting) OR fitup/pending (just released, awaiting cut)
-                  const ALL_IN_PLAN=new Set(['cutting','fitup','fit_up','welding','blasting','painting','pending']);
-                  const cutMarkNos=new Set(allDrgInsts.filter(i=>DONE_STAGES.has(i.currentStage)).map(i=>i.markNo));
-                  const plannedMarkNos=new Set(allDrgInsts.filter(i=>
-                    (IN_PROGRESS_STAGES.has(i.currentStage)||i.currentStage==='fitup'||i.currentStage==='fit_up')
-                    &&!DONE_STAGES.has(i.currentStage)
-                    &&!cutMarkNos.has(i.markNo)
-                  ).map(i=>i.markNo));
-                  const cutParts=cutMarkNos.size;
-                  const plannedParts=plannedMarkNos.size;
-                  // Keep drgInstances for rmUnit status checks (drawingId-scoped)
-                  const drgInstances=(instances||[]).filter(i=>
-                    i.drawingId===drawingId&&i.orderId===orderId&&!i.isSideCut&&i.releaseId!=="side_cut"
-                  );
+                  const drgInstances=(instances||[]).filter(i=>i.drawingId===drawingId&&i.orderId===orderId);
+                  const cutParts=drgInstances.filter(i=>DONE_STAGES.has(i.currentStage)).length;
+                  const plannedParts=drgInstances.filter(i=>IN_PROGRESS_STAGES.has(i.currentStage)).length;
                   const drawingMatCodes=[...new Set(fabParts.filter(p=>p.matCode).map(p=>p.matCode))];
                   const rmLots=drawingMatCodes.flatMap(mc=>(stock||[]).filter(s=>normMatCode(s.matCode)===normMatCode(mc)&&['available','reserved','partially_reserved'].includes(s.status)));
                   const totalReqKg=fabParts.filter(p=>p.source?.toLowerCase()==="procure").reduce((s,p)=>s+(p.clientTotalWt||0),0);
@@ -15318,19 +15328,8 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   const asmName=assemblyMap[drawingId]||"";
                   const drgMarkNos=new Set((order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").map(p=>p.markNo));
                   const allRmUnitsForDrg=(nestingBatches||[]).flatMap(b=>(b.lots||[]).flatMap(l=>(l.sheets||[]).filter(sh=>sh.rmUnitId&&(sh.parts||[]).some(mn=>drgMarkNos.has(mn)))));
-                  // RM units: a sheet is CUT when all drawing's parts on it are cut
-                  // A sheet is PLANNED only if formally released (not side-cut)
-                  const IN_PLAN_STAGES=new Set(['cutting','fitup','fit_up','welding','blasting','painting']);
-                  const formalInsts=(instances||[]).filter(i=>i.releaseId&&i.releaseId!=="side_cut");
-                  const cutRmUnits=allRmUnitsForDrg.filter(sh=>{
-                    if(formalInsts.some(i=>i.rmUnitId===sh.rmUnitId&&DONE_STAGES.has(i.currentStage))) return true;
-                    const sheetDrgParts=(sh.parts||[]).filter(mn=>drgMarkNos.has(mn));
-                    if(sheetDrgParts.length===0) return false;
-                    return sheetDrgParts.every(mn=>allDrgInsts.some(i=>i.markNo===mn&&DONE_STAGES.has(i.currentStage)));
-                  }).length;
-                  const plannedRmUnits=allRmUnitsForDrg.filter(sh=>
-                    formalInsts.some(i=>i.rmUnitId===sh.rmUnitId&&(IN_PROGRESS_STAGES.has(i.currentStage)||IN_PLAN_STAGES.has(i.currentStage)))
-                  ).length;
+                  const cutRmUnits=allRmUnitsForDrg.filter(sh=>drgInstances.some(inst=>inst.rmUnitId===sh.rmUnitId&&DONE_STAGES.has(inst.currentStage))).length;
+                  const plannedRmUnits=allRmUnitsForDrg.filter(sh=>drgInstances.some(inst=>inst.rmUnitId===sh.rmUnitId&&IN_PROGRESS_STAGES.has(inst.currentStage))).length;
                   const drawingWtT=drawing.totalWt>0?(drawing.totalWt/1000).toFixed(2):null;
                   const orderTotalWtT=(selectedOrder?.orderQty||0);
                   const drawingPct=orderTotalWtT>0&&drawing.totalWt>0?((drawing.totalWt/1000)/orderTotalWtT*100).toFixed(1):null;
@@ -15339,28 +15338,19 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   const rowBg=sel?`${T.accent}18`:shared?`${T.amber}12`:asmBg;
                   return (
                     <React.Fragment key={drawingId+orderId}>
-                      {/* Drawing row — checkbox selects, drawing no click expands */}
-                      {(()=>{
-                        const drgExpKey=`${drawingId}|${orderId}`;
-                        const isDrgExp=expandedDrwId===drgExpKey;
-                        return (<>
-                        <tr style={{cursor:"pointer",background:rowBg}}>
-                          <td style={{padding:"8px 10px",borderBottom:isDrgExp?"none":`1px solid ${T.border}`}} onClick={e=>{e.stopPropagation();toggleDrw({drawingId,orderId,drawing,order,tier,score});}}>
-                            <input type="checkbox" checked={sel} readOnly style={{cursor:"pointer"}} />
-                          </td>
-                          <td style={{padding:"8px 10px",borderBottom:isDrgExp?"none":`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}
-                            onClick={e=>{e.stopPropagation();setExpandedDrwId(isDrgExp?null:drgExpKey);}}>
-                            <span style={{display:"flex",alignItems:"center",gap:6}}>
-                              <span style={{fontSize:10,color:T.textLow}}>{isDrgExp?"▼":"▶"}</span>
-                              {drawing.drawingNo}
-                            </span>
-                            {shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:T.amberBg,color:T.amber,borderRadius:3,fontFamily:T.font,fontWeight:700,border:`1px solid ${T.amber}44`}}>
-                              {shared.sharedRmUnits} rmUnit{shared.sharedRmUnits!==1?"s":""} · {shared.sharedParts} part{shared.sharedParts!==1?"s":""} covered
-                            </span>}
-                            {inActive&&!shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:`${T.accent}22`,color:T.accent,borderRadius:3,fontFamily:T.font,fontWeight:700}}>
-                              In active release
-                            </span>}
-                          </td>
+                      <tr style={{cursor:"pointer",background:rowBg}}>
+                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}} onClick={()=>toggleDrw({drawingId,orderId,drawing,order,tier,score})}>
+                          <input type="checkbox" checked={sel} readOnly style={{cursor:"pointer"}} />
+                        </td>
+                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>
+                          {drawing.drawingNo}
+                          {shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:T.amberBg,color:T.amber,borderRadius:3,fontFamily:T.font,fontWeight:700,border:`1px solid ${T.amber}44`}}>
+                            {shared.sharedRmUnits} rmUnit{shared.sharedRmUnits!==1?"s":""} · {shared.sharedParts} part{shared.sharedParts!==1?"s":""} covered
+                          </span>}
+                          {inActive&&!shared&&<span style={{marginLeft:6,fontSize:9,padding:"1px 5px",background:`${T.accent}22`,color:T.accent,borderRadius:3,fontFamily:T.font,fontWeight:700}}>
+                            In active release
+                          </span>}
+                        </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.textMid}}>{asmName||"—"}</td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,whiteSpace:"nowrap"}}>
                           {drawingWtT
@@ -15410,108 +15400,6 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                           })()}
                         </td>
                       </tr>
-
-                        {/* ── Expand panel: RM units for this drawing ── */}
-                        {isDrgExp&&(
-                          <tr>
-                            <td colSpan={10} style={{padding:"0 0 12px 0",borderBottom:`1px solid ${T.border}`,background:`${T.accent}06`}}>
-                              <div style={{padding:"12px 16px 8px 40px"}}>
-                                <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8,letterSpacing:"0.05em"}}>
-                                  RM UNITS FOR THIS DRAWING ({allRmUnitsForDrg.length} physical sheets)
-                                </div>
-                                {allRmUnitsForDrg.length===0&&(
-                                  <div style={{fontSize:11,color:T.textLow}}>No nesting data found for this drawing.</div>
-                                )}
-                                <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                                  {allRmUnitsForDrg.map(sh=>{
-                                    // Determine status for this sheet
-                                    const sheetDrgParts=(sh.parts||[]).filter(mn=>drgMarkNos.has(mn));
-                                    const allCut=sheetDrgParts.length>0&&sheetDrgParts.every(mn=>
-                                      allDrgInsts.some(i=>i.markNo===mn&&DONE_STAGES.has(i.currentStage))
-                                    );
-                                    const inPlan=!allCut&&formalInsts.some(i=>
-                                      i.rmUnitId===sh.rmUnitId&&(IN_PLAN_STAGES.has(i.currentStage)||IN_PROGRESS_STAGES.has(i.currentStage))
-                                    );
-                                    const isCutting=!allCut&&formalInsts.some(i=>i.rmUnitId===sh.rmUnitId&&i.currentStage==="cutting");
-
-                                    // Parse rmUnitId: matCode/sheetDim/n-of-N
-                                    const parts=sh.rmUnitId.split("/");
-                                    const sheetRef=parts[parts.length-1]; // e.g. "1-5"
-                                    const [sheetN,sheetTotal]=sheetRef.split("-");
-                                    const matDimPart=parts.slice(0,-1).join("/");
-
-                                    // Cut instances on this sheet for this drawing
-                                    const cutInsts=allDrgInsts.filter(i=>
-                                      sheetDrgParts.includes(i.markNo)&&DONE_STAGES.has(i.currentStage)
-                                    );
-                                    const cutBy=[...new Set(cutInsts.map(i=>i.cutBy).filter(Boolean))].join(", ");
-                                    const cutAt=cutInsts[0]?.cutAt?.slice(0,10)||"";
-
-                                    const bgColor=allCut?`${T.green}10`:isCutting?`${T.accent}10`:inPlan?`${T.amber}10`:"transparent";
-                                    const borderColor=allCut?`${T.green}44`:isCutting?`${T.accent}44`:inPlan?`${T.amber}44`:`${T.border}`;
-                                    const badge=allCut?{label:"✓ CUT",color:T.green}
-                                      :isCutting?{label:"✂ CUTTING",color:T.accent}
-                                      :inPlan?{label:"📋 IN PLAN",color:T.amber}
-                                      :{label:"⚪ AVAILABLE",color:T.textLow};
-
-                                    return (
-                                      <div key={sh.rmUnitId} style={{
-                                        display:"flex",alignItems:"center",gap:12,
-                                        padding:"7px 12px",borderRadius:6,
-                                        background:bgColor,border:`1px solid ${borderColor}`,
-                                        opacity:allCut?0.75:1
-                                      }}>
-                                        {/* Sheet identity */}
-                                        <div style={{flex:1,minWidth:0}}>
-                                          <div style={{display:"flex",alignItems:"center",gap:8}}>
-                                            <span style={{fontFamily:T.fontMono,fontSize:11,fontWeight:700,
-                                              color:allCut?T.textMid:T.accentHi,
-                                              textDecoration:allCut?"line-through":"none"}}>
-                                              {matDimPart}
-                                            </span>
-                                            <span style={{fontSize:11,color:T.textMid,fontWeight:600}}>
-                                              Sheet {sheetN} of {sheetTotal}
-                                            </span>
-                                          </div>
-                                          <div style={{fontSize:10,color:T.textLow,marginTop:2,display:"flex",gap:10}}>
-                                            <span>{sheetDrgParts.length} part{sheetDrgParts.length!==1?"s":""} from this drawing</span>
-                                            <span>·</span>
-                                            <span>{(sh.parts||[]).length} total on sheet</span>
-                                            {allCut&&cutBy&&<><span>·</span><span style={{color:T.green}}>Cut by {cutBy}{cutAt?` · ${cutAt}`:""}</span></>}
-                                          </div>
-                                        </div>
-                                        {/* Parts chips */}
-                                        <div style={{display:"flex",gap:3,flexWrap:"wrap",maxWidth:320}}>
-                                          {sheetDrgParts.slice(0,8).map(mn=>{
-                                            const isCutPart=allDrgInsts.some(i=>i.markNo===mn&&DONE_STAGES.has(i.currentStage));
-                                            return (
-                                              <span key={mn} style={{fontFamily:T.fontMono,fontSize:9,
-                                                padding:"1px 5px",borderRadius:3,
-                                                background:isCutPart?`${T.green}22`:`${T.accent}18`,
-                                                color:isCutPart?T.green:T.accentHi,
-                                                textDecoration:isCutPart?"line-through":"none"}}>
-                                                {mn.split("-").slice(-1)[0]}
-                                              </span>
-                                            );
-                                          })}
-                                          {sheetDrgParts.length>8&&<span style={{fontSize:9,color:T.textLow}}>+{sheetDrgParts.length-8}</span>}
-                                        </div>
-                                        {/* Badge */}
-                                        <span style={{fontSize:10,fontWeight:700,color:badge.color,
-                                          background:`${badge.color}18`,borderRadius:4,
-                                          padding:"2px 8px",whiteSpace:"nowrap",minWidth:80,textAlign:"center"}}>
-                                          {badge.label}
-                                        </span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                        </>);
-                      })()}
                     </React.Fragment>
                   );
                 })}
@@ -15545,240 +15433,137 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const Step2 = () => (
     <div>
       <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>Step 2 — RM Picture</div>
-      <div style={{fontSize:12,color:T.textMid,marginBottom:14}}>
-        Raw material requirements grouped by material code. Expand each row to see individual sheet dimensions and RM units.
-      </div>
+      <div style={{fontSize:12,color:T.textMid,marginBottom:14}}>Raw material requirements for selected drawings, grouped by material code.</div>
       {rmPicture.length===0&&<InfoBanner color="blue">No procure parts found in selected drawings.</InfoBanner>}
       {rmPicture.length>0&&(
-        <div>
-          {rmPicture.map(r=>{
-            const isExp=expandedMat[r.matCode];
-            const totalSheets=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheets.length,0);
-            const totalSelParts=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.selPartsTotal,0);
-            const totalSelWt=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.selWtTotal,0);
-            const totalSheetWt=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheetWtTotal,0);
-            const overallPct=totalSheetWt>0?Math.round(totalSelWt/totalSheetWt*100):0;
-            const pctColor=overallPct>=85?T.green:overallPct>=70?T.amber:T.red;
-              const totalSh=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheets.length,0);
-              const cutSh=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheets.filter(sh=>sh.rmStatus==="cut").length,0);
-              const plannedSh=(r.sheetDimGroups||[]).reduce((s,g)=>s+g.sheets.filter(sh=>sh.rmStatus==="planned"||sh.rmStatus==="cutting").length,0);
-              const mcStatus=totalSh===0?"no_nesting":cutSh===totalSh?"all_cut":cutSh>0||plannedSh>0?"partial":"not_started";
-              const mcBorder=mcStatus==="all_cut"?T.green:mcStatus==="partial"?T.amber:mcStatus==="not_started"?T.border:T.textLow;
-            return (
-              <div key={r.matCode} style={{...css.card,marginBottom:10,padding:0,
-                borderLeft:`4px solid ${mcBorder}`,opacity:mcStatus==="all_cut"?0.6:1}}>
-                {/* ── MatCode header row ── */}
-                <div onClick={()=>setExpandedMat(p=>({...p,[r.matCode]:!p[r.matCode]}))}
-                  style={{display:"flex",alignItems:"center",gap:0,cursor:"pointer",padding:"10px 14px",
-                    background:isExp?`${T.accent}0a`:"transparent",borderRadius:isExp?"8px 8px 0 0":"8px"}}>
-                  <span style={{color:T.textLow,fontSize:11,width:20}}>{isExp?"▼":"▶"}</span>
-                  {/* MatCode */}
-                  <span style={{fontFamily:T.fontMono,fontWeight:800,color:T.accentHi,fontSize:13,minWidth:240}}>{r.matCode}</span>
-                  {/* Section + Grade */}
-                  <span style={{fontSize:11,color:T.textMid,minWidth:80}}>{r.section}</span>
-                  <span style={{fontSize:11,color:T.textMid,minWidth:60}}>{r.grade}</span>
-                  {/* Required weight */}
-                  <span style={{fontSize:11,color:T.text,minWidth:100}}>
-                    {r.requiredKg.toFixed(0)} kg req
-                  </span>
-                  {/* Available */}
-                  <span style={{fontSize:11,minWidth:100,color:r.availableKg>=r.requiredKg?T.green:r.availableKg>0?T.amber:T.red,fontWeight:600}}>
-                    {r.availableKg.toFixed(0)} kg avail
-                  </span>
-                  {/* Status badge */}
-                  <span style={{minWidth:130}}><Badge color={rmStatusColor(r.status)}>{r.status}</Badge></span>
-                  {/* Sheet count */}
-                  {totalSheets>0&&(
-                    <span style={{fontSize:11,color:T.textMid,minWidth:100}}>
-                      {totalSheets} sheet{totalSheets!==1?"s":""}
-                      {" · "}{(r.sheetDimGroups||[]).length} dim{(r.sheetDimGroups||[]).length!==1?"s":""}
-                    </span>
-                  )}
-                  {/* Overall usage */}
-                  {totalSheetWt>0&&(
-                    <span style={{fontSize:11,color:pctColor,fontWeight:600,marginLeft:"auto"}}>
-                      {totalSelWt.toFixed(0)}/{totalSheetWt.toFixed(0)} kg ({overallPct}% usage)
-                    </span>
-                  )}
-                  {totalSheets===0&&(r.batchesForMat||[]).length===0&&(
-                    <span style={{fontSize:11,color:T.amber,marginLeft:"auto"}}>⚠ No nesting batch found</span>
-                  )}
-                  {/* Status pill */}
-                  {mcStatus!=="no_nesting"&&(
-                    <span style={{marginLeft:"auto",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:10,
-                      color:mcStatus==="all_cut"?T.green:mcStatus==="partial"?T.amber:T.textLow,
-                      background:mcStatus==="all_cut"?`${T.green}18`:mcStatus==="partial"?`${T.amber}18`:`${T.border}22`,
-                      whiteSpace:"nowrap"}}>
-                      {mcStatus==="all_cut"?`✓ All ${cutSh} sheet${cutSh!==1?"s":""} cut`
-                        :mcStatus==="partial"?`${cutSh}✓ ${plannedSh>0?plannedSh+"▶ ":""}${totalSh-cutSh-plannedSh>0?(totalSh-cutSh-plannedSh)+"⚪ ":""}of ${totalSh} sheets`
-                        :`${totalSh} sheet${totalSh!==1?"s":""} to cut`}
-                    </span>
-                  )}
-                </div>
-
-                {/* ── Expanded: one sub-row per sheetDim ── */}
-                {isExp&&(
-                  <div style={{borderTop:`1px solid ${T.border}`,padding:"8px 14px 12px 34px"}}>
-                    {/* Drawings summary */}
-                    <div style={{fontSize:11,color:T.textMid,marginBottom:8}}>
-                      <span style={{fontWeight:700,color:T.text}}>Drawings: </span>
-                      {r.drawings.map((d,di)=>(
-                        <span key={di} style={{marginRight:12}}>
-                          {d.drawingNo} <span style={{color:T.textLow}}>({d.kg.toFixed(0)}kg)</span>
-                        </span>
-                      ))}
-                    </div>
-
-                    {/* Sheet dim groups */}
-                    {(r.sheetDimGroups||[]).length===0&&(
-                      <div style={{fontSize:11,color:T.textLow,padding:"8px 0"}}>
-                        No nesting data — material will be issued manually at cutting stage.
-                      </div>
-                    )}
-                    {(r.sheetDimGroups||[]).map(g=>{
-                      const gKey=`${r.matCode}::${g.sheetDim}`;
-                      const gExp=expandedMat[gKey];
-                      const gPct=g.sheetWtTotal>0?Math.round(g.selWtTotal/g.sheetWtTotal*100):0;
-                      const gColor=gPct>=85?T.green:gPct>=70?T.amber:T.red;
-                      const stockLot=g.stockLot||(stock||[]).find(s=>normMatCode(s.matCode)===normMatCode(r.matCode)&&['available','reserved','partially_reserved','qc_hold'].includes(s.status));
-                      // Compute dominant status across all sheets in this dim group
-                      const allCut=g.sheets.length>0&&g.sheets.every(s=>s.rmStatus==="cut");
-                      const anyCutting=g.sheets.some(s=>s.rmStatus==="cutting");
-                      const anyPlanned=g.sheets.some(s=>s.rmStatus==="planned");
-                      const dimBg=allCut?`${T.green}08`:anyCutting?`${T.accent}08`:anyPlanned?`${T.amber}06`:"transparent";
-                      const dimStatusLabel=allCut?"✓ ALL CUT":anyCutting?"✂ CUTTING":anyPlanned?"📋 PLANNED":null;
-                      const dimStatusColor=allCut?T.green:anyCutting?T.accent:T.amber;
+        <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,overflow:"hidden"}}>
+          <thead>
+            <tr style={{background:T.bgInput}}>
+              {["","Mat Code","Section","Grade","Parts / Sheet (kg)","Utilisation","Avail (kg)","Status","RM Units","Nesting Batch","Allocate RM Unit"].map(h=>(
+                <th key={h} style={{padding:"8px 10px",fontSize:11,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rmPicture.map((r)=>(
+              <React.Fragment key={r.matCode}>
+                <tr>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`}}>
+                    <button onClick={()=>setExpandedMat(p=>({...p,[r.matCode]:!p[r.matCode]}))} style={{...css.btn.ghost,padding:"2px 6px",fontSize:11}}>{expandedMat[r.matCode]?"▼":"▶"}</button>
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:12}}>{r.matCode}</td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:12}}>{r.section}</td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:12}}>{r.grade}</td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+                    {(()=>{
+                      const totalPartWt=(r.rmUnitsForMat||[]).reduce((s,x)=>s+(x.selPartWt||0),0);
+                      const totalSheetWt=(r.rmUnitsForMat||[]).reduce((s,x)=>s+(x.sheetWt||0),0);
+                      if(totalSheetWt===0) return <span style={{color:T.textLow}}>—</span>;
+                      const pct=totalSheetWt>0?Math.round(totalPartWt/totalSheetWt*100):0;
+                      const color=pct>=85?T.green:pct>=70?T.amber:T.red;
                       return (
-                        <div key={g.sheetDim} style={{marginBottom:6,border:`1px solid ${allCut?T.green+"44":T.border}`,borderRadius:6,overflow:"hidden"}}>
-                          {/* SheetDim header */}
-                          <div onClick={()=>setExpandedMat(p=>({...p,[gKey]:!p[gKey]}))}
-                            style={{display:"flex",alignItems:"center",gap:10,padding:"7px 12px",
-                              background:gExp?`${T.accent}08`:allCut?`${T.green}06`:T.bgInput,cursor:"pointer",
-                              opacity:allCut?0.75:1}}>
-                            <span style={{color:T.textLow,fontSize:10,width:14}}>{gExp?"▼":"▶"}</span>
-                            {/* Dim label */}
-                            <span style={{fontFamily:T.fontMono,fontWeight:700,
-                              color:allCut?T.green:T.text,fontSize:12,minWidth:140}}>
-                              {g.sheetDim||"Unknown dim"}
-                            </span>
-                            {/* Status badge at dim level */}
-                            {dimStatusLabel&&(
-                              <span style={{fontSize:9,fontWeight:800,color:dimStatusColor,
-                                background:`${dimStatusColor}22`,borderRadius:3,padding:"1px 6px",whiteSpace:"nowrap"}}>
-                                {dimStatusLabel}
-                              </span>
-                            )}
-                            {/* Sheet count */}
-                            <span style={{fontSize:11,color:T.textMid,minWidth:80}}>
-                              {g.sheets.length} sheet{g.sheets.length!==1?"s":""}
-                            </span>
-                            {/* Parts */}
-                            <span style={{fontSize:11,minWidth:120}}>
-                              <span style={{color:T.green,fontWeight:600}}>{g.selPartsTotal}</span>
-                              <span style={{color:T.textLow}}> / {g.totalPartsTotal} parts on sheets</span>
-                            </span>
-                            {/* Weight */}
-                            <span style={{fontSize:11,color:gColor,fontWeight:600,minWidth:140}}>
-                              {g.selWtTotal.toFixed(0)} / {g.sheetWtTotal.toFixed(0)} kg ({gPct}%)
-                            </span>
-                            {/* Stock lot */}
-                            {stockLot&&(
-                              <span style={{fontSize:10,color:T.textMid,marginLeft:"auto"}}>
-                                Lot: <span style={{fontFamily:T.fontMono,color:T.accentHi}}>{stockLot.lotNo}</span>
-                                {" · "}{(stockLot.wtAvailable||0).toFixed(0)} kg avail
-                                {" · Bay "}{stockLot.bayId||"?"}
-                              </span>
-                            )}
-                            {/* RM Unit allocate dropdown */}
-                            <div style={{marginLeft:stockLot?"8px":"auto"}} onClick={e=>e.stopPropagation()}>
-                              {g.sheets.length>0?(
-                                <select
-                                  value={rmUnitAsgn[`alloc::${r.matCode}::${g.sheetDim}`]?.rmUnitId||""}
-                                  onChange={e=>{
-                                    const ru=g.sheets.find(x=>x.rmUnitId===e.target.value);
-                                    const sl=ru?.stockLot||stockLot||{};
-                                    setRmUnitAsgn(prev=>({...prev,[`alloc::${r.matCode}::${g.sheetDim}`]:{
-                                      rmUnitId:e.target.value,
-                                      sheetDim:g.sheetDim,
-                                      batchId:ru?.batchId||"",
-                                      matCode:r.matCode,
-                                      lotId:sl.id||"",
-                                      lotNo:sl.lotNo||"",
-                                    }}));
-                                    // Also set the matCode-level alloc for backward compat
-                                    setRmUnitAsgn(prev=>({...prev,[`alloc::${r.matCode}`]:{
-                                      rmUnitId:e.target.value,
-                                      sheetDim:g.sheetDim,
-                                      batchId:ru?.batchId||"",
-                                      matCode:r.matCode,
-                                      lotId:sl.id||"",
-                                      lotNo:sl.lotNo||"",
-                                    }}));
-                                  }}
-                                  style={{...css.input,fontSize:10,padding:"2px 4px",minWidth:160}}
-                                >
-                                  <option value="">— Select RM unit —</option>
-                                  {g.sheets.map(ru=>(
-                                    <option key={ru.rmUnitId} value={ru.rmUnitId}>
-                                      {ru.rmUnitId.split("/").pop()} — {ru.selPartCount}/{ru.totalPartCount} pts{ru.utilisPct>0?` ${ru.utilisPct.toFixed(0)}%`:""}
-                                    </option>
-                                  ))}
-                                </select>
-                              ):<span style={{fontSize:10,color:T.textLow}}>No RM units</span>}
-                            </div>
-                          </div>
-
-                          {/* Individual sheets (further expanded) */}
-                          {gExp&&(
-                            <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
-                              <thead>
-                                <tr style={{background:T.bgCard}}>
-                                  {["RM Unit ID","Status","Your Parts","All Parts on Sheet","Your Wt (kg)","Sheet Wt (kg)","Your Share","Nesting Util"].map(h=>(
-                                    <th key={h} style={{padding:"4px 8px",textAlign:"left",color:T.textLow,fontWeight:600,borderBottom:`1px solid ${T.border}`}}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {g.sheets.map(ru=>{
-                                  const sharePct=ru.sheetWt>0?Math.round((ru.selPartWt||0)/ru.sheetWt*100):0;
-                                  const shareColor=sharePct>=85?T.green:sharePct>=50?T.amber:T.textMid;
-                                  const utilColor=ru.utilisPct>=85?T.green:ru.utilisPct>=70?T.amber:ru.utilisPct>0?T.red:T.textLow;
-                                  return (
-                                    <tr key={ru.rmUnitId} style={{
-                                      borderBottom:`1px solid ${T.border}33`,
-                                      background:ru.rmStatus==="cut"?`${T.green}0a`:ru.rmStatus==="cutting"?`${T.accent}0a`:ru.rmStatus==="planned"?`${T.amber}0a`:"transparent",
-                                      opacity:ru.rmStatus==="cut"?0.55:1
-                                    }}>
-                                      <td style={{padding:"4px 8px",fontFamily:T.fontMono,
-                                        color:ru.rmStatus==="cut"?T.textMid:T.accentHi,
-                                        textDecoration:ru.rmStatus==="cut"?"line-through":"none"}}>{ru.rmUnitId}</td>
-                                      <td style={{padding:"4px 8px"}}>
-                                        {ru.rmStatus==="cut"&&<span style={{fontSize:9,fontWeight:800,color:T.green,background:`${T.green}22`,borderRadius:3,padding:"1px 5px"}}>✓ CUT</span>}
-                                        {ru.rmStatus==="cutting"&&<span style={{fontSize:9,fontWeight:800,color:T.accent,background:`${T.accent}22`,borderRadius:3,padding:"1px 5px"}}>✂ CUTTING</span>}
-                                        {ru.rmStatus==="planned"&&<span style={{fontSize:9,fontWeight:800,color:T.amber,background:`${T.amber}22`,borderRadius:3,padding:"1px 5px"}}>📋 IN PLAN</span>}
-                                        {ru.rmStatus==="available"&&<span style={{fontSize:9,color:T.textLow,background:T.bgInput,borderRadius:3,padding:"1px 5px"}}>⚪ AVAILABLE</span>}
-                                      </td>
-                                      <td style={{padding:"4px 8px",color:T.green,fontWeight:700}}>{ru.selPartCount}</td>
-                                      <td style={{padding:"4px 8px",color:T.textMid}}>{ru.totalPartCount}</td>
-                                      <td style={{padding:"4px 8px",fontWeight:600}}>{(ru.selPartWt||0).toFixed(1)}</td>
-                                      <td style={{padding:"4px 8px",color:T.textMid}}>{ru.sheetWt>0?ru.sheetWt.toFixed(1):"—"}</td>
-                                      <td style={{padding:"4px 8px",color:shareColor,fontWeight:600}}>{ru.sheetWt>0?`${sharePct}%`:"—"}</td>
-                                      <td style={{padding:"4px 8px",color:utilColor}}>{ru.utilisPct>0?`${ru.utilisPct.toFixed(1)}%`:"—"}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
+                        <span>
+                          <span style={{fontWeight:700,color:T.text}}>{totalPartWt.toFixed(0)}</span>
+                          <span style={{color:T.textMid}}> / {totalSheetWt.toFixed(0)} kg</span>
+                          <span style={{marginLeft:6,fontSize:10,color,fontWeight:600}}>({pct}%)</span>
+                        </span>
                       );
-                    })}
-                  </div>
+                    })()}
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
+                    {(()=>{
+                      const units=r.rmUnitsForMat||[];
+                      if(units.length===0) return <span style={{color:T.textLow}}>—</span>;
+                      const withUtil=units.filter(u=>u.utilisPct>0);
+                      if(withUtil.length===0) return <span style={{color:T.textLow}}>—</span>;
+                      const avg=withUtil.reduce((s,u)=>s+u.utilisPct,0)/withUtil.length;
+                      const color=avg>=85?T.green:avg>=70?T.amber:T.red;
+                      return <span style={{fontWeight:600,color}}>{avg.toFixed(1)}%</span>;
+                    })()}
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:12}}>{r.availableKg.toFixed(1)}</td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`}}><Badge color={rmStatusColor(r.status)}>{r.status}</Badge></td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.textMid,fontFamily:T.fontMono}}>
+                    {(r.rmUnitsForMat||[]).length>0?(r.rmUnitsForMat||[]).length+" unit"+(r.rmUnitsForMat.length!==1?"s":""):"—"}
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.accent,fontFamily:T.fontMono}}>
+                    {(r.batchesForMat||[]).map(b=>b.id).join(", ")||"—"}
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`}}>
+                    {(r.rmUnitsForMat||[]).length>0?(
+                      <select
+                        value={rmUnitAsgn[`alloc::${r.matCode}`]?.rmUnitId||""}
+                        onChange={e=>{
+                          const ru=(r.rmUnitsForMat||[]).find(x=>x.rmUnitId===e.target.value);
+                          // Find matching stock lot for this matCode
+                          const stockLot=(stock||[]).find(s=>
+                            normMatCode(s.matCode)===normMatCode(r.matCode)&&
+                            ['available','reserved','partially_reserved'].includes(s.status)
+                          )||{};
+                          setRmUnitAsgn(prev=>({...prev,[`alloc::${r.matCode}`]:{
+                            rmUnitId:e.target.value,
+                            sheetDim:ru?.sheetDim||"",
+                            batchId:ru?.batchId||"",
+                            matCode:r.matCode,
+                            lotId:stockLot.id||"",
+                            lotNo:stockLot.lotNo||"",
+                          }}));
+                        }}
+                        style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:180}}
+                      >
+                        <option value="">— Select RM unit —</option>
+                        {(r.rmUnitsForMat||[]).map(ru=>(
+                          <option key={ru.rmUnitId} value={ru.rmUnitId}>
+                            {ru.rmUnitId} — {ru.selPartCount}/{ru.totalPartCount} parts{ru.utilisPct>0?` — ${ru.utilisPct.toFixed(0)}% util`:""}
+                          </option>
+                        ))}
+                      </select>
+                    ):<span style={{fontSize:11,color:T.textLow}}>No RM units in nesting</span>}
+                  </td>
+                </tr>
+                {expandedMat[r.matCode]&&(
+                  <tr>
+                    <td colSpan={11} style={{padding:"0 20px 12px 32px",background:T.bg,borderBottom:`1px solid ${T.border}`}}>
+                      <div style={{fontSize:11,color:T.textMid,marginTop:8,marginBottom:4}}>Drawings needing this material:</div>
+                      {r.drawings.map((d,di)=><div key={di} style={{fontSize:11,color:T.text}}>{d.drawingNo} ({d.orderId}){d.qty>1?` × ${d.qty}`:""} — {d.kg.toFixed(1)} kg</div>)}
+                      {(r.rmUnitsForMat||[]).length>0&&<>
+                        <div style={{fontSize:11,color:T.textMid,marginTop:8,marginBottom:4}}>RM units in nesting batches:</div>
+                        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginTop:4}}>
+                          <thead>
+                            <tr style={{background:T.bgInput}}>
+                              {["RM Unit ID","Dimensions","Sel Parts","All Parts","Parts Wt (kg)","Sheet Wt (kg)","Usage %","Nesting Util%"].map(h=>(
+                                <th key={h} style={{padding:"4px 8px",textAlign:"left",color:T.textLow,fontWeight:600,fontSize:10,borderBottom:`1px solid ${T.border}`}}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(r.rmUnitsForMat||[]).map(ru=>{
+                              const usagePct=ru.sheetWt>0?Math.round((ru.selPartWt||0)/ru.sheetWt*100):0;
+                              const usageColor=usagePct>=85?T.green:usagePct>=70?T.amber:T.red;
+                              const utilColor=ru.utilisPct>=85?T.green:ru.utilisPct>=70?T.amber:ru.utilisPct>0?T.red:T.textLow;
+                              return (
+                                <tr key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.border}33`}}>
+                                  <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:T.accentHi,fontSize:10}}>{ru.rmUnitId}</td>
+                                  <td style={{padding:"4px 8px",fontFamily:T.fontMono,fontSize:10}}>{ru.sheetDim}</td>
+                                  <td style={{padding:"4px 8px",fontSize:10,color:T.green,fontWeight:600}}>{ru.selPartCount}</td>
+                                  <td style={{padding:"4px 8px",fontSize:10,color:T.textMid}}>{ru.totalPartCount}</td>
+                                  <td style={{padding:"4px 8px",fontSize:10,fontWeight:600}}>{(ru.selPartWt||0).toFixed(1)}</td>
+                                  <td style={{padding:"4px 8px",fontSize:10,color:T.textMid}}>{ru.sheetWt>0?ru.sheetWt.toFixed(1):"—"}</td>
+                                  <td style={{padding:"4px 8px",fontSize:10,fontWeight:600,color:usageColor}}>{ru.sheetWt>0?`${usagePct}%`:"—"}</td>
+                                  <td style={{padding:"4px 8px",fontSize:10,color:utilColor}}>{ru.utilisPct>0?`${ru.utilisPct.toFixed(1)}%`:"—"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </>}
+                    </td>
+                  </tr>
                 )}
-              </div>
-            );
-          })}
-        </div>
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
       )}
       <div style={{marginTop:16,display:"flex",gap:8}}>
         <button onClick={()=>setStep(1)} style={css.btn.ghost}>← Back</button>
@@ -15796,10 +15581,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       <div>
         <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>Step 3 — Cutting Assignment</div>
         <div style={{fontSize:12,color:T.textMid,marginBottom:6}}>Assign each RM unit to a cutting contractor. Parts from non-selected drawings shown in amber.</div>
-        {unassignedCount>0&&<InfoBanner color="amber">
-          {unassignedCount} RM unit{unassignedCount!==1?"s":""} need cutting contractor assignment.
-          {" "}Sheets where all parts are already cut from previous releases are excluded.
-        </InfoBanner>}
+        {unassignedCount>0&&<InfoBanner color="amber">{unassignedCount} RM unit{unassignedCount!==1?"s":""} not yet assigned. You may proceed and assign later.</InfoBanner>}
         {rmUnits.length===0&&<InfoBanner color="blue">No RM units found in nesting batches for selected drawings. Check that nesting has been imported for this order.</InfoBanner>}
         {rmUnits.length>0&&(
           <div style={{overflowX:"auto"}}>
@@ -16120,492 +15902,648 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 // ═══════════════════════════════════════════════════════════════════════════════
 const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, materials, instances, setInstances, orders, nestingBatches }) => {
   const today = () => new Date().toISOString().slice(0,10);
+  const [tab, setTab] = useState("assignments");
 
-  // Get all rmUnit assignments for this contractor from in_progress releases
-  const myRmUnits = releases.filter(r=>r.status==="in_progress").flatMap(r=>
+  // ── All rmUnits assigned to this operator / contractor ─────────────────────
+  const myRmUnits = releases.filter(r => r.status === "in_progress").flatMap(r =>
     (r.rmUnitAssignments||[])
-      .filter(ru=>ru.contractorId&&(ru.contractorId===user.contractorId||user.role==="machine_operator"||user.role==="super_admin"))
-      .map(ru=>({...ru, releaseId:r.id}))
+      .filter(ru => ru.contractorId && (ru.contractorId === user.contractorId || user.role === "machine_operator" || user.role === "super_admin"))
+      .map(ru => ({ ...ru, releaseId: r.id }))
+  );
+  const legacyAssignments = releases.filter(r => r.status === "in_progress").flatMap(r =>
+    (r.machineAssignments||[]).map(a => ({ ...a, releaseId: r.id, _legacy: true }))
   );
 
-  // Also include legacy machineAssignments for backward compatibility
-  const legacyAssignments = releases.filter(r=>r.status==="in_progress").flatMap(r=>
-    (r.machineAssignments||[]).map(a=>({...a, releaseId:r.id, _legacy:true}))
-  );
-
-  // State machine per rmUnit: 1=no lot, 2=request rm, 3=awaiting store, 4=rm in hand, 5=cutting, 6=complete
+  // ── State machine per rmUnit ───────────────────────────────────────────────
+  // 1=no lot  2=request rm  3=awaiting store  4=rm in hand  5=cutting  6=complete
   const getRmState = (ru) => {
     if (!ru.lotId) return 1;
-    const req = (issueRequests||[]).find(r=>r.rmUnitId===ru.rmUnitId&&r.releaseId===ru.releaseId);
+    const req = (issueRequests||[]).find(r => r.rmUnitId === ru.rmUnitId && r.releaseId === ru.releaseId);
     if (!req) return 2;
-    if (req.status==="pending") return 3;
-    if (req.status==="issued") {
+    if (req.status === "pending")  return 3;
+    if (req.status === "issued") {
       if (ru.cuttingComplete) return 6;
-      if (ru.cuttingStarted) return 5;
+      if (ru.cuttingStarted)  return 5;
       return 4;
     }
-    if (req.status==="rejected") return 2;
+    if (req.status === "rejected") return 2;
     return 2;
   };
-
   const getLegacyState = (a) => {
     if (!a.lotId) return 1;
-    const req = (issueRequests||[]).find(r=>r.machineAssignmentId===a.id);
+    const req = (issueRequests||[]).find(r => r.machineAssignmentId === a.id);
     if (!req) return 2;
-    if (req.status==="pending") return 3;
-    if (req.status==="issued") {
+    if (req.status === "pending")  return 3;
+    if (req.status === "issued") {
       if (a.cuttingComplete) return 6;
-      if (a.cuttingStarted) return 5;
+      if (a.cuttingStarted)  return 5;
       return 4;
     }
     return 2;
   };
 
-  const requestRmForUnit = (ru) => {
-    const yr = new Date().getFullYear();
-    const seq = (issueRequests||[]).length + 1;
-    const id = `IRQ-${yr}-${String(seq).padStart(3,"0")}`;
-    // Use stockLotId if available, fallback to matCode match
-    const stockLot = (stock||[]).find(s=>s.id===ru.stockLotId) ||
-      (stock||[]).find(s=>normMatCode(s.matCode)===normMatCode(ru.matCode)&&
-        ['available','reserved','partially_reserved'].includes(s.status))||{};
-    // Sheet weight: use pre-calculated sheetWt, or calculate from dimensions, or fallback
-    const sheetWt = ru.sheetWt ||
-      calcSheetWt(ru.rmUnitId) ||
-      (stockLot.wtReceived&&parseRmUnitTotal(ru.rmUnitId)>0
-        ?Math.round(stockLot.wtReceived/parseRmUnitTotal(ru.rmUnitId)*100)/100
-        :stockLot.wtAvailable||0);
-    setIssueRequests(prev=>[...prev,{
-      id,
-      requestDate: today(),
-      requestedBy: user.username,
-      requestedByName: user.name,
-      rmUnitId: ru.rmUnitId,
-      releaseId: ru.releaseId,
-      lotId: stockLot.id||ru.stockLotId||ru.lotId,
-      lotNo: stockLot.lotNo||"",
-      matCode: ru.matCode,
-      dimensions: ru.dimensions||"",
-      contractorId: ru.contractorId||"",
-      contractorName: ru.contractorName||user.name,
-      wtRequested: sheetWt,
-      parts: ru.parts||[],
-      dxfLink: ru.dxfLink||"",
-      nestingFile: ru.nestingFile||"",
-      status: "pending",
-      remarks: "",
-    }]);
-  };
+  // ── Tab buckets ────────────────────────────────────────────────────────────
+  // Tab 1 — Assignments: state 1,2,3 (no lot / request pending / awaiting store)
+  const tab1 = myRmUnits.filter(ru => [1,2,3].includes(getRmState(ru)));
+  // Tab 2 — Cut/Process: state 4,5 (rm in hand / cutting)
+  const tab2 = myRmUnits.filter(ru => [4,5].includes(getRmState(ru)));
+  // Tab 3 — Completed: state 6
+  const tab3 = myRmUnits.filter(ru => getRmState(ru) === 6);
+  // Tab 4 — Offcuts: all offcut lots traceable to this operator's rmUnits
+  const myRmUnitIds = new Set(myRmUnits.map(ru => ru.rmUnitId));
+  const tab4Offcuts = (stock||[]).filter(s => s.isOffcut && (myRmUnitIds.has(s.parentRmUnitId) || myRmUnitIds.has(s.createdFrom)));
 
-  const requestRmLegacy = (a) => {
-    const yr = new Date().getFullYear();
+  // ── Actions (unchanged logic) ──────────────────────────────────────────────
+  const requestRmForUnit = (ru) => {
+    const yr  = new Date().getFullYear();
     const seq = (issueRequests||[]).length + 1;
-    const id = `IRQ-${yr}-${String(seq).padStart(3,"0")}`;
-    const lot = (stock||[]).find(s=>s.id===a.lotId)||{};
-    setIssueRequests(prev=>[...prev,{
+    const id  = `IRQ-${yr}-${String(seq).padStart(3,"0")}`;
+    const stockLot = (stock||[]).find(s => s.id === ru.stockLotId) ||
+      (stock||[]).find(s => normMatCode(s.matCode) === normMatCode(ru.matCode) &&
+        ['available','reserved','partially_reserved'].includes(s.status)) || {};
+    const sheetWt = ru.sheetWt || calcSheetWt(ru.rmUnitId) ||
+      (stockLot.wtReceived && parseRmUnitTotal(ru.rmUnitId) > 0
+        ? Math.round(stockLot.wtReceived / parseRmUnitTotal(ru.rmUnitId) * 100) / 100
+        : stockLot.wtAvailable || 0);
+    setIssueRequests(prev => [...prev, {
       id, requestDate:today(), requestedBy:user.username, requestedByName:user.name,
-      machineId:a.machineId, machineName:a.machineName, releaseId:a.releaseId,
-      machineAssignmentId:a.id, lotId:a.lotId, lotNo:lot.lotNo||"",
-      matCode:a.matCode, wtRequested:lot.wtAvailable||0,
+      rmUnitId:ru.rmUnitId, releaseId:ru.releaseId,
+      lotId:stockLot.id||ru.stockLotId||ru.lotId, lotNo:stockLot.lotNo||"",
+      matCode:ru.matCode, dimensions:ru.dimensions||"",
+      contractorId:ru.contractorId||"", contractorName:ru.contractorName||user.name,
+      wtRequested:sheetWt, parts:ru.parts||[],
+      dxfLink:ru.dxfLink||"", nestingFile:ru.nestingFile||"",
       status:"pending", remarks:"",
     }]);
   };
 
   const startCuttingRu = (ru) => {
-    setReleases(prev=>prev.map(r=>r.id!==ru.releaseId?r:{
-      ...r, rmUnitAssignments:(r.rmUnitAssignments||[]).map(x=>
-        x.rmUnitId===ru.rmUnitId?{...x,cuttingStarted:true,cuttingStartedBy:user.username,cuttingStartedDate:today()}:x
+    setReleases(prev => prev.map(r => r.id !== ru.releaseId ? r : {
+      ...r, rmUnitAssignments:(r.rmUnitAssignments||[]).map(x =>
+        x.rmUnitId === ru.rmUnitId
+          ? { ...x, cuttingStarted:true, cuttingStartedBy:user.username, cuttingStartedDate:today() }
+          : x
       )
     }));
   };
 
   const completeCuttingRu = (ru, offcutWt, offcutDim) => {
-    setReleases(prev=>prev.map(r=>r.id!==ru.releaseId?r:{
-      ...r, rmUnitAssignments:(r.rmUnitAssignments||[]).map(x=>
-        x.rmUnitId===ru.rmUnitId?{...x,cuttingComplete:true,cuttingCompleteBy:user.username,cuttingCompleteDate:today(),offcutWt:parseFloat(offcutWt)||0,offcutDim:offcutDim||""}:x
+    setReleases(prev => prev.map(r => r.id !== ru.releaseId ? r : {
+      ...r, rmUnitAssignments:(r.rmUnitAssignments||[]).map(x =>
+        x.rmUnitId === ru.rmUnitId
+          ? { ...x, cuttingComplete:true, cuttingCompleteBy:user.username,
+              cuttingCompleteDate:today(), offcutWt:parseFloat(offcutWt)||0, offcutDim:offcutDim||"" }
+          : x
       )
     }));
-    // Auto-create offcut lot in stock if weight > 0
-    const offWt = parseFloat(offcutWt)||0;
+    // Auto-create offcut stock lot
+    const offWt = parseFloat(offcutWt) || 0;
     if (offWt > 0) {
-      const lot = (stock||[]).find(s=>s.id===ru.lotId)||{};
-      const offcutId = `STK-OFFCUT-${Date.now()}`;
-      const newOffcut = {
-        id: offcutId,
-        lotNo: `OFFCUT-${ru.rmUnitId.split("/").pop()}-${Date.now()}`,
-        parentLotId: ru.lotId,
-        parentRmUnitId: ru.rmUnitId,
-        matCode: ru.matCode,
-        sectionType: lot.sectionType||"PLATE",
-        grade: lot.grade||"",
-        size: offcutDim||lot.size||"",
-        wtReceived: offWt,
-        wtAvailable: offWt,
-        wtAllocated: 0,
-        wtIssued: 0,
-        status: "available",
-        isOffcut: true,
-        bayId: lot.bayId||"",
-        receivedDate: today(),
-        createdBy: user.username,
-        createdFrom: ru.rmUnitId,
-        releaseId: ru.releaseId,
-        reservations: [],
-        issues: [],
-        auditLog: [{action:"offcut_created", by:user.username, date:today(), reason:`Offcut from ${ru.rmUnitId}`}],
-      };
-      setStock(prev=>[...prev, newOffcut]);
+      const lot = (stock||[]).find(s => s.id === ru.lotId) || {};
+      setStock(prev => [...prev, {
+        id:`STK-OFFCUT-${Date.now()}`,
+        lotNo:`OFFCUT-${ru.rmUnitId.split("/").pop()}-${Date.now()}`,
+        parentLotId:ru.lotId, parentRmUnitId:ru.rmUnitId,
+        matCode:ru.matCode, sectionType:lot.sectionType||"PLATE",
+        grade:lot.grade||"", size:offcutDim||lot.size||"",
+        wtReceived:offWt, wtAvailable:offWt, wtAllocated:0, wtIssued:0,
+        status:"pending_store",   // pending store acceptance
+        isOffcut:true, bayId:lot.bayId||"",
+        receivedDate:today(), createdBy:user.username,
+        createdFrom:ru.rmUnitId, releaseId:ru.releaseId,
+        reservations:[], issues:[],
+        auditLog:[{ action:"offcut_created", by:user.username, date:today(),
+          reason:`Offcut from ${ru.rmUnitId}` }],
+      }]);
     }
     const ts = new Date().toISOString();
-    // Step 1 — Advance existing instances for this rmUnit to cutting_qc
-    setInstances(prev=>{
-      const updated=prev.map(inst=>
-        inst.rmUnitId===ru.rmUnitId&&inst.currentStage==="cutting"
-          ?{...inst,currentStage:"cutting_qc",currentStatus:"pending_supervisor",cutAt:ts,cutBy:user.username}
-          :inst
+    // Advance instances to cutting_qc + create side-cut instances
+    setInstances(prev => {
+      const updated = prev.map(inst =>
+        inst.rmUnitId === ru.rmUnitId && inst.currentStage === "cutting"
+          ? { ...inst, currentStage:"cutting_qc", currentStatus:"pending_supervisor", cutAt:ts, cutBy:user.username }
+          : inst
       );
-
-      // Step 2 — Find ALL parts on this sheet from nesting batch
-      const batch=(nestingBatches||[]).find(b=>b.id===ru.batchId);
-      if(!batch) return updated;
-      const lot=(batch.lots||[]).find(l=>l.matCode===ru.matCode);
-      if(!lot) return updated;
-      const sheet=(lot.sheets||[]).find(s=>s.rmUnitId===ru.rmUnitId);
-      if(!sheet) return updated;
-
-      // All markNos on this sheet
-      const allMarkNos=new Set(sheet.parts||[]);
-
-      // MarkNos already handled for THIS specific rmUnit only
-      const existingMarkNos=new Set(updated.filter(i=>i.rmUnitId===ru.rmUnitId).map(i=>i.markNo));
-
-      // Find parts from NON-released drawings that are on this sheet
-      const newInstances=[];
-      const baseTs=Date.now();
-      let idx=0;
-
-      (orders||[]).forEach(order=>{
-        (order.parts||[]).forEach(part=>{
-          if(!allMarkNos.has(part.markNo)) return;
-          if(existingMarkNos.has(part.markNo)) return; // already has instance
-          if(part.fabType?.toLowerCase()!=="fabricate") return;
-          // Create a cut instance for this part
-          const drawing=(order.drawings||[]).find(d=>d.id===part.drawingId);
+      const batch = (nestingBatches||[]).find(b => b.id === ru.batchId);
+      if (!batch) return updated;
+      const lot2 = (batch.lots||[]).find(l => l.matCode === ru.matCode);
+      if (!lot2) return updated;
+      const sheet = (lot2.sheets||[]).find(s => s.rmUnitId === ru.rmUnitId);
+      if (!sheet) return updated;
+      const allMarkNos = new Set(sheet.parts||[]);
+      const existingMarkNos = new Set(updated.filter(i => i.rmUnitId === ru.rmUnitId).map(i => i.markNo));
+      const newInstances = [];
+      const baseTs = Date.now(); let idx = 0;
+      (orders||[]).forEach(order => {
+        (order.parts||[]).filter(p => allMarkNos.has(p.markNo) && !existingMarkNos.has(p.markNo)).forEach(p => {
           newInstances.push({
-            instanceId:`INST-CUT-${baseTs}-${idx++}`,
-            releaseId:"side_cut", // marks it as a side-effect cut
-            orderId:order.id,
-            orderNo:order.id,
-            drawingId:part.drawingId,
-            drawingNo:drawing?.drawingNo||part.drawingNo||"",
-            markNo:part.markNo,
-            desc:part.description||"",
-            matCode:part.matCode||"",
-            qty:part.qtyPerDrg||1,
-            partWt:part.clientUnitWt||0,
-            requiredOps:part.requiredOps||["Cut"],
-            subOpsRequired:["cut"],
-            assignedContractorId:null,
-            assignedContractorName:"",
-            pinnedEngineerId:"",
-            assignedStage:"fit_up",
-            currentStage:"cutting_qc",
-            currentStatus:"pending_supervisor",
-            rmUnitId:ru.rmUnitId,
-            cuttingContractorId:ru.contractorId||"",
+            instanceId:`SIDECUT-${ru.rmUnitId}-${p.markNo}-${baseTs+idx++}`,
+            markNo:p.markNo, desc:p.desc||"", drawingId:p.drawingId||"",
+            drawingNo:"", orderId:order.id, instanceNo:1, totalInstances:1,
+            currentStage:"cutting_qc", currentStatus:"pending_supervisor",
+            rmUnitId:ru.rmUnitId, cuttingContractorId:ru.contractorId||"",
             cuttingContractorName:ru.contractorName||"",
-            lotId:ru.lotId||"",
-            nestingRunId:null,
-            barRef:null,
-            batchNo:ru.batchId||"",
-            cuttingBayUsed:"",
-            stageHistory:[],
-            defects:[],
-            outboundCount:0,
-            outboundHistory:[],
-            qualityConcernFlag:false,
-            rejectionCount:0,
-            createdAt:ts,
-            createdBy:user.username,
-            cutAt:ts,
-            cutBy:user.username,
-            isSideCut:true, // flag to distinguish from formally released parts
+            lotId:ru.lotId||"", nestingRunId:null, barRef:null, batchNo:ru.batchId||"",
+            cuttingBayUsed:"", stageHistory:[], defects:[], outboundCount:0,
+            outboundHistory:[], qualityConcernFlag:false, rejectionCount:0,
+            createdAt:ts, createdBy:user.username, cutAt:ts, cutBy:user.username,
+            isSideCut:true,
           });
         });
       });
-
       return [...updated, ...newInstances];
     });
   };
 
-  const startCuttingLegacy = (a) => {
-    setReleases(prev=>prev.map(r=>({...r,machineAssignments:(r.machineAssignments||[]).map(ma=>
-      ma.id===a.id?{...ma,cuttingStarted:true,cuttingStartedBy:user.username,cuttingStartedDate:today()}:ma
-    )})));
-  };
+  // ── Section label helper ───────────────────────────────────────────────────
+  const SL = ({ title, count, color, sub }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, marginTop:20 }}>
+      <div style={{ fontSize:11, fontWeight:800, color:color||T.textMid, letterSpacing:"0.08em" }}>{title}</div>
+      {count > 0 && <div style={{ background:color||T.textMid, color:"#fff", fontSize:10,
+        fontWeight:800, borderRadius:8, padding:"1px 6px" }}>{count}</div>}
+      {sub && <div style={{ fontSize:11, color:T.textLow }}>{sub}</div>}
+    </div>
+  );
 
-  const completeCuttingLegacy = (a) => {
-    setReleases(prev=>prev.map(r=>({...r,machineAssignments:(r.machineAssignments||[]).map(ma=>
-      ma.id===a.id?{...ma,cuttingComplete:true,cuttingCompleteBy:user.username,cuttingCompleteDate:today()}:ma
-    )})));
-  };
-
-  const STATE_LABELS = ["","RM NOT ASSIGNED","REQUEST RM FROM STORE","AWAITING STORE","RM IN HAND — READY TO CUT","CUTTING IN PROGRESS","CUTTING COMPLETE"];
-  const STATE_COLORS = ["",T.textLow,T.accent,T.amber,T.green,T.accent,T.green];
-
-  // ── Tab state ──
-  const [moTab, setMoTab] = React.useState("assigned"); // assigned | cut | completed
-  const [searchCompleted, setSearchCompleted] = React.useState("");
-  const [showOffcutMap, setShowOffcutMap] = React.useState({});
-  const [offcutWtMap, setOffcutWtMap]     = React.useState({});
-  const [offcutDimMap, setOffcutDimMap]   = React.useState({});
-
-  // Split rmUnits into tabs by state
-  const assignedUnits  = myRmUnits.filter(ru=>getRmState(ru)<=3);    // no lot / request rm / awaiting store
-  const cutUnits       = myRmUnits.filter(ru=>[4,5].includes(getRmState(ru))); // rm in hand / cutting
-  const completedUnits = myRmUnits.filter(ru=>getRmState(ru)===6)
-    .sort((a,b)=>(b.cuttingCompleteDate||"").localeCompare(a.cuttingCompleteDate||""))
-    .slice(0,50);
-  const filteredCompleted = searchCompleted
-    ? completedUnits.filter(ru=>
-        ru.rmUnitId?.toLowerCase().includes(searchCompleted.toLowerCase())||
-        ru.matCode?.toLowerCase().includes(searchCompleted.toLowerCase())||
-        (ru.parts||[]).some(p=>(p.markNo||p).toLowerCase().includes(searchCompleted.toLowerCase()))
-      )
-    : completedUnits;
-
-  const TAB_COUNTS = {
-    assigned: assignedUnits.length + legacyAssignments.filter(a=>getLegacyState(a)<=3).length,
-    cut:      cutUnits.length + legacyAssignments.filter(a=>[4,5].includes(getLegacyState(a))).length,
-    completed:completedUnits.length + legacyAssignments.filter(a=>getLegacyState(a)===6).length,
-  };
-
-  const RmUnitCard = ({ru}) => {
-    const state=getRmState(ru);
-    const req=(issueRequests||[]).find(r=>r.rmUnitId===ru.rmUnitId&&r.releaseId===ru.releaseId);
-    const lot=(stock||[]).find(s=>s.id===ru.lotId)||{};
-    const color=STATE_COLORS[state];
-    const showOffcut=showOffcutMap[ru.rmUnitId]||false;
-    const offcutWt=offcutWtMap[ru.rmUnitId]||"";
-    const offcutDim=offcutDimMap[ru.rmUnitId]||"";
+  // ── rmUnit card — Tab 1 (Assignments) ─────────────────────────────────────
+  const AssignmentCard = ({ ru }) => {
+    const state = getRmState(ru);
+    const req   = (issueRequests||[]).find(r => r.rmUnitId === ru.rmUnitId && r.releaseId === ru.releaseId);
+    const lot   = (stock||[]).find(s => s.id === ru.lotId) || {};
+    const borderColor = state === 3 ? T.amber : state === 1 ? T.textLow : T.accent;
     return (
-      <div key={ru.rmUnitId+ru.releaseId} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${color}`}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+      <div style={{ ...css.card, marginBottom:10, borderLeft:`4px solid ${borderColor}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
           <div>
-            <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{ru.rmUnitId}</div>
-            <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{ru.matCode} · {ru.dimensions} · Release {ru.releaseId}</div>
-            <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
-              Parts: <span style={{color:T.text,fontWeight:600}}>{(ru.parts||[]).length}</span>
-              {ru.startDate&&<span> · Cut by: {ru.startDate} → {ru.endDate}</span>}
+            <div style={{ fontFamily:T.fontMono, fontSize:13, fontWeight:700, color:T.accent }}>{ru.rmUnitId}</div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+              {ru.matCode} · {ru.dimensions} · Release {ru.releaseId}
+            </div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+              Parts on sheet: <strong style={{ color:T.text }}>{(ru.parts||[]).length}</strong>
+              {ru.startDate && <span> · Planned: {ru.startDate} → {ru.endDate}</span>}
             </div>
           </div>
-          <div style={{background:color,color:state===2?T.text:"#fff",fontSize:10,fontWeight:800,borderRadius:4,padding:"3px 8px",whiteSpace:"nowrap"}}>
-            {STATE_LABELS[state]}
-          </div>
+          <Badge color={state===3?"amber":state===1?"gray":"blue"}>
+            {state===1?"No Lot":state===2?"Request RM":state===3?"Awaiting Store":"—"}
+          </Badge>
         </div>
-        {(ru.dxfLink||ru.nestingFile)&&(
-          <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-            {ru.dxfLink&&<a href={ru.dxfLink} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:T.accent,padding:"3px 8px",background:T.bgInput,borderRadius:4,border:`1px solid ${T.border}`,textDecoration:"none"}}>📐 DXF File</a>}
-            {ru.nestingFile&&<a href={ru.nestingFile} target="_blank" rel="noopener noreferrer" style={{fontSize:11,color:T.accent,padding:"3px 8px",background:T.bgInput,borderRadius:4,border:`1px solid ${T.border}`,textDecoration:"none"}}>📋 Nesting Layout</a>}
+        {ru.lotId && (
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:8, padding:"6px 10px",
+            background:T.bgInput, borderRadius:5 }}>
+            Lot: <span style={{ color:T.text, fontFamily:T.fontMono }}>{lot.lotNo||ru.lotId}</span>
+            {lot.bayId && <span> · Bay: <strong>{lot.bayId}</strong></span>}
+            {lot.wtAvailable > 0 && <span> · {lot.wtAvailable.toFixed(0)} kg available</span>}
           </div>
         )}
-        {ru.lotId&&(
-          <div style={{fontSize:12,color:T.textMid,marginBottom:8,padding:"6px 10px",background:T.bgInput,borderRadius:5}}>
-            Lot: <span style={{color:T.text,fontFamily:T.fontMono}}>{lot.lotNo||ru.lotId}</span>
-            {lot.bayId&&<span> · Bay: <span style={{color:T.text,fontWeight:600}}>{lot.bayId}</span></span>}
-            {lot.wtAvailable>0&&<span> · {lot.wtAvailable.toFixed(0)} kg available</span>}
+        {(ru.dxfLink||ru.nestingFile) && (
+          <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+            {ru.dxfLink && <a href={ru.dxfLink} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize:11, color:T.accent, padding:"3px 8px", background:T.bgInput,
+                borderRadius:4, border:`1px solid ${T.border}`, textDecoration:"none" }}>📐 DXF</a>}
+            {ru.nestingFile && <a href={ru.nestingFile} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize:11, color:T.accent, padding:"3px 8px", background:T.bgInput,
+                borderRadius:4, border:`1px solid ${T.border}`, textDecoration:"none" }}>📋 Nesting</a>}
           </div>
         )}
-        {req&&(
-          <div style={{fontSize:11,padding:"6px 10px",background:T.bgInput,borderRadius:5,marginBottom:8}}>
-            Request: <span style={{fontFamily:T.fontMono,color:T.accentHi}}>{req.id}</span>
-            <Badge color={req.status==="issued"?"green":req.status==="rejected"?"red":"amber"} style={{marginLeft:8}}>{req.status}</Badge>
-            {req.issuedBy&&<span style={{color:T.textMid,marginLeft:8}}>Issued by {req.issuedBy} on {req.issueDate}</span>}
-            {req.status==="rejected"&&req.remarks&&<div style={{color:T.red,marginTop:4}}>Reason: {req.remarks}</div>}
+        {req && req.status === "rejected" && (
+          <div style={{ fontSize:11, color:T.red, padding:"6px 10px",
+            background:T.redBg, borderRadius:5, marginBottom:8 }}>
+            ✕ Request {req.id} rejected — {req.remarks || "No reason given"}
           </div>
         )}
-        {(ru.parts||[]).length>0&&(
-          <details style={{marginBottom:8}}>
-            <summary style={{fontSize:11,color:T.textMid,cursor:"pointer",padding:"4px 0"}}>Parts on this sheet ({(ru.parts||[]).length})</summary>
-            <div style={{paddingLeft:12,paddingTop:4,display:"flex",flexWrap:"wrap",gap:4}}>
-              {(ru.parts||[]).map(p=>(
-                <span key={p.markNo||p} style={{fontFamily:T.fontMono,fontSize:10,color:T.text}}>{p.markNo||p}</span>
-              ))}
-            </div>
-          </details>
+        {state === 1 && (
+          <div style={{ fontSize:12, color:T.textLow, padding:"10px", background:T.bgInput,
+            borderRadius:6, textAlign:"center" }}>No lot assigned — contact production manager</div>
         )}
-        {state===1&&<InfoBanner color="gray">No lot assigned. Contact production manager.</InfoBanner>}
-        {state===2&&<button onClick={()=>requestRmForUnit(ru)} style={{...css.btn.primary,width:"100%",padding:"10px 0",fontSize:13}}>📦 Request Material Issue from Store</button>}
-        {state===3&&<div style={{padding:"10px 14px",background:`${T.amber}18`,border:`1px solid ${T.amber}44`,borderRadius:6,fontSize:12,color:T.amber,textAlign:"center"}}>⏳ Awaiting store — Request {req?.id} pending</div>}
-        {state===4&&<button onClick={()=>startCuttingRu(ru)} style={{...css.btn.green,width:"100%",padding:"10px 0",fontSize:13}}>✂ Material Received — Start Cutting</button>}
-        {state===5&&(
-          <div>
-            <div style={{fontSize:12,color:T.accent,marginBottom:10,fontWeight:700}}>✂ CUTTING IN PROGRESS</div>
-            {!showOffcut?(
-              <button onClick={()=>setShowOffcutMap(m=>({...m,[ru.rmUnitId]:true}))} style={{...css.btn.primary,width:"100%",padding:"10px 0",fontSize:13}}>✓ Mark Cutting Complete</button>
-            ):(
-              <div style={{padding:"12px",background:T.bgInput,borderRadius:6,border:`1px solid ${T.border}`}}>
-                <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:10}}>Log Offcut Before Completing</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-                  <div>
-                    <label style={css.label}>Offcut Weight (kg)</label>
-                    <input type="number" value={offcutWt} onChange={e=>setOffcutWtMap(m=>({...m,[ru.rmUnitId]:e.target.value}))} placeholder="0" style={{...css.input,fontSize:12}} />
-                  </div>
-                  <div>
-                    <label style={css.label}>Offcut Dimensions (mm)</label>
-                    <input type="text" value={offcutDim} onChange={e=>setOffcutDimMap(m=>({...m,[ru.rmUnitId]:e.target.value}))} placeholder="e.g. 1500X3200" style={{...css.input,fontSize:12}} />
-                  </div>
-                </div>
-                <div style={{fontSize:11,color:T.textMid,marginBottom:10}}>
-                  {parseFloat(offcutWt)>0?`Offcut of ${offcutWt}kg will be added to stock.`:"Enter 0 if no offcut."}
-                </div>
-                <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>completeCuttingRu(ru,offcutWt,offcutDim)} style={{...css.btn.green,flex:1,padding:"10px 0",fontSize:13}}>✓ Confirm Complete</button>
-                  <button onClick={()=>setShowOffcutMap(m=>({...m,[ru.rmUnitId]:false}))} style={{...css.btn.ghost,padding:"10px 16px"}}>Cancel</button>
-                </div>
-              </div>
-            )}
+        {state === 2 && (
+          <button onClick={() => requestRmForUnit(ru)}
+            style={{ ...css.btn.primary, width:"100%", padding:"10px 0", fontSize:13 }}>
+            📦 Request Material Issue from Store
+          </button>
+        )}
+        {state === 3 && (
+          <div style={{ padding:"10px 14px", background:T.amberBg,
+            border:`1px solid ${T.amber}44`, borderRadius:6, fontSize:12,
+            color:T.amber, textAlign:"center" }}>
+            ⏳ Awaiting store — Request <strong>{req?.id}</strong> pending
           </div>
         )}
       </div>
     );
   };
 
+  // ── rmUnit card — Tab 2 (Cut/Process) ─────────────────────────────────────
+  const CutCard = ({ ru }) => {
+    const state = getRmState(ru);
+    const req   = (issueRequests||[]).find(r => r.rmUnitId === ru.rmUnitId && r.releaseId === ru.releaseId);
+    const lot   = (stock||[]).find(s => s.id === ru.lotId) || {};
+    const [showOffcut, setShowOffcut] = React.useState(false);
+    const [offcutWt,   setOffcutWt]   = React.useState("");
+    const [offcutDim,  setOffcutDim]  = React.useState("");
+    return (
+      <div style={{ ...css.card, marginBottom:10,
+        borderLeft:`4px solid ${state===5?T.accent:T.green}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+          <div>
+            <div style={{ fontFamily:T.fontMono, fontSize:13, fontWeight:700, color:T.accent }}>{ru.rmUnitId}</div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+              {ru.matCode} · {ru.dimensions}
+            </div>
+          </div>
+          <Badge color={state===5?"blue":"green"}>
+            {state===5?"Cutting in Progress":"RM in Hand — Ready"}
+          </Badge>
+        </div>
+        {/* Lot info */}
+        <div style={{ fontSize:12, color:T.textMid, marginBottom:10, padding:"6px 10px",
+          background:T.bgInput, borderRadius:5 }}>
+          Lot: <span style={{ color:T.text, fontFamily:T.fontMono }}>{lot.lotNo||ru.lotId}</span>
+          {req?.issuedBy && <span style={{ color:T.textMid }}> · Issued by {req.issuedBy} on {req.issueDate}</span>}
+        </div>
+        {/* Parts list */}
+        {(ru.parts||[]).length > 0 && (
+          <details style={{ marginBottom:10 }}>
+            <summary style={{ fontSize:11, color:T.textMid, cursor:"pointer", padding:"4px 0" }}>
+              Parts on this sheet ({(ru.parts||[]).length})
+            </summary>
+            <div style={{ paddingLeft:12, paddingTop:4, display:"flex", flexWrap:"wrap", gap:4 }}>
+              {(ru.parts||[]).map(p => (
+                <span key={p.markNo||p} style={{ fontFamily:T.fontMono, fontSize:10,
+                  color:T.text, background:T.bgInput, padding:"2px 6px", borderRadius:4 }}>
+                  {p.markNo||p}
+                </span>
+              ))}
+            </div>
+          </details>
+        )}
+        {(ru.dxfLink||ru.nestingFile) && (
+          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+            {ru.dxfLink && <a href={ru.dxfLink} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize:11, color:T.accent, padding:"3px 8px", background:T.bgInput,
+                borderRadius:4, border:`1px solid ${T.border}`, textDecoration:"none" }}>📐 DXF</a>}
+            {ru.nestingFile && <a href={ru.nestingFile} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize:11, color:T.accent, padding:"3px 8px", background:T.bgInput,
+                borderRadius:4, border:`1px solid ${T.border}`, textDecoration:"none" }}>📋 Nesting</a>}
+          </div>
+        )}
+        {/* Actions */}
+        {state === 4 && (
+          <button onClick={() => startCuttingRu(ru)}
+            style={{ ...css.btn.green, width:"100%", padding:"10px 0", fontSize:13 }}>
+            ✂ Start Cutting
+          </button>
+        )}
+        {state === 5 && !showOffcut && (
+          <button onClick={() => setShowOffcut(true)}
+            style={{ ...css.btn.primary, width:"100%", padding:"10px 0", fontSize:13 }}>
+            ✓ Mark Cutting Complete + Log Offcut
+          </button>
+        )}
+        {state === 5 && showOffcut && (
+          <div style={{ padding:14, background:T.bgInput, borderRadius:8,
+            border:`1px solid ${T.border}` }}>
+            <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:12 }}>
+              Log Offcut & Confirm Complete
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+              <div>
+                <label style={css.label}>Offcut Weight (kg)</label>
+                <input type="number" value={offcutWt} onChange={e => setOffcutWt(e.target.value)}
+                  placeholder="0" style={{ ...css.input, fontSize:12 }} />
+              </div>
+              <div>
+                <label style={css.label}>Offcut Dimensions (mm)</label>
+                <input type="text" value={offcutDim} onChange={e => setOffcutDim(e.target.value)}
+                  placeholder="e.g. 1500×3200" style={{ ...css.input, fontSize:12 }} />
+              </div>
+            </div>
+            <div style={{ fontSize:11, color:T.textMid, marginBottom:12 }}>
+              {parseFloat(offcutWt) > 0
+                ? `Offcut of ${offcutWt} kg will be logged and sent to store for acceptance.`
+                : "Enter 0 if no offcut (full utilisation)."}
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => { completeCuttingRu(ru, offcutWt, offcutDim); setShowOffcut(false); }}
+                style={{ ...css.btn.green, flex:1, padding:"10px 0", fontSize:13 }}>
+                ✓ Confirm Complete
+              </button>
+              <button onClick={() => setShowOffcut(false)} style={{ ...css.btn.ghost, padding:"10px 16px" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── rmUnit card — Tab 3 (Completed) ───────────────────────────────────────
+  const CompletedCard = ({ ru }) => {
+    const allInsts = (instances||[]).filter(i => i.rmUnitId === ru.rmUnitId);
+    // Group by markNo, take first instance per mark for stage display
+    const byMark = {};
+    allInsts.filter(i => !i.isSideCut).forEach(i => {
+      if (!byMark[i.markNo]) byMark[i.markNo] = i;
+    });
+    const marks = Object.values(byMark);
+
+    // Derive status buckets across all instances
+    const qcPending    = allInsts.filter(i => i.currentStage === "cutting_qc");
+    const qcCleared    = allInsts.filter(i => ["fitup","welding","complete"].includes(i.currentStage));
+    const collected    = allInsts.filter(i => i.currentStage === "fitup" && i.currentStatus === "in_progress");
+    const awaitingColl = allInsts.filter(i => i.currentStage === "fitup" && i.currentStatus !== "in_progress");
+
+    // Derive single summary status for the card border
+    const borderColor = qcPending.length > 0 ? T.amber : T.green;
+
+    // Unique contractor names for "to be collected by"
+    const collContractors = [...new Set(
+      allInsts.filter(i => i.assignedContractorName).map(i => i.assignedContractorName)
+    )];
+
+    return (
+      <div style={{ ...css.card, marginBottom:10, borderLeft:`4px solid ${borderColor}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+          <div>
+            <div style={{ fontFamily:T.fontMono, fontSize:13, fontWeight:700, color:T.accent }}>{ru.rmUnitId}</div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+              {ru.matCode} · Completed {ru.cuttingCompleteDate || "—"}
+            </div>
+            {ru.offcutWt > 0 && (
+              <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>
+                Offcut: {ru.offcutWt} kg ({ru.offcutDim || "—"})
+              </div>
+            )}
+          </div>
+          <Badge color={qcPending.length > 0 ? "amber" : "green"}>
+            {qcPending.length > 0 ? `${qcPending.length} QC Pending` : "QC Cleared"}
+          </Badge>
+        </div>
+
+        {/* Status breakdown */}
+        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          {qcPending.length > 0 && (
+            <div style={{ padding:"8px 10px", background:T.amberBg,
+              border:`1px solid ${T.amber}44`, borderRadius:6, fontSize:11 }}>
+              <div style={{ fontWeight:700, color:T.amber, marginBottom:4 }}>
+                ⏳ {qcPending.length} instance{qcPending.length!==1?"s":""} — Cutting QC Pending
+              </div>
+              <div style={{ color:T.textMid }}>
+                QC team to inspect — {qcPending[0]?.assignedEngineer || "unassigned to QC user"}
+              </div>
+            </div>
+          )}
+          {awaitingColl.length > 0 && (
+            <div style={{ padding:"8px 10px", background:T.greenBg,
+              border:`1px solid ${T.green}44`, borderRadius:6, fontSize:11 }}>
+              <div style={{ fontWeight:700, color:T.green, marginBottom:4 }}>
+                ✅ {awaitingColl.length} instance{awaitingColl.length!==1?"s":""} — QC Cleared
+              </div>
+              {collContractors.length > 0
+                ? <div style={{ color:T.textMid }}>
+                    To be collected by: <strong style={{ color:T.text }}>{collContractors.join(", ")}</strong>
+                  </div>
+                : <div style={{ color:T.textMid }}>Awaiting weld contractor assignment — will go to bay</div>
+              }
+            </div>
+          )}
+          {collected.length > 0 && (
+            <div style={{ padding:"8px 10px", background:T.bgInput,
+              border:`1px solid ${T.border}`, borderRadius:6, fontSize:11 }}>
+              <div style={{ fontWeight:700, color:T.textMid, marginBottom:4 }}>
+                🚚 {collected.length} instance{collected.length!==1?"s":""} — Collected / In Fit-Up
+              </div>
+              <div style={{ color:T.textLow }}>
+                {[...new Set(collected.map(i => i.assignedContractorName).filter(Boolean))].join(", ")||"Contractor"}
+                {" "}has taken custody
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // ── Tab counts ─────────────────────────────────────────────────────────────
+  const totalJobs = myRmUnits.length + legacyAssignments.length;
+  const TABS = [
+    { id:"assignments", label:"Assignments", count:tab1.length,
+      alert: tab1.some(r=>getRmState(r)===3) ? T.amber : T.accent },
+    { id:"cutting",     label:"Cut / Process", count:tab2.length,
+      alert: tab2.length > 0 ? T.accent : T.textMid },
+    { id:"completed",   label:"Completed", count:tab3.length,
+      alert: T.green },
+    { id:"offcuts",     label:"Offcuts", count:tab4Offcuts.length,
+      alert: tab4Offcuts.some(o=>["pending_store","pending_offcut_verification"].includes(o.status)) ? T.amber : T.green },
+  ];
+
   return (
     <div>
       {/* Header */}
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:22,fontWeight:800,color:T.text}}>My Cutting Jobs</div>
-        <div style={{fontSize:13,color:T.textMid}}>{user.name}</div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:22, fontWeight:800, color:T.text }}>My Cutting Jobs</div>
+        <div style={{ fontSize:13, color:T.textMid }}>{user.name} · {totalJobs} job{totalJobs!==1?"s":""}</div>
       </div>
 
-      {/* Tab bar */}
-      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
-        {[
-          {id:"assigned", label:"📋 Assigned",   desc:"Request material"},
-          {id:"cut",      label:"✂ Start Cut",   desc:"Mark cutting done"},
-          {id:"completed",label:"✅ Completed",   desc:"Recent 50"},
-        ].map(t=>(
-          <button key={t.id} onClick={()=>setMoTab(t.id)} style={{
-            padding:"10px 20px",fontSize:12,fontWeight:moTab===t.id?700:400,
-            color:moTab===t.id?T.accent:T.textMid,background:"transparent",border:"none",
-            borderBottom:moTab===t.id?`2px solid ${T.accent}`:"2px solid transparent",
-            cursor:"pointer",display:"flex",alignItems:"center",gap:8
-          }}>
-            {t.label}
-            {TAB_COUNTS[t.id]>0&&(
-              <span style={{background:t.id==="assigned"?T.amber:t.id==="cut"?T.accent:T.green,
-                color:"#fff",borderRadius:"50%",fontSize:10,padding:"1px 6px",fontWeight:700}}>
-                {TAB_COUNTS[t.id]}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab 1: Assigned — no lot / request rm / awaiting store */}
-      {moTab==="assigned"&&(
-        <div>
-          {assignedUnits.length===0&&legacyAssignments.filter(a=>getLegacyState(a)<=3).length===0&&(
-            <InfoBanner color="blue">No jobs assigned yet. A production release must be created and assigned to you first.</InfoBanner>
-          )}
-          {assignedUnits.map(ru=><RmUnitCard key={ru.rmUnitId+ru.releaseId} ru={ru} />)}
-          {legacyAssignments.filter(a=>getLegacyState(a)<=3).map(a=>{
-            const state=getLegacyState(a); const req=(issueRequests||[]).find(r=>r.machineAssignmentId===a.id); const lot=(stock||[]).find(s=>s.id===a.lotId)||{};
-            return (
-              <div key={a.id} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${STATE_COLORS[state]}`}}>
-                <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{a.matCode}</div>
-                <div style={{fontSize:11,color:T.textMid}}>{a.machineName} · Release {a.releaseId} <Badge color="gray">Legacy</Badge></div>
-                {a.lotId&&<div style={{fontSize:11,color:T.textMid,margin:"6px 0"}}>Lot: {lot.lotNo||a.lotId}</div>}
-                {req&&<div style={{fontSize:11,margin:"6px 0"}}>Request: {req.id} <Badge color={req.status==="issued"?"green":"amber"}>{req.status}</Badge></div>}
-                {state===2&&<button onClick={()=>requestRmLegacy(a)} style={{...css.btn.primary,width:"100%"}}>📦 Request Issue from Store</button>}
-                {state===3&&<div style={{padding:"10px",background:`${T.amber}18`,borderRadius:6,fontSize:12,color:T.amber,textAlign:"center"}}>⏳ Awaiting store — {req?.id}</div>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Tab 2: Start Cut — rm in hand / cutting in progress */}
-      {moTab==="cut"&&(
-        <div>
-          {cutUnits.length===0&&legacyAssignments.filter(a=>[4,5].includes(getLegacyState(a))).length===0&&(
-            <InfoBanner color="blue">No sheets ready to cut. Request material from Tab 1 first.</InfoBanner>
-          )}
-          {cutUnits.map(ru=><RmUnitCard key={ru.rmUnitId+ru.releaseId} ru={ru} />)}
-          {legacyAssignments.filter(a=>[4,5].includes(getLegacyState(a))).map(a=>{
-            const state=getLegacyState(a);
-            return (
-              <div key={a.id} style={{...css.card,marginBottom:12,borderLeft:`4px solid ${STATE_COLORS[state]}`}}>
-                <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{a.matCode}</div>
-                <div style={{fontSize:11,color:T.textMid}}>{a.machineName} <Badge color="gray">Legacy</Badge></div>
-                {state===4&&<button onClick={()=>startCuttingLegacy(a)} style={{...css.btn.green,width:"100%",marginTop:8}}>✂ Start Cutting</button>}
-                {state===5&&<button onClick={()=>completeCuttingLegacy(a)} style={{...css.btn.primary,width:"100%",marginTop:8,padding:"12px 0",fontSize:15,fontWeight:800}}>✓ MARK CUTTING COMPLETE</button>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Tab 3: Completed — last 50, searchable */}
-      {moTab==="completed"&&(
-        <div>
-          <div style={{marginBottom:14}}>
-            <input
-              value={searchCompleted}
-              onChange={e=>setSearchCompleted(e.target.value)}
-              placeholder="Search by sheet ID, material code, or mark no..."
-              style={{...css.input,width:"100%",maxWidth:480}}
-            />
+      {totalJobs === 0 ? (
+        <InfoBanner color="blue">No cutting jobs assigned yet. A production release must be created and assigned to you first.</InfoBanner>
+      ) : (
+        <>
+          {/* Tab bar */}
+          <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                padding:"10px 18px", fontSize:13, fontWeight: tab===t.id?700:400,
+                color: tab===t.id ? T.accent : T.textMid,
+                background:"transparent", border:"none",
+                borderBottom: tab===t.id ? `2px solid ${T.accent}` : "2px solid transparent",
+                cursor:"pointer", display:"flex", alignItems:"center", gap:7
+              }}>
+                {t.label}
+                {t.count > 0 && (
+                  <span style={{ background: tab===t.id ? T.accent : t.alert,
+                    color:"#fff", borderRadius:10, fontSize:11,
+                    fontWeight:800, padding:"1px 7px", minWidth:20, textAlign:"center" }}>
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
-          {filteredCompleted.length===0&&(
-            <InfoBanner color="blue">{searchCompleted?"No results found.":"No completed jobs yet."}</InfoBanner>
-          )}
-          {filteredCompleted.map(ru=>{
-            const allInsts=(instances||[]).filter(i=>i.rmUnitId===ru.rmUnitId);
-            const assigned=allInsts.filter(i=>i.assignedContractorId||i.currentStatus==="awaiting_collection");
-            const cutCleared=allInsts.filter(i=>i.currentStatus==="cut_cleared");
-            return (
-              <div key={ru.rmUnitId+ru.releaseId} style={{...css.card,marginBottom:10,borderLeft:`4px solid ${T.green}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                  <div style={{fontFamily:T.fontMono,fontSize:13,fontWeight:700,color:T.accentHi}}>{ru.rmUnitId}</div>
-                  <Badge color="green">✓ Cut Complete</Badge>
+
+          {/* ── TAB 1: ASSIGNMENTS ── */}
+          {tab === "assignments" && (
+            <div>
+              {tab1.length === 0 ? (
+                <div style={{ textAlign:"center", padding:48, color:T.textLow, fontSize:13 }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>📋</div>
+                  All assigned sheets have been issued — check Cut / Process tab
                 </div>
-                <div style={{fontSize:11,color:T.textMid,marginBottom:6}}>
-                  {ru.matCode} · Release {ru.releaseId}
-                  {ru.cuttingCompleteDate&&<span> · Completed: {ru.cuttingCompleteDate}</span>}
-                  {ru.offcutWt>0&&<span style={{color:T.amber}}> · Offcut: {ru.offcutWt}kg ({ru.offcutDim||"—"})</span>}
-                </div>
-                <details>
-                  <summary style={{fontSize:11,color:T.textMid,cursor:"pointer"}}>
-                    {allInsts.length} instances — {assigned.length} awaiting collection, {cutCleared.length} cut cleared
-                  </summary>
-                  <div style={{paddingTop:8,display:"flex",flexDirection:"column",gap:2}}>
-                    {allInsts.slice(0,30).map(i=>(
-                      <div key={i.instanceId} style={{display:"flex",gap:8,fontSize:10,padding:"2px 0"}}>
-                        <span style={{fontFamily:T.fontMono,color:T.accentHi,minWidth:130}}>{i.markNo}</span>
-                        <span style={{color:T.textMid,minWidth:80}}>{i.drawingNo}</span>
-                        <span style={{color:i.currentStatus==="awaiting_collection"?T.amber:i.currentStatus==="cut_cleared"?T.accent:T.green,marginLeft:"auto"}}>
-                          {i.currentStatus==="awaiting_collection"?"⏳ Awaiting Collection":
-                           i.currentStatus==="cut_cleared"?"📦 Cut Cleared — Machine Bay":
-                           i.currentStage}
-                        </span>
-                      </div>
-                    ))}
-                    {allInsts.length>30&&<div style={{fontSize:10,color:T.textLow}}>+{allInsts.length-30} more</div>}
-                  </div>
-                </details>
-              </div>
-            );
-          })}
-          {/* Legacy completed */}
-          {legacyAssignments.filter(a=>getLegacyState(a)===6).map(a=>(
-            <div key={a.id} style={{...css.card,marginBottom:10,borderLeft:`4px solid ${T.green}`,opacity:0.8}}>
-              <div style={{fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accentHi}}>{a.matCode}</div>
-              <div style={{fontSize:11,color:T.textMid}}>{a.machineName} · <Badge color="gray">Legacy</Badge> · ✓ Complete</div>
+              ) : (
+                <>
+                  {tab1.filter(r=>getRmState(r)===3).length > 0 && (
+                    <SL title="AWAITING STORE ISSUE" count={tab1.filter(r=>getRmState(r)===3).length} color={T.amber} />
+                  )}
+                  {tab1.filter(r=>getRmState(r)===3).map(ru =>
+                    <AssignmentCard key={ru.rmUnitId+ru.releaseId} ru={ru} />
+                  )}
+                  {tab1.filter(r=>getRmState(r)===2).length > 0 && (
+                    <SL title="REQUEST PENDING — ACTION NEEDED" count={tab1.filter(r=>getRmState(r)===2).length} color={T.accent} />
+                  )}
+                  {tab1.filter(r=>getRmState(r)===2).map(ru =>
+                    <AssignmentCard key={ru.rmUnitId+ru.releaseId} ru={ru} />
+                  )}
+                  {tab1.filter(r=>getRmState(r)===1).length > 0 && (
+                    <SL title="NO LOT ASSIGNED" count={tab1.filter(r=>getRmState(r)===1).length} color={T.textLow} />
+                  )}
+                  {tab1.filter(r=>getRmState(r)===1).map(ru =>
+                    <AssignmentCard key={ru.rmUnitId+ru.releaseId} ru={ru} />
+                  )}
+                </>
+              )}
             </div>
-          ))}
-        </div>
+          )}
+
+          {/* ── TAB 2: CUT / PROCESS ── */}
+          {tab === "cutting" && (
+            <div>
+              {tab2.length === 0 ? (
+                <div style={{ textAlign:"center", padding:48, color:T.textLow, fontSize:13 }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>✂️</div>
+                  No sheets in hand yet — material must be issued by store first
+                </div>
+              ) : (
+                <>
+                  {tab2.filter(r=>getRmState(r)===5).length > 0 && (
+                    <SL title="CUTTING IN PROGRESS" count={tab2.filter(r=>getRmState(r)===5).length} color={T.accent} />
+                  )}
+                  {tab2.filter(r=>getRmState(r)===5).map(ru =>
+                    <CutCard key={ru.rmUnitId+ru.releaseId} ru={ru} />
+                  )}
+                  {tab2.filter(r=>getRmState(r)===4).length > 0 && (
+                    <SL title="RM IN HAND — READY TO CUT" count={tab2.filter(r=>getRmState(r)===4).length} color={T.green} />
+                  )}
+                  {tab2.filter(r=>getRmState(r)===4).map(ru =>
+                    <CutCard key={ru.rmUnitId+ru.releaseId} ru={ru} />
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── TAB 3: COMPLETED ── */}
+          {tab === "completed" && (
+            <div>
+              {tab3.length === 0 ? (
+                <div style={{ textAlign:"center", padding:48, color:T.textLow, fontSize:13 }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>✅</div>
+                  No completed sheets yet
+                </div>
+              ) : (
+                <>
+                  <SL title="CUTTING COMPLETE" count={tab3.length} color={T.green}
+                    sub="— showing part disposition status" />
+                  {tab3.map(ru => <CompletedCard key={ru.rmUnitId+ru.releaseId} ru={ru} />)}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── TAB 4: OFFCUTS ── */}
+          {tab === "offcuts" && (
+            <div>
+              {tab4Offcuts.length === 0 ? (
+                <div style={{ textAlign:"center", padding:48, color:T.textLow, fontSize:13 }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>♻️</div>
+                  No offcuts logged yet
+                </div>
+              ) : (
+                <>
+                  {tab4Offcuts.filter(o=>["pending_store","pending_offcut_verification"].includes(o.status)).length > 0 && (
+                    <>
+                      <SL title="PENDING STORE ACCEPTANCE"
+                        count={tab4Offcuts.filter(o=>["pending_store","pending_offcut_verification"].includes(o.status)).length}
+                        color={T.amber} sub="— store team to verify and accept into stock" />
+                      {tab4Offcuts.filter(o=>["pending_store","pending_offcut_verification"].includes(o.status)).map(offcut => (
+                        <div key={offcut.id} style={{ ...css.card, marginBottom:8,
+                          borderLeft:`3px solid ${T.amber}` }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                            <div>
+                              <div style={{ fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.text }}>
+                                {offcut.lotNo}
+                              </div>
+                              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                                {offcut.matCode} · {offcut.size||"—"} · {offcut.wtReceived} kg
+                              </div>
+                              <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>
+                                From: {offcut.parentRmUnitId}
+                              </div>
+                            </div>
+                            <Badge color="amber">Awaiting Store</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                  {tab4Offcuts.filter(o=>!["pending_store","pending_offcut_verification"].includes(o.status)).length > 0 && (
+                    <>
+                      <SL title="ACCEPTED INTO STOCK"
+                        count={tab4Offcuts.filter(o=>!["pending_store","pending_offcut_verification"].includes(o.status)).length}
+                        color={T.green} />
+                      {tab4Offcuts.filter(o=>!["pending_store","pending_offcut_verification"].includes(o.status)).map(offcut => (
+                        <div key={offcut.id} style={{ ...css.card, marginBottom:8,
+                          borderLeft:`3px solid ${T.green}` }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                            <div>
+                              <div style={{ fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.text }}>
+                                {offcut.lotNo}
+                              </div>
+                              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                                {offcut.matCode} · {offcut.size||"—"} · {offcut.wtReceived} kg
+                              </div>
+                              <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>
+                                Stock Lot ID: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{offcut.id}</span>
+                              </div>
+                            </div>
+                            <Badge color="green">In Stock ✓</Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Legacy assignments — shown only in assignments tab as a footnote */}
+          {tab === "assignments" && legacyAssignments.length > 0 && (
+            <div style={{ marginTop:24 }}>
+              <SL title="LEGACY ASSIGNMENTS" count={legacyAssignments.length} color={T.textLow} />
+              {legacyAssignments.map(a => {
+                const state = getLegacyState(a);
+                const req   = (issueRequests||[]).find(r => r.machineAssignmentId === a.id);
+                const lot   = (stock||[]).find(s => s.id === a.lotId) || {};
+                return (
+                  <div key={a.id} style={{ ...css.card, marginBottom:8, opacity:0.8,
+                    borderLeft:`3px solid ${T.textLow}` }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <div>
+                        <div style={{ fontFamily:T.fontMono, fontSize:12, color:T.text }}>{a.matCode}</div>
+                        <div style={{ fontSize:11, color:T.textMid }}>{a.machineName} · Release {a.releaseId}</div>
+                      </div>
+                      <Badge color="gray">Legacy</Badge>
+                    </div>
+                    {state === 2 && <button onClick={()=>{const yr=new Date().getFullYear();const seq=(issueRequests||[]).length+1;const id=`IRQ-${yr}-${String(seq).padStart(3,"0")}`;const lot2=(stock||[]).find(s=>s.id===a.lotId)||{};setIssueRequests(prev=>[...prev,{id,requestDate:today(),requestedBy:user.username,requestedByName:user.name,machineId:a.machineId,machineName:a.machineName,releaseId:a.releaseId,machineAssignmentId:a.id,lotId:a.lotId,lotNo:lot2.lotNo||"",matCode:a.matCode,wtRequested:lot2.wtAvailable||0,status:"pending",remarks:""}]);}} style={{...css.btn.primary,width:"100%",marginTop:8,fontSize:12}}>📦 Request Issue</button>}
+                    {state === 3 && <div style={{marginTop:8,padding:"8px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber,textAlign:"center"}}>⏳ Awaiting store — {req?.id}</div>}
+                    {state >= 4 && <div style={{marginTop:8,padding:"8px",background:T.greenBg,borderRadius:4,fontSize:11,color:T.green,textAlign:"center"}}>✓ {state===6?"Complete":"In Progress"}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -17813,15 +17751,208 @@ const STAGE_TO_PROCESS = {
   assembly:'Assembly QC',
 };
 
-const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, qcRules, setQcRules, overrideLog, setOverrideLog }) => {
+const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors }) => {
   const isAdmin = ["super_admin","qc_admin"].includes(user.role);
   const [tab, setTab] = useState("cutting_qc");
+
+  // ── DPR QC Panel — Fit-Up QC and Weld QC tabs ───────────────────────────────
+  const DprQcPanel = ({ dprStage }) => {
+    const isFitup = dprStage === "fitup_qc";
+    const label   = isFitup ? "Fit-Up" : "Weld";
+    const nextDprStage  = isFitup ? "welding"  : "complete";
+    const nextInstStage = isFitup ? "welding"   : "complete";
+
+    const pending = (dprs || []).filter(d => d.currentStage === dprStage);
+    const [selId,      setSelId]      = useState(null);
+    const [rejectMode, setRejectMode] = useState(false);
+    const [rejectReason, setRejectReason] = useState("");
+    const [checks,     setChecks]     = useState({});
+
+    const CHECKLIST = isFitup
+      ? ["Joint fit-up dimensions verified","Root gap within WPS tolerance","Tack welds acceptable","Distortion within limits","Drawing mark-up checked"]
+      : ["Visual weld inspection passed","Weld size/profile meets spec","Undercut / overlap checked","Weld coverage complete","NDE requirements noted"];
+
+    const selDpr = pending.find(d => d.id === selId);
+    const updDpr = (id, patch) => setDprs(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
+
+    const advInstances = (dpr, toStage) => {
+      setInstances(prev => prev.map(i => {
+        if (i.drawingId !== dpr.drawingId || i.orderId !== dpr.orderId || i.isSideCut) return i;
+        return { ...i, currentStage: toStage, currentStatus: toStage === "complete" ? "complete" : "in_progress",
+          stageHistory: [...(i.stageHistory||[]), { stage: i.currentStage, completedAt: new Date().toISOString(), completedBy: user.username }] };
+      }));
+    };
+
+    const doApprove = () => {
+      if (!selDpr) return;
+      const ts = new Date().toISOString();
+      updDpr(selDpr.id, {
+        currentStage: nextDprStage,
+        currentStatus: nextDprStage === "complete" ? "complete" : "in_progress",
+        [`${isFitup?"fitup":"weld"}QcApprovedAt`]: ts,
+        [`${isFitup?"fitup":"weld"}QcApprovedBy`]: user.username,
+        stageHistory: [...(selDpr.stageHistory||[]), {
+          stage: dprStage, action: "approved", by: user.username, at: ts,
+          checklist: CHECKLIST.filter(c => checks[c])
+        }]
+      });
+      advInstances(selDpr, nextInstStage);
+      setSelId(null); setChecks({}); setRejectMode(false); setRejectReason("");
+    };
+
+    const doReject = () => {
+      if (!selDpr || !rejectReason.trim()) return;
+      const ts = new Date().toISOString();
+      const prevStage = isFitup ? "fitup" : "welding";
+      updDpr(selDpr.id, {
+        currentStage: prevStage, currentStatus: "in_progress",
+        stageHistory: [...(selDpr.stageHistory||[]), {
+          stage: dprStage, action: "rejected", by: user.username, at: ts, reason: rejectReason
+        }]
+      });
+      setInstances(prev => prev.map(i => {
+        if (i.drawingId !== selDpr.drawingId || i.orderId !== selDpr.orderId || i.isSideCut) return i;
+        return { ...i, currentStage: prevStage, currentStatus: "in_progress",
+          stageHistory: [...(i.stageHistory||[]), { stage: dprStage, action: "rejected", at: ts, reason: rejectReason }] };
+      }));
+      setSelId(null); setChecks({}); setRejectMode(false); setRejectReason("");
+    };
+
+    if (pending.length === 0) return (
+      <div style={{ padding:"40px 20px", textAlign:"center", color:T.textLow, fontSize:13 }}>
+        ✓ No drawings pending {label} QC
+      </div>
+    );
+
+    if (selDpr) {
+      const order    = (orders||[]).find(o => o.id === selDpr.orderId) || {};
+      const drawing  = (order.drawings||[]).find(d => d.id === selDpr.drawingId) || {};
+      const fitupCon = (contractors||[]).find(c => c.id === selDpr.fitupContractorId);
+      const weldCon  = (contractors||[]).find(c => c.id === selDpr.weldContractorId);
+      const drgInsts = (instances||[]).filter(i => i.drawingId === selDpr.drawingId && i.orderId === selDpr.orderId && !i.isSideCut);
+      const allChecked = CHECKLIST.every(c => checks[c]);
+      const completedAt = isFitup ? selDpr.fitupCompleteAt : selDpr.weldCompleteAt;
+      return (
+        <div>
+          <button onClick={() => { setSelId(null); setChecks({}); setRejectMode(false); setRejectReason(""); }}
+            style={{ ...css.btn.ghost, marginBottom:16 }}>← Back to queue</button>
+          <div style={{ ...css.card, marginBottom:14 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
+              <div>
+                <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:15 }}>{selDpr.drawingNo || selDpr.drawingId}</div>
+                <div style={{ fontSize:12, color:T.textMid, marginTop:3 }}>{order.orderNo} · {order.clientName}</div>
+                {drawing.assemblyGroup && <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>Assembly: {drawing.assemblyGroup}</div>}
+              </div>
+              <Badge color="amber">{label} QC Pending</Badge>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              <div style={{ background:T.bgInput, borderRadius:6, padding:"8px 12px" }}>
+                <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase" }}>Fit-Up By</div>
+                <div style={{ fontSize:12, fontWeight:600, color:T.text, marginTop:2 }}>{fitupCon?.name || "—"}</div>
+              </div>
+              <div style={{ background:T.bgInput, borderRadius:6, padding:"8px 12px" }}>
+                <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase" }}>Weld By</div>
+                <div style={{ fontSize:12, fontWeight:600, color:T.text, marginTop:2 }}>{weldCon?.name || "—"}</div>
+              </div>
+              <div style={{ background:T.bgInput, borderRadius:6, padding:"8px 12px" }}>
+                <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase" }}>Parts</div>
+                <div style={{ fontSize:12, fontWeight:600, color:T.text, marginTop:2 }}>{drgInsts.length} instances</div>
+              </div>
+            </div>
+          </div>
+          <div style={{ ...css.card, marginBottom:14 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>
+              {label} QC Checklist
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {CHECKLIST.map(item => (
+                <label key={item} style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", padding:"8px 10px",
+                  background:checks[item] ? T.greenBg : T.bgInput, borderRadius:6,
+                  border:`1px solid ${checks[item] ? T.green : T.border}` }}>
+                  <input type="checkbox" checked={!!checks[item]} onChange={e => setChecks(p => ({ ...p, [item]: e.target.checked }))} />
+                  <span style={{ fontSize:13, color:checks[item] ? T.green : T.text, fontWeight:checks[item]?600:400 }}>{item}</span>
+                  {checks[item] && <span style={{ marginLeft:"auto", color:T.green, fontSize:12 }}>✓</span>}
+                </label>
+              ))}
+            </div>
+            <div style={{ marginTop:10, fontSize:11, color:T.textLow }}>
+              {CHECKLIST.filter(c=>checks[c]).length} / {CHECKLIST.length} items checked
+            </div>
+          </div>
+          {!rejectMode ? (
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={doApprove} disabled={!allChecked}
+                style={{ ...css.btn.green, flex:1, padding:"10px 0", fontSize:13, opacity:allChecked?1:0.45 }}>
+                ✓ Approve {label} QC — Advance to {nextDprStage==="complete"?"Complete":nextDprStage==="welding"?"Welding":nextDprStage}
+                {!allChecked && <span style={{ fontSize:11, marginLeft:6 }}>({CHECKLIST.filter(c=>!checks[c]).length} remaining)</span>}
+              </button>
+              <button onClick={() => setRejectMode(true)} style={{ ...css.btn.ghost, color:T.red, padding:"10px 16px" }}>✕ Reject</button>
+            </div>
+          ) : (
+            <div style={{ padding:14, background:T.redBg, borderRadius:8, border:`1px solid ${T.redLo}` }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.red, marginBottom:8 }}>Rejection Reason — Drawing returns to {isFitup?"Fit-Up":"Welding"}</div>
+              <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={2}
+                placeholder="State reason for rejection…" style={{ ...css.input, width:"100%", resize:"vertical", marginBottom:8 }} />
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={doReject} disabled={!rejectReason.trim()}
+                  style={{ ...css.btn.primary, background:T.red, opacity:rejectReason.trim()?1:0.45 }}>Confirm Reject</button>
+                <button onClick={() => setRejectMode(false)} style={css.btn.ghost}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Queue list
+    return (
+      <div>
+        <div style={{ fontSize:12, color:T.textLow, marginBottom:14 }}>
+          {pending.length} drawing{pending.length!==1?"s":""} awaiting {label} QC approval
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          {pending.map(dpr => {
+            const order    = (orders||[]).find(o => o.id === dpr.orderId) || {};
+            const fitupCon = (contractors||[]).find(c => c.id === dpr.fitupContractorId);
+            const weldCon  = (contractors||[]).find(c => c.id === dpr.weldContractorId);
+            const drgInsts = (instances||[]).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
+            const completedAt = isFitup ? dpr.fitupCompleteAt : dpr.weldCompleteAt;
+            const ageDays = completedAt ? Math.floor((Date.now()-new Date(completedAt).getTime())/86400000) : null;
+            return (
+              <div key={dpr.id} onClick={() => setSelId(dpr.id)}
+                style={{ ...css.card, cursor:"pointer", borderLeft:`3px solid ${T.amber}` }}
+                onMouseEnter={e=>e.currentTarget.style.background=T.bgHover}
+                onMouseLeave={e=>e.currentTarget.style.background=T.bgCard}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                  <div>
+                    <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo||dpr.drawingId}</div>
+                    <div style={{ fontSize:11, color:T.textMid, marginTop:3 }}>{order.orderNo} · {order.clientName}</div>
+                    <div style={{ fontSize:11, color:T.textLow, marginTop:4, display:"flex", gap:12 }}>
+                      <span>Fit-Up: <strong style={{color:T.text}}>{fitupCon?.name||"—"}</strong></span>
+                      <span>Weld: <strong style={{color:T.text}}>{weldCon?.name||"—"}</strong></span>
+                      <span>{drgInsts.length} parts</span>
+                      {ageDays!==null&&<span style={{color:ageDays>2?T.amber:T.textLow}}>Waiting {ageDays}d</span>}
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
+                    <Badge color="amber">{label} QC</Badge>
+                    <span style={{ fontSize:11, color:T.textLow }}>Tap to inspect →</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  // ── end DprQcPanel ──────────────────────────────────────────────────────────
 
   // ── Inspection tabs config ──
   const INSP_TABS = [
     { id:"cutting_qc", label:"Cutting QC",    stages:["cutting_qc"] },
-    { id:"fitup",      label:"Fit-Up QC",     stages:["tpi_fitup"] },
-    { id:"weld",       label:"Weld QC",       stages:["tpi_weld"] },
+    { id:"fitup",      label:"Fit-Up QC",     stages:["fitup","tpi_fitup"] },
+    { id:"weld",       label:"Weld QC",       stages:["welding","tpi_weld"] },
     { id:"blast",      label:"Blast QC",      stages:["blasting","tpi_blast"] },
     { id:"paint",      label:"Paint QC",      stages:["painting","tpi_paint"] },
     { id:"mdcc",       label:"MDCC",          stages:["mdcc"] },
@@ -17876,19 +18007,13 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
 
   // ── Inspection Queue Panel ──
   const InspectionPanel = ({ stages }) => {
-    // Pending instances — these drive the queue
     const myQueue = instances.filter(i=>
       i.currentStatus==="pending_supervisor" &&
       stages.includes(i.currentStage) &&
       (!i.assignedEngineer || i.assignedEngineer===user.id || i.assignedEngineer===user.username)
     );
 
-    // For cutting QC: collect ALL instances per rmUnit (including already approved side-cuts)
-    // so QC engineer sees the full sheet, not just pending parts
-    const isCuttingTab = stages.includes("cutting_qc");
-    const pendingRmUnitIds = new Set(myQueue.map(i=>i.rmUnitId).filter(Boolean));
-
-    // Group by rmUnitId — one group per physical sheet
+    // Group by rmUnitId first, then by markNo+drawingId
     const rmUnitGroups = {};
     myQueue.forEach(i=>{
       const rmKey = i.rmUnitId||`no-rmunit-${i.drawingId}`;
@@ -17897,21 +18022,10 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
         drawingNo:i.drawingNo,
         orderId:i.orderId,
         stage:i.currentStage,
-        parts:[],          // pending parts — used for approval
-        allParts:[],       // ALL parts on this sheet — for display only
+        parts:[],
       };
       rmUnitGroups[rmKey].parts.push(i);
     });
-
-    // For cutting QC: augment each group with ALL instances on that rmUnit
-    if(isCuttingTab){
-      pendingRmUnitIds.forEach(rmUnitId=>{
-        if(!rmUnitGroups[rmUnitId]) return;
-        // Find all instances on this sheet regardless of status
-        const allOnSheet=(instances||[]).filter(i=>i.rmUnitId===rmUnitId);
-        rmUnitGroups[rmUnitId].allParts=allOnSheet;
-      });
-    }
 
     const [selRmUnit, setSelRmUnit] = useState(null);
     const [checks, setChecks] = useState({});
@@ -17921,71 +18035,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
 
     const rmGroups = Object.values(rmUnitGroups);
 
-    // ── DPR-level QC queue (fitup_qc / weld_qc) ──────────────────────────────
-    // Detect tab type by checking if stages covers fitup or weld domain
-    // (stages array may only contain tpi_fitup/tpi_weld now, but tab still owns DPR QC)
-    const isFitupTab = stages.includes("fitup") || stages.includes("tpi_fitup");
-    const isWeldTab  = stages.includes("welding") || stages.includes("tpi_weld");
-    const dprQcStage = isFitupTab ? "fitup_qc" : isWeldTab ? "weld_qc" : null;
-    const dprQcQueue = dprQcStage ? (dprs||[]).filter(d=>d.currentStage===dprQcStage) : [];
-
-    const [selDprQc,    setSelDprQc]    = useState(null);
-    const [dprChecks,   setDprChecks]   = useState({});
-    const [dprReject,   setDprReject]   = useState(false);
-    const [dprRejectReason, setDprRejectReason] = useState("");
-    const [dprDimReadings,  setDprDimReadings]  = useState({});
-
-    const dprChecklist = isFitupTab ? (STAGE_CHECKLISTS.fitup||[]) : (STAGE_CHECKLISTS.welding||[]);
-    const dprAllChecked = dprChecklist.length===0 || dprChecklist.every(c=>dprChecks[c]);
-
-    const doDprApprove = (dpr) => {
-      const ts = new Date().toISOString();
-      const nextDprStage = isFitupTab ? "welding" : "complete";
-      const nextDprStatus = isFitupTab ? "in_progress" : "complete";
-      setDprs(prev=>prev.map(d=>d.id!==dpr.id?d:{...d,
-        currentStage:nextDprStage, currentStatus:nextDprStatus,
-        ...(isFitupTab?{fitupQcApprovedAt:ts,fitupQcApprovedBy:user.username}:{weldQcApprovedAt:ts,weldQcApprovedBy:user.username}),
-        stageHistory:[...(d.stageHistory||[]),{
-          stage:dprQcStage, action:"approved", by:user.username, at:ts,
-          checklist:Object.keys(dprChecks).filter(k=>dprChecks[k]),
-          dimReadings:dprDimReadings
-        }]
-      }));
-      // Advance instances: fitup_qc approve → instances go to welding/pending; weld_qc → complete
-      setInstances(prev=>prev.map(i=>{
-        if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
-        if(i.currentStatus==="pending_supervisor"&&(isFitupTab?i.currentStage==="fitup":i.currentStage==="welding")) {
-          const ns=isFitupTab?"welding":"complete";
-          return {...i,currentStage:ns,currentStatus:"pending",
-            stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,status:"approved",approvedBy:user.username,approvedAt:ts}]};
-        }
-        return i;
-      }));
-      setSelDprQc(null); setDprChecks({}); setDprReject(false); setDprRejectReason(""); setDprDimReadings({});
-    };
-
-    const doDprReject = (dpr) => {
-      if(!dprRejectReason.trim()) return;
-      const ts = new Date().toISOString();
-      const reworkStage  = isFitupTab ? "fitup" : "welding";
-      setDprs(prev=>prev.map(d=>d.id!==dpr.id?d:{...d,
-        currentStage:reworkStage, currentStatus:"rework",
-        stageHistory:[...(d.stageHistory||[]),{
-          stage:dprQcStage, action:"rejected_rework", by:user.username, at:ts, reason:dprRejectReason
-        }]
-      }));
-      setInstances(prev=>prev.map(i=>{
-        if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
-        if(i.currentStatus==="pending_supervisor") {
-          return {...i,currentStage:reworkStage,currentStatus:"in_progress",rejectionCount:(i.rejectionCount||0)+1,
-            stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,status:"rejected",rejectedBy:user.username,rejectedAt:ts,reason:dprRejectReason}]};
-        }
-        return i;
-      }));
-      setSelDprQc(null); setDprChecks({}); setDprReject(false); setDprRejectReason("");
-    };
-
-    if(rmGroups.length===0&&dprQcQueue.length===0) return (
+    if(rmGroups.length===0) return (
       <div style={{padding:"40px 20px",textAlign:"center",color:T.textLow,fontSize:13}}>
         ✓ No pending {stages[0].replace(/_/g," ")} inspections
       </div>
@@ -17998,111 +18048,32 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
       const allChecked = checklist.length>0 && checklist.every(item=>checks[item]);
       const doApprove = () => {
         const ts = new Date().toISOString();
-        const isFitupQc  = stages.includes("fitup");
-        const isWeldQc   = stages.includes("welding") || stages.includes("tpi_weld");
-
-        // Advance ALL instances in this rmUnit group (full sheet approval)
-        // - Released drawing parts → fitup/pending + awaiting_collection
-        // - Side-cut parts (unreleased drawings) → cut_cleared at machine bay
-        const isCuttingQcApproval = stages.includes("cutting_qc");
         setInstances(prev=>prev.map(inst=>{
           if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
-          if(isCuttingQcApproval){
-            // Side-cut: mark as cut_cleared, store machine bay info
-            if(inst.isSideCut || inst.releaseId==="side_cut") {
-              return {...inst,
-                currentStage:"cutting_qc",
-                currentStatus:"cut_cleared",
-                cutQcApprovedAt:ts,
-                cutQcApprovedBy:user.username,
-                machineBay:`machine_bay:${inst.cutBy||user.username}`,
-                stageHistory:[...(inst.stageHistory||[]),{
-                  stage:"cutting_qc", status:"approved_cut_cleared",
-                  approvedBy:user.username, approvedAt:ts
-                }]
-              };
-            }
-            // Released drawing part → fitup/pending + awaiting collection
-            return {...inst,
-              currentStage:"fitup",
-              currentStatus:"awaiting_collection",
-              cutQcApprovedAt:ts,
-              cutQcApprovedBy:user.username,
-              machineBay:`machine_bay:${inst.cutBy||user.username}`,
-              collectionDueBy:new Date(Date.now()+4*3600000).toISOString(),
-              stageHistory:[...(inst.stageHistory||[]),{
-                stage:"cutting_qc", status:"approved",
-                approvedBy:user.username, approvedAt:ts,
-                checklistItems:Object.keys(checks).filter(k=>checks[k]),
-                dimReadings:dimReadings
-              }]
-            };
-          }
-          // Non-cutting QC (fitup/weld) — original flow
           const nextStage = STAGE_NEXT[inst.currentStage]||inst.currentStage;
+          // After cutting_qc passes, move to fitup and notify weld contractor
+          const nextStatus = nextStage==="fitup"||nextStage==="welding" ? "pending" : "pending";
           return {...inst,
             currentStage: nextStage,
-            currentStatus: "pending",
-            stageHistory:[...(inst.stageHistory||[]),{
+            currentStatus: nextStatus,
+            stageHistory: [...(inst.stageHistory||[]),{
               stage:inst.currentStage, status:"approved",
               approvedBy:user.username, approvedAt:ts,
               checklistItems:Object.keys(checks).filter(k=>checks[k]),
-              dimReadings:dimReadings
+              dimReadings: dimReadings
             }]
           };
         }));
-
-        // Advance the DPR when fit-up QC or weld QC is approved
-        if ((isFitupQc || isWeldQc) && setDprs) {
-          const drawingId = selGroup.parts[0]?.drawingId;
-          const orderId   = selGroup.parts[0]?.orderId;
-          if (drawingId && orderId) {
-            setDprs(prev=>prev.map(dpr=>{
-              if (dpr.drawingId !== drawingId || dpr.orderId !== orderId) return dpr;
-              if (isFitupQc && dpr.currentStage === "fitup_qc") {
-                return {...dpr,
-                  currentStage:"welding", currentStatus:"in_progress",
-                  fitupQcApprovedAt:ts, fitupQcApprovedBy:user.username,
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"fitup_qc", action:"approved",
-                    by:user.username, at:ts,
-                    checklist:Object.keys(checks).filter(k=>checks[k])
-                  }]
-                };
-              }
-              if (isWeldQc && dpr.currentStage === "weld_qc") {
-                return {...dpr,
-                  currentStage:"complete", currentStatus:"complete",
-                  weldQcApprovedAt:ts, weldQcApprovedBy:user.username,
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"weld_qc", action:"approved",
-                    by:user.username, at:ts,
-                    checklist:Object.keys(checks).filter(k=>checks[k])
-                  }]
-                };
-              }
-              return dpr;
-            }));
-          }
-        }
-
         setSelRmUnit(null); setChecks({}); setDimReadings({}); setRejectMode(false); setRejectReason("");
       };
       const doReject = () => {
         if(!rejectReason.trim()) return;
         const ts = new Date().toISOString();
-        const isFitupQc = stages.includes("fitup");
-        const isWeldQc  = stages.includes("welding") || stages.includes("tpi_weld");
-        // Instances: rework back to fitup (fit-up rejection) or welding (weld rejection)
-        const rejectToStage  = isFitupQc ? "fitup"    : isWeldQc ? "welding"    : "cutting";
-        const rejectToStatus = isFitupQc ? "in_progress" : isWeldQc ? "in_progress" : "pending";
         setInstances(prev=>prev.map(inst=>{
           if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
           return {...inst,
-            currentStage: rejectToStage,
-            currentStatus: rejectToStatus,
-            rejectionCount: (inst.rejectionCount||0)+1,
-            qualityConcernFlag: (inst.rejectionCount||0)>=1,
+            currentStage:"cutting",
+            currentStatus:"pending",
             stageHistory:[...(inst.stageHistory||[]),{
               stage:inst.currentStage, status:"rejected",
               rejectedBy:user.username, rejectedAt:ts,
@@ -18110,35 +18081,6 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
             }]
           };
         }));
-        // DPR: push back to fitup or welding for rework
-        if ((isFitupQc || isWeldQc) && setDprs) {
-          const drawingId = selGroup.parts[0]?.drawingId;
-          const orderId   = selGroup.parts[0]?.orderId;
-          if (drawingId && orderId) {
-            setDprs(prev=>prev.map(dpr=>{
-              if (dpr.drawingId !== drawingId || dpr.orderId !== orderId) return dpr;
-              if (isFitupQc && dpr.currentStage === "fitup_qc") {
-                return {...dpr,
-                  currentStage:"fitup", currentStatus:"rework",
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"fitup_qc", action:"rejected_rework",
-                    by:user.username, at:ts, reason:rejectReason
-                  }]
-                };
-              }
-              if (isWeldQc && dpr.currentStage === "weld_qc") {
-                return {...dpr,
-                  currentStage:"welding", currentStatus:"rework",
-                  stageHistory:[...(dpr.stageHistory||[]),{
-                    stage:"weld_qc", action:"rejected_rework",
-                    by:user.username, at:ts, reason:rejectReason
-                  }]
-                };
-              }
-              return dpr;
-            }));
-          }
-        }
         setSelRmUnit(null); setChecks({}); setRejectMode(false); setRejectReason("");
       };
 
@@ -18151,18 +18093,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
                 <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:14}}>{selGroup.rmUnitId||selGroup.drawingNo}</div>
                 <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{selGroup.drawingNo} · {selGroup.orderId} · <Badge color="blue">{selGroup.stage.replace(/_/g," ")}</Badge></div>
               </div>
-              <div style={{fontSize:12,color:T.textMid}}>
-                {selGroup.allParts?.length>0?(
-                  <span>
-                    <span style={{color:T.green,fontWeight:700}}>{selGroup.parts.length}</span>
-                    <span style={{color:T.textLow}}> pending / </span>
-                    <span style={{fontWeight:700}}>{selGroup.allParts.length}</span>
-                    <span style={{color:T.textLow}}> total on sheet</span>
-                  </span>
-                ):(
-                  <span>{selGroup.parts.length} part{selGroup.parts.length!==1?"s":""}</span>
-                )}
-              </div>
+              <div style={{fontSize:12,color:T.textMid}}>{selGroup.parts.length} part{selGroup.parts.length!==1?"s":""}</div>
             </div>
 
             {/* Parts table */}
@@ -18176,28 +18107,20 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
               </thead>
               <tbody>
                 {(()=>{
-                  // Show allParts if available (cutting QC — all parts on sheet)
-                  // otherwise show parts (pending only)
-                  const displayParts = selGroup.allParts?.length>0 ? selGroup.allParts : selGroup.parts;
-                  const pendingIds = new Set(selGroup.parts.map(p=>p.instanceId));
-                  // Deduplicate by markNo
+                  // Deduplicate by markNo — show unique parts with qty count
                   const uniqueParts={};
-                  displayParts.forEach(p=>{
-                    if(!uniqueParts[p.markNo]) uniqueParts[p.markNo]={...p,qty:0,isPending:pendingIds.has(p.instanceId)};
+                  selGroup.parts.forEach(p=>{
+                    if(!uniqueParts[p.markNo]) uniqueParts[p.markNo]={...p,qty:0};
                     uniqueParts[p.markNo].qty++;
-                    if(pendingIds.has(p.instanceId)) uniqueParts[p.markNo].isPending=true;
                   });
                   return Object.values(uniqueParts).map(p=>{
                     const isSideCut=p.isSideCut||p.releaseId==="side_cut";
                     const isAssigned=!!p.assignedContractorId;
                     return (
-                      <tr key={p.markNo} style={{borderBottom:`1px solid ${T.border}33`,
-                        background:!p.isPending?`${T.green}06`:isSideCut?`${T.amber}08`:"transparent",
-                        opacity:!p.isPending?0.7:1}}>
+                      <tr key={p.markNo} style={{borderBottom:`1px solid ${T.border}33`,background:isSideCut?`${T.amber}08`:"transparent"}}>
                         <td style={{padding:"5px 10px",fontFamily:T.fontMono,color:isSideCut?T.amber:T.accentHi,fontWeight:600}}>
                           {p.markNo}
                           {isSideCut&&<span style={{marginLeft:4,fontSize:9,color:T.amber}}>side cut</span>}
-                          {!p.isPending&&<span style={{marginLeft:4,fontSize:9,color:T.green,fontWeight:700}}>✓ done</span>}
                         </td>
                         <td style={{padding:"5px 10px",fontFamily:T.fontMono,fontSize:10,color:T.textMid}}>{p.drawingNo}</td>
                         <td style={{padding:"5px 10px",fontSize:10}}>{p.matCode}</td>
@@ -18270,163 +18193,9 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
       );
     }
 
-    // Queue list view — DPR section first, then instance section
+    // Queue list view
     return (
-      <div>
-        {/* ── DPR-level QC queue ──────────────────────────────────────────── */}
-        {dprQcQueue.length>0&&(
-          <div style={{marginBottom:24}}>
-            <div style={{fontSize:13,fontWeight:800,color:T.amber,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
-              <span>📋 DRAWING-LEVEL QC — {isFitupTab?"FIT-UP QC":"WELD QC"}</span>
-              <span style={{background:T.amber,color:"#000",fontSize:10,fontWeight:800,borderRadius:8,padding:"1px 6px"}}>{dprQcQueue.length}</span>
-            </div>
-            {selDprQc ? (()=>{
-              const dpr=selDprQc;
-              const order=(orders||[]).find(o=>o.id===dpr.orderId);
-              const drawing=order?(order.drawings||[]).find(d=>d.id===dpr.drawingId):null;
-              const drgParts=order?(order.parts||[]).filter(p=>p.drawingId===dpr.drawingId&&p.fabType==="Fabricate"):[];
-              return (
-                <div style={{...css.card,border:`1px solid ${T.amber}44`}}>
-                  <button onClick={()=>{setSelDprQc(null);setDprChecks({});setDprReject(false);setDprRejectReason("");}} style={{...css.btn.ghost,marginBottom:14}}>← Back to queue</button>
-                  {/* Header */}
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}}>
-                    <div>
-                      <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <div style={{fontFamily:T.fontMono,fontWeight:800,color:T.accentHi,fontSize:16}}>{dpr.drawingNo}</div>
-                        {drawing?.driveLink&&(
-                          <a href={drawing.driveLink} target="_blank" rel="noopener noreferrer"
-                            style={{fontSize:11,color:T.accent,background:`${T.accent}18`,border:`1px solid ${T.accent}44`,
-                              borderRadius:4,padding:"2px 8px",textDecoration:"none",display:"inline-flex",alignItems:"center",gap:4}}
-                            onClick={e=>e.stopPropagation()}>
-                            📄 Open Drawing
-                          </a>
-                        )}
-                      </div>
-                      <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{dpr.orderId} · {order?.clientId||""}</div>
-                      {drawing?.title&&<div style={{fontSize:11,color:T.textLow,marginTop:1}}>{drawing.title}</div>}
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:11,fontWeight:700,color:T.amber,padding:"4px 12px",background:T.amberBg,borderRadius:4,border:`1px solid ${T.amber}44`}}>
-                        {isFitupTab?"Fit-Up QC":"Weld QC"} Pending
-                      </div>
-                      <div style={{fontSize:10,color:T.textMid,marginTop:4}}>{drgParts.length} parts · {(dpr.totalWt/1000).toFixed(2)}T</div>
-                    </div>
-                  </div>
-                  {/* Contractor info */}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16,padding:"10px 14px",background:T.bgInput,borderRadius:6}}>
-                    <div>
-                      <div style={{fontSize:10,color:T.textLow,marginBottom:2}}>FIT-UP CONTRACTOR</div>
-                      <div style={{fontSize:13,fontWeight:600,color:T.text}}>{dpr.fitupContractorName||"—"}</div>
-                      {dpr.fitupStartedAt&&<div style={{fontSize:10,color:T.textLow,marginTop:1}}>Started: {dpr.fitupStartedAt.slice(0,10)}</div>}
-                      {dpr.fitupCompleteAt&&<div style={{fontSize:10,color:T.green,marginTop:1}}>Completed: {dpr.fitupCompleteAt.slice(0,10)}</div>}
-                    </div>
-                    <div>
-                      <div style={{fontSize:10,color:T.textLow,marginBottom:2}}>WELDING CONTRACTOR</div>
-                      <div style={{fontSize:13,fontWeight:600,color:T.text}}>{dpr.weldContractorName||"—"}</div>
-                    </div>
-                  </div>
-                  {/* Parts summary */}
-                  <div style={{marginBottom:16}}>
-                    <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>PARTS IN THIS DRAWING</div>
-                    <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                      {drgParts.map(p=>{
-                        const tooltip=`${p.desc||""}${p.matCode?` · ${p.matCode}`:""}${p.length?` · L:${p.length}mm`:""}${p.width?` × W:${p.width}mm`:""}${p.clientUnitWt?` · ${p.clientUnitWt}kg/pc`:""}`;
-                        return (
-                          <span key={p.markNo} title={tooltip}
-                            style={{fontFamily:T.fontMono,fontSize:10,color:T.accentHi,
-                              background:`${T.accent}18`,borderRadius:3,padding:"2px 6px",
-                              border:`1px solid ${T.accent}33`,cursor:"help"}}>
-                            {p.markNo}
-                            <span style={{fontSize:9,color:T.textLow,marginLeft:3}}>×{p.qtyPerDrg||1}</span>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  {/* Checklist */}
-                  <div style={{marginBottom:16}}>
-                    <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>
-                      {isFitupTab?"FIT-UP":"WELDING"} QC CHECKLIST
-                    </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                      {dprChecklist.map(item=>(
-                        <label key={item} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",
-                          background:dprChecks[item]?T.greenBg:T.bgInput,borderRadius:4,cursor:"pointer",
-                          border:`1px solid ${dprChecks[item]?T.green:T.border}`,fontSize:12}}>
-                          <input type="checkbox" checked={!!dprChecks[item]} onChange={e=>setDprChecks(p=>({...p,[item]:e.target.checked}))} />
-                          <span style={{color:dprChecks[item]?T.green:T.text}}>{item}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Dimension readings */}
-                  <div style={{marginBottom:16}}>
-                    <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8}}>KEY DIMENSIONS (mm) — optional</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                      {["Overall Length","Overall Width","Overall Height","Diagonal 1","Diagonal 2"].map(dim=>(
-                        <div key={dim}>
-                          <label style={{...css.label,fontSize:10}}>{dim}</label>
-                          <input type="number" value={dprDimReadings[dim]||""} onChange={e=>setDprDimReadings(p=>({...p,[dim]:e.target.value}))}
-                            style={{...css.input,fontSize:11}} placeholder="mm" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Actions */}
-                  {!dprReject?(
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>doDprApprove(dpr)} disabled={!dprAllChecked}
-                        style={{...css.btn.green,flex:1,padding:"12px 0",fontSize:14,opacity:dprAllChecked?1:0.45}}>
-                        ✓ Approve {isFitupTab?"Fit-Up QC → Advance to Welding":"Weld QC → Mark Drawing Complete"}
-                        {!dprAllChecked&&<span style={{fontSize:11,marginLeft:6}}>({dprChecklist.filter(c=>!dprChecks[c]).length} items remaining)</span>}
-                      </button>
-                      <button onClick={()=>setDprReject(true)} style={{...css.btn.ghost,color:T.red,padding:"12px 16px"}}>✕ Reject</button>
-                    </div>
-                  ):(
-                    <div style={{padding:12,background:T.redBg,borderRadius:6,border:`1px solid ${T.red}44`}}>
-                      <div style={{fontSize:12,fontWeight:700,color:T.red,marginBottom:8}}>Rejection Reason — Drawing sent back for rework</div>
-                      <textarea value={dprRejectReason} onChange={e=>setDprRejectReason(e.target.value)}
-                        rows={2} placeholder="State reason for rejection..." style={{...css.input,width:"100%",resize:"vertical",marginBottom:8}} />
-                      <div style={{display:"flex",gap:8}}>
-                        <button onClick={()=>doDprReject(dpr)} disabled={!dprRejectReason.trim()}
-                          style={{...css.btn.primary,background:T.red,opacity:dprRejectReason.trim()?1:0.45}}>Confirm Reject</button>
-                        <button onClick={()=>setDprReject(false)} style={css.btn.ghost}>Cancel</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })():(
-              <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12,marginBottom:16}}>
-                <thead>
-                  <tr style={{background:T.bgInput}}>
-                    {["Drawing No","Order","Fit-Up Contractor","Weld Contractor","Parts","Started","Action"].map(h=>(
-                      <th key={h} style={{padding:"8px 10px",fontSize:10,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {dprQcQueue.map(dpr=>(
-                    <tr key={dpr.id} style={{borderBottom:`1px solid ${T.border}`,cursor:"pointer"}} onClick={()=>{setSelDprQc(dpr);setDprChecks({});setDprReject(false);}}>
-                      <td style={{padding:"8px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.accentHi}}>{dpr.drawingNo}</td>
-                      <td style={{padding:"8px 10px",fontSize:11}}>{dpr.orderId}</td>
-                      <td style={{padding:"8px 10px",fontSize:11}}>{dpr.fitupContractorName||"—"}</td>
-                      <td style={{padding:"8px 10px",fontSize:11}}>{dpr.weldContractorName||"—"}</td>
-                      <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>{dpr.totalParts}</td>
-                      <td style={{padding:"8px 10px",fontSize:11,color:T.textMid}}>{(isFitupTab?dpr.fitupCompleteAt:dpr.weldCompleteAt)?.slice(0,10)||"—"}</td>
-                      <td style={{padding:"8px 10px"}}>
-                        <button style={{...css.btn.amber,fontSize:11,padding:"3px 10px"}} onClick={e=>{e.stopPropagation();setSelDprQc(dpr);setDprChecks({});setDprReject(false);}}>Inspect →</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-        {/* ── Instance-level QC queue (cutting QC only for this tab) ──────── */}
-        {rmGroups.length>0&&(
-        <div style={{overflowX:"auto"}}>
+      <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
           <thead>
             <tr style={{background:T.bgInput}}>
@@ -18445,14 +18214,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
                   <td style={{padding:"8px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:11}}>{g.rmUnitId||g.drawingNo}</td>
                   <td style={{padding:"8px 10px",fontSize:11}}>{g.orderId}</td>
                   <td style={{padding:"8px 10px"}}><Badge color="blue">{g.stage.replace(/_/g," ")}</Badge></td>
-                  <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>
-                    {g.allParts?.length>0?(
-                      <span>
-                        <span style={{color:T.green,fontWeight:700}}>{g.parts.length}</span>
-                        <span style={{color:T.textLow}}> / {g.allParts.length} on sheet</span>
-                      </span>
-                    ):g.parts.length}
-                  </td>
+                  <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>{g.parts.length}</td>
                   <td style={{padding:"8px 10px",fontSize:11,color:T.textMid}}>{g.parts[0]?.cutBy||"—"}</td>
                   <td style={{padding:"8px 10px",fontSize:11,color:waitColor}}>{hoursWaiting>0?`${hoursWaiting}h ago`:"Just now"}</td>
                   <td style={{padding:"8px 10px"}}>
@@ -18463,13 +18225,6 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
             })}
           </tbody>
         </table>
-        </div>
-        )}
-        {rmGroups.length===0&&dprQcQueue.length===0&&(
-          <div style={{padding:"40px 20px",textAlign:"center",color:T.textLow,fontSize:13}}>
-            ✓ No pending {isFitupTab?"Fit-Up QC":isWeldTab?"Weld QC":(stages[0]||"").replace(/_/g," ")} inspections
-          </div>
-        )}
       </div>
     );
   };
@@ -18481,16 +18236,15 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
       <div style={{display:"flex",gap:0,marginBottom:20,borderBottom:`1px solid ${T.border}`,flexWrap:"wrap"}}>
         {allTabs.map(t=>{
           const isInsp=INSP_TABS.find(x=>x.id===t.id);
-          const instPending=isInsp?(instances||[]).filter(i=>
+          // fitup/weld tabs count DPRs; all others count instances
+          let pendingCount=0;
+          if(t.id==="fitup") pendingCount=(dprs||[]).filter(d=>d.currentStage==="fitup_qc").length;
+          else if(t.id==="weld") pendingCount=(dprs||[]).filter(d=>d.currentStage==="weld_qc").length;
+          else if(isInsp) pendingCount=(instances||[]).filter(i=>
             i.currentStatus==="pending_supervisor"&&
             isInsp.stages.includes(i.currentStage)&&
             (!i.assignedEngineer||i.assignedEngineer===user.id||i.assignedEngineer===user.username)
-          ).length:0;
-          // Also count DPRs waiting at the QC gate for fitup/weld tabs
-          const dprPending=isInsp&&(t.id==="fitup"||t.id==="weld")
-            ?(dprs||[]).filter(d=>t.id==="fitup"?d.currentStage==="fitup_qc":d.currentStage==="weld_qc").length
-            :0;
-          const pendingCount=instPending+dprPending;
+          ).length;
           return (
             <button key={t.id} onClick={()=>setTab(t.id)} style={{
               padding:"10px 16px",fontSize:12,fontWeight:tab===t.id?700:400,
@@ -18505,8 +18259,10 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, dprs, setDprs, q
         })}
       </div>
 
-      {/* Inspection tabs */}
-      {INSP_TABS.map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
+      {/* Inspection tabs — fitup/weld use DPR-level panel, others use instance-level panel */}
+      {tab==="fitup" && <DprQcPanel dprStage="fitup_qc" />}
+      {tab==="weld"  && <DprQcPanel dprStage="weld_qc"  />}
+      {INSP_TABS.filter(t=>t.id!=="fitup"&&t.id!=="weld").map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
 
       {/* Admin-only tabs */}
       {tab==="rules"&&isAdmin&&(
@@ -18685,634 +18441,337 @@ const RmUnitGroupRow = ({ rmUnitId, insts, T, css, STAGE_SEQ_LABELS }) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PRODUCTION ENGINEER SCREEN
-// Cross-order DPR view: drawing-level status, contractor, parts readiness, interventions
-// Accessible to production_engineer and super_admin
+// PRODUCTION ENGINEER SCREEN — DPR view across all orders
 // ═══════════════════════════════════════════════════════════════════════════════
-const ProductionEngineerScreen = ({ user, dprs, setDprs, orders, instances, setInstances, contractors, onBack }) => {
-  const [peView,           setPeView]           = useState("dprs"); // "dprs" | "cut_parts"
-  const [filterOrder,      setFilterOrder]      = useState("");
-  const [filterStage,      setFilterStage]      = useState("");
-  const [filterContractor, setFilterContractor] = useState("");
-  const [stuckOnly,        setStuckOnly]        = useState(false);
-  const [expanded,         setExpanded]         = useState(new Set());
-  const [reassignModal,    setReassignModal]    = useState(null);
-  const [reassignVal,      setReassignVal]      = useState("");
-  const [advanceModal,     setAdvanceModal]     = useState(null);
-  const [advanceNote,      setAdvanceNote]      = useState("");
-  const [cutSearch,        setCutSearch]        = useState("");
+const DPR_STAGE_META = {
+  pending:    { label:"Pending",       color:T.textLow,  bg:"#F1F5F9" },
+  fitup:      { label:"Fit-Up",        color:"#0E7490",  bg:"#CFFAFE" },
+  fitup_qc:   { label:"Fit-Up QC",     color:"#D97706",  bg:"#FEF3C7" },
+  welding:    { label:"Welding",       color:"#7C3AED",  bg:"#EDE9FE" },
+  weld_qc:    { label:"Weld QC",       color:"#D97706",  bg:"#FEF3C7" },
+  complete:   { label:"Complete",      color:"#059669",  bg:"#D1FAE5" },
+};
+const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","welding","weld_qc","complete"];
 
-  const today_ms = Date.now();
+const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, onBack }) => {
+  const [filterOrder,  setFilterOrder]  = useState("all");
+  const [filterStage,  setFilterStage]  = useState("all");
+  const [filterContr,  setFilterContr]  = useState("all");
+  const [search,       setSearch]       = useState("");
+  const [selDpr,       setSelDpr]       = useState(null);
+  const [sortCol,      setSortCol]      = useState("order");
+  const [sortDir,      setSortDir]      = useState("asc");
 
-  // ── Enrich each DPR with computed fields ──────────────────────────────────
-  const enriched = (dprs||[]).map(dpr => {
-    const order   = (orders||[]).find(o => o.id === dpr.orderId);
-    const drawing = order ? (order.drawings||[]).find(d => d.id === dpr.drawingId) : null;
+  // Build enriched DPR rows
+  const rows = (dprs || []).map(dpr => {
+    const order   = (orders || []).find(o => o.id === dpr.orderId) || {};
+    const drawing  = (order.drawings || []).find(d => d.id === dpr.drawingId) || {};
+    // Parts readiness from instances
+    const drgInsts = (instances || []).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
+    const totalParts  = drgInsts.length;
+    const cutCleared  = drgInsts.filter(i => ["cutting_qc","fitup","welding","complete"].includes(i.currentStage) || i.currentStatus === "pending_collection").length;
+    const pct = totalParts > 0 ? Math.round((cutCleared / totalParts) * 100) : 0;
+    const stage = dpr.currentStage || "pending";
+    const meta  = DPR_STAGE_META[stage] || DPR_STAGE_META.pending;
+    const fitupCon  = (contractors || []).find(c => c.id === dpr.fitupContractorId);
+    const weldCon   = (contractors || []).find(c => c.id === dpr.weldContractorId);
+    // Age in days since release
+    const ageDays = dpr.createdAt ? Math.floor((Date.now() - new Date(dpr.createdAt).getTime()) / 86400000) : null;
+    return { dpr, order, drawing, totalParts, cutCleared, pct, stage, meta, fitupCon, weldCon, ageDays };
+  });
 
-    // Parts readiness
-    const drgParts = order ? (order.parts||[]).filter(p => p.drawingId === dpr.drawingId && p.fabType === "Fabricate") : [];
-    const total    = drgParts.length;
-    const DONE_ST  = new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-    const drgInsts = (instances||[]).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
-    const unique   = {};
-    drgInsts.forEach(i => { if (!unique[i.markNo]) unique[i.markNo] = i.currentStage; });
-    const cutCleared = Object.values(unique).filter(s => DONE_ST.has(s)).length;
-    const pct        = total > 0 ? Math.round(cutCleared / total * 100) : 0;
+  // Unique orders with DPRs
+  const orderOpts = [...new Map(rows.map(r => [r.order.id, r.order])).values()].filter(o => o.id);
+  const contrOpts  = [...new Map([
+    ...rows.filter(r=>r.fitupCon).map(r=>[r.fitupCon.id, r.fitupCon]),
+    ...rows.filter(r=>r.weldCon).map(r=>[r.weldCon.id,  r.weldCon]),
+  ]).values()];
 
-    // Assembly group
-    const asmGroup = order && drawing ? (order.assemblies||[]).find(a => a.id === drawing.assemblyGroup) : null;
-
-    // Days at current stage
-    const lastHistory = (dpr.stageHistory||[]).slice(-1)[0];
-    const stageEnteredAt = lastHistory?.at || dpr.createdAt;
-    const daysAtStage = stageEnteredAt
-      ? Math.floor((today_ms - new Date(stageEnteredAt).getTime()) / 86400000)
-      : 0;
-
-    // Stuck flag: >5 days at same non-complete stage
-    const isStuck = daysAtStage > 5 && dpr.currentStage !== 'complete';
-
-    // ── Bottleneck ladder ──────────────────────────────────────────────────
-    // Finds the single worst thing blocking this drawing right now
-    const drgMarkNos = new Set(drgParts.map(p => p.markNo));
-    const allInsts   = (instances||[]).filter(i => drgMarkNos.has(i.markNo) && !i.isSideCut);
-    const CUT_QC_ST  = new Set(['cutting_qc']);
-    const DONE_ST2   = new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
-    const inCutting  = allInsts.filter(i => i.currentStage === 'cutting').length;
-    const inCutQC    = allInsts.filter(i => CUT_QC_ST.has(i.currentStage) && i.currentStatus==='pending_supervisor').length;
-
-    let bottleneck;
-    if (dpr.currentStage === 'complete') {
-      bottleneck = { label:"✅ Complete", color:T.green, priority:99 };
-    } else if (dpr.currentStage === 'weld_qc') {
-      bottleneck = { label:"🟡 Weld QC Pending", color:T.amber, priority:8 };
-    } else if (dpr.currentStage === 'welding') {
-      const wcon = dpr.weldContractorName||"—";
-      bottleneck = { label:`🔵 Welding in Progress`, sub:wcon, color:T.accent, priority:7 };
-    } else if (dpr.currentStage === 'fitup_qc') {
-      bottleneck = { label:"🟡 Fit-Up QC Pending", color:T.amber, priority:6 };
-    } else if (dpr.currentStage === 'fitup') {
-      const fcon = dpr.fitupContractorName||"—";
-      bottleneck = { label:`🔵 Fit-Up in Progress`, sub:fcon, color:T.accent, priority:5 };
-    } else if (inCutQC > 0) {
-      bottleneck = { label:"🟡 Cut Parts in QC", sub:`${inCutQC} parts awaiting QC`, color:T.amber, priority:4 };
-    } else if (inCutting > 0) {
-      bottleneck = { label:"🔵 Cutting in Progress", sub:`${inCutting}/${total} parts`, color:T.accent, priority:3 };
-    } else {
-      const awaitingCollParts=(instances||[]).filter(i=>
-        drgMarkNos.has(i.markNo)&&i.currentStatus==="awaiting_collection"
-      );
-      const hrs=awaitingCollParts.length>0&&awaitingCollParts[0].cutQcApprovedAt
-        ?Math.round((Date.now()-new Date(awaitingCollParts[0].cutQcApprovedAt).getTime())/3600000):0;
-      const overdue=hrs>=4;
-      if(awaitingCollParts.length>0){
-        bottleneck={
-          label:overdue?"⚠ Collection Overdue":"🟠 Awaiting Collection",
-          sub:`${awaitingCollParts.length} parts · ${hrs}h waiting`,
-          color:overdue?T.red:T.amber, priority:3
-        };
-      } else if(pct>0){
-        bottleneck={label:"🟡 Parts Not Collected",sub:`${cutCleared}/${total} cut`,color:T.amber,priority:2};
-      } else {
-        bottleneck={label:"⬜ Parts Not Cut",sub:`0/${total} started`,color:T.textMid,priority:1};
-      }
+  // Filter + search
+  const filtered = rows.filter(r => {
+    if (filterOrder !== "all" && r.order.id !== filterOrder) return false;
+    if (filterStage !== "all" && r.stage !== filterStage)   return false;
+    if (filterContr !== "all" && r.dpr.fitupContractorId !== filterContr && r.dpr.weldContractorId !== filterContr) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!r.dpr.drawingNo?.toLowerCase().includes(q) &&
+          !r.order.orderNo?.toLowerCase().includes(q)  &&
+          !r.order.clientName?.toLowerCase().includes(q)) return false;
     }
-
-    return { ...dpr, order, drawing, total, cutCleared, pct, asmGroup, daysAtStage, isStuck, bottleneck };
+    return true;
   });
 
-  // ── Filters ───────────────────────────────────────────────────────────────
-  let filtered = enriched;
-  if (filterOrder)      filtered = filtered.filter(d => d.orderId === filterOrder);
-  if (filterStage)      filtered = filtered.filter(d => d.currentStage === filterStage);
-  if (filterContractor) filtered = filtered.filter(d =>
-    d.fitupContractorId === filterContractor || d.weldContractorId === filterContractor);
-  if (stuckOnly)        filtered = filtered.filter(d => d.isStuck);
-
-  // Sort: stuck first, then by order ID
-  filtered = [...filtered].sort((a,b) => {
-    if (a.isStuck !== b.isStuck) return a.isStuck ? -1 : 1;
-    return (a.orderId||"").localeCompare(b.orderId||"");
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    let av, bv;
+    if (sortCol === "order")   { av = a.order.orderNo||"";   bv = b.order.orderNo||""; }
+    if (sortCol === "drawing") { av = a.dpr.drawingNo||"";   bv = b.dpr.drawingNo||""; }
+    if (sortCol === "stage")   { av = DPR_STAGES_ORDER.indexOf(a.stage); bv = DPR_STAGES_ORDER.indexOf(b.stage); }
+    if (sortCol === "pct")     { av = a.pct; bv = b.pct; }
+    if (sortCol === "age")     { av = a.ageDays||0; bv = b.ageDays||0; }
+    if (av < bv) return sortDir === "asc" ? -1 : 1;
+    if (av > bv) return sortDir === "asc" ?  1 : -1;
+    return 0;
   });
 
-  // ── Unique values for filter dropdowns ───────────────────────────────────
-  const allOrders       = [...new Set((dprs||[]).map(d => d.orderId))].sort();
-  const allContractorIds= [...new Set((dprs||[]).flatMap(d => [d.fitupContractorId, d.weldContractorId].filter(Boolean)))];
-  const allContractors  = allContractorIds.map(id => (contractors||[]).find(c => c.id === id)).filter(Boolean);
-
-  // ── Stage label / color map ───────────────────────────────────────────────
-  const STAGE_META = {
-    pending:    { label:"Awaiting Parts",    color:T.textMid },
-    fitup:      { label:"Fit-Up",            color:T.accent  },
-    fitup_qc:   { label:"Fit-Up QC",         color:T.amber   },
-    welding:    { label:"Welding",           color:T.accent  },
-    weld_qc:    { label:"Weld QC",           color:T.amber   },
-    complete:   { label:"Complete",          color:T.green   },
+  const toggleSort = col => {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("asc"); }
+  };
+  const SortHd = ({ col, children, right }) => {
+    const active = sortCol === col;
+    return (
+      <th onClick={() => toggleSort(col)} style={{ padding:"8px 10px", textAlign:right?"right":"left", fontSize:10, fontWeight:700,
+        color:active ? T.accent : T.textMid, textTransform:"uppercase", letterSpacing:"0.04em",
+        borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap", cursor:"pointer", userSelect:"none" }}>
+        {children}{active ? (sortDir==="asc"?" ↑":" ↓") : ""}
+      </th>
+    );
   };
 
-  const DPR_STAGE_ORDER = ["pending","fitup","fitup_qc","welding","weld_qc","complete"];
+  // Summary stats
+  const byStage = {};
+  DPR_STAGES_ORDER.forEach(s => byStage[s] = rows.filter(r => r.stage === s).length);
+  const totalDprs = rows.length;
 
-  // What stage comes next — for PE advance override
-  const STAGE_NEXT_DPR = {
-    pending:"fitup", fitup:"fitup_qc", fitup_qc:"welding", welding:"weld_qc", weld_qc:"complete", complete:null
-  };
+  // DPR Detail panel
+  if (selDpr) {
+    const r = rows.find(x => x.dpr.id === selDpr);
+    if (!r) { setSelDpr(null); return null; }
+    const { dpr, order, drawing, pct, totalParts, cutCleared, fitupCon, weldCon, ageDays } = r;
+    const history = dpr.stageHistory || [];
+    const drgInsts = (instances || []).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
+    const stageGroups = {};
+    drgInsts.forEach(i => {
+      const s = i.currentStage; if (!stageGroups[s]) stageGroups[s] = []; stageGroups[s].push(i);
+    });
+    return (
+      <div>
+        <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:20 }}>
+          <button onClick={() => setSelDpr(null)} style={css.btn.ghost}>← Back to List</button>
+          <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Drawing Detail</div>
+          <div style={{ flex:1 }} />
+          <Badge color={r.stage === "complete" ? "green" : r.stage === "fitup_qc" || r.stage === "weld_qc" ? "amber" : "blue"}>
+            {DPR_STAGE_META[r.stage]?.label || r.stage}
+          </Badge>
+        </div>
 
-  // ── Summary stats bar ─────────────────────────────────────────────────────
-  const stageCountMap = {};
-  DPR_STAGE_ORDER.forEach(s => { stageCountMap[s] = enriched.filter(d => d.currentStage === s).length; });
-  const stuckCount = enriched.filter(d => d.isStuck).length;
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:16 }}>
+          {/* Left: identity */}
+          <div style={css.card}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Drawing Info</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              {[
+                ["Order",    order.orderNo || dpr.orderId],
+                ["Client",   order.clientName || "—"],
+                ["Drawing",  dpr.drawingNo || dpr.drawingId],
+                ["Assembly", drawing.assemblyGroup || "—"],
+                ["Released", dpr.createdAt ? new Date(dpr.createdAt).toLocaleDateString("en-IN") : "—"],
+                ["Age",      ageDays != null ? `${ageDays}d` : "—"],
+              ].map(([l,v]) => (
+                <div key={l}>
+                  <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase" }}>{l}</div>
+                  <div style={{ fontSize:13, color:T.text, fontWeight:500, fontFamily:l==="Drawing"?T.fontMono:T.font }}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
 
-  // ── Reassign contractor ───────────────────────────────────────────────────
-  const doReassign = () => {
-    if (!reassignModal || !reassignVal) return;
-    const { dprId, field } = reassignModal;
-    const con = (contractors||[]).find(c => c.id === reassignVal);
-    const patch = field === "fitup"
-      ? { fitupContractorId: reassignVal, fitupContractorName: con?.name||reassignVal }
-      : { weldContractorId:  reassignVal, weldContractorName:  con?.name||reassignVal };
-    setDprs(prev => prev.map(d => d.id === dprId ? {...d, ...patch,
-      stageHistory:[...(d.stageHistory||[]), {
-        stage: d.currentStage, action:`${field}_reassigned`, by:user.username, at:new Date().toISOString(), to:con?.name||reassignVal
-      }]
-    } : d));
-    setReassignModal(null); setReassignVal("");
-  };
+          {/* Right: contractor + readiness */}
+          <div style={css.card}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Assignment & Readiness</div>
+            <div style={{ marginBottom:12 }}>
+              <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:4 }}>Parts Readiness</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ flex:1, height:10, background:T.border, borderRadius:99, overflow:"hidden" }}>
+                  <div style={{ width:`${pct}%`, height:"100%", background:pct>=80?T.green:pct>=50?T.amber:T.red, borderRadius:99, transition:"width 0.3s" }} />
+                </div>
+                <span style={{ fontSize:13, fontWeight:800, color:pct>=80?T.green:pct>=50?T.amber:T.red, minWidth:40, textAlign:"right" }}>{pct}%</span>
+              </div>
+              <div style={{ fontSize:11, color:T.textLow, marginTop:4 }}>{cutCleared} of {totalParts} parts cut & cleared</div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              <div style={{ background:T.bgInput, borderRadius:6, padding:"8px 10px" }}>
+                <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:3 }}>Fit-Up</div>
+                <div style={{ fontSize:12, fontWeight:600, color:fitupCon ? T.text : T.textLow }}>{fitupCon?.name || "Not assigned"}</div>
+                {fitupCon?.isInHouse && <div style={{ fontSize:10, color:T.accent }}>In-House</div>}
+              </div>
+              <div style={{ background:T.bgInput, borderRadius:6, padding:"8px 10px" }}>
+                <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:3 }}>Welding</div>
+                <div style={{ fontSize:12, fontWeight:600, color:weldCon ? T.text : T.textLow }}>{weldCon?.name || "Not assigned"}</div>
+                {weldCon?.isInHouse && <div style={{ fontSize:10, color:T.accent }}>In-House</div>}
+              </div>
+            </div>
+          </div>
+        </div>
 
-  // ── PE advance (override) ─────────────────────────────────────────────────
-  const doAdvance = (dpr) => {
-    const nextStage = STAGE_NEXT_DPR[dpr.currentStage];
-    if (!nextStage) return;
-    const ts = new Date().toISOString();
-    const patch = {
-      currentStage: nextStage,
-      currentStatus: nextStage === "complete" ? "complete" : nextStage.endsWith("_qc") ? "pending_qc" : "in_progress",
-      stageHistory: [...(dpr.stageHistory||[]), {
-        stage: dpr.currentStage, action:"pe_override_advance",
-        by: user.username, at: ts, note: advanceNote.trim()||"PE override"
-      }],
-    };
-    // Stamp timestamps
-    if (dpr.currentStage === "fitup")    patch.fitupCompleteAt   = ts;
-    if (dpr.currentStage === "fitup_qc") patch.fitupQcApprovedAt = ts;
-    if (dpr.currentStage === "welding")  patch.weldCompleteAt    = ts;
-    if (dpr.currentStage === "weld_qc")  patch.weldQcApprovedAt  = ts;
+        {/* Stage Progress Bar */}
+        <div style={{ ...css.card, marginBottom:16 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:14 }}>DPR Stage Progress</div>
+          <div style={{ display:"flex", gap:0, alignItems:"stretch" }}>
+            {DPR_STAGES_ORDER.map((s, i) => {
+              const stageIdx  = DPR_STAGES_ORDER.indexOf(r.stage);
+              const thisIdx   = i;
+              const done      = thisIdx < stageIdx;
+              const current   = thisIdx === stageIdx;
+              const meta      = DPR_STAGE_META[s];
+              return (
+                <React.Fragment key={s}>
+                  <div style={{ flex:1, textAlign:"center", padding:"10px 6px", background:done?T.green:current?meta.bg:"transparent",
+                    border:`1px solid ${done?T.green:current?meta.color:T.border}`, borderRadius:i===0?"6px 0 0 6px":i===DPR_STAGES_ORDER.length-1?"0 6px 6px 0":"0",
+                    borderLeft:i>0?"none":undefined }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:done?"#fff":current?meta.color:T.textLow }}>{meta.label}</div>
+                    {done && <div style={{ fontSize:10, color:"rgba(255,255,255,0.8)" }}>✓</div>}
+                    {current && <div style={{ fontSize:10, color:meta.color }}>● Now</div>}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
 
-    setDprs(prev => prev.map(d => d.id === dpr.id ? {...d, ...patch} : d));
+        {/* Instance breakdown by stage */}
+        <div style={{ ...css.card, marginBottom:16 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Part Instances by Stage</div>
+          {Object.entries(stageGroups).length === 0
+            ? <div style={{ color:T.textLow, fontSize:12 }}>No instances yet for this drawing.</div>
+            : Object.entries(stageGroups).map(([stage, insts]) => (
+              <div key={stage} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:`1px solid ${T.border}` }}>
+                <div style={{ width:120, fontSize:11, fontWeight:600, color:T.textMid }}>{stage.replace(/_/g," ").toUpperCase()}</div>
+                <div style={{ flex:1, height:8, background:T.border, borderRadius:99, overflow:"hidden" }}>
+                  <div style={{ width:`${(insts.length/(totalParts||1))*100}%`, height:"100%", background:T.accent, borderRadius:99 }} />
+                </div>
+                <div style={{ fontSize:12, fontWeight:700, color:T.text, minWidth:40, textAlign:"right" }}>{insts.length}</div>
+              </div>
+            ))}
+        </div>
 
-    // Advance instances too
-    const toInstStage = nextStage === "fitup" ? "fitup"
-      : nextStage === "fitup_qc" ? "fitup"
-      : nextStage === "welding"  ? "welding"
-      : nextStage === "weld_qc"  ? "welding"
-      : "welding";
-    const toInstStatus = nextStage.endsWith("_qc") ? "pending_supervisor" : "in_progress";
-    setInstances(prev => prev.map(i => {
-      if (i.drawingId !== dpr.drawingId || i.orderId !== dpr.orderId || i.isSideCut) return i;
-      return { ...i, currentStage: toInstStage, currentStatus: toInstStatus,
-        stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,completedAt:ts,completedBy:user.username}]
-      };
-    }));
-
-    setAdvanceModal(null); setAdvanceNote("");
-  };
-
-  const toggleExpand = (id) => {
-    const s = new Set(expanded);
-    s.has(id) ? s.delete(id) : s.add(id);
-    setExpanded(s);
-  };
-
-  // ── FitUp + Welding contractors for reassign modal ──────────────────────
-  const fitupCons = (contractors||[]).filter(c => (c.type||[]).some(t => ['fit_up','fitup'].includes(t)));
-  const weldCons  = (contractors||[]).filter(c => (c.type||[]).some(t => ['welding'].includes(t)));
+        {/* Stage History */}
+        {history.length > 0 && (
+          <div style={css.card}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Stage History</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {history.map((h, i) => (
+                <div key={i} style={{ display:"flex", gap:12, alignItems:"flex-start", padding:"8px 10px", background:T.bgInput, borderRadius:6 }}>
+                  <div style={{ width:8, height:8, borderRadius:"50%", background:T.accent, marginTop:3, flexShrink:0 }} />
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                      <span style={{ fontSize:12, fontWeight:700, color:T.text }}>{(h.stage||"").replace(/_/g," ").toUpperCase()}</span>
+                      <Badge color="gray">{h.action || "updated"}</Badge>
+                    </div>
+                    <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>
+                      by {h.by || "—"} · {h.at ? new Date(h.at).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "—"}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>
       {/* Header */}
-      <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16 }}>
+      <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:20 }}>
         <button onClick={onBack} style={css.btn.ghost}>← Production</button>
-        <div>
-          <div style={{ fontSize:20, fontWeight:800, color:T.text }}>Production Engineer — DPR Control</div>
-          <div style={{ fontSize:12, color:T.textMid }}>Cross-order drawing production records · interventions · reassignment</div>
-        </div>
+        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Production Engineer — DPR View</div>
+        <div style={{ flex:1 }} />
+        <div style={{ fontSize:12, color:T.textLow }}>{totalDprs} total DPRs across {orderOpts.length} order{orderOpts.length !== 1 ? "s" : ""}</div>
       </div>
 
-      {/* Tab bar */}
-      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
-        {[
-          {id:"dprs",      label:"📋 DPR Control",    desc:"Drawing production records"},
-          {id:"cut_parts", label:"🔍 Cut Parts Finder", desc:"Find cut material"},
-        ].map(t=>(
-          <button key={t.id} onClick={()=>setPeView(t.id)} style={{
-            padding:"10px 20px",fontSize:12,fontWeight:peView===t.id?700:400,
-            color:peView===t.id?T.accent:T.textMid,background:"transparent",border:"none",
-            borderBottom:peView===t.id?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer"
-          }}>{t.label}</button>
-        ))}
-      </div>
-
-      {/* Cut Parts Finder Tab */}
-      {peView==="cut_parts"&&React.createElement(()=>{
-        const cutInsts=(instances||[]).filter(i=>
-          ['cut_cleared','awaiting_collection','with_contractor'].includes(i.currentStatus)
-        );
-        const search=cutSearch.toLowerCase();
-        const filtered=cutSearch?cutInsts.filter(i=>
-          i.markNo?.toLowerCase().includes(search)||
-          i.drawingNo?.toLowerCase().includes(search)||
-          i.rmUnitId?.toLowerCase().includes(search)||
-          i.matCode?.toLowerCase().includes(search)||
-          i.assignedContractorName?.toLowerCase().includes(search)
-        ):cutInsts;
-        const STATUS_META={
-          awaiting_collection:{label:"⚡ Awaiting Collection",color:T.amber},
-          with_contractor:    {label:"✓ With Contractor",     color:T.green},
-          cut_cleared:        {label:"📦 Cut Cleared",         color:T.accent},
-        };
-        return (
-          <div>
-            <div style={{marginBottom:14}}>
-              <input value={cutSearch} onChange={e=>setCutSearch(e.target.value)}
-                placeholder="Search by mark no, drawing no, rmUnitId, matCode, contractor..."
-                style={{...css.input,width:"100%",maxWidth:520}}
-              />
-              <div style={{fontSize:11,color:T.textMid,marginTop:6}}>
-                {filtered.length} instances found
-                {cutSearch&&` for "${cutSearch}"`}
-              </div>
-            </div>
-            {filtered.length===0&&(
-              <InfoBanner color="blue">{cutSearch?"No matches found.":"No cut parts in the system yet."}</InfoBanner>
-            )}
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-              <thead>
-                <tr style={{background:T.bgInput}}>
-                  {["Mark No","Drawing","RM Unit","Mat Code","Cut By","Cut At","Status","Contractor","Location"].map(h=>(
-                    <th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,
-                      color:T.textMid,fontWeight:700,borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.slice(0,200).map(i=>{
-                  const sm=STATUS_META[i.currentStatus]||{label:i.currentStatus,color:T.textLow};
-                  const hrs=i.cutQcApprovedAt?Math.round((Date.now()-new Date(i.cutQcApprovedAt).getTime())/3600000):null;
-                  const overdue=hrs!==null&&hrs>=4&&i.currentStatus==="awaiting_collection";
-                  return (
-                    <tr key={i.instanceId} style={{borderBottom:`1px solid ${T.border}22`,
-                      background:overdue?`${T.red}08`:"transparent"}}>
-                      <td style={{padding:"6px 10px",fontFamily:T.fontMono,color:T.accentHi,fontSize:11}}>{i.markNo}</td>
-                      <td style={{padding:"6px 10px",fontFamily:T.fontMono,fontSize:11}}>{i.drawingNo}</td>
-                      <td style={{padding:"6px 10px",fontFamily:T.fontMono,fontSize:10,color:T.textMid,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{i.rmUnitId||"—"}</td>
-                      <td style={{padding:"6px 10px",fontSize:11}}>{i.matCode||"—"}</td>
-                      <td style={{padding:"6px 10px",fontSize:11,color:T.textMid}}>{i.cutBy||"—"}</td>
-                      <td style={{padding:"6px 10px",fontSize:11,color:T.textMid}}>{i.cutAt?i.cutAt.slice(0,10):"—"}</td>
-                      <td style={{padding:"6px 10px"}}>
-                        <span style={{fontSize:10,fontWeight:700,color:sm.color,
-                          background:`${sm.color}18`,borderRadius:3,padding:"2px 6px",whiteSpace:"nowrap"}}>
-                          {sm.label}
-                          {hrs!==null&&i.currentStatus==="awaiting_collection"&&
-                            <span style={{marginLeft:4,color:overdue?T.red:T.amber}}>({hrs}h)</span>}
-                        </span>
-                      </td>
-                      <td style={{padding:"6px 10px",fontSize:11}}>{i.assignedContractorName||"—"}</td>
-                      <td style={{padding:"6px 10px",fontSize:11,color:T.textMid}}>
-                        {i.machineBay?i.machineBay.replace(/^machine_bay:/,"Machine Bay — ").replace(/_/g," "):"—"}
-                        {i.currentStatus==="with_contractor"&&i.collectedAt&&
-                          <span style={{color:T.green}}> ✓ {i.collectedAt.slice(0,10)}</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
-
-      {/* DPR Control Tab */}
-      {peView==="dprs"&&<>
-
-      {/* Summary stat pills */}
-      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
-        {DPR_STAGE_ORDER.map(s => {
-          const m = STAGE_META[s];
-          const n = stageCountMap[s];
+      {/* Stage summary pills */}
+      <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
+        {DPR_STAGES_ORDER.map(s => {
+          const meta = DPR_STAGE_META[s];
+          const cnt  = byStage[s] || 0;
+          const active = filterStage === s;
           return (
-            <div key={s} onClick={() => setFilterStage(filterStage === s ? "" : s)}
-              style={{ padding:"6px 14px", borderRadius:20, border:`1px solid ${m.color}55`,
-                background: filterStage === s ? `${m.color}22` : "transparent",
-                cursor:"pointer", display:"flex", gap:6, alignItems:"center" }}>
-              <span style={{ fontSize:11, color:m.color, fontWeight:700 }}>{m.label}</span>
-              <span style={{ fontSize:13, color:T.text, fontWeight:800 }}>{n}</span>
-            </div>
+            <button key={s} onClick={() => setFilterStage(active ? "all" : s)}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", border:`1px solid ${active ? meta.color : T.border}`,
+                borderRadius:99, background:active ? meta.bg : "transparent", cursor:"pointer", fontFamily:T.font }}>
+              <span style={{ fontSize:12, fontWeight:700, color:active ? meta.color : T.textMid }}>{meta.label}</span>
+              <span style={{ fontSize:12, fontWeight:800, color:active ? meta.color : T.textLow }}>{cnt}</span>
+            </button>
           );
         })}
-        {stuckCount > 0 && (
-          <div onClick={() => setStuckOnly(p => !p)}
-            style={{ padding:"6px 14px", borderRadius:20, border:`1px solid ${T.red}88`,
-              background: stuckOnly ? `${T.red}22` : "transparent", cursor:"pointer",
-              display:"flex", gap:6, alignItems:"center" }}>
-            <span style={{ fontSize:11, color:T.red, fontWeight:700 }}>🔴 Stuck (&gt;5d)</span>
-            <span style={{ fontSize:13, color:T.text, fontWeight:800 }}>{stuckCount}</span>
-          </div>
+        {filterStage !== "all" && (
+          <button onClick={() => setFilterStage("all")} style={{ ...css.btn.ghost, fontSize:11 }}>✕ Clear</button>
         )}
       </div>
 
-      {/* Filter bar */}
-      <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap", alignItems:"center" }}>
-        <select value={filterOrder} onChange={e => setFilterOrder(e.target.value)} style={{ ...css.input, width:180 }}>
-          <option value="">All Orders</option>
-          {allOrders.map(o => <option key={o} value={o}>{o}</option>)}
+      {/* Filters row */}
+      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search drawing / order / client…"
+          style={{ ...css.input, maxWidth:260 }} />
+        <select value={filterOrder} onChange={e => setFilterOrder(e.target.value)} style={{ ...css.input, width:"auto" }}>
+          <option value="all">All Orders</option>
+          {orderOpts.map(o => <option key={o.id} value={o.id}>{o.orderNo} — {o.clientName}</option>)}
         </select>
-        <select value={filterStage} onChange={e => setFilterStage(e.target.value)} style={{ ...css.input, width:160 }}>
-          <option value="">All Stages</option>
-          {DPR_STAGE_ORDER.map(s => <option key={s} value={s}>{STAGE_META[s].label}</option>)}
+        <select value={filterContr} onChange={e => setFilterContr(e.target.value)} style={{ ...css.input, width:"auto" }}>
+          <option value="all">All Contractors</option>
+          {contrOpts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select value={filterContractor} onChange={e => setFilterContractor(e.target.value)} style={{ ...css.input, width:180 }}>
-          <option value="">All Contractors</option>
-          {allContractors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <label style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:T.text, cursor:"pointer" }}>
-          <input type="checkbox" checked={stuckOnly} onChange={e => setStuckOnly(e.target.checked)} style={{ accentColor:T.red }} />
-          Stuck only
-        </label>
-        <span style={{ fontSize:11, color:T.textLow, marginLeft:"auto" }}>{filtered.length} drawing{filtered.length !== 1 ? "s" : ""}</span>
+        <div style={{ flex:1 }} />
+        <div style={{ fontSize:11, color:T.textLow, alignSelf:"center" }}>{sorted.length} drawing{sorted.length !== 1 ? "s" : ""}</div>
       </div>
 
       {/* Table */}
-      {filtered.length === 0 && (
-        <div style={{ ...css.card, textAlign:"center", padding:40, color:T.textLow, fontSize:13 }}>
-          No DPRs match the current filters.
+      {sorted.length === 0 ? (
+        <div style={{ textAlign:"center", padding:64, color:T.textLow }}>
+          <div style={{ fontSize:36, marginBottom:12 }}>📋</div>
+          <div style={{ fontSize:14, fontWeight:600, color:T.textMid }}>No DPRs match the current filters</div>
+          {dprs.length === 0 && <div style={{ fontSize:12, marginTop:6 }}>DPRs are created when a production release is confirmed.</div>}
         </div>
-      )}
-
-      {filtered.length > 0 && (
+      ) : (
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
             <thead>
-              <tr style={{ background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
-                {["","Drawing No","Order","Assembly","DPR Stage","Parts Ready","Days","Fit-Up","Welding","Actions"].map((h,i) => (
-                  <th key={i} style={{ padding:"8px 10px", fontSize:11, color:T.textMid, fontWeight:700,
-                    textAlign:i===0?"center":"left", whiteSpace:"nowrap", borderBottom:`1px solid ${T.border}` }}>
-                    {h}
-                  </th>
-                ))}
+              <tr>
+                <SortHd col="order">Order</SortHd>
+                <SortHd col="drawing">Drawing</SortHd>
+                <th style={{ padding:"8px 10px", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput }}>Fit-Up By</th>
+                <th style={{ padding:"8px 10px", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput }}>Weld By</th>
+                <SortHd col="stage">Stage</SortHd>
+                <SortHd col="pct" right>Parts Ready</SortHd>
+                <SortHd col="age" right>Age</SortHd>
+                <th style={{ padding:"8px 10px", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput }}></th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map(dpr => {
-                const isExp = expanded.has(dpr.id);
-                const m     = STAGE_META[dpr.currentStage] || { label: dpr.currentStage, color: T.textMid };
-                const pctColor = dpr.pct >= 80 ? T.green : dpr.pct >= 50 ? T.amber : T.red;
-                const stuckBg  = dpr.isStuck ? `${T.red}0a` : "transparent";
-                const nextStage= STAGE_NEXT_DPR[dpr.currentStage];
-
-                return (
-                  <React.Fragment key={dpr.id}>
-                    <tr style={{ background:isExp ? `${T.accent}11` : stuckBg,
-                      borderBottom:`1px solid ${T.border}`, cursor:"pointer" }}
-                      onClick={() => toggleExpand(dpr.id)}>
-
-                      {/* Expand toggle */}
-                      <td style={{ padding:"8px 8px", textAlign:"center", color:T.textLow, width:24 }}>
-                        {isExp ? "▼" : "▶"}
-                      </td>
-
-                      {/* Drawing No */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi }}>
-                          {dpr.drawingNo || dpr.drawingId}
-                        </div>
-                        {dpr.drawingTitle && (
-                          <div style={{ fontSize:10, color:T.textMid, marginTop:1 }}>{dpr.drawingTitle.slice(0,40)}</div>
-                        )}
-                        {dpr.isStuck && (
-                          <span style={{ fontSize:9, color:T.red, fontWeight:800, background:`${T.red}22`,
-                            borderRadius:3, padding:"1px 5px", display:"inline-block", marginTop:2 }}>
-                            STUCK {dpr.daysAtStage}d
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Order */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ fontSize:11, fontFamily:T.fontMono, color:T.text }}>{dpr.orderId}</div>
-                        <div style={{ fontSize:10, color:T.textLow }}>{dpr.order?.clientId||""}</div>
-                      </td>
-
-                      {/* Assembly */}
-                      <td style={{ padding:"8px 10px", fontSize:11, color:T.textMid }}>
-                        {dpr.asmGroup?.assemblyName || dpr.asmGroup?.assemblyNumber || <span style={{ color:T.textLow }}>—</span>}
-                      </td>
-
-                      {/* DPR Stage — Bottleneck Ladder */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:dpr.bottleneck?.color||m.color,
-                          background:`${dpr.bottleneck?.color||m.color}18`, borderRadius:4, padding:"2px 8px",
-                          display:"inline-block", whiteSpace:"nowrap" }}>
-                          {dpr.bottleneck?.label||m.label}
-                        </div>
-                        {dpr.bottleneck?.sub&&(
-                          <div style={{ fontSize:10, color:T.textMid, marginTop:2 }}>{dpr.bottleneck.sub}</div>
-                        )}
-                      </td>
-
-                      {/* Parts readiness */}
-                      <td style={{ padding:"8px 10px" }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                          <div style={{ flex:1, height:5, background:T.border, borderRadius:3, minWidth:48, overflow:"hidden" }}>
-                            <div style={{ height:"100%", width:`${dpr.pct}%`, background:pctColor, borderRadius:3 }} />
-                          </div>
-                          <span style={{ color:pctColor, fontWeight:700, fontSize:11, minWidth:32 }}>{dpr.pct}%</span>
-                        </div>
-                        <div style={{ fontSize:9, color:T.textLow, marginTop:1 }}>{dpr.cutCleared}/{dpr.total} parts</div>
-                      </td>
-
-                      {/* Days at stage */}
-                      <td style={{ padding:"8px 10px", fontSize:11,
-                        color: dpr.daysAtStage > 5 ? T.red : dpr.daysAtStage > 2 ? T.amber : T.textMid,
-                        fontWeight: dpr.daysAtStage > 5 ? 700 : 400 }}>
-                        {dpr.daysAtStage}d
-                      </td>
-
-                      {/* Fit-up contractor */}
-                      <td style={{ padding:"8px 10px", fontSize:11 }}>
-                        {dpr.fitupContractorName || <span style={{ color:T.textLow }}>—</span>}
-                      </td>
-
-                      {/* Weld contractor */}
-                      <td style={{ padding:"8px 10px", fontSize:11 }}>
-                        {dpr.weldContractorName || <span style={{ color:T.textLow }}>—</span>}
-                      </td>
-
-                      {/* Actions */}
-                      <td style={{ padding:"8px 10px" }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
-                          <button
-                            onClick={() => { setReassignModal({ dprId:dpr.id, field:"fitup" }); setReassignVal(dpr.fitupContractorId||""); }}
-                            style={{ ...css.btn.ghost, fontSize:10, padding:"2px 7px" }} title="Reassign fit-up contractor">
-                            ↔ F/U
-                          </button>
-                          <button
-                            onClick={() => { setReassignModal({ dprId:dpr.id, field:"weld" }); setReassignVal(dpr.weldContractorId||""); }}
-                            style={{ ...css.btn.ghost, fontSize:10, padding:"2px 7px" }} title="Reassign welding contractor">
-                            ↔ WLD
-                          </button>
-                          {nextStage && dpr.currentStage !== "complete" && (
-                            <button
-                              onClick={() => { setAdvanceModal(dpr); setAdvanceNote(""); }}
-                              style={{ ...css.btn.amber, fontSize:10, padding:"2px 7px" }} title="Force-advance DPR stage">
-                              ⚡ Advance
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-
-                    {/* Expanded detail row */}
-                    {isExp && (
-                      <tr style={{ background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
-                        <td colSpan={10} style={{ padding:"12px 16px 16px 32px" }}>
-                          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
-
-                            {/* Stage history */}
-                            <div>
-                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6, letterSpacing:"0.06em" }}>
-                                STAGE HISTORY
-                              </div>
-                              {(dpr.stageHistory||[]).length === 0 ? (
-                                <div style={{ fontSize:11, color:T.textLow }}>No history yet.</div>
-                              ) : (
-                                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                                  {(dpr.stageHistory||[]).map((h, i) => (
-                                    <div key={i} style={{ fontSize:11, color:T.textMid }}>
-                                      <span style={{ color:T.text, fontWeight:600 }}>{h.stage?.replace(/_/g," ")}</span>
-                                      {" — "}{h.action?.replace(/_/g," ")}
-                                      {h.by && <span style={{ color:T.textLow }}> by {h.by}</span>}
-                                      {h.to && <span style={{ color:T.accent }}> → {h.to}</span>}
-                                      {h.at && <span style={{ color:T.textLow }}> {h.at.slice(0,10)}</span>}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Parts breakdown */}
-                            <div>
-                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6, letterSpacing:"0.06em" }}>
-                                PARTS READINESS
-                              </div>
-                              <div style={{ fontSize:12, color:T.green, marginBottom:3 }}>✅ {dpr.cutCleared} cut &amp; cleared</div>
-                              <div style={{ fontSize:12, color:T.textMid }}>📦 {dpr.total - dpr.cutCleared} not yet cleared</div>
-                              <div style={{ fontSize:12, color:T.text, marginTop:4 }}>
-                                Total parts in drawing: <b>{dpr.total}</b>
-                              </div>
-                              {dpr.totalWt > 0 && (
-                                <div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>
-                                  Drawing wt: {(dpr.totalWt/1000).toFixed(2)} T
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Escalation alerts */}
-                            <div>
-                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6, letterSpacing:"0.06em" }}>
-                                ALERTS
-                              </div>
-                              {!dpr.isStuck && dpr.currentStage !== "complete" && (
-                                <div style={{ fontSize:11, color:T.green }}>✓ Progressing normally</div>
-                              )}
-                              {dpr.isStuck && (
-                                <div style={{ padding:"8px 10px", background:T.redBg,
-                                  border:`1px solid ${T.red}55`, borderRadius:6, fontSize:11, color:T.red }}>
-                                  🔴 Stuck at <b>{STAGE_META[dpr.currentStage]?.label}</b> for <b>{dpr.daysAtStage} days</b> — escalation required
-                                </div>
-                              )}
-                              {dpr.currentStage === "pending" && dpr.pct < 50 && (
-                                <div style={{ padding:"8px 10px", background:T.amberBg,
-                                  border:`1px solid ${T.amber}55`, borderRadius:6, fontSize:11, color:T.amber, marginTop:6 }}>
-                                  ⚠ Only {dpr.pct}% parts cut — fit-up not ready
-                                </div>
-                              )}
-                              {dpr.currentStage === "complete" && (
-                                <div style={{ fontSize:11, color:T.green }}>✅ Drawing complete</div>
-                              )}
-                              <div style={{ fontSize:10, color:T.textLow, marginTop:8 }}>
-                                DPR ID: <span style={{ fontFamily:T.fontMono }}>{dpr.id}</span>
-                              </div>
-                              <div style={{ fontSize:10, color:T.textLow }}>
-                                Release: <span style={{ fontFamily:T.fontMono }}>{dpr.releaseId}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+              {sorted.map(({ dpr, order, drawing, pct, totalParts, cutCleared, stage, meta, fitupCon, weldCon, ageDays }, i) => (
+                <tr key={dpr.id} style={{ background:i%2===0?"transparent":T.bgInput }}
+                  onMouseEnter={e => e.currentTarget.style.background=T.bgHover}
+                  onMouseLeave={e => e.currentTarget.style.background=i%2===0?"transparent":T.bgInput}>
+                  <TD mono>{order.orderNo || dpr.orderId}</TD>
+                  <TD mono>{dpr.drawingNo || dpr.drawingId}</TD>
+                  <TD>{fitupCon ? <span>{fitupCon.name}{fitupCon.isInHouse?" 🏭":""}</span> : <span style={{color:T.textLow}}>—</span>}</TD>
+                  <TD>{weldCon  ? <span>{weldCon.name}{weldCon.isInHouse?" 🏭":""}</span>  : <span style={{color:T.textLow}}>—</span>}</TD>
+                  <TD>
+                    <span style={{ display:"inline-block", padding:"2px 8px", borderRadius:99, fontSize:11, fontWeight:700,
+                      background:meta.bg, color:meta.color }}>{meta.label}</span>
+                  </TD>
+                  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, textAlign:"right" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, justifyContent:"flex-end" }}>
+                      <div style={{ width:60, height:6, background:T.border, borderRadius:99, overflow:"hidden" }}>
+                        <div style={{ width:`${pct}%`, height:"100%", background:pct>=80?T.green:pct>=50?T.amber:T.red, borderRadius:99 }} />
+                      </div>
+                      <span style={{ fontSize:12, fontWeight:700, color:pct>=80?T.green:pct>=50?T.amber:T.red, minWidth:32, textAlign:"right" }}>{pct}%</span>
+                    </div>
+                  </td>
+                  <TD right color={ageDays!=null&&ageDays>14?T.amber:T.textLow}>{ageDays!=null?`${ageDays}d`:"—"}</TD>
+                  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>
+                    <button onClick={() => setSelDpr(dpr.id)} style={css.btn.ghost}>Detail →</button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
-
-      {/* Reassign Contractor Modal */}
-      {reassignModal && (() => {
-        const dpr = (dprs||[]).find(d => d.id === reassignModal.dprId);
-        const isF = reassignModal.field === "fitup";
-        const conList = isF ? fitupCons.length > 0 ? fitupCons : (contractors||[]) : weldCons.length > 0 ? weldCons : (contractors||[]);
-        return (
-          <Modal title={`Reassign ${isF ? "Fit-Up" : "Welding"} Contractor — ${dpr?.drawingNo||""}`}
-            onClose={() => { setReassignModal(null); setReassignVal(""); }}>
-            <div style={{ marginBottom:14 }}>
-              <div style={{ fontSize:12, color:T.textMid, marginBottom:4 }}>Current: <b style={{ color:T.text }}>{isF ? dpr?.fitupContractorName : dpr?.weldContractorName || "—"}</b></div>
-              <label style={css.label}>NEW CONTRACTOR *</label>
-              <select value={reassignVal} onChange={e => setReassignVal(e.target.value)} style={css.input}>
-                <option value="">Select contractor...</option>
-                {conList.map(c => <option key={c.id} value={c.id}>{c.name}{c.isInHouse ? " (In-House)" : ""}</option>)}
-              </select>
-            </div>
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
-              <button onClick={() => { setReassignModal(null); setReassignVal(""); }} style={css.btn.ghost}>Cancel</button>
-              <button onClick={doReassign} disabled={!reassignVal}
-                style={{ ...css.btn.primary, opacity:reassignVal ? 1 : 0.4 }}>Reassign</button>
-            </div>
-          </Modal>
-        );
-      })()}
-
-      {/* Advance Stage Modal */}
-      {advanceModal && (() => {
-        const dpr      = advanceModal;
-        const nextStage= STAGE_NEXT_DPR[dpr.currentStage];
-        const nextMeta = STAGE_META[nextStage] || { label: nextStage };
-        return (
-          <Modal title={`Override Advance — ${dpr.drawingNo}`}
-            onClose={() => { setAdvanceModal(null); setAdvanceNote(""); }}>
-            <div style={{ padding:"10px 14px", background:T.amberBg, border:`1px solid ${T.amber}44`,
-              borderRadius:6, marginBottom:14, fontSize:12, color:T.amber }}>
-              ⚠ This is a production engineer override. It will advance the DPR from{" "}
-              <b>{STAGE_META[dpr.currentStage]?.label}</b> to{" "}
-              <b style={{ color:nextMeta.color }}>{nextMeta.label}</b> and update all linked instances.
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <label style={css.label}>REASON / NOTE (recorded in history)</label>
-              <textarea value={advanceNote} onChange={e => setAdvanceNote(e.target.value)}
-                rows={3} placeholder="State reason for advancing stage..."
-                style={{ ...css.input, width:"100%", resize:"vertical" }} />
-            </div>
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
-              <button onClick={() => { setAdvanceModal(null); setAdvanceNote(""); }} style={css.btn.ghost}>Cancel</button>
-              <button onClick={() => doAdvance(dpr)}
-                style={{ ...css.btn.amber }}>
-                ⚡ Force Advance to {nextMeta.label}
-              </button>
-            </div>
-          </Modal>
-        );
-      })()}
-      </> /* end peView==="dprs" */}
     </div>
   );
 };
@@ -19344,14 +18803,16 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const canAssign = ["super_admin","planning_admin","floor_planner"].includes(user.role);
 
   const totalInstances    = instances.length;
-  const readyToCollect    = instances.filter(i=>i.currentStatus==="awaiting_collection").length;
+  const readyToCollect    = instances.filter(i=>i.currentStatus==="pending_collection").length;
   const inProgress        = instances.filter(i=>i.currentStatus==="in_progress").length;
-  const pendingSupervisor = instances.filter(i=>
-    i.currentStatus==="pending_supervisor"&&
-    !['cut_cleared','awaiting_collection','with_contractor'].includes(i.currentStatus)
-  ).length;
+  const pendingSupervisor = instances.filter(i=>i.currentStatus==="pending_supervisor").length;
   const defective         = instances.filter(i=>i.currentStatus==="defective").length;
   const qualityConcerns   = instances.filter(i=>i.qualityConcernFlag).length;
+
+  // ── Production Engineer DPR view ──
+  if (view==="eng_dpr") return (
+    <ProductionEngineerScreen user={user} dprs={dprs||[]} orders={orders||[]} instances={instances||[]} contractors={contractors||[]} onBack={()=>setView("dashboard")} />
+  );
 
   // ── Release creation wizard ──
   if (view==="release_new") return (
@@ -19381,7 +18842,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       <div style={{ padding:0 }}>
         <OrderProgressTracker order={progOrder}
           onChange={(updated)=>setOrders(prev=>prev.map(o=>o.id===updated.id?updated:o))}
-          user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances} purchaseReqs={purchaseReqs||[]}
+          user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances} purchaseReqs={purchaseReqs||[]} dprs={dprs||[]}
           onBack={()=>{ setView("register"); setSelProgressOrderId(""); }} />
       </div>
     );
@@ -19515,13 +18976,6 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       </div>
     );
   }
-
-  // ── Production Engineer screen ──
-  if (view==="pe_screen") return (
-    <ProductionEngineerScreen user={user} dprs={dprs||[]} setDprs={setDprs}
-      orders={orders} instances={instances} setInstances={setInstances}
-      contractors={contractors||[]} onBack={()=>setView("dashboard")} />
-  );
 
   // ── Drawing Register view ──
   if (view==="register") return (
@@ -19693,14 +19147,12 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
 
       <div style={{ display:"flex",gap:12,marginBottom:24,flexWrap:"wrap" }}>
         {canAssign&&<button onClick={()=>setView("release_new")} style={css.btn.green}>+ New Release</button>}
+        {["super_admin","planning_admin","floor_planner","production_engineer"].includes(user.role)&&(
+          <button onClick={()=>setView("eng_dpr")} style={css.btn.primary}>📐 DPR View</button>
+        )}
         <button onClick={()=>setView("cutting")} style={css.btn.primary}>✂ Cutting Confirmation</button>
         {canAssign&&<button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("assignments");}} style={css.btn.secondary}>📋 Assignment</button>}
         <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={css.btn.secondary}>📊 Progress Grid</button>
-        {["production_engineer","super_admin"].includes(user.role)&&(
-          <button onClick={()=>setView("pe_screen")} style={{...css.btn.primary,background:`${T.accent}22`,border:`1px solid ${T.accent}`,color:T.accentHi}}>
-            🏗 PE Control
-          </button>
-        )}
         {canAssign&&<button onClick={()=>setView("outbound")} style={css.btn.secondary}>🔄 Outbound</button>}
         {["super_admin","planning_admin","floor_planner","production_engineer","supervisor"].includes(user.role)&&(
           <button onClick={()=>setView("blast_paint")} style={{...css.btn.ghost,fontSize:12}}>🎨 Blast & Paint</button>
@@ -19949,84 +19401,7 @@ export default function App() {
   });
   const [nestingRuns, setNestingRuns]       = useState(() => { try { const s=localStorage.getItem('structo_nestingRuns'); return s?JSON.parse(s):INIT_NESTING_RUNS; } catch { return INIT_NESTING_RUNS; } });
   const [nestingBatches, setNestingBatches] = useState(() => { try { const s=localStorage.getItem('structo_nestingBatches'); if(s){ const p=JSON.parse(s); return Array.isArray(p)?p:[]; } return []; } catch { return []; } });
-  const [instances, setInstances]       = useState(() => {
-    try {
-      const s = localStorage.getItem('structo_instances');
-      const loaded = s ? JSON.parse(s) : INIT_INSTANCES;
-      // Migration 1: instances incorrectly at fitup/welding with pending_supervisor status
-      // (from old instance-level flow or test scenarios) — DPR now owns fitup/weld QC
-      // Migration 2: existing fitup/pending instances → awaiting_collection
-      // (so contractor banner and PE bottleneck work for existing data)
-      // Migration 3: side-cut instances past cutting_qc → cut_cleared
-      return loaded.map(i => {
-        if ((i.currentStage==='fitup'||i.currentStage==='welding') && i.currentStatus==='pending_supervisor') {
-          return {...i, currentStatus:'pending'};
-        }
-        if (i.isSideCut && ['fitup','welding','blasting','painting'].includes(i.currentStage)) {
-          return {...i, currentStage:'cutting_qc', currentStatus:'cut_cleared',
-            machineBay:`machine_bay:${i.cutBy||'operator'}`};
-        }
-        // Existing fitup/pending with assigned contractor → awaiting_collection
-        // (DPR not yet at fitup stage means parts not yet collected)
-        if (i.currentStage==='fitup' && i.currentStatus==='pending' && 
-            i.assignedContractorId && !i.isSideCut && i.releaseId!=='side_cut') {
-          return {...i, currentStatus:'awaiting_collection',
-            cutQcApprovedAt: i.cutAt||i.createdAt||new Date().toISOString(),
-            collectionDueBy: new Date(Date.now()+4*3600000).toISOString(),
-            machineBay:`machine_bay:${i.cutBy||'operator'}`};
-        }
-        return i;
-      });
-    } catch { return INIT_INSTANCES; }
-  });
-
-  // ── Migration: populate sheetDim on stock lots from PO lines ──
-  // PO lines store sheetDim per dimension (one line per sheet size).
-  // Stock lots link to PO lines via poLineId — use that to copy sheetDim.
-  // Also falls back to nesting batch data for lots without a matching PO line.
-  React.useEffect(() => {
-    if (!pos?.length) return;
-    // Build index: poLineId → sheetDim
-    const poLineDimIndex = {};
-    (pos||[]).forEach(po=>{
-      (po.lines||[]).forEach(pl=>{
-        if (pl.id && pl.sheetDim) poLineDimIndex[pl.id] = pl.sheetDim.trim().toUpperCase().replace(/x/g,"X");
-      });
-    });
-    // Build nesting fallback: normMatCode → dims[]
-    const matDimIndex = {};
-    (nestingBatches||[]).forEach(b=>{
-      (b.lots||[]).forEach(nl=>{
-        const mc = normMatCode(nl.matCode);
-        if (!matDimIndex[mc]) matDimIndex[mc] = new Set();
-        (nl.sheets||[]).forEach(sh=>{
-          if (sh.sheetDim) matDimIndex[mc].add(sh.sheetDim.trim().toUpperCase().replace(/x/g,"X"));
-        });
-      });
-    });
-    setStock(prev => {
-      let changed = false;
-      const updated = prev.map(lot => {
-        if (lot.sheetDim) return lot; // already has dim
-        if (!lot.matCode) return lot;
-        if ((lot.sectionType||lot.section||"").toUpperCase() !== "PLATE") return lot;
-        // Primary: read from PO line
-        if (lot.poLineId && poLineDimIndex[lot.poLineId]) {
-          changed = true;
-          return {...lot, sheetDim: poLineDimIndex[lot.poLineId]};
-        }
-        // Fallback: nesting batch single-dim match
-        const mc = normMatCode(lot.matCode);
-        const dims = matDimIndex[mc];
-        if (dims?.size === 1) {
-          changed = true;
-          return {...lot, sheetDim:[...dims][0]};
-        }
-        return lot;
-      });
-      return changed ? updated : prev;
-    });
-  }, [pos, nestingBatches]); // eslint-disable-line
+  const [instances, setInstances]       = useState(() => { try { const s=localStorage.getItem('structo_instances'); return s?JSON.parse(s):INIT_INSTANCES; } catch { return INIT_INSTANCES; } });
   const [dprs, setDprs] = useState(() => {
     try { const s=localStorage.getItem('structo_dprs'); return s?JSON.parse(s):[]; } catch { return []; }
   });
@@ -20134,9 +19509,9 @@ export default function App() {
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setMod={setMod} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
-      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} dprs={dprs||[]} setDprs={setDprs} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} />;
+      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
-      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} />;
+      case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
@@ -20149,33 +19524,33 @@ export default function App() {
   return (
     <div style={{ display:"flex", height:"100vh", background:T.bg, fontFamily:T.font, color:T.text, fontSize:14 }}>
       {/* Sidebar */}
-      <div style={{ width:sidebar?216:52, minWidth:sidebar?216:52, background:T.bgCard, borderRight:`1px solid ${T.border}`, display:"flex", flexDirection:"column", transition:"width 0.2s", overflow:"hidden" }}>
-        <div style={{ padding:"12px 12px 10px", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", gap:8 }}>
-          <div style={{ width:30, height:30, background:T.accent, borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+      <div style={{ width:sidebar?216:52, minWidth:sidebar?216:52, background:T.bgSidebar, borderRight:"none", display:"flex", flexDirection:"column", transition:"width 0.2s", overflow:"hidden" }}>
+        <div style={{ padding:"12px 12px 10px", borderBottom:"1px solid rgba(165,243,252,0.15)", display:"flex", alignItems:"center", gap:8 }}>
+          <div style={{ width:30, height:30, background:"rgba(6,182,212,0.3)", borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
             <span style={{ fontSize:15, fontWeight:900, color:"#fff", fontFamily:T.fontMono }}>S</span>
           </div>
-          {sidebar && <div><div style={{ fontSize:13, fontWeight:800, color:T.text }}>STRUCTO</div><div style={{ fontSize:9, color:T.textMid, letterSpacing:"0.12em" }}>ERP v3.0 · S3</div></div>}
+          {sidebar && <div><div style={{ fontSize:13, fontWeight:800, color:"#fff" }}>STRUCTO</div><div style={{ fontSize:9, color:T.sidebarText, letterSpacing:"0.12em" }}>ERP v3.0 · S3</div></div>}
         </div>
         <nav style={{ flex:1, overflowY:"auto", padding:"4px 0" }}>
           {visibleNav.map(item=>{
             const active=mod===item.id;
             return (
-              <button key={item.id} onClick={()=>setMod(item.id)} title={!sidebar?item.label:""} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:sidebar?"7px 12px":"7px 10px", background:active?`${T.accent}22`:"transparent", border:"none", borderLeft:active?`2px solid ${T.accent}`:"2px solid transparent", color:active?T.accent:T.textMid, cursor:"pointer", fontFamily:T.font, fontSize:12, fontWeight:active?700:400, textAlign:"left" }}>
+              <button key={item.id} onClick={()=>setMod(item.id)} title={!sidebar?item.label:""} style={{ display:"flex", alignItems:"center", gap:8, width:"100%", padding:sidebar?"7px 12px":"7px 10px", background:active?T.bgSidebarActive:"transparent", border:"none", borderLeft:active?"2px solid #93C5FD":"2px solid transparent", color:active?T.sidebarTextActive:T.sidebarText, cursor:"pointer", fontFamily:T.font, fontSize:12, fontWeight:active?700:400, textAlign:"left" }}>
                 <span style={{ fontSize:13, flexShrink:0, width:18, textAlign:"center" }}>{item.icon}</span>
                 {sidebar && <span>{item.label}</span>}
               </button>
             );
           })}
         </nav>
-        <div style={{ padding:8, borderTop:`1px solid ${T.border}` }}>
+        <div style={{ padding:8, borderTop:"1px solid rgba(165,243,252,0.15)" }}>
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <div style={{ width:28, height:28, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"#fff", flexShrink:0 }}>{initials}</div>
+            <div style={{ width:28, height:28, borderRadius:"50%", background:"rgba(6,182,212,0.3)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"#fff", flexShrink:0 }}>{initials}</div>
             {sidebar && <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{user.name}</div>
-              <div style={{ fontSize:10, color:T.textMid, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{roleLabel}</div>
+              <div style={{ fontSize:11, fontWeight:700, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{user.name}</div>
+              <div style={{ fontSize:10, color:T.sidebarText, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{roleLabel}</div>
             </div>}
           </div>
-          {sidebar && <button onClick={()=>setUser(null)} style={{ background:"transparent", color:T.red, border:"none", cursor:"pointer", fontFamily:T.font, fontSize:11, marginTop:6, width:"100%", textAlign:"left", padding:"2px 0" }}>Sign Out</button>}
+          {sidebar && <button onClick={()=>setUser(null)} style={{ background:"transparent", color:"#FCA5A5", border:"none", cursor:"pointer", fontFamily:T.font, fontSize:11, marginTop:6, width:"100%", textAlign:"left", padding:"2px 0" }}>Sign Out</button>}
         </div>
       </div>
 
