@@ -10460,6 +10460,688 @@ const VendorTagInput = ({ value, onChange, vendors, disabled }) => {
   );
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TPI FIELD POOL + HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+const TPI_FIELD_POOL = [
+  { id:"orderNo",       label:"Order No",          source:"order" },
+  { id:"clientName",    label:"Client Name",        source:"order" },
+  { id:"drawingNo",     label:"Drawing No",         source:"drawing" },
+  { id:"drawingRev",    label:"Rev",                source:"drawing" },
+  { id:"drawingDate",   label:"Drawing Date",       source:"drawing" },
+  { id:"assemblyGroup", label:"Assembly Group",     source:"drawing" },
+  { id:"markNo",        label:"Mark No",            source:"part" },
+  { id:"description",   label:"Description / Component", source:"part" },
+  { id:"qty",           label:"Qty",                source:"part" },
+  { id:"unitWt",        label:"Unit Wt (kg)",       source:"calc" },
+  { id:"totalWt",       label:"Total Wt (kg)",      source:"calc" },
+  { id:"grade",         label:"Material Grade",     source:"part" },
+  { id:"thickness",     label:"Thickness / Size",   source:"part" },
+  { id:"welderId",      label:"Welder ID",          source:"tpi" },
+  { id:"welderName",    label:"Welder Name",        source:"tpi" },
+  { id:"wpsNo",         label:"WPS No",             source:"tpi" },
+  { id:"jointId",       label:"Joint ID",           source:"tpi" },
+  { id:"weldType",      label:"Weld Type",          source:"tpi" },
+  { id:"ndtType",       label:"NDT Type",           source:"tpi" },
+  { id:"ndtResult",     label:"NDT Result",         source:"tpi" },
+  { id:"fitupResult",   label:"Fit-Up Result",      source:"tpi" },
+  { id:"dimResult",     label:"Dimensional Result", source:"tpi" },
+  { id:"remarks",       label:"Inspector Remarks",  source:"tpi" },
+  { id:"acceptReject",  label:"Accept / Reject",    source:"tpi" },
+  { id:"certNo",        label:"Certificate No",     source:"tpi" },
+  { id:"inspDate",      label:"Inspection Date",    source:"tpi" },
+  { id:"stage",         label:"Stage",              source:"meta" },
+];
+
+const HP_LABELS = { fit_up:"Fit-Up", welding:"Welding", blasting:"Blasting", painting:"Painting", rm_inspection:"RM Inspection" };
+const HP_DPR_STAGE = { fit_up:"tpi_fitup", welding:"tpi_weld", blasting:"tpi_blast", painting:"tpi_paint" };
+const HP_PREV_STAGE = { fit_up:"fitup", welding:"welding", blasting:"blasting", painting:"painting" };
+const HP_NEXT_STAGE = { fit_up:"welding", welding:"complete", blasting:"painting", painting:"complete" };
+
+// Resolve a field value from row context {order, drawing, part, tpiRecord}
+function resolveTpiField(fieldId, ctx) {
+  const { order, drawing, part, tpiRecord } = ctx;
+  const q = order?.quality || {};
+  const unitWt = part?.unitWt || 0;
+  switch(fieldId) {
+    case "orderNo":       return order?.orderNo || "";
+    case "clientName":    return order?.clientName || "";
+    case "drawingNo":     return drawing?.drawingNo || drawing?.id || "";
+    case "drawingRev":    return drawing?.rev || "";
+    case "drawingDate":   return drawing?.drawingDate ? new Date(drawing.drawingDate).toLocaleDateString("en-IN") : "";
+    case "assemblyGroup": return drawing?.assemblyGroup || "";
+    case "markNo":        return part?.markNo || "";
+    case "description":   return part?.desc || "";
+    case "qty":           return part?.qtyPerDrg || "";
+    case "unitWt":        return unitWt > 0 ? unitWt.toFixed(2) : "";
+    case "totalWt":       return unitWt > 0 ? ((unitWt * (part?.qtyPerDrg||1))).toFixed(2) : "";
+    case "grade":         return part?.grade || "";
+    case "thickness":     return part?.size || part?.thickness || "";
+    case "welderId":      return tpiRecord?.welderId || "";
+    case "welderName":    return tpiRecord?.welderName || "";
+    case "wpsNo":         return tpiRecord?.wpsNo || (q.weldSpecs?.[0]?.wpsDoc ? "Per WPS" : "");
+    case "jointId":       return tpiRecord?.jointId || "";
+    case "weldType":      return tpiRecord?.weldType || "";
+    case "ndtType":       return tpiRecord?.ndtType || "";
+    case "ndtResult":     return tpiRecord?.ndtResult || "";
+    case "fitupResult":   return tpiRecord?.fitupResult || "";
+    case "dimResult":     return tpiRecord?.dimResult || "";
+    case "remarks":       return tpiRecord?.remarks || "";
+    case "acceptReject":  return tpiRecord?.outcome === "pass" || tpiRecord?.outcome === "conditional_pass" ? "Accept" : tpiRecord?.outcome === "fail" ? "Reject" : "";
+    case "certNo":        return tpiRecord?.certNo || "";
+    case "inspDate":      return tpiRecord?.inspDate ? new Date(tpiRecord.inspDate).toLocaleDateString("en-IN") : "";
+    case "stage":         return HP_LABELS[tpiRecord?.holdPoint] || "";
+    default:              return "";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TPI QUALITY SETUP — inside Order → Quality → TPI tab
+// ═══════════════════════════════════════════════════════════════════════════════
+const TpiQualitySetup = ({ order, onChange, canEdit, tpiAgencies }) => {
+  const q = order.quality || {};
+  const updQ = (k, v) => onChange({ ...order, quality: { ...q, [k]: v } });
+  const [templateBuilderHp, setTemplateBuilderHp] = useState(null); // which hold point's template we're editing
+  const [savedTemplates, setSavedTemplates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("structo_tpiTemplates") || "[]"); } catch { return []; }
+  });
+  const persistTemplates = (arr) => {
+    setSavedTemplates(arr);
+    try { localStorage.setItem("structo_tpiTemplates", JSON.stringify(arr)); } catch {}
+  };
+
+  const HP_LIST = [["rm_inspection","RM Inspection"],["fit_up","Fit-Up"],["welding","Welding"],["blasting","Blasting"],["painting","Painting"]];
+  const activeHps = (q.tpiHoldPoints || []);
+  const tpiConfig = q.tpiConfig || {};
+  const tpiOrderTemplates = q.tpiOrderTemplates || {};
+
+  const updConfig = (hp, patch) => updQ("tpiConfig", { ...tpiConfig, [hp]: { ...(tpiConfig[hp]||{}), ...patch } });
+  const updTemplate = (hp, cols) => updQ("tpiOrderTemplates", { ...tpiOrderTemplates, [hp]: cols });
+
+  const DEFAULT_COLS = [
+    { field:"markNo",    label:"Mark No" },
+    { field:"description", label:"Description" },
+    { field:"qty",       label:"Qty" },
+    { field:"unitWt",    label:"Unit Wt (kg)" },
+    { field:"totalWt",   label:"Total Wt (kg)" },
+    { field:"grade",     label:"Material Grade" },
+    { field:"acceptReject", label:"Accept / Reject" },
+    { field:"remarks",   label:"Remarks" },
+  ];
+
+  const getTemplate = (hp) => tpiOrderTemplates[hp] || DEFAULT_COLS;
+  const setTemplate = (hp, cols) => updTemplate(hp, cols);
+
+  const TemplateBuilder = ({ hp }) => {
+    const [cols, setCols] = useState(getTemplate(hp).map((c,i)=>({...c,_id:i})));
+    const [newField, setNewField] = useState("");
+    const [newLabel, setNewLabel] = useState("");
+
+    const save = () => { setTemplate(hp, cols.map(({_id,...c})=>c)); setTemplateBuilderHp(null); };
+
+    const moveUp = (i) => { if(i===0) return; const n=[...cols]; [n[i-1],n[i]]=[n[i],n[i-1]]; setCols(n); };
+    const moveDown = (i) => { if(i===cols.length-1) return; const n=[...cols]; [n[i],n[i+1]]=[n[i+1],n[i]]; setCols(n); };
+    const del = (i) => setCols(cols.filter((_,j)=>j!==i));
+    const addCol = () => {
+      if (!newField) return;
+      const pool = TPI_FIELD_POOL.find(f=>f.id===newField);
+      setCols([...cols, { field:newField, label:newLabel||pool?.label||newField, _id:Date.now() }]);
+      setNewField(""); setNewLabel("");
+    };
+
+    // Sample data for preview
+    const sampleParts = (order.parts||[]).filter(p=>p.fabType==="Fabricate").slice(0,2);
+    const drawing0 = (order.drawings||[]).find(d=>d.id===sampleParts[0]?.drawingId) || {};
+
+    const saveAsTemplate = () => {
+      const name = window.prompt("Template name (e.g. 'ISGEC Weld TPI'):");
+      if (!name) return;
+      const tmpl = { id:`TPITMPL-${Date.now()}`, clientId:order.clientId, clientName:order.clientName, holdPoint:hp, name, columns:cols.map(({_id,...c})=>c), createdBy:"qc_admin", createdAt:new Date().toISOString() };
+      persistTemplates([...savedTemplates, tmpl]);
+    };
+
+    const clientTemplates = savedTemplates.filter(t => t.clientId === order.clientId && t.holdPoint === hp);
+
+    return (
+      <div style={{ ...css.card, marginTop:12 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Report Template — {HP_LABELS[hp]}</div>
+          <div style={{ display:"flex", gap:8 }}>
+            {clientTemplates.length > 0 && (
+              <select onChange={e=>{ const t=savedTemplates.find(x=>x.id===e.target.value); if(t) setCols(t.columns.map((c,i)=>({...c,_id:i}))); }} style={{ ...css.input, width:"auto", fontSize:11 }}>
+                <option value="">Load saved template…</option>
+                {clientTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            )}
+            <button onClick={saveAsTemplate} style={{ ...css.btn.ghost, fontSize:11 }}>💾 Save as Template</button>
+            <button onClick={save} style={css.btn.green}>✓ Apply</button>
+            <button onClick={()=>setTemplateBuilderHp(null)} style={css.btn.ghost}>✕</button>
+          </div>
+        </div>
+
+        {/* Column editor */}
+        <div style={{ marginBottom:14 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"26px 1fr 1fr 60px", gap:6, fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", marginBottom:6, padding:"0 4px" }}>
+            <span>#</span><span>Field</span><span>Column Header</span><span>Actions</span>
+          </div>
+          {cols.map((col,i) => (
+            <div key={col._id||i} style={{ display:"grid", gridTemplateColumns:"26px 1fr 1fr 60px", gap:6, marginBottom:4, alignItems:"center" }}>
+              <span style={{ fontSize:11, color:T.textLow, textAlign:"center" }}>{i+1}</span>
+              <div style={{ fontSize:12, color:T.accent, fontFamily:T.fontMono, padding:"5px 8px", background:T.bgInput, borderRadius:4 }}>
+                {TPI_FIELD_POOL.find(f=>f.id===col.field)?.label || col.field}
+              </div>
+              <input value={col.label} onChange={e=>{ const n=[...cols]; n[i]={...n[i],label:e.target.value}; setCols(n); }}
+                style={{ ...css.input, fontSize:12 }} placeholder="Column header…" />
+              <div style={{ display:"flex", gap:3 }}>
+                <button onClick={()=>moveUp(i)} disabled={i===0} style={{ ...css.btn.ghost, padding:"3px 6px", fontSize:11, opacity:i===0?0.3:1 }}>↑</button>
+                <button onClick={()=>moveDown(i)} disabled={i===cols.length-1} style={{ ...css.btn.ghost, padding:"3px 6px", fontSize:11, opacity:i===cols.length-1?0.3:1 }}>↓</button>
+                <button onClick={()=>del(i)} style={{ ...css.btn.ghost, padding:"3px 6px", fontSize:11, color:T.red }}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Add column */}
+        <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:16, padding:"10px 12px", background:T.bgInput, borderRadius:6 }}>
+          <select value={newField} onChange={e=>{ setNewField(e.target.value); setNewLabel(TPI_FIELD_POOL.find(f=>f.id===e.target.value)?.label||""); }} style={{ ...css.input, width:"auto", fontSize:12 }}>
+            <option value="">Add field…</option>
+            {TPI_FIELD_POOL.filter(f=>!cols.find(c=>c.field===f.id)).map(f=><option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
+          <input value={newLabel} onChange={e=>setNewLabel(e.target.value)} placeholder="Custom header (optional)" style={{ ...css.input, fontSize:12, flex:1 }} />
+          <button onClick={addCol} disabled={!newField} style={{ ...css.btn.primary, opacity:newField?1:0.4 }}>+ Add</button>
+        </div>
+
+        {/* Live preview */}
+        {sampleParts.length > 0 && (
+          <div>
+            <div style={{ fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Preview (sample data)</div>
+            <div style={{ overflowX:"auto", borderRadius:6, border:`1px solid ${T.border}` }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                <thead>
+                  <tr style={{ background:T.bgInput }}>
+                    <th style={{ padding:"6px 8px", textAlign:"left", fontWeight:700, color:T.textMid, fontSize:10, textTransform:"uppercase", whiteSpace:"nowrap", borderBottom:`1px solid ${T.border}` }}>#</th>
+                    {cols.map((col,i)=><th key={i} style={{ padding:"6px 8px", textAlign:"left", fontWeight:700, color:T.textMid, fontSize:10, textTransform:"uppercase", whiteSpace:"nowrap", borderBottom:`1px solid ${T.border}` }}>{col.label}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sampleParts.map((part,ri)=>{
+                    const drg = (order.drawings||[]).find(d=>d.id===part.drawingId)||{};
+                    const ctx = { order, drawing:drg, part:{ ...part, unitWt: part.unitWt || (part.wt||0) / Math.max(part.qtyPerDrg||1,1) }, tpiRecord:{} };
+                    return (
+                      <tr key={part.markNo} style={{ background:ri%2===0?"transparent":T.bgInput }}>
+                        <td style={{ padding:"5px 8px", color:T.textLow, borderBottom:`1px solid ${T.border}` }}>{ri+1}</td>
+                        {cols.map((col,ci)=><td key={ci} style={{ padding:"5px 8px", color:T.text, borderBottom:`1px solid ${T.border}`, fontFamily:["markNo","drawingNo","orderNo"].includes(col.field)?T.fontMono:T.font }}>{resolveTpiField(col.field, ctx)||<span style={{color:T.textLow}}>—</span>}</td>)}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ ...css.card }}>
+      {/* TPI Required toggle */}
+      <div style={{ marginBottom:16 }}>
+        <div style={css.label}>TPI Required</div>
+        <div style={{ display:"flex", gap:12, marginTop:4 }}>
+          <label style={{ display:"flex", alignItems:"center", gap:8, cursor:canEdit?"pointer":"default" }}>
+            <input type="radio" checked={q.tpiRequired===true} onChange={()=>canEdit&&updQ("tpiRequired",true)} disabled={!canEdit} />
+            <span style={{ color:T.text }}>Yes</span>
+          </label>
+          <label style={{ display:"flex", alignItems:"center", gap:8, cursor:canEdit?"pointer":"default" }}>
+            <input type="radio" checked={q.tpiRequired!==true} onChange={()=>canEdit&&updQ("tpiRequired",false)} disabled={!canEdit} />
+            <span style={{ color:T.text }}>No</span>
+          </label>
+        </div>
+      </div>
+
+      {q.tpiRequired && (
+        <>
+          {/* Agency + Hold Points */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:20 }}>
+            <div>
+              <label style={css.label}>TPI Agency</label>
+              <select value={q.tpiAgencyId||""} disabled={!canEdit} style={css.input}
+                onChange={e=>{
+                  const agencyList = tpiAgencies?.length ? tpiAgencies : TPI_AGENCIES;
+                  const a = agencyList.find(t=>t.id===e.target.value);
+                  onChange({...order, quality:{...q, tpiAgencyId:e.target.value, tpiAgencyName:a?.name||""}});
+                }}>
+                <option value="">Select agency…</option>
+                {(tpiAgencies?.length ? tpiAgencies : TPI_AGENCIES).map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={css.label}>Hold Points</div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
+                {HP_LIST.map(([hp,label])=>(
+                  <label key={hp} style={{ display:"flex", alignItems:"center", gap:6, cursor:canEdit?"pointer":"default" }}>
+                    <input type="checkbox" checked={activeHps.includes(hp)} disabled={!canEdit}
+                      onChange={e=>{ const pts=activeHps; updQ("tpiHoldPoints",e.target.checked?[...pts,hp]:pts.filter(p=>p!==hp)); }} />
+                    <span style={{ fontSize:12, color:T.text }}>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Per hold-point config */}
+          {activeHps.filter(hp=>hp!=="rm_inspection").map(hp => {
+            const cfg = tpiConfig[hp] || {};
+            const coveragePct = cfg.coveragePct ?? 100;
+            return (
+              <div key={hp} style={{ ...css.card, background:T.bgInput, marginBottom:12 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:T.text }}>{HP_LABELS[hp]} TPI</div>
+                  {canEdit && (
+                    <button onClick={()=>setTemplateBuilderHp(templateBuilderHp===hp?null:hp)}
+                      style={{ ...css.btn.ghost, fontSize:11, color:T.accent }}>
+                      {templateBuilderHp===hp?"▲ Close Template":"📋 Configure Report Template"}
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+                  {/* Coverage % */}
+                  <div>
+                    <label style={css.label}>Coverage %</label>
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <input type="number" min={1} max={100} value={coveragePct}
+                        disabled={!canEdit}
+                        onChange={e=>updConfig(hp,{coveragePct:Math.min(100,Math.max(1,+e.target.value))})}
+                        style={{ ...css.input, width:70 }} />
+                      <span style={{ fontSize:12, color:coveragePct<100?T.amber:T.green, fontWeight:700 }}>
+                        {coveragePct<100?`Partial — ${coveragePct}%`:"Full"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Selection method (only shown when < 100%) */}
+                  {coveragePct < 100 && (
+                    <div>
+                      <label style={css.label}>Selection Method</label>
+                      <select value={cfg.selectionMethod||"first"} disabled={!canEdit}
+                        onChange={e=>updConfig(hp,{selectionMethod:e.target.value})} style={css.input}>
+                        <option value="first">First N drawings</option>
+                        <option value="random">Random</option>
+                        <option value="manual">Manual pick</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* NDT config for welding */}
+                  {hp === "welding" && (
+                    <div>
+                      <label style={css.label}>NDT Required</label>
+                      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
+                        {["RT","UT","MPI","VT"].map(ndt=>(
+                          <label key={ndt} style={{ display:"flex", alignItems:"center", gap:4, cursor:canEdit?"pointer":"default", fontSize:12 }}>
+                            <input type="checkbox"
+                              checked={((cfg.ndtTypes||[])).includes(ndt)}
+                              disabled={!canEdit}
+                              onChange={e=>{ const t=cfg.ndtTypes||[]; updConfig(hp,{ndtTypes:e.target.checked?[...t,ndt]:t.filter(x=>x!==ndt)}); }} />
+                            {ndt}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Template builder inline */}
+                {templateBuilderHp === hp && canEdit && (
+                  <TemplateBuilder hp={hp} />
+                )}
+
+                {/* Template summary when not editing */}
+                {templateBuilderHp !== hp && (
+                  <div style={{ marginTop:10, fontSize:11, color:T.textLow }}>
+                    Report columns: <span style={{ color:T.textMid }}>
+                      {getTemplate(hp).map(c=>c.label).join(" · ")}
+                    </span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TPI QC PANEL — QC & Inspection → TPI tab
+// ═══════════════════════════════════════════════════════════════════════════════
+const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiTemplates, setTpiTemplates, contractors }) => {
+  // Collect all active TPI hold points across orders
+  const activeOrders = (orders||[]).filter(o=>o.status==="active"&&o.quality?.tpiRequired&&(o.quality?.tpiHoldPoints||[]).length>0);
+
+  // Build hold-point sub-tabs — only those that have DPRs currently at that TPI stage
+  const HP_ORDER = ["fit_up","welding","blasting","painting"];
+  const activeTabs = HP_ORDER.filter(hp => {
+    const dprStage = HP_DPR_STAGE[hp];
+    return activeOrders.some(o=>(o.quality?.tpiHoldPoints||[]).includes(hp)) ||
+           (dprs||[]).some(d=>d.currentStage===dprStage);
+  });
+
+  const [activeHp, setActiveHp] = useState(activeTabs[0]||"welding");
+  const [selDprId, setSelDprId] = useState(null);
+
+  // Counts per tab
+  const countForHp = hp => (dprs||[]).filter(d=>d.currentStage===HP_DPR_STAGE[hp]).length;
+
+  // Update DPR helper
+  const updDpr = (id, patch) => setDprs(prev=>prev.map(d=>d.id===id?{...d,...patch}:d));
+
+  // Advance instances when TPI clears
+  const advInstances = (dpr, toStage) => {
+    setInstances(prev=>prev.map(i=>{
+      if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
+      return {...i, currentStage:toStage, currentStatus:toStage==="complete"?"complete":"in_progress",
+        stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,completedAt:new Date().toISOString(),completedBy:user.username}]};
+    }));
+  };
+
+  // ── TPI Hold-Point Panel ───────────────────────────────────────────────────
+  const HoldPointPanel = ({ hp }) => {
+    const dprStage = HP_DPR_STAGE[hp];
+    const prevStage = HP_PREV_STAGE[hp];
+    const nextStage = HP_NEXT_STAGE[hp];
+    const allDprs = (dprs||[]).filter(d=>d.currentStage===dprStage||(d.tpiRecords||[]).some(r=>r.holdPoint===hp));
+
+    const awaiting  = allDprs.filter(d=>d.currentStage===dprStage&&!(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.offeredAt));
+    const offered   = allDprs.filter(d=>d.currentStage===dprStage&&(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.offeredAt&&!r.outcome));
+    const cleared   = allDprs.filter(d=>(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&(r.outcome==="pass"||r.outcome==="conditional_pass")));
+    const failed    = allDprs.filter(d=>(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.outcome==="fail"));
+
+    const [offerForm, setOfferForm] = useState({});
+    const [outcomeForm, setOutcomeForm] = useState({});
+    const [section, setSection] = useState("awaiting"); // awaiting | offered | cleared | failed
+    const [genScope, setGenScope] = useState("cleared"); // cleared | offered | all
+
+    const getOrder = dpr => (orders||[]).find(o=>o.id===dpr.orderId)||{};
+    const getDrawing = (dpr,order) => (order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+
+    // Offer to TPI
+    const submitOffer = (dpr) => {
+      const f = offerForm[dpr.id]||{};
+      if (!f.inspector||!f.offeredAt) return;
+      const ts = new Date().toISOString();
+      const rec = { holdPoint:hp, offeredAt:f.offeredAt, inspector:f.inspector, expectedDate:f.expectedDate||"", scope:f.scope||HP_LABELS[hp]+" inspection", offeredBy:user.username };
+      const existing = dpr.tpiRecords||[];
+      updDpr(dpr.id, { tpiRecords:[...existing.filter(r=>!(r.holdPoint===hp&&!r.outcome)),rec],
+        tpiOfferedAt:ts });
+      // Also stamp drawing for progress tracker
+      const order = getOrder(dpr);
+      const drawing = getDrawing(dpr, order);
+      if (drawing.id) {
+        // Update drawing tpiOfferedAt via orders
+        setDprs(prev=>prev); // trigger re-render
+      }
+      setOfferForm(p=>({...p,[dpr.id]:{}}));
+      setSection("offered");
+    };
+
+    // Record outcome
+    const submitOutcome = (dpr) => {
+      const f = outcomeForm[dpr.id]||{};
+      if (!f.outcome||!f.certNo||!f.inspDate) return;
+      const ts = new Date().toISOString();
+      const existingRec = (dpr.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.offeredAt&&!r.outcome)||{};
+      const updRec = { ...existingRec, holdPoint:hp, outcome:f.outcome, certNo:f.certNo, inspDate:f.inspDate,
+        welderId:f.welderId||"", welderName:f.welderName||"", wpsNo:f.wpsNo||"",
+        ndtType:f.ndtType||"", ndtResult:f.ndtResult||"", remarks:f.remarks||"",
+        clearedAt:ts, clearedBy:user.username };
+      const updRecords = [...(dpr.tpiRecords||[]).filter(r=>!(r.holdPoint===hp&&!r.outcome)), updRec];
+
+      if (f.outcome==="pass"||f.outcome==="conditional_pass") {
+        updDpr(dpr.id, { tpiRecords:updRecords, currentStage:nextStage,
+          currentStatus:nextStage==="complete"?"complete":"in_progress",
+          tpiClearedAt:ts,
+          stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_cleared",outcome:f.outcome,by:user.username,at:ts}] });
+        advInstances(dpr, nextStage);
+      } else {
+        // Fail — push back to work stage
+        updDpr(dpr.id, { tpiRecords:updRecords, currentStage:prevStage, currentStatus:"in_progress",
+          stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_failed",reason:f.remarks,by:user.username,at:ts}] });
+        advInstances(dpr, prevStage);
+      }
+      setOutcomeForm(p=>({...p,[dpr.id]:{}}));
+      setSection(f.outcome==="fail"?"failed":"cleared");
+    };
+
+    // Generate report
+    const generateReport = (scope) => {
+      const targetDprs = scope==="cleared" ? cleared : scope==="offered" ? offered : [...awaiting,...offered,...cleared];
+      if (targetDprs.length===0) { alert("No drawings in selected scope."); return; }
+
+      // Collect template from first matching order
+      const firstOrder = getOrder(targetDprs[0]);
+      const template = firstOrder.quality?.tpiOrderTemplates?.[hp] ||
+        [{ field:"markNo",label:"Mark No"},{field:"description",label:"Description"},{field:"qty",label:"Qty"},{field:"unitWt",label:"Unit Wt (kg)"},{field:"totalWt",label:"Total Wt (kg)"},{field:"grade",label:"Grade"},{field:"acceptReject",label:"Accept/Reject"},{field:"certNo",label:"Cert No"},{field:"inspDate",label:"Insp Date"},{field:"remarks",label:"Remarks"}];
+
+      // Build rows — one per part per drawing
+      const rows = [];
+      let srNo = 1;
+      targetDprs.forEach(dpr => {
+        const order = getOrder(dpr);
+        const drawing = getDrawing(dpr, order);
+        const tpiRecord = (dpr.tpiRecords||[]).filter(r=>r.holdPoint===hp).slice(-1)[0]||{};
+        const parts = (order.parts||[]).filter(p=>p.drawingId===dpr.drawingId&&p.fabType==="Fabricate");
+        parts.forEach(part => {
+          const ctx = { order, drawing, part:{ ...part, unitWt: part.unitWt||(part.wt||0)/Math.max(part.qtyPerDrg||1,1) }, tpiRecord };
+          const row = { _srNo: srNo++, ...Object.fromEntries(template.map(col=>[col.label, resolveTpiField(col.field,ctx)])) };
+          rows.push(row);
+        });
+      });
+
+      // XLSX export
+      const wsData = [["Sr No", ...template.map(c=>c.label)], ...rows.map(r=>[r._srNo, ...template.map(c=>r[c.label])])];
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+      // Column widths
+      ws['!cols'] = [{ wch:6 }, ...template.map(()=>({ wch:18 }))];
+      XLSX.utils.book_append_sheet(wb, ws, `${HP_LABELS[hp]} TPI`);
+      const orderNo = firstOrder.orderNo||"ORDER";
+      XLSX.writeFile(wb, `TPI-${HP_LABELS[hp].replace(/\s/g,"")}-${orderNo}-${new Date().toISOString().slice(0,10)}.xlsx`);
+    };
+
+    // ── DPR Card ──
+    const DprTpiCard = ({ dpr, mode }) => {
+      const order = getOrder(dpr);
+      const drawing = getDrawing(dpr, order);
+      const latestRec = (dpr.tpiRecords||[]).filter(r=>r.holdPoint===hp).slice(-1)[0]||null;
+      const ageDays = dpr.tpiOfferedAt ? Math.floor((Date.now()-new Date(dpr.tpiOfferedAt).getTime())/86400000) : null;
+      const overdue = latestRec?.expectedDate && new Date(latestRec.expectedDate) < new Date();
+
+      return (
+        <div style={{ ...css.card, marginBottom:10, borderLeft:`3px solid ${mode==="awaiting"?T.amber:mode==="offered"?T.accent:mode==="cleared"?T.green:T.red}` }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+            <div>
+              <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo||dpr.drawingId}</div>
+              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>{order.orderNo} · {order.clientName}</div>
+              {drawing.assemblyGroup&&<div style={{ fontSize:11, color:T.textLow }}>Assembly: {drawing.assemblyGroup}</div>}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+              <Badge color={mode==="awaiting"?"amber":mode==="offered"?"blue":mode==="cleared"?"green":"red"}>
+                {mode==="awaiting"?"Awaiting Offer":mode==="offered"?"Offered — Pending":mode==="cleared"?`${latestRec?.outcome==="conditional_pass"?"Conditional Pass":"Cleared"}`:("Failed")}
+              </Badge>
+              {mode==="offered"&&ageDays!==null&&<span style={{ fontSize:10, color:overdue?T.red:T.textLow }}>{ageDays}d waiting{overdue?" — OVERDUE":""}</span>}
+            </div>
+          </div>
+
+          {/* TPI agency + inspector if offered */}
+          {latestRec?.inspector&&<div style={{ fontSize:11, color:T.textMid, marginBottom:8 }}>Inspector: <strong style={{color:T.text}}>{latestRec.inspector}</strong> · {latestRec.offeredAt ? new Date(latestRec.offeredAt).toLocaleDateString("en-IN") : ""}</div>}
+          {latestRec?.certNo&&<div style={{ fontSize:11, color:T.textMid }}>Cert: <strong style={{color:T.text,fontFamily:T.fontMono}}>{latestRec.certNo}</strong> · {latestRec.inspDate ? new Date(latestRec.inspDate).toLocaleDateString("en-IN") : ""}</div>}
+
+          {/* Offer form */}
+          {mode==="awaiting" && (
+            <div style={{ marginTop:10, padding:12, background:T.bgInput, borderRadius:6 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>Offer to TPI Agency</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
+                <div>
+                  <label style={css.label}>Inspector Name</label>
+                  <input value={(offerForm[dpr.id]||{}).inspector||""} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),inspector:e.target.value}}))} style={css.input} placeholder="e.g. Mr. A. Sharma" />
+                </div>
+                <div>
+                  <label style={css.label}>Date Offered</label>
+                  <input type="date" value={(offerForm[dpr.id]||{}).offeredAt||new Date().toISOString().slice(0,10)} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),offeredAt:e.target.value}}))} style={css.input} />
+                </div>
+                <div>
+                  <label style={css.label}>Expected Inspection Date</label>
+                  <input type="date" value={(offerForm[dpr.id]||{}).expectedDate||""} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),expectedDate:e.target.value}}))} style={css.input} />
+                </div>
+                <div>
+                  <label style={css.label}>Scope (auto-filled)</label>
+                  <input value={(offerForm[dpr.id]||{}).scope||`${HP_LABELS[hp]} inspection as per WPS/drawing`} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),scope:e.target.value}}))} style={css.input} />
+                </div>
+              </div>
+              <button onClick={()=>submitOffer(dpr)} disabled={!(offerForm[dpr.id]?.inspector&&offerForm[dpr.id]?.offeredAt)}
+                style={{ ...css.btn.primary, opacity:(offerForm[dpr.id]?.inspector&&offerForm[dpr.id]?.offeredAt)?1:0.45 }}>
+                📤 Offer to TPI
+              </button>
+            </div>
+          )}
+
+          {/* Outcome form */}
+          {mode==="offered" && (
+            <div style={{ marginTop:10, padding:12, background:T.bgInput, borderRadius:6 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>Record TPI Outcome</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:8 }}>
+                <div>
+                  <label style={css.label}>Outcome</label>
+                  <select value={(outcomeForm[dpr.id]||{}).outcome||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),outcome:e.target.value}}))} style={css.input}>
+                    <option value="">Select…</option>
+                    <option value="pass">Pass</option>
+                    <option value="conditional_pass">Conditional Pass</option>
+                    <option value="fail">Fail — Return to {HP_LABELS[hp]}</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={css.label}>Certificate / Report No</label>
+                  <input value={(outcomeForm[dpr.id]||{}).certNo||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),certNo:e.target.value}}))} style={css.input} placeholder="e.g. BV/WLD/2026/001" />
+                </div>
+                <div>
+                  <label style={css.label}>Inspection Date</label>
+                  <input type="date" value={(outcomeForm[dpr.id]||{}).inspDate||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),inspDate:e.target.value}}))} style={css.input} />
+                </div>
+                <div>
+                  <label style={css.label}>Welder ID / Stamp</label>
+                  <input value={(outcomeForm[dpr.id]||{}).welderId||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),welderId:e.target.value}}))} style={css.input} placeholder="e.g. WLD-001" />
+                </div>
+                <div>
+                  <label style={css.label}>Welder Name</label>
+                  <input value={(outcomeForm[dpr.id]||{}).welderName||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),welderName:e.target.value}}))} style={css.input} placeholder="Name" />
+                </div>
+                <div>
+                  <label style={css.label}>WPS No</label>
+                  <input value={(outcomeForm[dpr.id]||{}).wpsNo||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),wpsNo:e.target.value}}))} style={css.input} placeholder="e.g. WPS-001" />
+                </div>
+                {hp==="welding"&&(
+                  <>
+                    <div>
+                      <label style={css.label}>NDT Type</label>
+                      <input value={(outcomeForm[dpr.id]||{}).ndtType||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),ndtType:e.target.value}}))} style={css.input} placeholder="RT / UT / MPI / VT" />
+                    </div>
+                    <div>
+                      <label style={css.label}>NDT Result</label>
+                      <select value={(outcomeForm[dpr.id]||{}).ndtResult||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),ndtResult:e.target.value}}))} style={css.input}>
+                        <option value="">—</option>
+                        <option value="Pass">Pass</option>
+                        <option value="Fail">Fail</option>
+                        <option value="N/A">N/A</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+                <div style={{ gridColumn:"span 3" }}>
+                  <label style={css.label}>Remarks</label>
+                  <textarea value={(outcomeForm[dpr.id]||{}).remarks||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),remarks:e.target.value}}))} style={{ ...css.input, minHeight:52, resize:"vertical" }} placeholder="Inspector remarks, conditions, observations…" />
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={()=>submitOutcome(dpr)} disabled={!(outcomeForm[dpr.id]?.outcome&&outcomeForm[dpr.id]?.certNo&&outcomeForm[dpr.id]?.inspDate)}
+                  style={{ ...(outcomeForm[dpr.id]?.outcome==="fail"?css.btn.danger:css.btn.green), opacity:(outcomeForm[dpr.id]?.outcome&&outcomeForm[dpr.id]?.certNo&&outcomeForm[dpr.id]?.inspDate)?1:0.45 }}>
+                  {outcomeForm[dpr.id]?.outcome==="fail"?"✕ Record Fail":"✓ Record Clearance"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    const SECTIONS = [
+      { id:"awaiting", label:"Awaiting Offer", count:awaiting.length, color:T.amber },
+      { id:"offered",  label:"Offered — Pending", count:offered.length, color:T.accent },
+      { id:"cleared",  label:"Cleared", count:cleared.length, color:T.green },
+      { id:"failed",   label:"Failed", count:failed.length, color:T.red },
+    ];
+
+    return (
+      <div>
+        {/* Generate Report bar */}
+        <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16, padding:"10px 14px", background:T.bgInput, borderRadius:8, border:`1px solid ${T.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:T.text }}>Generate TPI Report</div>
+          <select value={genScope} onChange={e=>setGenScope(e.target.value)} style={{ ...css.input, width:"auto", fontSize:12 }}>
+            <option value="cleared">Cleared drawings only</option>
+            <option value="offered">Offered drawings</option>
+            <option value="all">All drawings</option>
+          </select>
+          <button onClick={()=>generateReport(genScope)} style={css.btn.primary}>📥 Export XLSX</button>
+          <div style={{ flex:1 }} />
+          <div style={{ fontSize:11, color:T.textLow }}>{cleared.length} cleared · {offered.length} pending · {awaiting.length} not offered</div>
+        </div>
+
+        {/* Section tabs */}
+        <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
+          {SECTIONS.map(s=>(
+            <button key={s.id} onClick={()=>setSection(s.id)} style={{ padding:"8px 16px", fontSize:12, fontWeight:section===s.id?700:400, color:section===s.id?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:section===s.id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+              {s.label}
+              {s.count>0&&<span style={{ background:section===s.id?T.accent:s.color, color:"#fff", borderRadius:10, fontSize:10, fontWeight:800, padding:"1px 6px" }}>{s.count}</span>}
+            </button>
+          ))}
+        </div>
+
+        {section==="awaiting"&&(awaiting.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>✓ No drawings awaiting TPI offer</div>:awaiting.map(d=><DprTpiCard key={d.id} dpr={d} mode="awaiting" />))}
+        {section==="offered"&&(offered.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>No drawings currently offered to TPI</div>:offered.map(d=><DprTpiCard key={d.id} dpr={d} mode="offered" />))}
+        {section==="cleared"&&(cleared.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>No TPI clearances recorded yet</div>:cleared.map(d=><DprTpiCard key={d.id} dpr={d} mode="cleared" />))}
+        {section==="failed"&&(failed.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>No TPI failures recorded</div>:failed.map(d=><DprTpiCard key={d.id} dpr={d} mode="failed" />))}
+      </div>
+    );
+  };
+
+  if (activeTabs.length===0) return (
+    <div style={{ textAlign:"center", padding:48, color:T.textLow }}>
+      <div style={{ fontSize:32, marginBottom:12 }}>🔍</div>
+      <div style={{ fontSize:14, fontWeight:600, color:T.textMid }}>No TPI hold points configured</div>
+      <div style={{ fontSize:12, marginTop:6 }}>Enable TPI on an order via Orders → Quality → TPI tab and select hold points.</div>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Hold-point sub-tabs */}
+      <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+        {activeTabs.map(hp=>(
+          <button key={hp} onClick={()=>setActiveHp(hp)} style={{ padding:"10px 18px", fontSize:13, fontWeight:activeHp===hp?700:400, color:activeHp===hp?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:activeHp===hp?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", display:"flex", alignItems:"center", gap:7 }}>
+            {HP_LABELS[hp]} TPI
+            {countForHp(hp)>0&&<span style={{ background:activeHp===hp?T.accent:T.amber, color:"#fff", borderRadius:10, fontSize:11, fontWeight:800, padding:"1px 7px" }}>{countForHp(hp)}</span>}
+          </button>
+        ))}
+      </div>
+      <HoldPointPanel key={activeHp} hp={activeHp} />
+    </div>
+  );
+};
+
 const TabQuality = ({ order, onChange, canEdit, vendors, tpiAgencies }) => {
   const [activeQ, setActiveQ]       = useState("rm_makes");
   const [activeSpec, setActiveSpec] = useState(0);
@@ -10726,53 +11408,7 @@ const TabQuality = ({ order, onChange, canEdit, vendors, tpiAgencies }) => {
           </div>
         );
       })()}
-      {activeQ==="tpi"&&<div style={{ ...css.card }}>
-        <div style={{ marginBottom:12 }}>
-          <div style={css.label}>TPI Required</div>
-          <div style={{ display:"flex", gap:12 }}>
-            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
-              <input type="radio" checked={q.tpiRequired===true} onChange={()=>updQ("tpiRequired",true)} disabled={!canEdit} />
-              <span style={{ color:T.text }}>Yes</span>
-            </label>
-            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
-              <input type="radio" checked={q.tpiRequired===false} onChange={()=>updQ("tpiRequired",false)} disabled={!canEdit} />
-              <span style={{ color:T.text }}>No</span>
-            </label>
-          </div>
-        </div>
-        {q.tpiRequired&&<div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-          <div>
-            <label style={css.label}>TPI Agency</label>
-            <select
-              value={q.tpiAgencyId||""}
-              disabled={!canEdit}
-              style={css.input}
-              onChange={e=>{
-                const agencyList = tpiAgencies?.length ? tpiAgencies : TPI_AGENCIES;
-                const a = agencyList.find(t=>t.id===e.target.value);
-                // Single onChange call — avoids stale-closure overwrite bug
-                onChange({...order, quality:{...q, tpiAgencyId:e.target.value, tpiAgencyName:a?.name||""}});
-              }}>
-              <option value="">Select...</option>
-              {(tpiAgencies?.length ? tpiAgencies : TPI_AGENCIES).map(a=>(
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <div style={css.label}>Hold Points</div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:4 }}>
-              {[["rm_inspection","RM Inspection"],["fit_up","Fit-Up"],["welding","Welding"],["blasting","Blasting"],["painting","Painting"]].map(([hp,label])=>(
-                <label key={hp} style={{ display:"flex", alignItems:"center", gap:6, cursor:"pointer" }}>
-                  <input type="checkbox" checked={(q.tpiHoldPoints||[]).includes(hp)} disabled={!canEdit}
-                    onChange={e=>{ const pts=q.tpiHoldPoints||[]; updQ("tpiHoldPoints",e.target.checked?[...pts,hp]:pts.filter(p=>p!==hp)); }} />
-                  <span style={{ fontSize:12, color:T.text }}>{label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>}
-      </div>}
+      {activeQ==="tpi"&&<TpiQualitySetup order={order} onChange={onChange} canEdit={canEdit} tpiAgencies={tpiAgencies} />}
       {activeQ==="dispatch"&&<div style={{ ...css.card }}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Packing Type</label><select value={q.dispatchSpec?.packingType||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,packingType:e.target.value})} disabled={!canEdit} style={css.input}><option value="">Select...</option><option>Shrink wrap only</option><option>Wooden rafters + shrink wrap</option><option>Wooden box</option><option>Custom</option></select></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Remarks</label><textarea value={q.dispatchSpec?.remarks||""} onChange={e=>updQ("dispatchSpec",{...q.dispatchSpec,remarks:e.target.value})} disabled={!canEdit} style={{ ...css.input, minHeight:60, resize:"vertical" }} /></div></div></div>}
       {activeQ==="mdcc"&&<div>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}><div style={{ fontSize:14, fontWeight:700, color:T.text }}>MDCC Dossier Checklist</div>{canEdit&&<button onClick={()=>updQ("mdccDocs",[...(q.mdccDocs||[]),{id:`MDCC-D-${Date.now()}`,docName:"",mandatory:true}])} style={css.btn.primary}>+ Add Document</button>}</div>
@@ -17751,7 +18387,7 @@ const STAGE_TO_PROCESS = {
   assembly:'Assembly QC',
 };
 
-const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors }) => {
+const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates }) => {
   const isAdmin = ["super_admin","qc_admin"].includes(user.role);
   const [tab, setTab] = useState("cutting_qc");
 
@@ -17956,6 +18592,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
     { id:"blast",      label:"Blast QC",      stages:["blasting","tpi_blast"] },
     { id:"paint",      label:"Paint QC",      stages:["painting","tpi_paint"] },
     { id:"mdcc",       label:"MDCC",          stages:["mdcc"] },
+    { id:"tpi",        label:"TPI",           stages:["tpi_fitup","tpi_weld","tpi_blast","tpi_paint"] },
   ];
   const adminTabs = isAdmin ? [
     { id:"rules",  label:"Assignment Rules" },
@@ -18240,6 +18877,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
           let pendingCount=0;
           if(t.id==="fitup") pendingCount=(dprs||[]).filter(d=>d.currentStage==="fitup_qc").length;
           else if(t.id==="weld") pendingCount=(dprs||[]).filter(d=>d.currentStage==="weld_qc").length;
+          else if(t.id==="tpi") pendingCount=(dprs||[]).filter(d=>["tpi_fitup","tpi_weld","tpi_blast","tpi_paint"].includes(d.currentStage)).length;
           else if(isInsp) pendingCount=(instances||[]).filter(i=>
             i.currentStatus==="pending_supervisor"&&
             isInsp.stages.includes(i.currentStage)&&
@@ -18259,10 +18897,11 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
         })}
       </div>
 
-      {/* Inspection tabs — fitup/weld use DPR-level panel, others use instance-level panel */}
+      {/* Inspection tabs — fitup/weld use DPR-level panel, TPI uses TPI panel, others use instance-level panel */}
       {tab==="fitup" && <DprQcPanel dprStage="fitup_qc" />}
       {tab==="weld"  && <DprQcPanel dprStage="weld_qc"  />}
-      {INSP_TABS.filter(t=>t.id!=="fitup"&&t.id!=="weld").map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
+      {tab==="tpi"   && <TpiQcPanel orders={orders} dprs={dprs} setDprs={setDprs} instances={instances} setInstances={setInstances} user={user} tpiTemplates={tpiTemplates} setTpiTemplates={setTpiTemplates} contractors={contractors} />}
+      {INSP_TABS.filter(t=>t.id!=="fitup"&&t.id!=="weld"&&t.id!=="tpi").map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
 
       {/* Admin-only tabs */}
       {tab==="rules"&&isAdmin&&(
@@ -19457,6 +20096,7 @@ export default function App() {
   const [qcRules, setQcRules]           = useState(() => { try { const s=localStorage.getItem('structo_qcRules'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [overrideLog, setOverrideLog]   = useState(() => { try { const s=localStorage.getItem('structo_overrideLog'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [issueRequests, setIssueRequests] = useState(() => { try { const s=localStorage.getItem('structo_issueRequests'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [tpiTemplates, setTpiTemplates] = useState(() => { try { const s=localStorage.getItem('structo_tpiTemplates'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [productionStandards, setProductionStandards] = useState({
     blastThresholds: { amberHours: 3, redHours: 4 },
     tiers: [
@@ -19493,6 +20133,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('structo_qcRules',         JSON.stringify(qcRules));         } catch(e) { console.warn('Storage full',e); } }, [qcRules]);
   useEffect(() => { try { localStorage.setItem('structo_overrideLog',     JSON.stringify(overrideLog));     } catch(e) { console.warn('Storage full',e); } }, [overrideLog]);
   useEffect(() => { try { localStorage.setItem('structo_issueRequests',   JSON.stringify(issueRequests));   } catch(e) { console.warn('Storage full',e); } }, [issueRequests]);
+  useEffect(() => { try { localStorage.setItem('structo_tpiTemplates',   JSON.stringify(tpiTemplates));   } catch(e) { console.warn('Storage full',e); } }, [tpiTemplates]);
   useEffect(() => { try { localStorage.setItem('structo_welders',         JSON.stringify(welders));         } catch(e) { console.warn('Storage full',e); } }, [welders]);
   useEffect(() => { try { localStorage.setItem('structo_contractors',     JSON.stringify(contractors));     } catch(e) { console.warn('Storage full',e); } }, [contractors]);
   useEffect(() => { try { localStorage.setItem('structo_machines',        JSON.stringify(machines));        } catch(e) { console.warn('Storage full',e); } }, [machines]);
@@ -19509,7 +20150,7 @@ export default function App() {
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setMod={setMod} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
-      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} />;
+      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} />;
