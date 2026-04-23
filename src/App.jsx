@@ -15552,6 +15552,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 
   // ── Step 2 compute ──
   const computeRmPicture = () => {
+    const DONE_STAGES_RM = new Set(['cutting_qc','fitup','fit_up','welding','weld_qc','tpi_weld','blasting','painting','dispatch','complete']);
     const byMat={};
     selDrawings.forEach(entry=>{
       const {drawing,order}=entry;
@@ -15609,6 +15610,19 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             const selStats=getRmUnitPartStats(selParts,allOrderParts);
             const sheetWt=calcSheetWt(sheet.rmUnitId)||0;
             const utilisPct=sheet.utilisPct||0;
+            // ── Detect already-cut status ──────────────────────────────────
+            const sheetInsts=(instances||[]).filter(i=>i.rmUnitId===sheet.rmUnitId&&!i.isSideCut);
+            // Also check releases — if cuttingComplete is true on rmUnitAssignment, sheet is done
+            const releaseForSheet=(releases||[]).some(r=>(r.rmUnitAssignments||[]).some(ru=>ru.rmUnitId===sheet.rmUnitId&&ru.cuttingComplete));
+            // A sheet is "done" if ANY instance from the selected-drawing parts is past cutting
+            // OR if the release marks cuttingComplete (mirrors Step 1 logic)
+            const selPartMarkNos=new Set(selParts);
+            const sheetIsCut=releaseForSheet||sheetInsts.some(i=>DONE_STAGES_RM.has(i.currentStage)&&selPartMarkNos.has(i.markNo));
+            const sheetIsInCutting=!sheetIsCut&&sheetInsts.some(i=>i.currentStage==="cutting"&&selPartMarkNos.has(i.markNo));
+            let cuttingStatus="pending";
+            if(sheetIsCut) cuttingStatus="done";
+            else if(sheetIsInCutting) cuttingStatus="partial";
+            // ────────────────────────────────────────────────────────────────
             rmUnitsForMat.push({
               rmUnitId:sheet.rmUnitId,
               batchId:batch.id,
@@ -15620,6 +15634,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
               sheetWt,
               utilisPct,
               lotId:lot.lotId,
+              cuttingStatus,
             });
           });
         });
@@ -15650,6 +15665,10 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const getRmUnitsForRelease = () => {
     const markNoMap=getSelDrawingMarkNos();
     const selMarkNos=new Set(Object.keys(markNoMap).filter(mn=>markNoMap[mn].selected));
+    // Build set of rmUnitIds already fully cut (from existing releases)
+    const alreadyCutRmUnits=new Set(
+      (releases||[]).flatMap(r=>(r.rmUnitAssignments||[]).filter(ru=>ru.cuttingComplete).map(ru=>ru.rmUnitId))
+    );
     const rmUnits=[];
     const seen=new Set();
     (nestingBatches||[]).forEach(batch=>{
@@ -15660,6 +15679,8 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           // Only include sheets that have at least one part from selected drawings
           const hasSelPart=(sheet.parts||[]).some(mn=>selMarkNos.has(mn));
           if(!hasSelPart) return;
+          // Skip sheets already fully cut in a previous release
+          if(alreadyCutRmUnits.has(sheet.rmUnitId)) return;
           seen.add(sheet.rmUnitId);
           rmUnits.push({
             rmUnitId: sheet.rmUnitId,
@@ -16120,41 +16141,57 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:12}}>{r.availableKg.toFixed(1)}</td>
                   <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`}}><Badge color={rmStatusColor(r.status)}>{r.status}</Badge></td>
                   <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.textMid,fontFamily:T.fontMono}}>
-                    {(r.rmUnitsForMat||[]).length>0?(r.rmUnitsForMat||[]).length+" unit"+(r.rmUnitsForMat.length!==1?"s":""):"—"}
+                    {(()=>{
+                      const all=(r.rmUnitsForMat||[]);
+                      const pending=all.filter(u=>u.cuttingStatus!=="done");
+                      const done=all.filter(u=>u.cuttingStatus==="done");
+                      if(all.length===0) return "—";
+                      return (
+                        <span>
+                          {pending.length>0&&<span style={{color:T.accent,fontWeight:700}}>{pending.length} to cut</span>}
+                          {pending.length>0&&done.length>0&&<span style={{color:T.textLow}}> · </span>}
+                          {done.length>0&&<span style={{color:T.green}}>{done.length} ✓ done</span>}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.accent,fontFamily:T.fontMono}}>
                     {(r.batchesForMat||[]).map(b=>b.id).join(", ")||"—"}
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`}}>
-                    {(r.rmUnitsForMat||[]).length>0?(
-                      <select
-                        value={rmUnitAsgn[`alloc::${r.matCode}`]?.rmUnitId||""}
-                        onChange={e=>{
-                          const ru=(r.rmUnitsForMat||[]).find(x=>x.rmUnitId===e.target.value);
-                          // Find matching stock lot for this matCode
-                          const stockLot=(stock||[]).find(s=>
-                            normMatCode(s.matCode)===normMatCode(r.matCode)&&
-                            ['available','reserved','partially_reserved'].includes(s.status)
-                          )||{};
-                          setRmUnitAsgn(prev=>({...prev,[`alloc::${r.matCode}`]:{
-                            rmUnitId:e.target.value,
-                            sheetDim:ru?.sheetDim||"",
-                            batchId:ru?.batchId||"",
-                            matCode:r.matCode,
-                            lotId:stockLot.id||"",
-                            lotNo:stockLot.lotNo||"",
-                          }}));
-                        }}
-                        style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:180}}
-                      >
-                        <option value="">— Select RM unit —</option>
-                        {(r.rmUnitsForMat||[]).map(ru=>(
-                          <option key={ru.rmUnitId} value={ru.rmUnitId}>
-                            {ru.rmUnitId} — {ru.selPartCount}/{ru.totalPartCount} parts{ru.utilisPct>0?` — ${ru.utilisPct.toFixed(0)}% util`:""}
-                          </option>
-                        ))}
-                      </select>
-                    ):<span style={{fontSize:11,color:T.textLow}}>No RM units in nesting</span>}
+                    {(()=>{
+                      const pending=(r.rmUnitsForMat||[]).filter(u=>u.cuttingStatus!=="done");
+                      if((r.rmUnitsForMat||[]).length===0) return <span style={{fontSize:11,color:T.textLow}}>No RM units in nesting</span>;
+                      if(pending.length===0) return <span style={{fontSize:11,color:T.green}}>✓ All sheets already cut</span>;
+                      return (
+                        <select
+                          value={rmUnitAsgn[`alloc::${r.matCode}`]?.rmUnitId||""}
+                          onChange={e=>{
+                            const ru=(r.rmUnitsForMat||[]).find(x=>x.rmUnitId===e.target.value);
+                            const stockLot=(stock||[]).find(s=>
+                              normMatCode(s.matCode)===normMatCode(r.matCode)&&
+                              ['available','reserved','partially_reserved'].includes(s.status)
+                            )||{};
+                            setRmUnitAsgn(prev=>({...prev,[`alloc::${r.matCode}`]:{
+                              rmUnitId:e.target.value,
+                              sheetDim:ru?.sheetDim||"",
+                              batchId:ru?.batchId||"",
+                              matCode:r.matCode,
+                              lotId:stockLot.id||"",
+                              lotNo:stockLot.lotNo||"",
+                            }}));
+                          }}
+                          style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:180}}
+                        >
+                          <option value="">— Select RM unit —</option>
+                          {pending.map(ru=>(
+                            <option key={ru.rmUnitId} value={ru.rmUnitId}>
+                              {ru.rmUnitId} — {ru.selPartCount}/{ru.totalPartCount} parts{ru.cuttingStatus==="partial"?" (partial)":""}{ru.utilisPct>0?` — ${ru.utilisPct.toFixed(0)}% util`:""}
+                            </option>
+                          ))}
+                        </select>
+                      );
+                    })()}
                   </td>
                 </tr>
                 {expandedMat[r.matCode]&&(
@@ -16167,7 +16204,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginTop:4}}>
                           <thead>
                             <tr style={{background:T.bgInput}}>
-                              {["RM Unit ID","Dimensions","Sel Parts","All Parts","Parts Wt (kg)","Sheet Wt (kg)","Usage %","Nesting Util%"].map(h=>(
+                              {["RM Unit ID","Dimensions","Sel Parts","All Parts","Parts Wt (kg)","Sheet Wt (kg)","Usage %","Nesting Util%","Cut Status"].map(h=>(
                                 <th key={h} style={{padding:"4px 8px",textAlign:"left",color:T.textLow,fontWeight:600,fontSize:10,borderBottom:`1px solid ${T.border}`}}>{h}</th>
                               ))}
                             </tr>
@@ -16177,9 +16214,10 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                               const usagePct=ru.sheetWt>0?Math.round((ru.selPartWt||0)/ru.sheetWt*100):0;
                               const usageColor=usagePct>=85?T.green:usagePct>=70?T.amber:T.red;
                               const utilColor=ru.utilisPct>=85?T.green:ru.utilisPct>=70?T.amber:ru.utilisPct>0?T.red:T.textLow;
+                              const isDone=ru.cuttingStatus==="done";
                               return (
-                                <tr key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.border}33`}}>
-                                  <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:T.accentHi,fontSize:10}}>{ru.rmUnitId}</td>
+                                <tr key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.border}33`,opacity:isDone?0.5:1}}>
+                                  <td style={{padding:"4px 8px",fontFamily:T.fontMono,color:isDone?T.textLow:T.accentHi,fontSize:10}}>{ru.rmUnitId}</td>
                                   <td style={{padding:"4px 8px",fontFamily:T.fontMono,fontSize:10}}>{ru.sheetDim}</td>
                                   <td style={{padding:"4px 8px",fontSize:10,color:T.green,fontWeight:600}}>{ru.selPartCount}</td>
                                   <td style={{padding:"4px 8px",fontSize:10,color:T.textMid}}>{ru.totalPartCount}</td>
@@ -16187,6 +16225,13 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                                   <td style={{padding:"4px 8px",fontSize:10,color:T.textMid}}>{ru.sheetWt>0?ru.sheetWt.toFixed(1):"—"}</td>
                                   <td style={{padding:"4px 8px",fontSize:10,fontWeight:600,color:usageColor}}>{ru.sheetWt>0?`${usagePct}%`:"—"}</td>
                                   <td style={{padding:"4px 8px",fontSize:10,color:utilColor}}>{ru.utilisPct>0?`${ru.utilisPct.toFixed(1)}%`:"—"}</td>
+                                  <td style={{padding:"4px 8px",fontSize:10}}>
+                                    {isDone
+                                      ? <span style={{color:T.green,fontWeight:700}}>✓ Cut</span>
+                                      : ru.cuttingStatus==="partial"
+                                      ? <span style={{color:T.amber,fontWeight:700}}>Partial</span>
+                                      : <span style={{color:T.accent}}>To cut</span>}
+                                  </td>
                                 </tr>
                               );
                             })}
