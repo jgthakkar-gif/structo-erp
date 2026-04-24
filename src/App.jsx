@@ -1381,8 +1381,13 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
       allocations:[], reservations:[], qcHoldReason:"",
       qtyReceived: l.qtyReceived||0,
       unit: poLine.unit||"MT",
-      length: poLine.length||null,
-      width: poLine.width||null,
+      sheetLength: poLine.sheetLength||poLine.length||null,
+      sheetWidth:  poLine.sheetWidth||poLine.width||null,
+      sheetDim:    poLine.sheetDim||"",
+      sheetCount:  poLine.qty||poLine.qtyOrdered||0,
+      sheetWt:     poLine.wtPerSheet||0,
+      length: poLine.sheetLength||poLine.length||null,
+      width:  poLine.sheetWidth||poLine.width||null,
       calculatedWt: l.calculatedWt||l.wtReceived||0,
       actualWt: l.actualWt||l.wtReceived||0,
       variance: l.variance||0,
@@ -1420,6 +1425,11 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
         qtyReceived:hs.qty||0,
         unit:poLine.unit||"MT",
         length:poLine.length||null, width:poLine.width||null,
+        sheetLength: poLine.sheetLength||poLine.length||null,
+        sheetWidth:  poLine.sheetWidth||poLine.width||null,
+        sheetDim:    poLine.sheetDim||"",
+        sheetCount:  poLine.qty||poLine.qtyOrdered||0,
+        sheetWt:     poLine.wtPerSheet||0,
         calculatedWt:hs.wt, actualWt:hs.wt, variance:0,
       });
     });
@@ -3491,9 +3501,9 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, or
         const k = s.sheetDim||"?";
         const dimGroup = byDim[k];
         const idxInGroup = dimGroup.indexOf(s); // reference equality — safe since same objects
-        // RM Unit ID: matCode/sheetDim/n-of-groupTotal
-        // e.g. PLATE/MS/E350/10mm/1500X9000/1-2
-        const rmUnitId = `${normRmMatCode(lot.matCode)}/${k}/${idxInGroup+1}-${dimGroup.length}`;
+        // RM Unit ID: new format A342/PLT/E350/16mm/1500X6300/1
+        // lotId is used as a placeholder until a real lot is assigned at GRN
+        const rmUnitId = buildRmUnitId("???", lot.matCode.split("/")[0]||"UNK", lot.matCode.split("/")[2]||"E250", lot.matCode.split("/")[3]||"", k, idxInGroup+1);
         return { sheetNo:s.sheetNo, sheetDim:s.sheetDim, utilisPct:s.utilisPct, parts:[...s.parts], rmUnitId };
       });
       const safeId = lot.matCode.replace(/[^a-zA-Z0-9]/g,"-");
@@ -4740,7 +4750,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, s
           }
           return acc;
         }, []);
-        const rmUnitId = `${normRmMatCode(mc)}/${sheetDim}/${idx+1}-${totalSheets}`;
+        const rmUnitId = buildRmUnitId("???", mc.split("/")[0]||"UNK", mc.split("/")[2]||"E250", mc.split("/")[3]||"", sheetDim, idx+1);
         return { sheetNo: idx+1, sheetDim, utilisPct: rp.LengthUsed != null ? +((1 - rp.Scrap)*100).toFixed(1) : np, parts, rmUnitId };
       });
 
@@ -5183,7 +5193,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, s
                     {!err && rp.map((sheet, idx)=>{
                       const rm = group?.rawMats[sheet.RawPlateIndex] || group?.rawMats[0] || {};
                       const sheetDim = group?.isPlate ? `${rm.length}×${rm.width}` : `${rm.length}mm`;
-                      const rmUnitId = `${normRmMatCode(mc)}/${sheetDim}/${idx+1}-${totalSheets}`;
+                      const rmUnitId = buildRmUnitId("???", mc.split("/")[0]||"UNK", mc.split("/")[2]||"E250", mc.split("/")[3]||"", sheetDim, idx+1);
                       const sheetUtil = sheet.Scrap != null ? ((1-sheet.Scrap)*100).toFixed(1) : "—";
                       // Build parts with qty
                       const partsOnSheet = (sheet.PartsNested||[]).reduce((acc,pn)=>{
@@ -5606,8 +5616,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     if (po && setStock) {
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
-        const maxLot=prev.reduce((m,s)=>{ const mt=s.lotNo?.match(/^LOT-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
-        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+idx+1).padStart(3,"0")}`}));
+        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:genLotNo([...prev,...rawLots.slice(0,idx)])}));
         const coveredOrders = po.coveredOrders||[];
         const finalLots = numberedLots.map(lot => {
           if (!coveredOrders.length) return lot;
@@ -6597,8 +6606,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
     if (setStock) {
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
-        const maxLot=prev.reduce((m,s)=>{ const mt=s.lotNo?.match(/^LOT-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
-        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:`LOT-${yr}-${String(maxLot+idx+1).padStart(3,"0")}`}));
+        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:genLotNo([...prev,...rawLots.slice(0,idx)])}));
         const coveredOrders = po.coveredOrders||[];
         const finalLots = numberedLots.map(lot => {
           if (!coveredOrders.length) return lot;
@@ -7770,11 +7778,10 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
   const saveOffcut = () => {
     const offcutWt = +(mForm.offcutWt||0);
     if (offcutWt < 5) return showToast("Minimum off-cut weight is 5 kg","amber");
-    let maxLot = 0;
-    stock.forEach(s=>{ const m=(s.lotNo||"").match(/^LOT-(\d{4})-(\d+)$/); if(m&&+m[1]===yr) maxLot=Math.max(maxLot,+m[2]); });
-    const newLotNo = `LOT-${yr}-${String(maxLot+1).padStart(3,"0")}`;
+    const newLotNo = genLotNo(stock);
     const dim = (activeLot.sectionType||activeLot.section)==="PLATE" ? (mForm.offcutDim||"") : (mForm.offcutLength||"");
-    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"pending_offcut_verification", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], reservations:[...(activeLot.reservations||[])], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
+    const offcutRmUnitId = buildOffcutRmUnitId(activeLot.lotNo||"???", activeLot.sectionType||activeLot.section||"PLATE", activeLot.grade||"", activeLot.size||"", dim, stock);
+    const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, rmUnitId:offcutRmUnitId, sheetDim:dim, sheetWt:+(mForm.offcutWt||0), sheetCount:1, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"pending_offcut_verification", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], reservations:[...(activeLot.reservations||[])], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
     const consumed = +(mForm.consumedWt||0);
     setStock(prev=>[...prev.map(s=>s.id!==activeLot.id?s:{ ...s, wtConsumed:(s.wtConsumed||0)+consumed, auditLog:[...(s.auditLog||[]),{action:"offcut-created",orderId:"",wt:offcutWt,by:user.name,date:today(),reason:`Off-cut → ${newLotNo}`}] }), newLot]);
     showToast(`Off-cut lot created: ${newLotNo}`); closeModal();
@@ -8047,613 +8054,271 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, is
         );
       })()}
 
-      <div style={{ overflowX:"auto" }}>
-        <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
-          <thead>
-            <tr>
-              <TH></TH>
-              <TH>Lot No</TH><TH>Batch No</TH><TH>Mat Code</TH><TH>Section / Size</TH><TH>Grade</TH>
-              <TH>Vendor</TH><TH>Bay</TH>
-              <TH right>Rcvd kg</TH><TH right>Avail kg</TH><TH right>Alloc kg</TH><TH right>Issued kg</TH>
-              <TH>MTC</TH><TH>Heat No</TH><TH>RM QC</TH><TH>Client</TH><TH>Status</TH><TH>Actions</TH>
-            </tr>
-          </thead>
-          {filtered.length===0 && <tbody><tr><td colSpan={18} style={{ padding:32,textAlign:"center",color:T.textLow }}>No stock found</td></tr></tbody>}
-          {filtered.map(s=>(
-            <tbody key={s.id}>
-              <tr style={{ background:expandedId===s.id?`${T.accent}11`:"transparent",borderBottom:`1px solid ${T.border}`,cursor:"pointer" }} onClick={()=>setExpandedId(expandedId===s.id?null:s.id)}>
-                <TD><span style={{ color:T.textLow,fontSize:10 }}>{expandedId===s.id?"▼":"▶"}</span></TD>
-                <TD mono>{s.lotNo}{s.isOffcut&&<span style={{ marginLeft:4 }}><Badge color="teal">OC</Badge></span>}</TD>
-                <TD mono>{s.batchNo}</TD>
-                <TD mono>{s.matCode||`${(s.sectionType||s.section)||""}/${s.size||""}`}</TD>
-                <TD>{s.sectionType||s.section} {s.size}</TD>
-                <TD><Badge color="gray">{s.grade}</Badge></TD>
-                <TD>{s.vendorName}</TD>
-                <TD><Badge color="teal">{s.bayId}</Badge></TD>
-                <TD right mono>{fmt.num(s.wtReceived)}</TD>
-                <TD right mono bold color={T.green}>{fmt.num(s.wtAvailable)}</TD>
-                <TD right mono color={T.accent}>{fmt.num(s.wtAllocated)}</TD>
-                <TD right mono color="#A78BFA">{fmt.num(s.wtIssued||0)}</TD>
-                <TD onClick={e=>e.stopPropagation()}>
-                  {s.mtcUploaded
-                    ? <a href={s.mtcDoc} target="_blank" rel="noreferrer" style={{ fontSize:10,color:T.green,fontWeight:700 }}>MTC ✓</a>
-                    : <div>
-                        <span style={{ fontSize:10,color:T.red,fontWeight:700 }}>⚠ Missing</span>
-                        {mtcUploadId!==s.id
-                          ? <button onClick={()=>{setMtcUploadId(s.id);setMtcForm({});}} style={{ ...css.btn.sm,fontSize:9,marginLeft:4,padding:"1px 6px",background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}` }}>Upload</button>
-                          : <div style={{ marginTop:4, display:"flex", flexDirection:"column", gap:4, minWidth:180 }}>
-                              <input value={mtcForm.link||""} onChange={e=>setMtcForm(f=>({...f,link:e.target.value}))}
-                                placeholder="Drive link..." style={{ ...css.input,fontSize:10,padding:"3px 6px" }} />
-                              <input value={mtcForm.heatNo||""} onChange={e=>setMtcForm(f=>({...f,heatNo:e.target.value}))}
-                                placeholder="Heat number..." style={{ ...css.input,fontSize:10,padding:"3px 6px" }} />
-                              <div style={{ display:"flex",gap:4 }}>
-                                <button disabled={!(mtcForm.link||"").trim()} onClick={()=>{
-                                  if (!(mtcForm.link||"").trim()) return;
-                                  setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,mtcDoc:mtcForm.link.trim(),heatNo:mtcForm.heatNo||l.heatNo,mtcUploaded:true}));
-                                  setMtcUploadId(null); setMtcForm({});
-                                  showToast("MTC uploaded","green");
-                                }} style={{ ...css.btn.sm,fontSize:9,padding:"2px 8px",opacity:(mtcForm.link||"").trim()?1:0.4 }}>Save</button>
-                                <button onClick={()=>setMtcUploadId(null)} style={{ ...css.btn.sm,fontSize:9,padding:"2px 8px",background:"transparent",color:T.textMid,border:`1px solid ${T.border}` }}>✕</button>
-                              </div>
-                            </div>
-                        }
+      {/* ── Grouped by matCode display ── */}
+      {filter !== "issue_requests" && (() => {
+        // Group filtered lots by matCode
+        const groups = {};
+        filtered.forEach(s => {
+          const key = s.matCode || `${s.sectionType||s.section||""}/${s.size||""}`;
+          if (!groups[key]) groups[key] = { matCode:key, sectionType:s.sectionType||s.section||"", grade:s.grade||"", lots:[] };
+          groups[key].lots.push(s);
+        });
+        const groupArr = Object.values(groups).sort((a,b)=>a.matCode.localeCompare(b.matCode));
+
+        if (groupArr.length === 0) return (
+          <div style={{ textAlign:"center", padding:48, color:T.textLow }}>
+            <div style={{ fontSize:32, marginBottom:10 }}>📦</div>
+            <div style={{ fontSize:14, color:T.textMid }}>No stock matches the current filter</div>
+          </div>
+        );
+
+        return (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {groupArr.map(group => {
+              const isGroupExp = expandedId === `grp::${group.matCode}`;
+              // Group totals
+              const activeLots = group.lots.filter(s=>!['rejected','returned','written_off'].includes(s.status));
+              const totalRcvd   = group.lots.reduce((s,x)=>s+(x.wtReceived||0),0);
+              const totalAvail  = activeLots.reduce((s,x)=>s+(x.wtAvailable||0),0);
+              const totalAlloc  = activeLots.reduce((s,x)=>s+(x.wtAllocated||0),0);
+              const totalIssued = activeLots.reduce((s,x)=>s+(x.wtIssued||0),0);
+              const qcHoldCount = group.lots.filter(s=>s.status==="qc_hold").length;
+              const offcutCount = group.lots.filter(s=>s.isOffcut).length;
+              const totalSheets = group.lots.reduce((s,x)=>s+(x.sheetCount||0),0);
+
+              return (
+                <div key={group.matCode} style={{ ...css.card, padding:0, overflow:"hidden" }}>
+                  {/* MatCode header row */}
+                  <div onClick={()=>setExpandedId(isGroupExp?null:`grp::${group.matCode}`)}
+                    style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 16px",
+                      background:isGroupExp?T.bgHover:"transparent", cursor:"pointer",
+                      borderBottom: isGroupExp?`1px solid ${T.border}`:"none" }}>
+                    <span style={{ color:T.textLow, fontSize:11, width:16 }}>{isGroupExp?"▼":"▶"}</span>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                        <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{group.matCode}</span>
+                        <Badge color="gray">{group.sectionType}</Badge>
+                        {group.grade&&<Badge color="gray">{group.grade}</Badge>}
+                        {qcHoldCount>0&&<Badge color="amber">{qcHoldCount} QC Hold</Badge>}
+                        {offcutCount>0&&<Badge color="teal">{offcutCount} offcut{offcutCount!==1?"s":""}</Badge>}
+                        <span style={{ fontSize:11, color:T.textLow }}>{group.lots.length} lot{group.lots.length!==1?"s":""}{totalSheets>0?` · ${totalSheets} sheets`:""}</span>
                       </div>
-                  }
-                </TD>
-                <TD mono>{s.heatNo||<span style={{ color:T.textLow }}>—</span>}</TD>
-                <TD><Badge color={qcStatusBadge[s.rmQcStatus]||"gray"}>{s.rmQcStatus}</Badge></TD>
-                <TD><Badge color={qcStatusBadge[s.clientInspStatus]||"gray"}>{s.clientInspStatus}</Badge></TD>
-                <TD><Badge color={stCol[s.status]||"gray"}>{s.status?.replace("_"," ")}</Badge></TD>
-                <TD onClick={e=>e.stopPropagation()}>
-                  <div style={{ display:"flex",gap:4,flexWrap:"wrap" }}>
-                    {canAllocate&&s.status==="available"&&s.rmQcStatus==="approved"&&s.clientInspStatus==="approved"&&(
-                      <button onClick={()=>openModal("allocate",s)} style={{ ...css.btn.sm,fontSize:10 }}>Alloc</button>
-                    )}
-                    {canRelease&&(s.allocations||[]).length>0&&(
-                      <button onClick={()=>openModal("release",s)} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Release</button>
-                    )}
-                    {canRelease&&(s.allocations||[]).length>0&&(s.wtIssued||0)===0&&(
-                      <button onClick={()=>openModal("transfer",s)} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>Transfer</button>
-                    )}
-                    {canIssue&&s.status==="allocated"&&s.clientInspStatus==="approved"&&(
-                      <button onClick={()=>openModal("issue",s)} style={{ ...css.btn.sm,background:"#2D1B69",color:"#A78BFA",border:"1px solid #A78BFA",fontSize:10 }}>Issue</button>
-                    )}
-                    {canIssue&&s.status==="issued"&&(
-                      <button onClick={()=>openModal("offcut",s)} style={{ ...css.btn.sm,background:"#0D3340",color:"#22D3EE",border:"1px solid #22D3EE",fontSize:10 }}>Off-cut</button>
-                    )}
-                    {(s.issues||[]).length>0&&(
-                      <button onClick={e=>{e.stopPropagation();const iss=s.issues[s.issues.length-1];setMForm({issNoteNo:iss.issueNoteNo,issEntry:iss,lotSnap:s,contractorName:iss.issuedTo});setModal("print");}} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>ISN↗</button>
-                    )}
-                    {canRelease && s.status!=="consumed" && s.status!=="written_off" && s.status!=="issued" && (
-                      <button onClick={e=>{e.stopPropagation();setResLot(s);setResForm({});setResModal("add");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}`, fontSize:10 }}>Reserve</button>
-                    )}
-                    {user.role==="super_admin"&&(s.status==="available"||s.status==="qc_hold")&&(s.wtAllocated||0)===0&&(
-                      <button onClick={e=>{e.stopPropagation();openModal("writeoff",s);}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.redLo}`,fontSize:10 }}>Write Off</button>
-                    )}
-                    {s.status==='rejected'&&canIssue&&(
-                      <button onClick={e=>{e.stopPropagation();setReturnModal(s);setReturnForm({returnDate:today(),vehicleNo:"",returnChallan:""});}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.red}`,fontSize:10 }}>Return to Vendor</button>
-                    )}
-                    {s.status==='rejected'&&canIssue&&(
-                      <button onClick={e=>{e.stopPropagation();setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,status:'qc_hold',wtAvailable:l.wtReceived||0,rmQcStatus:'pending',clientInspStatus:'pending',rejectedAt:undefined,grnReversed:undefined,rejectionReason:undefined}));showToast("Lot returned to QC Hold for re-inspection");}} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Re-inspect</button>
-                    )}
-                  </div>
-                </TD>
-              </tr>
-              {expandedId===s.id&&(
-                <tr>
-                  <td colSpan={18} style={{ background:`${T.accent}08`,padding:"12px 20px",borderBottom:`1px solid ${T.border}` }}>
-                    <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:12 }}>
-                      {[["PO",s.poId||"—"],["GRN",s.grnId||"—"],["Received",fmt.date(s.receivedDate)],["Bay",s.bayId||"—"],["Heat No",s.heatNo||"—"],["Batch No",s.batchNo||"—"],["Item Code",s.itemCode||"—"],["Off-cut",s.isOffcut?`Yes${s.parentLotId?" — parent: "+s.parentLotId:""}` :"No"],...(s.isOffcut&&s.parentRmUnitId?[["Parent RM Unit",s.parentRmUnitId]]:[]),(s.isOffcut&&s.offcutSequence?[["OC Sequence",s.offcutSequence]]:[])].map(([k,v])=>(
-                        <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12,color:T.text,fontFamily:T.fontMono }}>{v}</div></div>
-                      ))}
                     </div>
-                    {(s.qcHoldReason||s.status==="qc_hold")&&<div style={{ background:T.amberBg,border:`1px solid ${T.amber}`,borderRadius:6,padding:"6px 10px",fontSize:12,color:T.amber,marginBottom:10 }}>🔒 Hold reason: {s.qcHoldReason||"Pending QC inspection"}</div>}
-                    {(s.allocations||[]).length>0&&(
-                      <div style={{ marginBottom:12 }}>
-                        <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>ALLOCATIONS</div>
-                        <table style={{ width:"100%",fontSize:11,borderCollapse:"collapse" }}>
-                          <thead><tr>{["Order","Drawing","Mark No","Weight (kg)","Reserved By","Date","Status"].map(h=><th key={h} style={{ textAlign:"left",padding:"3px 8px",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
-                          <tbody>{(s.allocations||[]).map((a,i)=>(
-                            <tr key={i}><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{a.orderId}</td><td style={{ padding:"4px 8px" }}>{a.drawingNo||a.drawingId||"—"}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{a.markNo||"—"}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{fmt.num(a.wt)}</td><td style={{ padding:"4px 8px" }}>{a.reservedBy||"—"}</td><td style={{ padding:"4px 8px" }}>{a.reservedDate||"—"}</td><td style={{ padding:"4px 8px" }}><Badge color={a.status==="issued"?"purple":a.status==="consumed"?"gray":"blue"}>{a.status||"allocated"}</Badge></td></tr>
-                          ))}</tbody>
-                        </table>
+                    {/* Weight summary pills */}
+                    <div style={{ display:"flex", gap:8, flexShrink:0, flexWrap:"wrap" }}>
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:"0.05em" }}>Available</div>
+                        <div style={{ fontSize:14, fontWeight:800, color:T.green, fontFamily:T.fontMono }}>{fmt.wtT(totalAvail)}</div>
                       </div>
-                    )}
-                    {(s.issues||[]).length>0&&(
-                      <div style={{ marginBottom:12 }}>
-                        <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>ISSUE HISTORY</div>
-                        <table style={{ width:"100%",fontSize:11,borderCollapse:"collapse" }}>
-                          <thead><tr>{["ISN No","Date","Issued To","Order","Weight (kg)","DXF"].map(h=><th key={h} style={{ textAlign:"left",padding:"3px 8px",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
-                          <tbody>{(s.issues||[]).map((iss,i)=>(
-                            <tr key={i}><td style={{ padding:"4px 8px",fontFamily:T.fontMono,color:T.accent }}>{iss.issueNoteNo}</td><td style={{ padding:"4px 8px" }}>{iss.issueDate}</td><td style={{ padding:"4px 8px" }}>{iss.issuedTo}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{iss.orderId}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{fmt.num(iss.wt)}</td><td style={{ padding:"4px 8px" }}>{iss.dxfLink?<a href={iss.dxfLink} target="_blank" rel="noreferrer" style={{ color:T.accent }}>DXF↗</a>:"—"}</td></tr>
-                          ))}</tbody>
-                        </table>
+                      {totalAlloc>0&&<div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:"0.05em" }}>Allocated</div>
+                        <div style={{ fontSize:13, fontWeight:700, color:T.accent, fontFamily:T.fontMono }}>{fmt.wtT(totalAlloc)}</div>
+                      </div>}
+                      {totalIssued>0&&<div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:"0.05em" }}>Issued</div>
+                        <div style={{ fontSize:13, fontWeight:700, color:"#7C3AED", fontFamily:T.fontMono }}>{fmt.wtT(totalIssued)}</div>
+                      </div>}
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:"0.05em" }}>Received</div>
+                        <div style={{ fontSize:12, color:T.textMid, fontFamily:T.fontMono }}>{fmt.wtT(totalRcvd)}</div>
                       </div>
-                    )}
-                    {/* Reservations */}
-                    {(s.reservations||[]).length>0&&(
-                      <div style={{ marginTop:8, padding:"8px 12px", background:T.amberBg+"44", borderRadius:6 }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginBottom:6 }}>RESERVATIONS</div>
-                        {(s.reservations||[]).map((r,ri)=>(
-                          <div key={ri} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"3px 0", borderBottom:`1px solid ${T.border}` }}>
-                            <span style={{ fontSize:11, color:T.text }}>{r.orderRef} — {fmt.num(r.kg)} kg — by {r.reservedBy} on {r.reservedAt}</span>
-                            {(user.role==="super_admin"||user.role==="planning_admin") && (
-                              <button onClick={()=>releaseReservation(s,ri)} style={{ ...css.btn.sm, fontSize:9, color:T.red, padding:"1px 6px" }}>Release</button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {(s.auditLog||[]).length>0&&(
-                      <div>
-                        <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>AUDIT LOG</div>
-                        {[...(s.auditLog||[])].reverse().map((e,i)=>(
-                          <div key={i} style={{ fontSize:11,color:T.textLow,display:"flex",gap:10,marginBottom:3 }}>
-                            <span style={{ color:T.accent,fontFamily:T.fontMono,minWidth:90 }}>{e.date}</span>
-                            <Badge color="gray">{e.action}</Badge>
-                            {e.wt>0&&<span>{fmt.num(e.wt)} kg</span>}
-                            {e.orderId&&<span style={{ fontFamily:T.fontMono }}>{e.orderId}</span>}
-                            <span>by {e.by}</span>
-                            {e.reason&&<span>· {e.reason}</span>}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          ))}
-        </table>
-      </div>
-
-      {/* ALLOCATE MODAL */}
-      {modal==="allocate"&&activeLot&&(
-        <Modal title={`Allocate Stock — ${activeLot.lotNo}`} onClose={closeModal} width={520}>
-          <div style={{ ...css.card,background:T.bg,marginBottom:14 }}>
-            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8 }}>
-              {[["Mat Code",activeLot.matCode||`${(activeLot.sectionType||activeLot.section)} ${activeLot.size}`],["Grade",activeLot.grade],["Available",`${fmt.num(activeLot.wtAvailable)} kg`]].map(([k,v])=>(
-                <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12,color:T.text,fontFamily:T.fontMono }}>{v}</div></div>
-              ))}
-            </div>
-          </div>
-          <Field label="Allocate to Order" required>
-            <Sel value={mForm.orderId||""} onChange={e=>setMForm(f=>({...f,orderId:e.target.value,drawingId:"",markNo:"",wt:""}))}>
-              <option value="">Select order...</option>
-              {orders.map(o=><option key={o.id} value={o.id}>{o.id} — {o.projectDesc}</option>)}
-            </Sel>
-          </Field>
-          {mForm.orderId&&(
-            <Field label="Drawing">
-              <Sel value={mForm.drawingId||""} onChange={e=>setMForm(f=>({...f,drawingId:e.target.value,markNo:"",wt:""}))}>
-                <option value="">Select drawing...</option>
-                {(orders.find(o=>o.id===mForm.orderId)?.drawings||[]).map(d=><option key={d.id} value={d.id}>{d.drawingNo} — {d.title}</option>)}
-              </Sel>
-            </Field>
-          )}
-          {mForm.drawingId&&(
-            <Field label="Mark No (Part)">
-              <Sel value={mForm.markNo||""} onChange={e=>{
-                const p=(orders.find(o=>o.id===mForm.orderId)?.drawings?.find(d=>d.id===mForm.drawingId)?.parts||[]).find(x=>x.markNo===e.target.value);
-                setMForm(f=>({...f,markNo:e.target.value,wt:p?(p.calcTotalWt||p.clientTotalWt||0):""}));
-              }}>
-                <option value="">Select part...</option>
-                {(orders.find(o=>o.id===mForm.orderId)?.drawings?.find(d=>d.id===mForm.drawingId)?.parts||[]).map(p=>(
-                  <option key={p.markNo} value={p.markNo}>{p.markNo} — {p.matCode||p.section} — {fmt.num(p.calcTotalWt||p.clientTotalWt||0)} kg</option>
-                ))}
-              </Sel>
-            </Field>
-          )}
-          <Field label="Weight to Allocate (kg)" required>
-            <Input type="number" value={mForm.wt||""} onChange={e=>setMForm(f=>({...f,wt:e.target.value}))} max={activeLot.wtAvailable} placeholder={`Max ${fmt.num(activeLot.wtAvailable)} kg`} />
-            {(()=>{
-              const wt=parseFloat(mForm.wt)||0;
-              if(!wt||!activeLot) return null;
-              const perUnit=(activeLot.qtyReceived||0)>0?(activeLot.actualWt||activeLot.wtReceived||0)/(activeLot.qtyReceived||1):0;
-              if(!perUnit) return null;
-              const approxUnits=wt/perUnit;
-              const rounded=Math.ceil(approxUnits*2)/2;
-              const isPlate=(activeLot.sectionType||activeLot.section)==="PLATE";
-              const dimStr=activeLot.length&&activeLot.width?`${activeLot.length}×${activeLot.width}×${activeLot.size||""}`:activeLot.size||"";
-              return <div style={{fontSize:11,color:T.textMid,marginTop:4}}>≈ <strong style={{color:T.accent}}>{rounded}</strong> {isPlate?"sheet(s)":"bar(s)"}{dimStr?` of ${dimStr}`:""} ({fmt.num(Math.round(perUnit))} kg/unit)</div>;
-            })()}
-          </Field>
-          <InfoBanner color="blue">Partial allocation supported. Remaining weight stays available for other orders.</InfoBanner>
-          <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
-            <button onClick={closeModal} style={css.btn.secondary}>Cancel</button>
-            <button onClick={saveAlloc} style={css.btn.primary}>Allocate Stock</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* RELEASE MODAL */}
-      {modal==="release"&&activeLot&&(
-        <Modal title={`Release Allocation — ${activeLot.lotNo}`} onClose={closeModal} width={480}>
-          <Field label="Select Allocation to Release" required>
-            <Sel value={mForm.allocIdx!==undefined?String(mForm.allocIdx):""} onChange={e=>setMForm(f=>({...f,allocIdx:e.target.value}))}>
-              <option value="">Select allocation...</option>
-              {(activeLot.allocations||[]).map((a,i)=>(
-                <option key={i} value={i}>{a.orderId} — {a.markNo||a.drawingId||"—"} — {fmt.num(a.wt)} kg</option>
-              ))}
-            </Sel>
-          </Field>
-          {(activeLot.wtIssued||0)>0&&<InfoBanner color="amber">⚠ {fmt.num(activeLot.wtIssued)} kg already issued — physical return required before releasing.</InfoBanner>}
-          <Field label="Reason" required>
-            <Input value={mForm.reason||""} onChange={e=>setMForm(f=>({...f,reason:e.target.value}))} placeholder="Reason for releasing allocation..." />
-          </Field>
-          <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
-            <button onClick={closeModal} style={css.btn.secondary}>Cancel</button>
-            <button onClick={saveRelease} style={css.btn.amber}>Release Allocation</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* TRANSFER MODAL */}
-      {modal==="transfer"&&activeLot&&(
-        <Modal title={`Transfer Allocation — ${activeLot.lotNo}`} onClose={closeModal} width={520}>
-          {(activeLot.wtIssued||0)>0
-            ?<InfoBanner color="red">Cannot transfer — {fmt.num(activeLot.wtIssued)} kg already issued. Recall material first.</InfoBanner>
-            :<>
-              <Field label="Allocation to Transfer" required>
-                <Sel value={mForm.allocIdx!==undefined?String(mForm.allocIdx):""} onChange={e=>setMForm(f=>({...f,allocIdx:e.target.value,newOrderId:"",newDrawingId:""}))}>
-                  <option value="">Select allocation...</option>
-                  {(activeLot.allocations||[]).map((a,i)=>(
-                    <option key={i} value={i}>{a.orderId} — {fmt.num(a.wt)} kg</option>
-                  ))}
-                </Sel>
-              </Field>
-              <Field label="Transfer to Order" required>
-                <Sel value={mForm.newOrderId||""} onChange={e=>setMForm(f=>({...f,newOrderId:e.target.value,newDrawingId:""}))}>
-                  <option value="">Select order...</option>
-                  {orders.filter(o=>o.id!==activeLot.allocations?.[+mForm.allocIdx]?.orderId).map(o=><option key={o.id} value={o.id}>{o.id} — {o.projectDesc}</option>)}
-                </Sel>
-              </Field>
-              {mForm.newOrderId&&(
-                <Field label="New Drawing">
-                  <Sel value={mForm.newDrawingId||""} onChange={e=>setMForm(f=>({...f,newDrawingId:e.target.value}))}>
-                    <option value="">Select drawing...</option>
-                    {(orders.find(o=>o.id===mForm.newOrderId)?.drawings||[]).map(d=><option key={d.id} value={d.id}>{d.drawingNo} — {d.title}</option>)}
-                  </Sel>
-                </Field>
-              )}
-              {mtcDivWarn&&(
-                <InfoBanner color="amber">
-                  ⚠ MTC diversion: material was received for a different client. TPI inspector may require re-inspection.
-                  <div style={{ marginTop:8 }}>
-                    <label style={{ display:"flex",alignItems:"center",gap:6,cursor:"pointer" }}>
-                      <input type="checkbox" checked={!!mForm.mtcOverride} onChange={e=>setMForm(f=>({...f,mtcOverride:e.target.checked}))} />
-                      <span style={{ fontSize:12 }}>I confirm diversion and accept MTC re-inspection risk</span>
-                    </label>
+                    </div>
                   </div>
-                </InfoBanner>
-              )}
-              <Field label="Reason" required>
-                <Input value={mForm.reason||""} onChange={e=>setMForm(f=>({...f,reason:e.target.value}))} placeholder="Reason for transferring..." />
-              </Field>
-              <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
-                <button onClick={closeModal} style={css.btn.secondary}>Cancel</button>
-                <button onClick={saveTransfer} disabled={mtcDivWarn&&!mForm.mtcOverride} style={{ ...css.btn.primary,opacity:mtcDivWarn&&!mForm.mtcOverride?0.5:1 }}>Transfer Stock</button>
-              </div>
-            </>
-          }
-        </Modal>
-      )}
 
-      {/* ISSUE MODAL */}
-      {modal==="issue"&&activeLot&&(
-        <Modal title={`Issue Material — ${activeLot.lotNo}`} onClose={closeModal} width={540}>
-          <div style={{ ...css.card,background:T.bg,marginBottom:14 }}>
-            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8 }}>
-              {[["Item Code",activeLot.itemCode||activeLot.matCode||"—"],["Batch No",activeLot.batchNo],["Heat No",activeLot.heatNo||"—"],["Allocated",`${fmt.num(activeLot.wtAllocated)} kg`]].map(([k,v])=>(
-                <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12,color:T.text,fontFamily:T.fontMono }}>{v}</div></div>
-              ))}
-            </div>
-          </div>
-          {(activeLot.allocations||[]).length>0&&(
-            <div style={{ ...css.card,background:T.bg,marginBottom:14,padding:10 }}>
-              <div style={{ fontSize:10,color:T.textMid,fontWeight:700,marginBottom:6 }}>ALLOCATED TO</div>
-              {activeLot.allocations.map((a,i)=>(
-                <div key={i} style={{ display:"flex",gap:8,fontSize:11,color:T.textLow,marginBottom:3 }}>
-                  <span style={{ fontFamily:T.fontMono,color:T.text }}>{a.orderId}</span>
-                  {a.drawingNo&&<span>{a.drawingNo}</span>}
-                  {a.markNo&&<span style={{ fontFamily:T.fontMono }}>{a.markNo}</span>}
-                  <span style={{ color:T.accent }}>{fmt.num(a.wt)} kg</span>
+                  {/* Lot rows — shown when group expanded */}
+                  {isGroupExp && (
+                    <div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                        <thead>
+                          <tr style={{ background:T.bgInput }}>
+                            <th style={{ width:24 }}></th>
+                            {["Lot No","Dimensions","Sheets","Wt/Sheet","Vendor","Bay","Avail (T)","Alloc (T)","Issued (T)","Heat No","MTC","RM QC","Status","Actions"].map(h=>(
+                              <th key={h} style={{ padding:"6px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.lots.map((s,li) => {
+                            const isLotExp = expandedId === s.id;
+                            return (
+                              <React.Fragment key={s.id}>
+                                <tr style={{ background:isLotExp?`${T.accent}08`:li%2===0?"transparent":T.bgInput, borderBottom:`1px solid ${T.border}`, cursor:"pointer" }}
+                                  onClick={()=>setExpandedId(isLotExp?`grp::${group.matCode}`:s.id)}>
+                                  <td style={{ padding:"6px 8px", textAlign:"center" }}>
+                                    <span style={{ color:T.textLow, fontSize:9 }}>{isLotExp?"▼":"▶"}</span>
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.accent, whiteSpace:"nowrap" }}>
+                                    {s.lotNo}{s.isOffcut&&<span style={{ marginLeft:4 }}><Badge color="teal">OC</Badge></span>}
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:11, color:T.text }}>
+                                    {s.sheetDim||s.size||"—"}
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontSize:12, color:T.textMid, textAlign:"right" }}>
+                                    {s.sheetCount||s.qtyReceived||"—"}
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:11, color:T.textMid, textAlign:"right" }}>
+                                    {s.sheetWt>0?`${fmt.num(s.sheetWt)} kg`:"—"}
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontSize:11, color:T.text }}>{s.vendorName||"—"}</td>
+                                  <td style={{ padding:"6px 10px" }}>{s.bayId?<Badge color="teal">{s.bayId}</Badge>:"—"}</td>
+                                  <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.green, textAlign:"right" }}>
+                                    {fmt.wtT(s.wtAvailable)}
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:12, color:T.accent, textAlign:"right" }}>
+                                    {(s.wtAllocated||0)>0?fmt.wtT(s.wtAllocated):"—"}
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:12, color:"#7C3AED", textAlign:"right" }}>
+                                    {(s.wtIssued||0)>0?fmt.wtT(s.wtIssued):"—"}
+                                  </td>
+                                  <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:11, color:T.textMid }}>{s.heatNo||"—"}</td>
+                                  <td style={{ padding:"6px 10px" }} onClick={e=>e.stopPropagation()}>
+                                    {s.mtcUploaded
+                                      ? <a href={s.mtcDoc} target="_blank" rel="noreferrer" style={{ fontSize:10,color:T.green,fontWeight:700 }}>MTC ✓</a>
+                                      : <span style={{ fontSize:10,color:T.red,fontWeight:700 }}>⚠ Missing</span>}
+                                  </td>
+                                  <td style={{ padding:"6px 10px" }}>
+                                    <Badge color={qcStatusBadge[s.rmQcStatus]||"gray"}>{s.rmQcStatus}</Badge>
+                                  </td>
+                                  <td style={{ padding:"6px 10px" }}>
+                                    <Badge color={stCol[s.status]||"gray"}>{s.status?.replace(/_/g," ")}</Badge>
+                                  </td>
+                                  <td style={{ padding:"6px 10px" }} onClick={e=>e.stopPropagation()}>
+                                    <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
+                                      {canAllocate&&s.status==="available"&&s.rmQcStatus==="approved"&&s.clientInspStatus==="approved"&&(
+                                        <button onClick={()=>openModal("allocate",s)} style={{ ...css.btn.sm,fontSize:10 }}>Alloc</button>
+                                      )}
+                                      {canRelease&&(s.allocations||[]).length>0&&(
+                                        <button onClick={()=>openModal("release",s)} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Release</button>
+                                      )}
+                                      {canRelease&&(s.allocations||[]).length>0&&(s.wtIssued||0)===0&&(
+                                        <button onClick={()=>openModal("transfer",s)} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>Transfer</button>
+                                      )}
+                                      {canIssue&&s.status==="allocated"&&s.clientInspStatus==="approved"&&(
+                                        <button onClick={()=>openModal("issue",s)} style={{ ...css.btn.sm,background:"#EDE9FE",color:"#7C3AED",border:"1px solid #7C3AED",fontSize:10 }}>Issue</button>
+                                      )}
+                                      {canIssue&&s.status==="issued"&&(
+                                        <button onClick={()=>openModal("offcut",s)} style={{ ...css.btn.sm,background:T.bgInput,color:"#0E7490",border:`1px solid #0E7490`,fontSize:10 }}>Off-cut</button>
+                                      )}
+                                      {(s.issues||[]).length>0&&(
+                                        <button onClick={e=>{e.stopPropagation();const iss=s.issues[s.issues.length-1];setMForm({issNoteNo:iss.issueNoteNo,issEntry:iss,lotSnap:s,contractorName:iss.issuedTo});setModal("print");}} style={{ ...css.btn.sm,background:"transparent",color:T.textMid,border:`1px solid ${T.border}`,fontSize:10 }}>ISN↗</button>
+                                      )}
+                                      {canRelease&&s.status!=="consumed"&&s.status!=="written_off"&&s.status!=="issued"&&(
+                                        <button onClick={e=>{e.stopPropagation();setResLot(s);setResForm({});setResModal("add");}} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Reserve</button>
+                                      )}
+                                      {user.role==="super_admin"&&(s.status==="available"||s.status==="qc_hold")&&(s.wtAllocated||0)===0&&(
+                                        <button onClick={e=>{e.stopPropagation();openModal("writeoff",s);}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.redLo}`,fontSize:10 }}>Write Off</button>
+                                      )}
+                                      {s.status==="rejected"&&canIssue&&(
+                                        <button onClick={e=>{e.stopPropagation();setReturnModal(s);setReturnForm({returnDate:today(),vehicleNo:"",returnChallan:""});}} style={{ ...css.btn.sm,background:T.redBg,color:T.red,border:`1px solid ${T.red}`,fontSize:10 }}>Return</button>
+                                      )}
+                                      {s.status==="rejected"&&canIssue&&(
+                                        <button onClick={e=>{e.stopPropagation();setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,status:"qc_hold",wtAvailable:l.wtReceived||0,rmQcStatus:"pending",clientInspStatus:"pending",rejectedAt:undefined,grnReversed:undefined,rejectionReason:undefined}));showToast("Lot returned to QC Hold");}} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Re-inspect</button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                                {/* Lot detail expansion */}
+                                {isLotExp&&(
+                                  <tr>
+                                    <td colSpan={15} style={{ background:`${T.accent}06`, padding:"12px 20px", borderBottom:`1px solid ${T.border}` }}>
+                                      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:12 }}>
+                                        {[
+                                          ["Lot No", s.lotNo],
+                                          ["RM Unit ID", s.rmUnitId||"—"],
+                                          ["PO", s.poId||"—"],
+                                          ["GRN", s.grnId||"—"],
+                                          ["Received", fmt.date(s.receivedDate)],
+                                          ["Bay", s.bayId||"—"],
+                                          ["Heat No", s.heatNo||"—"],
+                                          ["Batch No", s.batchNo||"—"],
+                                          ["Dimensions", s.sheetDim||s.size||"—"],
+                                          ["Sheets", s.sheetCount||s.qtyReceived||"—"],
+                                          ["Wt/Sheet (kg)", s.sheetWt>0?fmt.num(s.sheetWt):"—"],
+                                          ["Off-cut", s.isOffcut?`Yes${s.parentLotId?" — parent: "+s.parentLotId:""}` :"No"],
+                                          ...(s.isOffcut&&s.parentRmUnitId?[["Parent RM Unit", s.parentRmUnitId]]:[]),
+                                          ["Client Insp", s.clientInspStatus||"—"],
+                                        ].map(([k,v])=>(
+                                          <div key={k}><div style={css.label}>{k}</div><div style={{ fontSize:12,color:T.text,fontFamily:T.fontMono }}>{v}</div></div>
+                                        ))}
+                                      </div>
+                                      {(s.qcHoldReason||s.status==="qc_hold")&&<div style={{ background:T.amberBg,border:`1px solid ${T.amber}`,borderRadius:6,padding:"6px 10px",fontSize:12,color:T.amber,marginBottom:10 }}>🔒 Hold reason: {s.qcHoldReason||"Pending QC inspection"}</div>}
+                                      {(s.allocations||[]).length>0&&(
+                                        <div style={{ marginBottom:12 }}>
+                                          <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>ALLOCATIONS</div>
+                                          <table style={{ width:"100%",fontSize:11,borderCollapse:"collapse" }}>
+                                            <thead><tr>{["Order","Drawing","Mark No","Weight (kg)","Reserved By","Date","Status"].map(h=><th key={h} style={{ textAlign:"left",padding:"3px 8px",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                                            <tbody>{(s.allocations||[]).map((a,ai)=>(
+                                              <tr key={ai}><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{a.orderId}</td><td style={{ padding:"4px 8px" }}>{a.drawingNo||a.drawingId||"—"}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{a.markNo||"—"}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{fmt.num(a.wt)}</td><td style={{ padding:"4px 8px" }}>{a.reservedBy||"—"}</td><td style={{ padding:"4px 8px" }}>{a.reservedDate||"—"}</td><td style={{ padding:"4px 8px" }}><Badge color={a.status==="issued"?"purple":a.status==="consumed"?"gray":"blue"}>{a.status||"allocated"}</Badge></td></tr>
+                                            ))}</tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                      {(s.issues||[]).length>0&&(
+                                        <div style={{ marginBottom:12 }}>
+                                          <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>ISSUE HISTORY</div>
+                                          <table style={{ width:"100%",fontSize:11,borderCollapse:"collapse" }}>
+                                            <thead><tr>{["ISN No","Date","Issued To","Order","Weight (kg)","DXF"].map(h=><th key={h} style={{ textAlign:"left",padding:"3px 8px",color:T.textMid,fontWeight:600,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                                            <tbody>{(s.issues||[]).map((iss,ii)=>(
+                                              <tr key={ii}><td style={{ padding:"4px 8px",fontFamily:T.fontMono,color:T.accent }}>{iss.issueNoteNo}</td><td style={{ padding:"4px 8px" }}>{iss.issueDate}</td><td style={{ padding:"4px 8px" }}>{iss.issuedTo}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{iss.orderId}</td><td style={{ padding:"4px 8px",fontFamily:T.fontMono }}>{fmt.num(iss.wt)}</td><td style={{ padding:"4px 8px" }}>{iss.dxfLink?<a href={iss.dxfLink} target="_blank" rel="noreferrer" style={{ color:T.accent }}>DXF↗</a>:"—"}</td></tr>
+                                            ))}</tbody>
+                                          </table>
+                                        </div>
+                                      )}
+                                      {(s.reservations||[]).length>0&&(
+                                        <div style={{ marginTop:8, padding:"8px 12px", background:T.amberBg+"44", borderRadius:6 }}>
+                                          <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginBottom:6 }}>RESERVATIONS</div>
+                                          {(s.reservations||[]).map((r,ri)=>(
+                                            <div key={ri} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"3px 0", borderBottom:`1px solid ${T.border}` }}>
+                                              <span style={{ fontSize:11, color:T.text }}>{r.orderRef} — {fmt.num(r.kg)} kg — by {r.reservedBy} on {r.reservedAt}</span>
+                                              {(user.role==="super_admin"||user.role==="planning_admin")&&(
+                                                <button onClick={()=>releaseReservation(s,ri)} style={{ ...css.btn.sm, fontSize:9, color:T.red, padding:"1px 6px" }}>Release</button>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {(s.auditLog||[]).length>0&&(
+                                        <div style={{ marginTop:8 }}>
+                                          <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:6,letterSpacing:"0.05em" }}>AUDIT LOG</div>
+                                          {[...(s.auditLog||[])].reverse().slice(0,5).map((e,ei)=>(
+                                            <div key={ei} style={{ fontSize:11,color:T.textLow,display:"flex",gap:10,marginBottom:3 }}>
+                                              <span style={{ color:T.accent,fontFamily:T.fontMono,minWidth:90 }}>{e.date}</span>
+                                              <Badge color="gray">{e.action}</Badge>
+                                              <span>{e.orderId?`Order: ${e.orderId}`:""} {e.wt?`${fmt.num(e.wt)} kg`:""} {e.by?`by ${e.by}`:""}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {/* MTC upload inline */}
+                                      {!s.mtcUploaded&&(
+                                        <div style={{ marginTop:8 }}>
+                                          {mtcUploadId!==s.id
+                                            ? <button onClick={()=>{setMtcUploadId(s.id);setMtcForm({});}} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Upload MTC</button>
+                                            : <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                                                <input value={mtcForm.link||""} onChange={e=>setMtcForm(f=>({...f,link:e.target.value}))} placeholder="Drive link..." style={{ ...css.input,fontSize:11,width:220 }} />
+                                                <input value={mtcForm.heatNo||""} onChange={e=>setMtcForm(f=>({...f,heatNo:e.target.value}))} placeholder="Heat number..." style={{ ...css.input,fontSize:11,width:140 }} />
+                                                <button disabled={!(mtcForm.link||"").trim()} onClick={()=>{if(!(mtcForm.link||"").trim())return;setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,mtcDoc:mtcForm.link.trim(),heatNo:mtcForm.heatNo||l.heatNo,mtcUploaded:true}));setMtcUploadId(null);setMtcForm({});showToast("MTC uploaded");}} style={{ ...css.btn.sm,opacity:(mtcForm.link||"").trim()?1:0.4 }}>Save</button>
+                                                <button onClick={()=>setMtcUploadId(null)} style={{ ...css.btn.ghost }}>✕</button>
+                                              </div>
+                                          }
+                                        </div>
+                                      )}
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-          <Field label="Issue to Contractor" required>
-            <Sel value={mForm.contractorId||""} onChange={e=>setMForm(f=>({...f,contractorId:e.target.value}))}>
-              <option value="">Select contractor...</option>
-              {(contractors||[]).filter(c=>c.active).map(c=><option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
-            </Sel>
-          </Field>
-          <Field label="Order" required>
-            <Sel value={mForm.orderId||activeLot.allocations?.[0]?.orderId||""} onChange={e=>setMForm(f=>({...f,orderId:e.target.value}))}>
-              <option value="">Select order...</option>
-              {orders.map(o=><option key={o.id} value={o.id}>{o.id} — {o.projectDesc}</option>)}
-            </Sel>
-          </Field>
-          <Field label="DXF Cutting Layout (Drive link)">
-            <Input value={mForm.dxfLink||""} onChange={e=>setMForm(f=>({...f,dxfLink:e.target.value}))} placeholder="https://drive.google.com/..." />
-          </Field>
-          <Field label="Weight to Issue (kg)" required>
-            <Input type="number" value={mForm.wt||String(activeLot.wtAllocated)} onChange={e=>setMForm(f=>({...f,wt:e.target.value}))} max={activeLot.wtAllocated} placeholder={`Max ${fmt.num(activeLot.wtAllocated)} kg`} />
-          </Field>
-          <InfoBanner color="blue">Issue note number will be auto-generated on confirm.</InfoBanner>
-          <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
-            <button onClick={closeModal} style={css.btn.secondary}>Cancel</button>
-            <button onClick={saveIssue} style={{ ...css.btn.primary,background:"#4C1D95",border:"1px solid #A78BFA" }}>Issue & Generate ISN</button>
+              );
+            })}
           </div>
-        </Modal>
-      )}
-
-      {/* OFF-CUT MODAL */}
-      {modal==="offcut"&&activeLot&&(
-        <Modal title={`Record Off-cut — ${activeLot.lotNo}`} onClose={closeModal} width={460}>
-          <InfoBanner color="blue">Off-cut inherits QC approval and batch number from parent lot. No re-inspection required.</InfoBanner>
-          <Field label="Consumed Weight (kg)" required>
-            <Input type="number" value={mForm.consumedWt||""} onChange={e=>setMForm(f=>({...f,consumedWt:e.target.value}))} placeholder="Weight cut/processed..." />
-          </Field>
-          <Field label="Off-cut Remaining Weight (kg)" required>
-            <Input type="number" value={mForm.offcutWt||""} onChange={e=>setMForm(f=>({...f,offcutWt:e.target.value}))} placeholder="Min 5 kg to record as off-cut..." />
-          </Field>
-          <Field label={(activeLot.sectionType||activeLot.section)==="PLATE"?"Off-cut Dimensions (LxW mm)":"Off-cut Length (mm)"}>
-            {(activeLot.sectionType||activeLot.section)==="PLATE"
-              ?<Input value={mForm.offcutDim||""} onChange={e=>setMForm(f=>({...f,offcutDim:e.target.value}))} placeholder="e.g. 1300X400" />
-              :<Input type="number" value={mForm.offcutLength||""} onChange={e=>setMForm(f=>({...f,offcutLength:e.target.value,offcutDim:e.target.value}))} placeholder="e.g. 2340" />
-            }
-          </Field>
-          <div style={{ display:"flex",gap:8,justifyContent:"flex-end" }}>
-            <button onClick={closeModal} style={css.btn.secondary}>Cancel</button>
-            <button onClick={saveOffcut} style={{ ...css.btn.primary,background:"#0D3340",border:"1px solid #22D3EE",color:"#22D3EE" }}>Create Off-cut Lot</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* PRINT ISN MODAL */}
-      {modal==="writeoff"&&activeLot&&(
-        <Modal title={`Write Off Lot — ${activeLot.lotNo}`} onClose={closeModal} width={480}>
-          <InfoBanner color="red">Write-off permanently reduces available weight. This action is irreversible. Only use for damaged, lost, or expired material.</InfoBanner>
-          <div style={{ ...css.card, background:T.bg, marginBottom:14, marginTop:12 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:12 }}>
-              {[["Lot No",activeLot.lotNo],["Material",`${activeLot.matType} ${activeLot.grade}`],["Size",activeLot.size],["Available",`${fmt.num(activeLot.wtAvailable)} kg`]].map(([k,v])=>(
-                <div key={k}><div style={css.label}>{k}</div><div style={{ color:T.text, fontFamily:T.fontMono }}>{v}</div></div>
-              ))}
-            </div>
-          </div>
-          <Field label="Write-Off Type" required>
-            <Sel value={mForm.writeOffType||"other"} onChange={e=>setMForm(f=>({...f,writeOffType:e.target.value}))}>
-              {[["damaged","Damaged / Defective"],["lost","Lost / Misplaced"],["expired","Expired / Corroded"],["other","Other"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
-            </Sel>
-          </Field>
-          <Field label="Weight to Write Off (kg)" required>
-            <Input type="number" value={mForm.writeOffWt||""} onChange={e=>setMForm(f=>({...f,writeOffWt:e.target.value}))}
-              placeholder={`Max ${fmt.num(activeLot.wtAvailable)} kg`} min={0.1} max={activeLot.wtAvailable} step={0.1} />
-          </Field>
-          <Field label="Reason *" required>
-            <Textarea value={mForm.writeOffReason||""} onChange={e=>setMForm(f=>({...f,writeOffReason:e.target.value}))}
-              placeholder="Describe the reason for write-off..." />
-          </Field>
-          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
-            <button onClick={closeModal} style={css.btn.secondary}>Cancel</button>
-            <button disabled={!mForm.writeOffReason?.trim()||(+(mForm.writeOffWt||0))<=0}
-              onClick={saveWriteOff}
-              style={{ ...css.btn.primary, background:T.red, borderColor:T.red, opacity:(mForm.writeOffReason?.trim()&&+(mForm.writeOffWt||0)>0)?1:0.4 }}>
-              Confirm Write-Off
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Return to Vendor Modal */}
-      {returnModal && (
-        <Modal title={`Return to Vendor — ${returnModal.lotNo}`} onClose={()=>{setReturnModal(null);setReturnForm({});}} width={480}>
-          <InfoBanner color="amber">Records the return of this rejected lot to the vendor. Lot status will change to Returned.</InfoBanner>
-          <div style={{ ...css.card, background:T.bg, marginBottom:14, marginTop:12 }}>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:12 }}>
-              {[["Lot No",returnModal.lotNo],["Material",`${returnModal.matType||""} ${returnModal.grade||""}`],["Size",returnModal.size||"—"],["Received Wt",`${fmt.num(returnModal.wtReceived)} kg`]].map(([k,v])=>(
-                <div key={k}><div style={css.label}>{k}</div><div style={{ color:T.text, fontFamily:T.fontMono }}>{v}</div></div>
-              ))}
-            </div>
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-            <Field label="Return Date" required><Input type="date" value={returnForm.returnDate||""} onChange={e=>setReturnForm(f=>({...f,returnDate:e.target.value}))} /></Field>
-            <Field label="Vehicle No" required><Input value={returnForm.vehicleNo||""} onChange={e=>setReturnForm(f=>({...f,vehicleNo:e.target.value}))} placeholder="MH-31-AB-1234" /></Field>
-            <Field label="Return Challan No"><Input value={returnForm.returnChallan||""} onChange={e=>setReturnForm(f=>({...f,returnChallan:e.target.value}))} placeholder="DC/RET-001" /></Field>
-            <Field label="Remarks"><Input value={returnForm.remarks||""} onChange={e=>setReturnForm(f=>({...f,remarks:e.target.value}))} placeholder="Optional..." /></Field>
-          </div>
-          <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
-            <button onClick={()=>{setReturnModal(null);setReturnForm({});}} style={css.btn.secondary}>Cancel</button>
-            <button disabled={!returnForm.vehicleNo?.trim()||!returnForm.returnDate}
-              onClick={()=>{
-                setStock(prev=>prev.map(l=>l.id!==returnModal.id?l:{
-                  ...l, status:'returned',
-                  returnDate:returnForm.returnDate, returnVehicleNo:returnForm.vehicleNo,
-                  returnChallan:returnForm.returnChallan||"", returnRemarks:returnForm.remarks||"",
-                  returnedBy:user.name, returnedAt:new Date().toISOString()
-                }));
-                showToast(`Lot ${returnModal.lotNo} returned to vendor`);
-                setReturnModal(null); setReturnForm({});
-              }}
-              style={{ ...css.btn.primary, background:T.red, opacity:(returnForm.vehicleNo?.trim()&&returnForm.returnDate)?1:0.4 }}>
-              Confirm Return
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {resModal==="add" && resLot && (
-        <Modal title={`Reserve Stock — ${resLot.lotNo}`} onClose={()=>{setResModal(null);setResLot(null);setResForm({});}}>
-          <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>Available: <strong style={{color:T.green}}>{fmt.num(resLot.wtAvailable)} kg</strong></div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            <div style={{ gridColumn:"span 2" }}>
-              <label style={css.label}>Order *</label>
-              <select value={resForm.orderId||""} onChange={e=>setResForm({...resForm,orderId:e.target.value})} style={css.input}>
-                <option value="">Select order...</option>
-                {(orders||[]).filter(o=>o.status==="active").map(o=><option key={o.id} value={o.id}>{o.id} — {o.projectDesc?.slice(0,40)}</option>)}
-              </select>
-            </div>
-            <div style={{ gridColumn:"span 2" }}>
-              <label style={css.label}>Reserve Quantity (kg) *</label>
-              <input type="number" value={resForm.kg||""} onChange={e=>setResForm({...resForm,kg:e.target.value})} min={1} max={resLot.wtAvailable} style={css.input} placeholder={`Max: ${fmt.num(resLot.wtAvailable)} kg`} />
-            </div>
-          </div>
-          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
-            <button onClick={()=>{setResModal(null);setResLot(null);setResForm({});}} style={css.btn.secondary}>Cancel</button>
-            <button onClick={saveReserve} style={css.btn.primary}>Save Reservation</button>
-          </div>
-        </Modal>
-      )}
-
-      {modal==="print"&&mForm.issEntry&&(
-        <Modal title={`Issue Note — ${mForm.issNoteNo||""}`} onClose={closeModal} width={680}>
-          <div style={{ background:"#fff",color:"#000",padding:32,borderRadius:8,fontFamily:"Georgia,serif",fontSize:13 }}>
-            <div style={{ textAlign:"center",marginBottom:20 }}>
-              <div style={{ fontSize:20,fontWeight:700 }}>MATERIAL ISSUE NOTE</div>
-              <div style={{ fontSize:14,marginTop:4 }}>Structo Fabrication Works</div>
-            </div>
-            <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16 }}>
-              <div><strong>Issue Note No:</strong> {mForm.issNoteNo}</div>
-              <div><strong>Date:</strong> {mForm.issEntry?.issueDate}</div>
-              <div><strong>Store Officer:</strong> {mForm.issEntry?.issuedBy}</div>
-              <div><strong>Issued To:</strong> {mForm.contractorName||mForm.issEntry?.issuedTo}</div>
-            </div>
-            <div style={{ borderTop:"1px solid #ccc",paddingTop:12,marginBottom:12 }}>
-              <div style={{ fontWeight:700,marginBottom:8 }}>MATERIAL DETAILS</div>
-              <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8 }}>
-                <div><strong>Item Code:</strong> {mForm.lotSnap?.itemCode||mForm.lotSnap?.matCode||"—"}</div>
-                <div><strong>Lot No:</strong> {mForm.lotSnap?.lotNo}</div>
-                <div><strong>Batch No:</strong> {mForm.lotSnap?.batchNo}</div>
-                <div><strong>Heat No:</strong> {mForm.lotSnap?.heatNo||"—"}</div>
-                <div><strong>Weight Issued:</strong> {fmt.num(mForm.issEntry?.wt)} kg</div>
-                <div><strong>Bay:</strong> {mForm.lotSnap?.bayId}</div>
-              </div>
-            </div>
-            <div style={{ borderTop:"1px solid #ccc",paddingTop:12,marginBottom:20 }}>
-              <div style={{ fontWeight:700,marginBottom:8 }}>AGAINST ORDER / DRAWING</div>
-              <div><strong>Order:</strong> {mForm.issEntry?.orderId||"—"}</div>
-              <div style={{ marginTop:4 }}><strong>Drawing:</strong> {mForm.issEntry?.drawingNo||mForm.issEntry?.drawingId||"—"}</div>
-              {mForm.issEntry?.dxfLink&&<div style={{ marginTop:4 }}><strong>DXF Layout:</strong> {mForm.issEntry.dxfLink}</div>}
-            </div>
-            <div style={{ borderTop:"1px solid #ccc",paddingTop:24,display:"grid",gridTemplateColumns:"1fr 1fr",gap:60 }}>
-              <div><div style={{ borderTop:"1px solid #000",paddingTop:4,marginTop:48 }}>Issued By (Store Officer)</div></div>
-              <div><div style={{ borderTop:"1px solid #000",paddingTop:4,marginTop:48 }}>Received By (Contractor)</div></div>
-            </div>
-          </div>
-          <div style={{ display:"flex",gap:8,justifyContent:"flex-end",marginTop:14 }}>
-            <button onClick={closeModal} style={css.btn.secondary}>Close</button>
-            <button onClick={()=>window.print()} style={css.btn.primary}>🖨 Print Issue Note</button>
-          </div>
-        </Modal>
-      )}
-
-      {filter==="issue_requests"&&(
-        <div>
-          <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:16}}>Material Issue Requests</div>
-          {(issueRequests||[]).length===0&&<InfoBanner color="blue">No issue requests yet.</InfoBanner>}
-          {(issueRequests||[]).length>0&&(
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
-                <thead>
-                  <tr style={{background:T.bgInput}}>
-                    {["Request ID","Date","Requested By","RM Unit / Lot","Mat Code","Dimensions","Contractor","Wt (kg)","Status","Actions"].map(h=>(
-                      <th key={h} style={{padding:"8px 10px",fontSize:10,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...(issueRequests||[])].sort((a,b)=>{
-                    const order={pending:0,issued:1,rejected:2};
-                    return (order[a.status]??3)-(order[b.status]??3)||(b.requestDate||"").localeCompare(a.requestDate||"");
-                  }).map(req=>{
-                    const lot=(stock||[]).find(s=>s.id===req.lotId)||
-                      (stock||[]).find(s=>normMatCode(s.matCode)===normMatCode(req.matCode)&&
-                        ['available','reserved','partially_reserved'].includes(s.status))||{};
-                    const canAct=(user.role==="store_admin"||user.role==="super_admin")&&req.status==="pending";
-                    const yr2=new Date().getFullYear();
-                    const issueNote=()=>{
-                      let maxIsn=0;
-                      (issueRequests||[]).forEach(r=>{const m=(r.issueNoteNo||"").match(/^ISN-(\d{4})-(\d+)$/);if(m&&+m[1]===yr2)maxIsn=Math.max(maxIsn,+m[2]);});
-                      (stock||[]).forEach(s=>(s.issues||[]).forEach(iss=>{const m=(iss.issueNoteNo||"").match(/^ISN-(\d{4})-(\d+)$/);if(m&&+m[1]===yr2)maxIsn=Math.max(maxIsn,+m[2]);}));
-                      return `ISN-${yr2}-${String(maxIsn+1).padStart(3,"0")}`;
-                    };
-                    const doIssue=()=>{
-                      const issueNoteNo=issueNote();
-                      const issueDate=new Date().toISOString().slice(0,10);
-                      const wt=req.wtRequested||0;
-                      const lotAvail=lot.wtAvailable||0;
-                      if(wt>0&&lotAvail<wt*0.95){
-                        const proceed=window.confirm(
-                          `Warning: Lot ${lot.lotNo||lot.id} only has ${lotAvail.toFixed(1)}kg available but ${wt.toFixed(1)}kg is being issued.\n\nThis will overdraw the lot. Proceed anyway?`
-                        );
-                        if(!proceed) return;
-                      }
-                      const stockLotId=lot.id||req.lotId;
-                      setStock(prev=>prev.map(l=>{
-                        if(l.id!==stockLotId) return l;
-                        return {...l,
-                          status: Math.max(0,(l.wtAvailable||0)-wt)<1?"issued":"partially_issued",
-                          wtIssued:(l.wtIssued||0)+wt,
-                          wtAvailable:Math.max(0,(l.wtAvailable||0)-wt),
-                          issues:[...(l.issues||[]),{
-                            issueId:issueNoteNo,issueDate,
-                            issuedTo:req.contractorName||req.machineName||"",
-                            contractorId:req.contractorId||"",
-                            rmUnitId:req.rmUnitId||"",
-                            machineId:req.machineId||"",
-                            releaseId:req.releaseId||"",
-                            wt,issuedBy:user.name,issueNoteNo
-                          }],
-                          auditLog:[...(l.auditLog||[]),{
-                            action:"issued",by:user.name,date:issueDate,
-                            reason:`Issued via ${req.id} for ${req.rmUnitId||""}`
-                          }]
-                        };
-                      }));
-                      setIssueRequests(prev=>prev.map(r=>r.id!==req.id?r:{
-                        ...r,status:"issued",issuedBy:user.name,issueDate,issueNoteNo
-                      }));
-                    };
-                    const doReject=()=>{
-                      const reason=prompt("Rejection reason (optional):")||"Rejected by store";
-                      setIssueRequests(prev=>prev.map(r=>r.id!==req.id?r:{...r,status:"rejected",remarks:reason}));
-                    };
-                    return (
-                      <tr key={req.id} style={{borderBottom:`1px solid ${T.border}`,background:req.status==="pending"?`${T.amber}08`:req.status==="issued"?`${T.green}06`:"transparent"}}>
-                        <td style={{padding:"8px 10px",fontFamily:T.fontMono,color:T.accentHi,fontWeight:700}}>{req.id}</td>
-                        <td style={{padding:"8px 10px",fontSize:11}}>{req.requestDate}</td>
-                        <td style={{padding:"8px 10px",fontSize:11}}>{req.requestedByName||req.requestedBy}</td>
-                        <td style={{padding:"8px 10px",fontSize:10,fontFamily:T.fontMono,color:T.textMid}}>{req.rmUnitId||lot.lotNo||req.lotId}</td>
-                        <td style={{padding:"8px 10px",fontSize:11}}>{req.matCode}</td>
-                        <td style={{padding:"8px 10px",fontSize:11,fontFamily:T.fontMono}}>{req.dimensions||"—"}</td>
-                        <td style={{padding:"8px 10px",fontSize:11,fontWeight:600}}>{req.contractorName||req.machineName||"—"}</td>
-                        <td style={{padding:"8px 10px",fontSize:11,textAlign:"right"}}>{(req.wtRequested||0).toFixed(0)}</td>
-                        <td style={{padding:"8px 10px"}}>
-                          <Badge color={req.status==="pending"?"amber":req.status==="issued"?"green":"red"}>{req.status}</Badge>
-                          {req.issueNoteNo&&<div style={{fontSize:9,color:T.textMid,marginTop:2}}>{req.issueNoteNo}</div>}
-                        </td>
-                        <td style={{padding:"8px 10px"}}>
-                          {canAct?(
-                            <div style={{display:"flex",gap:6}}>
-                              <button onClick={doIssue} style={{...css.btn.green,fontSize:10,padding:"3px 10px"}}>✓ Issue</button>
-                              <button onClick={doReject} style={{...css.btn.ghost,fontSize:10,padding:"3px 10px",color:T.red}}>✕ Reject</button>
-                            </div>
-                          ):(
-                            <span style={{fontSize:11,color:T.textMid}}>
-                              {req.status==="issued"?`By ${req.issuedBy||"—"} on ${req.issueDate||"—"}`:"—"}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
@@ -12551,7 +12216,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
         ? `${selRun.materialCode}/${barForm.offcutLength}X${barForm.offcutWidth}`
         : `${selRun.materialCode}/${barForm.offcutLength}`;
       setStock(prev=>[...prev,{
-        id:newOcId, lotNo:`LOT-${yr}-${String(maxLot+1).padStart(3,"0")}`,
+        id:newOcId, lotNo:genLotNo(stock||[]),
         batchNo:barForm.batchNo, itemCode:ocItemCode,
         matCode:selRun.materialCode, matLibId:parentLot.matLibId||"",
         section:parentLot.section||"", size:parentLot.size||"",
@@ -15397,21 +15062,91 @@ const OutboundProcessing = ({ user, instances, setInstances, orders, vendors, on
 // Calculate plate sheet weight from rmUnitId dimensions
 // rmUnitId format: PLATE/MS/E350/16mm/1500X11200/1-3
 // Returns weight in kg using steel density 7850 kg/m³
+// ─── LOT NUMBER + RMUNIT ID HELPERS ─────────────────────────────────────────
+// Alphanumeric lot counter: A001..A999, B001..B999 ... Z999 (skip I and O)
+const LOT_ALPHA_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // skip I and O
+const SECTION_PREFIX = {
+  PLATE:"PLT", PLT:"PLT",
+  ISA:"ISA", ISMC:"ISMC", ISMB:"ISMB",
+  SHS:"SHS", RHS:"RHS",
+  "FLAT BAR":"FLB", "FLAT":"FLB", FLB:"FLB",
+  "ROUND BAR":"RDB", RDB:"RDB",
+};
+
+// Generate next lot number from existing stock lots
+// Returns { lotNo: "A342", nextAlpha: "A", nextNum: 343 }
+const genLotNo = (existingStock) => {
+  let bestAlpha = 0; // index into LOT_ALPHA_CHARS
+  let bestNum = 0;
+  (existingStock||[]).forEach(s => {
+    const m = (s.lotNo||"").match(/^([A-HJ-NP-Z])(\d{3})$/);
+    if (!m) return;
+    const ai = LOT_ALPHA_CHARS.indexOf(m[1]);
+    const num = parseInt(m[2], 10);
+    if (ai > bestAlpha || (ai === bestAlpha && num > bestNum)) {
+      bestAlpha = ai; bestNum = num;
+    }
+  });
+  // Increment
+  let nextNum = bestNum + 1;
+  let nextAlpha = bestAlpha;
+  if (nextNum > 999) { nextNum = 1; nextAlpha++; }
+  if (nextAlpha >= LOT_ALPHA_CHARS.length) { nextAlpha = 0; nextNum = 1; } // safety wrap
+  return `${LOT_ALPHA_CHARS[nextAlpha]}${String(nextNum).padStart(3,"0")}`;
+};
+
+// Generate rmUnitId from lot record + sequence number
+// e.g. A342/PLT/E350/16mm/1500X6300/1
+const buildRmUnitId = (lotNo, sectionType, grade, size, sheetDim, seq) => {
+  const prefix = SECTION_PREFIX[(sectionType||"").toUpperCase()] || (sectionType||"UNK").toUpperCase().slice(0,4);
+  const gradeStr = (grade||"E250").replace(/[^A-Z0-9]/gi,"");
+  const sizeStr  = (size||"").replace(/\s/g,"");
+  const dimStr   = (sheetDim||"").toUpperCase().replace(/[×x]/g,"X");
+  return `${lotNo}/${prefix}/${gradeStr}/${sizeStr}/${dimStr}/${seq}`;
+};
+
+// Build offcut rmUnitId — same lotNo, own dimensions, /1 /2 sequence
+const buildOffcutRmUnitId = (parentLotNo, sectionType, grade, size, offcutDim, existingStock) => {
+  const prefix = SECTION_PREFIX[(sectionType||"").toUpperCase()] || (sectionType||"UNK").toUpperCase().slice(0,4);
+  const gradeStr = (grade||"E250").replace(/[^A-Z0-9]/gi,"");
+  const sizeStr  = (size||"").replace(/\s/g,"");
+  const dimStr   = (offcutDim||"").toUpperCase().replace(/[×x]/g,"X");
+  const baseId   = `${parentLotNo}/${prefix}/${gradeStr}/${sizeStr}/${dimStr}`;
+  // Count existing offcuts with same baseId
+  const existing = (existingStock||[]).filter(s=>s.isOffcut&&(s.rmUnitId||"").startsWith(baseId+"/")).length;
+  return `${baseId}/${existing+1}`;
+};
+
+// Parse rmUnitId — handles both old format (PLATE/MS/E350/16mm/1500X6300/1-4)
+// and new format (A342/PLT/E350/16mm/1500X6300/1)
+const parseRmUnitIdNew = (rmUnitId) => {
+  if (!rmUnitId) return { isNew:false, lotNo:"", sectionPrefix:"", grade:"", size:"", dim:"", seq:1 };
+  const parts = rmUnitId.split("/");
+  // New format: first segment matches alphanumeric lot pattern
+  if (/^[A-HJ-NP-Z]\d{3}$/.test(parts[0])) {
+    return { isNew:true, lotNo:parts[0], sectionPrefix:parts[1]||"", grade:parts[2]||"",
+      size:parts[3]||"", dim:parts[4]||"", seq:parseInt(parts[5]||"1",10) };
+  }
+  return { isNew:false };
+};
+
 const calcSheetWt = (rmUnitId) => {
   if (!rmUnitId) return 0;
   const parts = rmUnitId.split("/");
+  // Both old format (PLATE/MS/E350/16mm/1500X6300/1-4) and
+  // new format (A342/PLT/E350/16mm/1500X6300/1) encode thickness + dimensions
   // Find thickness segment — contains "mm" e.g. "16mm"
-  const thickSeg = parts.find(p => p.toLowerCase().endsWith("mm"));
+  const thickSeg = parts.find(p => /^\d+(\.\d+)?mm$/i.test(p));
   const thickness = thickSeg ? parseFloat(thickSeg) : 0;
-  // Find dimension segment — contains "X" e.g. "1500X11200"
-  const dimSeg = parts.find(p => p.toUpperCase().includes("X") && !p.includes("-"));
+  // Find dimension segment — contains "X" and only digits+X (no dashes = not old range suffix)
+  const dimSeg = parts.find(p => /^\d+[Xx]\d+$/.test(p));
   if (!dimSeg || !thickness) return 0;
   const dimParts = dimSeg.toUpperCase().split("X");
   if (dimParts.length < 2) return 0;
-  const w = parseFloat(dimParts[0]) / 1000; // mm to m
-  const l = parseFloat(dimParts[1]) / 1000; // mm to m
-  const t = thickness / 1000; // mm to m
-  return Math.round(w * l * t * 7850 * 100) / 100; // kg, 2 decimal places
+  const w = parseFloat(dimParts[0]) / 1000;
+  const l = parseFloat(dimParts[1]) / 1000;
+  const t = thickness / 1000;
+  return Math.round(w * l * t * 7850 * 100) / 100;
 };
 
 // "PLATE/MS/E350/16mm/1500X11200/2-3" → 3 (the total unit count from the range)
@@ -15428,9 +15163,10 @@ const parseRmUnitDim = sheetDim => {
   return m ? {w:parseInt(m[1],10), l:parseInt(m[2],10)} : {w:0, l:0};
 };
 
-// Weight of one RM unit = lot weight / total units in that rmUnitId range
+// Weight of one RM unit — new format: use lot.sheetWt; old format: lot.wtReceived / range total
 const getRmUnitWt = (lot, rmUnitId) => {
-  const total = parseRmUnitTotal(rmUnitId);
+  if (lot?.sheetWt > 0) return lot.sheetWt;
+  const total = parseRmUnitTotal(rmUnitId); // legacy fallback
   return total > 0 ? (lot?.wtReceived||0) / total : 0;
 };
 
@@ -16683,12 +16419,19 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
       const lot = (stock||[]).find(s => s.id === ru.lotId) || {};
       setStock(prev => [...prev, {
         id:`STK-OFFCUT-${Date.now()}`,
-        lotNo:`OFFCUT-${ru.rmUnitId.split("/").pop()}-${Date.now()}`,
         parentLotId:ru.lotId, parentRmUnitId:ru.rmUnitId,
         matCode:ru.matCode, sectionType:lot.sectionType||"PLATE",
-        grade:lot.grade||"", size:offcutDim||lot.size||"",
+        grade:lot.grade||"", size:lot.size||"",
+        // Offcut rmUnitId: inherits parent lotNo, own dimensions, sequential
+        lotNo: lot.lotNo||ru.lotId||"",
+        rmUnitId: buildOffcutRmUnitId(lot.lotNo||"???", lot.sectionType||"PLATE", lot.grade||"", lot.size||"", offcutDim, stock),
+        sheetDim: offcutDim||"",
+        sheetLength: (offcutDim||"").split(/[Xx×]/)[0]||0,
+        sheetWidth:  (offcutDim||"").split(/[Xx×]/)[1]||0,
+        sheetWt: offWt,
+        sheetCount: 1,
         wtReceived:offWt, wtAvailable:offWt, wtAllocated:0, wtIssued:0,
-        status:"pending_store",   // pending store acceptance
+        status:"pending_store",
         isOffcut:true, bayId:lot.bayId||"",
         receivedDate:today(), createdBy:user.username,
         createdFrom:ru.rmUnitId, releaseId:ru.releaseId,
