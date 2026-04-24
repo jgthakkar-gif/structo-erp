@@ -13175,6 +13175,21 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
     }));
   };
 
+  // Get best (most advanced) stage per markNo across ALL instances
+  // Fixes the case where a part was cut in a previous release on a shared sheet
+  const STAGE_ORDER_BEST = ['complete','welding','fitup','fit_up','blasting','painting','cutting_qc','cutting','pending'];
+  const getBestStagePerMarkNo = (markNos) => {
+    const best = {};
+    const markNoSet = new Set(markNos);
+    (instances||[]).filter(i => markNoSet.has(i.markNo)).forEach(i => {
+      const curr = best[i.markNo];
+      if (!curr || STAGE_ORDER_BEST.indexOf(i.currentStage) < STAGE_ORDER_BEST.indexOf(curr)) {
+        best[i.markNo] = i.currentStage;
+      }
+    });
+    return best;
+  };
+
   const getPartsReadiness = (dpr) => {
     const order = (orders||[]).find(o => o.id === dpr.orderId);
     if (!order) return { total:0, cutCleared:0, inCutting:0, pct:0 };
@@ -13184,11 +13199,19 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
     const total = drgParts.length;
     const DONE = new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
     const CUTTING = new Set(['cutting']);
-    const drgInsts = (instances||[]).filter(i => i.drawingId === drawing.id && i.orderId === order.id && !i.isSideCut);
-    const unique = {};
-    drgInsts.forEach(i => { if (!unique[i.markNo]) unique[i.markNo] = i.currentStage; });
-    const cutCleared = Object.values(unique).filter(s => DONE.has(s)).length;
-    const inCutting  = Object.values(unique).filter(s => CUTTING.has(s)).length;
+    // Use best stage per markNo across ALL instances (any release, including side-cuts)
+    // This handles the case where a part was cut in a previous release on a shared sheet
+    const stageOrder = ['complete','welding','fitup','fit_up','blasting','painting','cutting_qc','cutting','pending'];
+    const bestStage = {};
+    const partMarkNos = new Set(drgParts.map(p => p.markNo));
+    (instances||[]).filter(i => partMarkNos.has(i.markNo)).forEach(i => {
+      const curr = bestStage[i.markNo];
+      if (!curr || stageOrder.indexOf(i.currentStage) < stageOrder.indexOf(curr)) {
+        bestStage[i.markNo] = i.currentStage;
+      }
+    });
+    const cutCleared = Object.values(bestStage).filter(s => DONE.has(s)).length;
+    const inCutting  = Object.values(bestStage).filter(s => CUTTING.has(s)).length;
     const pct = total > 0 ? Math.round(cutCleared / total * 100) : 0;
     return { total, cutCleared, inCutting, pct, order, drawing };
   };
@@ -18384,7 +18407,9 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
       const drawing  = (order.drawings||[]).find(d => d.id === selDpr.drawingId) || {};
       const fitupCon = (contractors||[]).find(c => c.id === selDpr.fitupContractorId);
       const weldCon  = (contractors||[]).find(c => c.id === selDpr.weldContractorId);
-      const drgInsts = (instances||[]).filter(i => i.drawingId === selDpr.drawingId && i.orderId === selDpr.orderId && !i.isSideCut);
+      const blastCon = (contractors||[]).find(c => c.id === selDpr.blastContractorId);
+      const drgParts = (order.parts||[]).filter(p => p.drawingId === selDpr.drawingId && p.fabType === "Fabricate");
+      const drgInsts = { length: drgParts.length }; // use part count not instance count
       const allChecked = CHECKLIST.every(c => checks[c]);
       const completedAt = isFitup ? selDpr.fitupCompleteAt : selDpr.weldCompleteAt;
       return (
@@ -18471,7 +18496,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
             const fitupCon = (contractors||[]).find(c => c.id === dpr.fitupContractorId);
             const weldCon  = (contractors||[]).find(c => c.id === dpr.weldContractorId);
             const blastCon = (contractors||[]).find(c => c.id === dpr.blastContractorId);
-            const drgInsts = (instances||[]).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
+            const drgInsts = { length: (order.parts||[]).filter(p=>p.drawingId===dpr.drawingId&&p.fabType==="Fabricate").length };
             const completedAt = isFitup ? dpr.fitupCompleteAt : isBlast ? dpr.blastCompleteAt : dpr.weldCompleteAt;
             const ageDays = completedAt ? Math.floor((Date.now()-new Date(completedAt).getTime())/86400000) : null;
             return (
@@ -19275,10 +19300,18 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
   const rows = (dprs || []).map(dpr => {
     const order   = (orders || []).find(o => o.id === dpr.orderId) || {};
     const drawing  = (order.drawings || []).find(d => d.id === dpr.drawingId) || {};
-    // Parts readiness from instances
-    const drgInsts = (instances || []).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
-    const totalParts  = drgInsts.length;
-    const cutCleared  = drgInsts.filter(i => ["cutting_qc","fitup","welding","complete"].includes(i.currentStage) || i.currentStatus === "pending_collection").length;
+    // Parts readiness — use best stage per markNo across ALL instances (handles side-cut parts)
+    const drgParts = (order.parts||[]).filter(p => p.drawingId === dpr.drawingId && p.fabType === "Fabricate");
+    const totalParts = drgParts.length;
+    const STAGE_ORD = ['complete','welding','fitup','fit_up','blasting','painting','cutting_qc','cutting','pending'];
+    const DONE_SET = new Set(["cutting_qc","fitup","fit_up","welding","blasting","painting","complete"]);
+    const partMarkNos = new Set(drgParts.map(p => p.markNo));
+    const bestStage = {};
+    (instances||[]).filter(i => partMarkNos.has(i.markNo)).forEach(i => {
+      const curr = bestStage[i.markNo];
+      if (!curr || STAGE_ORD.indexOf(i.currentStage) < STAGE_ORD.indexOf(curr)) bestStage[i.markNo] = i.currentStage;
+    });
+    const cutCleared = Object.values(bestStage).filter(s => DONE_SET.has(s)).length;
     const pct = totalParts > 0 ? Math.round((cutCleared / totalParts) * 100) : 0;
     const stage = dpr.currentStage || "pending";
     const meta  = DPR_STAGE_META[stage] || DPR_STAGE_META.pending;
@@ -19349,10 +19382,19 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
     if (!r) { setSelDpr(null); return null; }
     const { dpr, order, drawing, pct, totalParts, cutCleared, fitupCon, weldCon, ageDays } = r;
     const history = dpr.stageHistory || [];
-    const drgInsts = (instances || []).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
+    // Use all instances for this drawing's parts, best stage per markNo
+    const drgParts = (order.parts||[]).filter(p => p.drawingId === dpr.drawingId && p.fabType === "Fabricate");
+    const partMarkNos = new Set(drgParts.map(p => p.markNo));
+    const STAGE_ORD2 = ['complete','welding','fitup','fit_up','blasting','painting','cutting_qc','cutting','pending'];
+    const bestStageMap = {};
+    (instances||[]).filter(i => partMarkNos.has(i.markNo)).forEach(i => {
+      const curr = bestStageMap[i.markNo];
+      if (!curr || STAGE_ORD2.indexOf(i.currentStage) < STAGE_ORD2.indexOf(curr)) bestStageMap[i.markNo] = i.currentStage;
+    });
     const stageGroups = {};
-    drgInsts.forEach(i => {
-      const s = i.currentStage; if (!stageGroups[s]) stageGroups[s] = []; stageGroups[s].push(i);
+    Object.entries(bestStageMap).forEach(([mn, stage]) => {
+      if (!stageGroups[stage]) stageGroups[stage] = [];
+      stageGroups[stage].push(mn);
     });
     return (
       <div>
@@ -19439,18 +19481,18 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
           </div>
         </div>
 
-        {/* Instance breakdown by stage */}
+        {/* Part breakdown by stage */}
         <div style={{ ...css.card, marginBottom:16 }}>
-          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Part Instances by Stage</div>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:12 }}>Parts by Stage (best stage per part)</div>
           {Object.entries(stageGroups).length === 0
             ? <div style={{ color:T.textLow, fontSize:12 }}>No instances yet for this drawing.</div>
-            : Object.entries(stageGroups).map(([stage, insts]) => (
+            : Object.entries(stageGroups).map(([stage, markNosInStage]) => (
               <div key={stage} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:`1px solid ${T.border}` }}>
                 <div style={{ width:120, fontSize:11, fontWeight:600, color:T.textMid }}>{stage.replace(/_/g," ").toUpperCase()}</div>
                 <div style={{ flex:1, height:8, background:T.border, borderRadius:99, overflow:"hidden" }}>
-                  <div style={{ width:`${(insts.length/(totalParts||1))*100}%`, height:"100%", background:T.accent, borderRadius:99 }} />
+                  <div style={{ width:`${(markNosInStage.length/(totalParts||1))*100}%`, height:"100%", background:T.accent, borderRadius:99 }} />
                 </div>
-                <div style={{ fontSize:12, fontWeight:700, color:T.text, minWidth:40, textAlign:"right" }}>{insts.length}</div>
+                <div style={{ fontSize:12, fontWeight:700, color:T.text, minWidth:40, textAlign:"right" }}>{markNosInStage.length}</div>
               </div>
             ))}
         </div>
