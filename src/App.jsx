@@ -4527,7 +4527,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, s
 
     // Sheet 1: Drawing Register
     const s1 = [
-      ["Drawing No","Title","Qty","Rev","Drawing Date","Received Date","Order ID","Phase","Priority","Unit Wt (kg)","Total Wt (kg)"],
+      ["Drawing No","Title","Qty","Rev","Drawing Date","Received Date","Order ID","Phase","Priority","Unit Wt (kg)","Total Wt (kg)","Paint Spec"],
       ...allDrawings.map(d=>[
         d.drawingNo||"", d.title||"", d.qty||1, d.rev||"",
         d.drawingDate||"", d.receivedDate||"",
@@ -9441,6 +9441,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
     { key:"priority",     hdr:"Priority",         required:true,  hint:"1 = highest within phase" },
     { key:"driveLink",    hdr:"Drive Link",       required:false, hint:"Google Drive URL" },
     { key:"remarks",      hdr:"Remarks",          required:false, hint:"Any notes" },
+    { key:"paintSpecId",   hdr:"Paint Spec",       required:false, hint:"e.g. A or B. Blank = first spec (A)." },
   ];
 
   const downloadTemplate = () => {
@@ -9506,6 +9507,7 @@ const TabDrawings = ({ order, onChange, canEdit, user }) => {
           driveLink: r.driveLink?.trim()||"",
           remarks: r.remarks?.trim()||"",
           status: parseDate(r.receivedDate)?"active":"pending",
+          paintSpecId: r.paintSpecId?.trim()||"",
           revHistory:[{rev:r.revNo?.trim()||"A",date:parseDate(r.drawingDate)||"",note:"Imported"}],
         }));
         const errs = parsed.filter(r=>!r.drawingNo||!r.qty||!r.unitWt);
@@ -10485,10 +10487,7 @@ const TpiQualitySetup = ({ order, onChange, canEdit, tpiAgencies }) => {
 // TPI QC PANEL — QC & Inspection → TPI tab
 // ═══════════════════════════════════════════════════════════════════════════════
 const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiTemplates, setTpiTemplates, contractors }) => {
-  // Collect all active TPI hold points across orders
   const activeOrders = (orders||[]).filter(o=>o.status==="active"&&o.quality?.tpiRequired&&(o.quality?.tpiHoldPoints||[]).length>0);
-
-  // Build hold-point sub-tabs — only those that have DPRs currently at that TPI stage
   const HP_ORDER = ["fit_up","welding","blasting","painting"];
   const activeTabs = HP_ORDER.filter(hp => {
     const dprStage = HP_DPR_STAGE[hp];
@@ -10497,308 +10496,315 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
   });
 
   const [activeHp, setActiveHp] = useState(activeTabs[0]||"welding");
-  const [selDprId, setSelDprId] = useState(null);
-
-  // Counts per tab
   const countForHp = hp => (dprs||[]).filter(d=>d.currentStage===HP_DPR_STAGE[hp]).length;
-
-  // Update DPR helper
   const updDpr = (id, patch) => setDprs(prev=>prev.map(d=>d.id===id?{...d,...patch}:d));
 
-  // Advance instances when TPI clears
   const advInstances = (dpr, toStage) => {
     setInstances(prev=>prev.map(i=>{
       if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
-      return {...i, currentStage:toStage, currentStatus:toStage==="complete"?"complete":"in_progress",
+      return {...i,currentStage:toStage,currentStatus:toStage==="complete"?"complete":"in_progress",
         stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,completedAt:new Date().toISOString(),completedBy:user.username}]};
     }));
   };
 
-  // ── TPI Hold-Point Panel ───────────────────────────────────────────────────
+  // ── Hold-point panel ─────────────────────────────────────────────────────────
   const HoldPointPanel = ({ hp }) => {
     const dprStage = HP_DPR_STAGE[hp];
-    const prevStage = HP_PREV_STAGE[hp];
     const nextStage = HP_NEXT_STAGE[hp];
-    const allDprs = (dprs||[]).filter(d=>d.currentStage===dprStage||(d.tpiRecords||[]).some(r=>r.holdPoint===hp));
 
-    const awaiting  = allDprs.filter(d=>d.currentStage===dprStage&&!(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.offeredAt));
-    const offered   = allDprs.filter(d=>d.currentStage===dprStage&&(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.offeredAt&&!r.outcome));
-    const cleared   = allDprs.filter(d=>(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&(r.outcome==="pass"||r.outcome==="conditional_pass")));
-    const failed    = allDprs.filter(d=>(d.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.outcome==="fail"));
+    // Awaiting offer: at TPI stage with no offer yet
+    const awaitingOffer = (dprs||[]).filter(d=>d.currentStage===dprStage&&!d.tpiOfferedAt);
+    // Offered: at TPI stage with offer recorded, no outcome
+    const offered = (dprs||[]).filter(d=>d.currentStage===dprStage&&d.tpiOfferedAt&&!d.tpiClearedAt&&!d.tpiFailedAt);
+    // Cleared (passed or waived)
+    const cleared = (dprs||[]).filter(d=>(d.tpiClearedAt||d.tpiWaived)&&(d.tpiRecords||[]).some(r=>r.holdPoint===hp));
 
-    const [offerForm, setOfferForm] = useState({});
-    const [outcomeForm, setOutcomeForm] = useState({});
-    const [section, setSection] = useState("awaiting"); // awaiting | offered | cleared | failed
-    const [genScope, setGenScope] = useState("cleared"); // cleared | offered | all
+    const [section, setSection] = useState("offer");
+    const [selected, setSelected] = useState(new Set()); // selected DPR IDs for batch offer
+    const [offerForm, setOfferForm] = useState({inspector:"",offeredAt:new Date().toISOString().slice(0,10),expectedDate:"",scope:""});
+    const [outcomeMap, setOutcomeMap] = useState({}); // dprId → {outcome, certNo, inspDate, remarks}
+    const [waiveMap, setWaiveMap]   = useState({}); // dprId → reason
+    const [showOutcomeForm, setShowOutcomeForm] = useState(false);
+    const [certNo, setCertNo]   = useState("");
+    const [inspDate, setInspDate] = useState(new Date().toISOString().slice(0,10));
+    const [batchRemarks, setBatchRemarks] = useState("");
 
-    const getOrder = dpr => (orders||[]).find(o=>o.id===dpr.orderId)||{};
-    const getDrawing = (dpr,order) => (order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
-
-    // Offer to TPI
-    const submitOffer = (dpr) => {
-      const f = offerForm[dpr.id]||{};
-      if (!f.inspector||!f.offeredAt) return;
-      const ts = new Date().toISOString();
-      const rec = { holdPoint:hp, offeredAt:f.offeredAt, inspector:f.inspector, expectedDate:f.expectedDate||"", scope:f.scope||HP_LABELS[hp]+" inspection", offeredBy:user.username };
-      const existing = dpr.tpiRecords||[];
-      updDpr(dpr.id, { tpiRecords:[...existing.filter(r=>!(r.holdPoint===hp&&!r.outcome)),rec],
-        tpiOfferedAt:ts });
-      // Also stamp drawing for progress tracker
-      const order = getOrder(dpr);
-      const drawing = getDrawing(dpr, order);
-      if (drawing.id) {
-        // Update drawing tpiOfferedAt via orders
-        setDprs(prev=>prev); // trigger re-render
-      }
-      setOfferForm(p=>({...p,[dpr.id]:{}}));
-      setSection("offered");
-    };
-
-    // Record outcome
-    const submitOutcome = (dpr) => {
-      const f = outcomeForm[dpr.id]||{};
-      if (!f.outcome||!f.certNo||!f.inspDate) return;
-      const ts = new Date().toISOString();
-      const existingRec = (dpr.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.offeredAt&&!r.outcome)||{};
-      const updRec = { ...existingRec, holdPoint:hp, outcome:f.outcome, certNo:f.certNo, inspDate:f.inspDate,
-        welderId:f.welderId||"", welderName:f.welderName||"", wpsNo:f.wpsNo||"",
-        ndtType:f.ndtType||"", ndtResult:f.ndtResult||"", remarks:f.remarks||"",
-        clearedAt:ts, clearedBy:user.username };
-      const updRecords = [...(dpr.tpiRecords||[]).filter(r=>!(r.holdPoint===hp&&!r.outcome)), updRec];
-
-      if (f.outcome==="pass"||f.outcome==="conditional_pass") {
-        updDpr(dpr.id, { tpiRecords:updRecords, currentStage:nextStage,
-          currentStatus:nextStage==="complete"?"complete":"in_progress",
-          tpiClearedAt:ts,
-          stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_cleared",outcome:f.outcome,by:user.username,at:ts}] });
-        advInstances(dpr, nextStage);
-      } else {
-        // Fail — push back to work stage
-        updDpr(dpr.id, { tpiRecords:updRecords, currentStage:prevStage, currentStatus:"in_progress",
-          stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_failed",reason:f.remarks,by:user.username,at:ts}] });
-        advInstances(dpr, prevStage);
-      }
-      setOutcomeForm(p=>({...p,[dpr.id]:{}}));
-      setSection(f.outcome==="fail"?"failed":"cleared");
-    };
-
-    // Generate report
-    const generateReport = (scope) => {
-      const targetDprs = scope==="cleared" ? cleared : scope==="offered" ? offered : [...awaiting,...offered,...cleared];
-      if (targetDprs.length===0) { alert("No drawings in selected scope."); return; }
-
-      // Collect template from first matching order
-      const firstOrder = getOrder(targetDprs[0]);
+    // Generate XLSX report
+    const generateReport = () => {
+      const doneDprs = cleared;
+      if (doneDprs.length===0) { alert("No cleared drawings to export."); return; }
+      const firstOrder = (orders||[]).find(o=>o.id===doneDprs[0]?.orderId)||{};
       const template = firstOrder.quality?.tpiOrderTemplates?.[hp] ||
-        [{ field:"markNo",label:"Mark No"},{field:"description",label:"Description"},{field:"qty",label:"Qty"},{field:"unitWt",label:"Unit Wt (kg)"},{field:"totalWt",label:"Total Wt (kg)"},{field:"grade",label:"Grade"},{field:"acceptReject",label:"Accept/Reject"},{field:"certNo",label:"Cert No"},{field:"inspDate",label:"Insp Date"},{field:"remarks",label:"Remarks"}];
-
-      // Build rows — one per part per drawing
-      const rows = [];
-      let srNo = 1;
-      targetDprs.forEach(dpr => {
-        const order = getOrder(dpr);
-        const drawing = getDrawing(dpr, order);
-        const tpiRecord = (dpr.tpiRecords||[]).filter(r=>r.holdPoint===hp).slice(-1)[0]||{};
-        const parts = (order.parts||[]).filter(p=>p.drawingId===dpr.drawingId&&p.fabType==="Fabricate");
-        parts.forEach(part => {
-          const ctx = { order, drawing, part:{ ...part, unitWt: part.unitWt||(part.wt||0)/Math.max(part.qtyPerDrg||1,1) }, tpiRecord };
-          const row = { _srNo: srNo++, ...Object.fromEntries(template.map(col=>[col.label, resolveTpiField(col.field,ctx)])) };
-          rows.push(row);
+        [{field:"markNo",label:"Mark No"},{field:"description",label:"Description"},{field:"qty",label:"Qty"},{field:"acceptReject",label:"Accept/Reject"},{field:"certNo",label:"Cert No"},{field:"inspDate",label:"Insp Date"},{field:"remarks",label:"Remarks"}];
+      const rows = []; let srNo=1;
+      doneDprs.forEach(dpr=>{
+        const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+        const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+        const tpiRecord=(dpr.tpiRecords||[]).filter(r=>r.holdPoint===hp).slice(-1)[0]||{};
+        const parts=(order.parts||[]).filter(p=>p.drawingId===dpr.drawingId&&p.fabType==="Fabricate");
+        parts.forEach(part=>{
+          const ctx={order,drawing,part:{...part,unitWt:part.unitWt||(part.wt||0)/Math.max(part.qtyPerDrg||1,1)},tpiRecord};
+          rows.push([srNo++, ...template.map(col=>resolveTpiField(col.field,ctx))]);
         });
       });
-
-      // XLSX export
-      const wsData = [["Sr No", ...template.map(c=>c.label)], ...rows.map(r=>[r._srNo, ...template.map(c=>r[c.label])])];
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
-      // Column widths
-      ws['!cols'] = [{ wch:6 }, ...template.map(()=>({ wch:18 }))];
-      XLSX.utils.book_append_sheet(wb, ws, `${HP_LABELS[hp]} TPI`);
-      const orderNo = firstOrder.orderNo||"ORDER";
-      XLSX.writeFile(wb, `TPI-${HP_LABELS[hp].replace(/\s/g,"")}-${orderNo}-${new Date().toISOString().slice(0,10)}.xlsx`);
+      const wb=XLSX.utils.book_new();
+      const ws=XLSX.utils.aoa_to_sheet([["Sr No",...template.map(c=>c.label)],...rows]);
+      ws['!cols']=[{wch:6},...template.map(()=>({wch:18}))];
+      XLSX.utils.book_append_sheet(wb,ws,`${HP_LABELS[hp]} TPI`);
+      XLSX.writeFile(wb,`TPI-${HP_LABELS[hp].replace(/\s/g,"")}-${firstOrder.orderNo||"ORDER"}-${new Date().toISOString().slice(0,10)}.xlsx`);
     };
 
-    // ── DPR Card ──
-    const DprTpiCard = ({ dpr, mode }) => {
-      const order = getOrder(dpr);
-      const drawing = getDrawing(dpr, order);
-      const latestRec = (dpr.tpiRecords||[]).filter(r=>r.holdPoint===hp).slice(-1)[0]||null;
-      const ageDays = dpr.tpiOfferedAt ? Math.floor((Date.now()-new Date(dpr.tpiOfferedAt).getTime())/86400000) : null;
-      const overdue = latestRec?.expectedDate && new Date(latestRec.expectedDate) < new Date();
-
-      return (
-        <div style={{ ...css.card, marginBottom:10, borderLeft:`3px solid ${mode==="awaiting"?T.amber:mode==="offered"?T.accent:mode==="cleared"?T.green:T.red}` }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-            <div>
-              <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo||dpr.drawingId}</div>
-              <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>{order.orderNo} · {order.clientName}</div>
-              {drawing.assemblyGroup&&<div style={{ fontSize:11, color:T.textLow }}>Assembly: {drawing.assemblyGroup}</div>}
-            </div>
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-              <Badge color={mode==="awaiting"?"amber":mode==="offered"?"blue":mode==="cleared"?"green":"red"}>
-                {mode==="awaiting"?"Awaiting Offer":mode==="offered"?"Offered — Pending":mode==="cleared"?`${latestRec?.outcome==="conditional_pass"?"Conditional Pass":"Cleared"}`:("Failed")}
-              </Badge>
-              {mode==="offered"&&ageDays!==null&&<span style={{ fontSize:10, color:overdue?T.red:T.textLow }}>{ageDays}d waiting{overdue?" — OVERDUE":""}</span>}
-            </div>
-          </div>
-
-          {/* TPI agency + inspector if offered */}
-          {latestRec?.inspector&&<div style={{ fontSize:11, color:T.textMid, marginBottom:8 }}>Inspector: <strong style={{color:T.text}}>{latestRec.inspector}</strong> · {latestRec.offeredAt ? new Date(latestRec.offeredAt).toLocaleDateString("en-IN") : ""}</div>}
-          {latestRec?.certNo&&<div style={{ fontSize:11, color:T.textMid }}>Cert: <strong style={{color:T.text,fontFamily:T.fontMono}}>{latestRec.certNo}</strong> · {latestRec.inspDate ? new Date(latestRec.inspDate).toLocaleDateString("en-IN") : ""}</div>}
-
-          {/* Offer form */}
-          {mode==="awaiting" && (
-            <div style={{ marginTop:10, padding:12, background:T.bgInput, borderRadius:6 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>Offer to TPI Agency</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:8 }}>
-                <div>
-                  <label style={css.label}>Inspector Name</label>
-                  <input value={(offerForm[dpr.id]||{}).inspector||""} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),inspector:e.target.value}}))} style={css.input} placeholder="e.g. Mr. A. Sharma" />
-                </div>
-                <div>
-                  <label style={css.label}>Date Offered</label>
-                  <input type="date" value={(offerForm[dpr.id]||{}).offeredAt||new Date().toISOString().slice(0,10)} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),offeredAt:e.target.value}}))} style={css.input} />
-                </div>
-                <div>
-                  <label style={css.label}>Expected Inspection Date</label>
-                  <input type="date" value={(offerForm[dpr.id]||{}).expectedDate||""} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),expectedDate:e.target.value}}))} style={css.input} />
-                </div>
-                <div>
-                  <label style={css.label}>Scope (auto-filled)</label>
-                  <input value={(offerForm[dpr.id]||{}).scope||`${HP_LABELS[hp]} inspection as per WPS/drawing`} onChange={e=>setOfferForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),scope:e.target.value}}))} style={css.input} />
-                </div>
-              </div>
-              <button onClick={()=>submitOffer(dpr)} disabled={!(offerForm[dpr.id]?.inspector&&offerForm[dpr.id]?.offeredAt)}
-                style={{ ...css.btn.primary, opacity:(offerForm[dpr.id]?.inspector&&offerForm[dpr.id]?.offeredAt)?1:0.45 }}>
-                📤 Offer to TPI
-              </button>
-            </div>
-          )}
-
-          {/* Outcome form */}
-          {mode==="offered" && (
-            <div style={{ marginTop:10, padding:12, background:T.bgInput, borderRadius:6 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>Record TPI Outcome</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:8 }}>
-                <div>
-                  <label style={css.label}>Outcome</label>
-                  <select value={(outcomeForm[dpr.id]||{}).outcome||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),outcome:e.target.value}}))} style={css.input}>
-                    <option value="">Select…</option>
-                    <option value="pass">Pass</option>
-                    <option value="conditional_pass">Conditional Pass</option>
-                    <option value="fail">Fail — Return to {HP_LABELS[hp]}</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={css.label}>Certificate / Report No</label>
-                  <input value={(outcomeForm[dpr.id]||{}).certNo||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),certNo:e.target.value}}))} style={css.input} placeholder="e.g. BV/WLD/2026/001" />
-                </div>
-                <div>
-                  <label style={css.label}>Inspection Date</label>
-                  <input type="date" value={(outcomeForm[dpr.id]||{}).inspDate||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),inspDate:e.target.value}}))} style={css.input} />
-                </div>
-                <div>
-                  <label style={css.label}>Welder ID / Stamp</label>
-                  <input value={(outcomeForm[dpr.id]||{}).welderId||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),welderId:e.target.value}}))} style={css.input} placeholder="e.g. WLD-001" />
-                </div>
-                <div>
-                  <label style={css.label}>Welder Name</label>
-                  <input value={(outcomeForm[dpr.id]||{}).welderName||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),welderName:e.target.value}}))} style={css.input} placeholder="Name" />
-                </div>
-                <div>
-                  <label style={css.label}>WPS No</label>
-                  <input value={(outcomeForm[dpr.id]||{}).wpsNo||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),wpsNo:e.target.value}}))} style={css.input} placeholder="e.g. WPS-001" />
-                </div>
-                {hp==="welding"&&(
-                  <>
-                    <div>
-                      <label style={css.label}>NDT Type</label>
-                      <input value={(outcomeForm[dpr.id]||{}).ndtType||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),ndtType:e.target.value}}))} style={css.input} placeholder="RT / UT / MPI / VT" />
-                    </div>
-                    <div>
-                      <label style={css.label}>NDT Result</label>
-                      <select value={(outcomeForm[dpr.id]||{}).ndtResult||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),ndtResult:e.target.value}}))} style={css.input}>
-                        <option value="">—</option>
-                        <option value="Pass">Pass</option>
-                        <option value="Fail">Fail</option>
-                        <option value="N/A">N/A</option>
-                      </select>
-                    </div>
-                  </>
-                )}
-                <div style={{ gridColumn:"span 3" }}>
-                  <label style={css.label}>Remarks</label>
-                  <textarea value={(outcomeForm[dpr.id]||{}).remarks||""} onChange={e=>setOutcomeForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),remarks:e.target.value}}))} style={{ ...css.input, minHeight:52, resize:"vertical" }} placeholder="Inspector remarks, conditions, observations…" />
-                </div>
-              </div>
-              <div style={{ display:"flex", gap:8 }}>
-                <button onClick={()=>submitOutcome(dpr)} disabled={!(outcomeForm[dpr.id]?.outcome&&outcomeForm[dpr.id]?.certNo&&outcomeForm[dpr.id]?.inspDate)}
-                  style={{ ...(outcomeForm[dpr.id]?.outcome==="fail"?css.btn.danger:css.btn.green), opacity:(outcomeForm[dpr.id]?.outcome&&outcomeForm[dpr.id]?.certNo&&outcomeForm[dpr.id]?.inspDate)?1:0.45 }}>
-                  {outcomeForm[dpr.id]?.outcome==="fail"?"✕ Record Fail":"✓ Record Clearance"}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      );
+    const submitOffer = () => {
+      if (!offerForm.inspector||!offerForm.offeredAt||selected.size===0) return;
+      const ts = new Date().toISOString();
+      const batchId = `TPI-BATCH-${Date.now()}`;
+      [...selected].forEach(dprId=>{
+        const dpr=(dprs||[]).find(d=>d.id===dprId);
+        if(!dpr) return;
+        updDpr(dprId,{
+          tpiOfferedAt:offerForm.offeredAt, tpiInspector:offerForm.inspector,
+          tpiExpectedDate:offerForm.expectedDate, tpiBatchId:batchId,
+          tpiRecords:[...(dpr.tpiRecords||[]),{holdPoint:hp,offeredAt:offerForm.offeredAt,inspector:offerForm.inspector,expectedDate:offerForm.expectedDate,scope:offerForm.scope||`${HP_LABELS[hp]} inspection`,offeredBy:user.username,batchId}],
+          stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_offered",by:user.username,at:ts,inspector:offerForm.inspector,batchId}]
+        });
+      });
+      setSelected(new Set()); setSection("offered");
     };
+
+    const submitOutcome = () => {
+      if (!certNo||!inspDate) return;
+      const ts = new Date().toISOString();
+      Object.entries(outcomeMap).forEach(([dprId, om])=>{
+        const dpr=(dprs||[]).find(d=>d.id===dprId); if(!dpr) return;
+        const outcome = om.outcome||"pass";
+        const isPass = outcome==="pass"||outcome==="conditional_pass"||outcome==="not_inspected";
+        const existing = dpr.tpiRecords||[];
+        const updRec = [...existing.filter(r=>!(r.holdPoint===hp&&!r.outcome)),
+          {...(existing.find(r=>r.holdPoint===hp&&r.offeredAt&&!r.outcome)||{}),
+           holdPoint:hp,outcome,certNo,inspDate,remarks:om.remarks||batchRemarks,
+           clearedAt:ts,clearedBy:user.username}];
+        updDpr(dprId,{
+          tpiRecords:updRec,
+          ...(isPass?{currentStage:nextStage,currentStatus:nextStage==="complete"?"complete":"in_progress",tpiClearedAt:ts}:{currentStage:HP_PREV_STAGE[hp],currentStatus:"in_progress",tpiFailedAt:ts}),
+          stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:isPass?"tpi_cleared":"tpi_failed",outcome,certNo,by:user.username,at:ts}]
+        });
+        if(isPass) advInstances(dpr,nextStage);
+        else advInstances(dpr,HP_PREV_STAGE[hp]);
+      });
+      setCertNo(""); setInspDate(new Date().toISOString().slice(0,10)); setBatchRemarks(""); setOutcomeMap({}); setShowOutcomeForm(false); setSection("cleared");
+    };
+
+    const submitWaive = (dprId) => {
+      const reason = waiveMap[dprId]; if(!reason?.trim()) return;
+      const ts = new Date().toISOString();
+      const dpr=(dprs||[]).find(d=>d.id===dprId); if(!dpr) return;
+      updDpr(dprId,{
+        tpiWaived:true, tpiWaivedReason:reason, tpiClearedAt:ts,
+        currentStage:nextStage, currentStatus:nextStage==="complete"?"complete":"in_progress",
+        tpiRecords:[...(dpr.tpiRecords||[]),{holdPoint:hp,outcome:"waived",reason,waivedBy:user.username,at:ts}],
+        stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_waived",reason,by:user.username,at:ts}]
+      });
+      advInstances(dpr,nextStage);
+      setWaiveMap(p=>({...p,[dprId]:""}));
+    };
+
+    const getOrder = dpr => (orders||[]).find(o=>o.id===dpr.orderId)||{};
 
     const SECTIONS = [
-      { id:"awaiting", label:"Awaiting Offer", count:awaiting.length, color:T.amber },
-      { id:"offered",  label:"Offered — Pending", count:offered.length, color:T.accent },
-      { id:"cleared",  label:"Cleared", count:cleared.length, color:T.green },
-      { id:"failed",   label:"Failed", count:failed.length, color:T.red },
+      {id:"offer",   label:"Awaiting Offer",       count:awaitingOffer.length, color:T.amber},
+      {id:"offered", label:"Offered — Pending",     count:offered.length,       color:T.accent},
+      {id:"cleared", label:"Cleared / History",     count:cleared.length,       color:T.green},
     ];
 
     return (
       <div>
-        {/* Generate Report bar */}
-        <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16, padding:"10px 14px", background:T.bgInput, borderRadius:8, border:`1px solid ${T.border}` }}>
-          <div style={{ fontSize:12, fontWeight:700, color:T.text }}>Generate TPI Report</div>
-          <select value={genScope} onChange={e=>setGenScope(e.target.value)} style={{ ...css.input, width:"auto", fontSize:12 }}>
-            <option value="cleared">Cleared drawings only</option>
-            <option value="offered">Offered drawings</option>
-            <option value="all">All drawings</option>
-          </select>
-          <button onClick={()=>generateReport(genScope)} style={css.btn.primary}>📥 Export XLSX</button>
-          <div style={{ flex:1 }} />
-          <div style={{ fontSize:11, color:T.textLow }}>{cleared.length} cleared · {offered.length} pending · {awaiting.length} not offered</div>
+        {/* Report button */}
+        <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16,padding:"10px 14px",background:T.bgInput,borderRadius:8,border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:12,fontWeight:700,color:T.text}}>TPI Report</div>
+          <div style={{flex:1}}/>
+          <button onClick={generateReport} style={css.btn.primary}>📥 Export XLSX</button>
+          <div style={{fontSize:11,color:T.textLow}}>{cleared.length} cleared · {offered.length} pending · {awaitingOffer.length} not offered</div>
         </div>
 
         {/* Section tabs */}
-        <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
+        <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:16}}>
           {SECTIONS.map(s=>(
-            <button key={s.id} onClick={()=>setSection(s.id)} style={{ padding:"8px 16px", fontSize:12, fontWeight:section===s.id?700:400, color:section===s.id?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:section===s.id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+            <button key={s.id} onClick={()=>setSection(s.id)} style={{padding:"8px 16px",fontSize:12,fontWeight:section===s.id?700:400,color:section===s.id?T.accent:T.textMid,background:"transparent",border:"none",borderBottom:section===s.id?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
               {s.label}
-              {s.count>0&&<span style={{ background:section===s.id?T.accent:s.color, color:"#fff", borderRadius:10, fontSize:10, fontWeight:800, padding:"1px 6px" }}>{s.count}</span>}
+              {s.count>0&&<span style={{background:section===s.id?T.accent:s.color,color:"#fff",borderRadius:10,fontSize:10,fontWeight:800,padding:"1px 6px"}}>{s.count}</span>}
             </button>
           ))}
         </div>
 
-        {section==="awaiting"&&(awaiting.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>✓ No drawings awaiting TPI offer</div>:awaiting.map(d=><DprTpiCard key={d.id} dpr={d} mode="awaiting" />))}
-        {section==="offered"&&(offered.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>No drawings currently offered to TPI</div>:offered.map(d=><DprTpiCard key={d.id} dpr={d} mode="offered" />))}
-        {section==="cleared"&&(cleared.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>No TPI clearances recorded yet</div>:cleared.map(d=><DprTpiCard key={d.id} dpr={d} mode="cleared" />))}
-        {section==="failed"&&(failed.length===0?<div style={{textAlign:"center",padding:40,color:T.textLow}}>No TPI failures recorded</div>:failed.map(d=><DprTpiCard key={d.id} dpr={d} mode="failed" />))}
+        {/* ── AWAITING OFFER ── */}
+        {section==="offer"&&(
+          <div>
+            {awaitingOffer.length===0
+              ? <div style={{textAlign:"center",padding:40,color:T.textLow}}>✓ No drawings awaiting TPI offer</div>
+              : <>
+                  {/* Selection + Offer form */}
+                  <div style={{...css.card,marginBottom:16}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                      <div style={{fontSize:13,fontWeight:700,color:T.text}}>Select drawings to offer as a batch</div>
+                      <button onClick={()=>setSelected(selected.size===awaitingOffer.length?new Set():new Set(awaitingOffer.map(d=>d.id)))} style={css.btn.ghost}>
+                        {selected.size===awaitingOffer.length?"Deselect All":"Select All"}
+                      </button>
+                    </div>
+                    {awaitingOffer.map(dpr=>{
+                      const order=getOrder(dpr);
+                      const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+                      const ageDays=dpr.weldCompleteAt||dpr.blastCompleteAt?Math.floor((Date.now()-new Date(dpr.weldCompleteAt||dpr.blastCompleteAt).getTime())/86400000):null;
+                      return (
+                        <div key={dpr.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+                          <input type="checkbox" checked={selected.has(dpr.id)} onChange={e=>{const ns=new Set(selected);e.target.checked?ns.add(dpr.id):ns.delete(dpr.id);setSelected(ns);}} />
+                          <div style={{flex:1}}>
+                            <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:12}}>{dpr.drawingNo}</div>
+                            <div style={{fontSize:11,color:T.textMid}}>{order.orderNo} · {order.clientName}{drawing.assemblyGroup?` · Asm: ${drawing.assemblyGroup}`:""}</div>
+                          </div>
+                          {ageDays!==null&&<span style={{fontSize:11,color:ageDays>7?T.amber:T.textLow}}>{ageDays}d waiting</span>}
+                          {/* Waive option */}
+                          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                            <input value={waiveMap[dpr.id]||""} onChange={e=>setWaiveMap(p=>({...p,[dpr.id]:e.target.value}))}
+                              placeholder="Waive reason…" style={{...css.input,fontSize:11,width:150}} />
+                            <button disabled={!(waiveMap[dpr.id]||"").trim()} onClick={()=>submitWaive(dpr.id)}
+                              style={{...css.btn.ghost,fontSize:11,color:T.amber,opacity:(waiveMap[dpr.id]||"").trim()?1:0.4}}>Waive</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* Offer form */}
+                    {selected.size>0&&(
+                      <div style={{marginTop:16,padding:14,background:T.bgInput,borderRadius:6}}>
+                        <div style={{fontSize:12,fontWeight:700,color:T.textMid,marginBottom:10}}>Offer {selected.size} drawing{selected.size!==1?"s":""} to TPI</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+                          <div><label style={css.label}>Inspector Name</label><input value={offerForm.inspector} onChange={e=>setOfferForm(p=>({...p,inspector:e.target.value}))} style={css.input} placeholder="e.g. Mr. A. Sharma" /></div>
+                          <div><label style={css.label}>Date Offered</label><input type="date" value={offerForm.offeredAt} onChange={e=>setOfferForm(p=>({...p,offeredAt:e.target.value}))} style={css.input} /></div>
+                          <div><label style={css.label}>Expected Inspection Date</label><input type="date" value={offerForm.expectedDate} onChange={e=>setOfferForm(p=>({...p,expectedDate:e.target.value}))} style={css.input} /></div>
+                        </div>
+                        <div style={{marginBottom:10}}><label style={css.label}>Scope (auto-filled)</label><input value={offerForm.scope||`${HP_LABELS[hp]} inspection as per WPS/drawing`} onChange={e=>setOfferForm(p=>({...p,scope:e.target.value}))} style={css.input} /></div>
+                        <button onClick={submitOffer} disabled={!offerForm.inspector} style={{...css.btn.primary,opacity:offerForm.inspector?1:0.45}}>📤 Offer Batch to TPI</button>
+                      </div>
+                    )}
+                  </div>
+                </>
+            }
+          </div>
+        )}
+
+        {/* ── OFFERED — PENDING ── */}
+        {section==="offered"&&(
+          <div>
+            {offered.length===0
+              ? <div style={{textAlign:"center",padding:40,color:T.textLow}}>No drawings currently offered to TPI</div>
+              : <>
+                  {/* Group by batchId */}
+                  {(()=>{
+                    const batches={};
+                    offered.forEach(d=>{const bid=d.tpiBatchId||d.id;if(!batches[bid])batches[bid]=[];batches[bid].push(d);});
+                    return Object.entries(batches).map(([bid,dprsInBatch])=>{
+                      const first=dprsInBatch[0];
+                      const overdue=first.tpiExpectedDate&&new Date(first.tpiExpectedDate)<new Date();
+                      return (
+                        <div key={bid} style={{...css.card,marginBottom:16,borderLeft:`3px solid ${overdue?T.red:T.accent}`}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                            <div>
+                              <div style={{fontSize:13,fontWeight:700,color:T.text}}>Inspector: {first.tpiInspector||"—"}</div>
+                              <div style={{fontSize:11,color:T.textMid}}>Offered: {first.tpiOfferedAt?new Date(first.tpiOfferedAt).toLocaleDateString("en-IN"):"-"} · Expected: {first.tpiExpectedDate||"—"}</div>
+                            </div>
+                            {overdue&&<Badge color="red">OVERDUE</Badge>}
+                          </div>
+                          {dprsInBatch.map(dpr=>{
+                            const order=getOrder(dpr);
+                            const om=outcomeMap[dpr.id]||{};
+                            return (
+                              <div key={dpr.id} style={{display:"grid",gridTemplateColumns:"1fr auto auto auto",gap:8,alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`}}>
+                                <div>
+                                  <div style={{fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accent}}>{dpr.drawingNo}</div>
+                                  <div style={{fontSize:11,color:T.textMid}}>{order.orderNo}</div>
+                                </div>
+                                <select value={om.outcome||""} onChange={e=>setOutcomeMap(p=>({...p,[dpr.id]:{...om,outcome:e.target.value}}))} style={{...css.input,fontSize:11,width:160}}>
+                                  <option value="">Outcome…</option>
+                                  <option value="pass">Pass</option>
+                                  <option value="conditional_pass">Conditional Pass</option>
+                                  <option value="fail">Fail</option>
+                                  <option value="not_inspected">Not Inspected (random sample)</option>
+                                </select>
+                                <input value={om.remarks||""} onChange={e=>setOutcomeMap(p=>({...p,[dpr.id]:{...om,remarks:e.target.value}}))}
+                                  placeholder="Remarks…" style={{...css.input,fontSize:11,width:180}} />
+                              </div>
+                            );
+                          })}
+                          {/* Batch outcome form */}
+                          {!showOutcomeForm||showOutcomeForm!==bid
+                            ? <button onClick={()=>{ setShowOutcomeForm(bid); const init={}; dprsInBatch.forEach(d=>{init[d.id]={outcome:"pass",remarks:""}}); setOutcomeMap(p=>({...p,...init})); }} style={{...css.btn.primary,marginTop:10}}>Record Batch Outcome</button>
+                            : <div style={{marginTop:12,padding:12,background:T.bgInput,borderRadius:6}}>
+                                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+                                  <div><label style={css.label}>Certificate / Report No</label><input value={certNo} onChange={e=>setCertNo(e.target.value)} style={css.input} placeholder="e.g. BV/WLD/2026/001" /></div>
+                                  <div><label style={css.label}>Inspection Date</label><input type="date" value={inspDate} onChange={e=>setInspDate(e.target.value)} style={css.input} /></div>
+                                  <div><label style={css.label}>Batch Remarks</label><input value={batchRemarks} onChange={e=>setBatchRemarks(e.target.value)} style={css.input} placeholder="General observations…" /></div>
+                                </div>
+                                <div style={{display:"flex",gap:8}}>
+                                  <button onClick={submitOutcome} disabled={!certNo} style={{...css.btn.green,opacity:certNo?1:0.45}}>✓ Submit Outcomes</button>
+                                  <button onClick={()=>setShowOutcomeForm(false)} style={css.btn.ghost}>Cancel</button>
+                                </div>
+                              </div>
+                          }
+                        </div>
+                      );
+                    });
+                  })()}
+                </>
+            }
+          </div>
+        )}
+
+        {/* ── CLEARED / HISTORY ── */}
+        {section==="cleared"&&(
+          <div>
+            {cleared.length===0
+              ? <div style={{textAlign:"center",padding:40,color:T.textLow}}>No TPI clearances recorded yet</div>
+              : cleared.map(dpr=>{
+                  const order=getOrder(dpr);
+                  const rec=(dpr.tpiRecords||[]).filter(r=>r.holdPoint===hp).slice(-1)[0]||{};
+                  const isWaived=dpr.tpiWaived&&rec.outcome==="waived";
+                  return (
+                    <div key={dpr.id} style={{...css.card,marginBottom:8,borderLeft:`3px solid ${isWaived?T.amber:T.green}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                        <div>
+                          <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:13}}>{dpr.drawingNo}</div>
+                          <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{order.orderNo} · {order.clientName}</div>
+                          {rec.certNo&&<div style={{fontSize:11,color:T.textMid,marginTop:2}}>Cert: <span style={{fontFamily:T.fontMono,color:T.text}}>{rec.certNo}</span> · {rec.inspDate?new Date(rec.inspDate).toLocaleDateString("en-IN"):""}</div>}
+                          {isWaived&&<div style={{fontSize:11,color:T.amber,marginTop:2}}>Waived: {rec.reason}</div>}
+                        </div>
+                        <Badge color={isWaived?"amber":rec.outcome==="conditional_pass"?"amber":"green"}>
+                          {isWaived?"Waived":rec.outcome==="not_inspected"?"Not Inspected":rec.outcome==="conditional_pass"?"Conditional Pass":"Cleared ✓"}
+                        </Badge>
+                      </div>
+                    </div>
+                  );
+                })
+            }
+          </div>
+        )}
       </div>
     );
   };
 
   if (activeTabs.length===0) return (
-    <div style={{ textAlign:"center", padding:48, color:T.textLow }}>
-      <div style={{ fontSize:32, marginBottom:12 }}>🔍</div>
-      <div style={{ fontSize:14, fontWeight:600, color:T.textMid }}>No TPI hold points configured</div>
-      <div style={{ fontSize:12, marginTop:6 }}>Enable TPI on an order via Orders → Quality → TPI tab and select hold points.</div>
+    <div style={{textAlign:"center",padding:48,color:T.textLow}}>
+      <div style={{fontSize:32,marginBottom:12}}>🔍</div>
+      <div style={{fontSize:14,fontWeight:600,color:T.textMid}}>No TPI hold points configured</div>
+      <div style={{fontSize:12,marginTop:6}}>Enable TPI on an order via Orders → Quality → TPI tab and select hold points.</div>
     </div>
   );
 
   return (
     <div>
-      {/* Hold-point sub-tabs */}
-      <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+      <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
         {activeTabs.map(hp=>(
-          <button key={hp} onClick={()=>setActiveHp(hp)} style={{ padding:"10px 18px", fontSize:13, fontWeight:activeHp===hp?700:400, color:activeHp===hp?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:activeHp===hp?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", display:"flex", alignItems:"center", gap:7 }}>
+          <button key={hp} onClick={()=>setActiveHp(hp)} style={{padding:"10px 18px",fontSize:13,fontWeight:activeHp===hp?700:400,color:activeHp===hp?T.accent:T.textMid,background:"transparent",border:"none",borderBottom:activeHp===hp?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer",display:"flex",alignItems:"center",gap:7}}>
             {HP_LABELS[hp]} TPI
-            {countForHp(hp)>0&&<span style={{ background:activeHp===hp?T.accent:T.amber, color:"#fff", borderRadius:10, fontSize:11, fontWeight:800, padding:"1px 7px" }}>{countForHp(hp)}</span>}
+            {countForHp(hp)>0&&<span style={{background:activeHp===hp?T.accent:T.amber,color:"#fff",borderRadius:10,fontSize:11,fontWeight:800,padding:"1px 7px"}}>{countForHp(hp)}</span>}
           </button>
         ))}
       </div>
@@ -10807,12 +10813,13 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
   );
 };
 
+
 const TabQuality = ({ order, onChange, canEdit, vendors, tpiAgencies }) => {
   const [activeQ, setActiveQ]       = useState("rm_makes");
   const [activeSpec, setActiveSpec] = useState(0);
   const q = order.quality||{};
   const updQ = (k,v) => onChange({...order,quality:{...q,[k]:v}});
-  const qtabs = [{id:"rm_makes",label:"RM Approved Makes"},{id:"paint",label:"Paint Spec"},{id:"weld",label:"Weld Spec"},{id:"tpi",label:"TPI"},{id:"dispatch",label:"Dispatch Spec"},{id:"mdcc",label:"MDCC Dossier"}];
+  const qtabs = [{id:"rm_makes",label:"RM Approved Makes"},{id:"blast",label:"Blast Spec"},{id:"paint",label:"Paint Spec"},{id:"weld",label:"Weld Spec"},{id:"tpi",label:"TPI"},{id:"dispatch",label:"Dispatch Spec"},{id:"mdcc",label:"MDCC Dossier"}];
   return (
     <div>
       <TabBar2 tabs={qtabs} active={activeQ} onChange={setActiveQ} />
@@ -10842,6 +10849,67 @@ const TabQuality = ({ order, onChange, canEdit, vendors, tpiAgencies }) => {
           </div>
         ))}
       </div>}
+      {activeQ==="blast"&&(
+        <div style={{ ...css.card }}>
+          <div style={{ marginBottom:16 }}>
+            <div style={css.label}>Blasting Required</div>
+            <div style={{ display:"flex", gap:12, marginTop:4 }}>
+              <label style={{ display:"flex", alignItems:"center", gap:8, cursor:canEdit?"pointer":"default" }}>
+                <input type="radio" checked={q.blastingRequired!==false} onChange={()=>canEdit&&updQ("blastingRequired",true)} disabled={!canEdit} />
+                <span style={{ color:T.text }}>Yes</span>
+              </label>
+              <label style={{ display:"flex", alignItems:"center", gap:8, cursor:canEdit?"pointer":"default" }}>
+                <input type="radio" checked={q.blastingRequired===false} onChange={()=>canEdit&&updQ("blastingRequired",false)} disabled={!canEdit} />
+                <span style={{ color:T.text }}>No</span>
+              </label>
+            </div>
+          </div>
+          {q.blastingRequired!==false&&(
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14 }}>
+              <div>
+                <label style={css.label}>Blasting Standard</label>
+                <select value={q.blastingStandard||"Sa 2.5"} disabled={!canEdit}
+                  onChange={e=>updQ("blastingStandard",e.target.value)} style={css.input}>
+                  {["Sa 1","Sa 2","Sa 2.5","Sa 3","SIS-05 59 00 St 3","SSPC-SP6","SSPC-SP10"].map(s=>(
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={css.label}>Surface Profile (Rz microns)</label>
+                <input value={q.blastingProfile||"40-70"} disabled={!canEdit}
+                  onChange={e=>updQ("blastingProfile",e.target.value)}
+                  style={css.input} placeholder="e.g. 40-70" />
+              </div>
+              <div>
+                <label style={css.label}>Primer Window (hours)</label>
+                <input type="number" value={q.primerWindowHrs??4} disabled={!canEdit} min={1} max={24}
+                  onChange={e=>updQ("primerWindowHrs",parseFloat(e.target.value)||4)}
+                  style={css.input} />
+                <div style={{ fontSize:10, color:T.textLow, marginTop:3 }}>Max time between blast complete and primer application. Default: 4 hrs.</div>
+              </div>
+              <div>
+                <label style={css.label}>Blast Contractor</label>
+                <input value={q.blastContractorNote||""} disabled={!canEdit}
+                  onChange={e=>updQ("blastContractorNote",e.target.value)}
+                  style={css.input} placeholder="Assigned at production stage" />
+              </div>
+              <div>
+                <label style={css.label}>Ambient Conditions Note</label>
+                <input value={q.blastAmbientNote||""} disabled={!canEdit}
+                  onChange={e=>updQ("blastAmbientNote",e.target.value)}
+                  style={css.input} placeholder="e.g. Humidity < 85%, no dew point" />
+              </div>
+              <div>
+                <label style={css.label}>Remarks</label>
+                <input value={q.blastRemarks||""} disabled={!canEdit}
+                  onChange={e=>updQ("blastRemarks",e.target.value)}
+                  style={css.input} placeholder="Any specific blasting notes" />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {activeQ==="paint"&&(()=>{
         // Migrate legacy paintCoats → paintSpecs on first render
         const paintSpecs = q.paintSpecs
@@ -10861,7 +10929,7 @@ const TabQuality = ({ order, onChange, canEdit, vendors, tpiAgencies }) => {
         };
         const addCoat = () => {
           const coats = selSpec?.coats||[];
-          updSpec({coats:[...coats,{coatNo:coats.length+1,type:"Primer",dft:50,make:"",product:"",dryTime:8,remarks:""}]});
+          updSpec({coats:[...coats,{coatNo:coats.length+1,type:"Primer",dft:50,make:"",product:"",dryTime:8,remarks:"",requiresQc:true}]});
         };
         const updCoat = (ci,patch) => {
           updSpec({coats:(selSpec.coats||[]).map((c,j)=>j===ci?{...c,...patch}:c)});
@@ -10965,6 +11033,14 @@ const TabQuality = ({ order, onChange, canEdit, vendors, tpiAgencies }) => {
                         <div><div style={css.label}>Dry Time (h)</div>
                           <input type="number" value={c.dryTime||""} disabled={!canEdit}
                             onChange={e=>updCoat(ci,{dryTime:+e.target.value})} style={css.input} />
+                        </div>
+                        <div>
+                          <div style={css.label}>QC Required</div>
+                          <label style={{ display:"flex", alignItems:"center", gap:6, marginTop:6, cursor:canEdit?"pointer":"default" }}>
+                            <input type="checkbox" checked={c.requiresQc!==false} disabled={!canEdit}
+                              onChange={e=>updCoat(ci,{requiresQc:e.target.checked})} />
+                            <span style={{ fontSize:12, color:T.text }}>Yes</span>
+                          </label>
                         </div>
                         {canEdit && (
                           <button onClick={()=>removeCoat(ci)}
@@ -11956,7 +12032,7 @@ const Login = ({ onLogin }) => {
           <div style={{ marginTop:18, padding:12, background:T.bg, borderRadius:8 }}>
             <div style={{ fontSize:10, color:T.textMid, fontWeight:700, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.05em" }}>Quick Logins</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
-              {[["Super Admin","rajesh.kumar","admin123"],["Planning Admin","vikram.singh","plan123"],["Planning User","neha.gupta","plan123"],["Purchase","deepak.rao","pur123"],["Store Admin","mohan.das","store123"],["QC Admin","priya.mehta","qc123"],["Floor Planner","suresh.patel","prod123"],["Finance Admin","sameer.shah","fin123"],["Dispatch","ramesh.kulkarni","disp123"],["Contractor","krishna.fab","con123"],["Machine Op","ajay.kadam","machine123"],["In-House A","inhouse.a","con123"],["In-House B","inhouse.b","con123"]].map(([role,un,pw])=>(
+              {[["Super Admin","rajesh.kumar","admin123"],["Planning Admin","vikram.singh","plan123"],["Planning User","neha.gupta","plan123"],["Purchase","deepak.rao","pur123"],["Store Admin","mohan.das","store123"],["QC Admin","priya.mehta","qc123"],["Floor Planner","suresh.patel","prod123"],["Finance Admin","sameer.shah","fin123"],["Dispatch","ramesh.kulkarni","disp123"],["Contractor","krishna.fab","con123"],["Machine Op","ajay.kadam","machine123"],["In-House A","inhouse.a","con123"],["In-House B","inhouse.b","con123"],["Blast/Paint","ganesh.blast","con123"]].map(([role,un,pw])=>(
                 <button key={role} onClick={()=>{setU(un);setP(pw);}} style={{ ...css.btn.ghost, textAlign:"left", fontSize:11, background:T.bgCard, borderRadius:4, border:`1px solid ${T.border}`, padding:"4px 8px" }}>{role}</button>
               ))}
             </div>
@@ -13147,10 +13223,14 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
     d.fitupContractorId === cid &&
     ['pending','fitup'].includes(d.currentStage)
   );
-  // Tab 2 — Welding: awaiting fitup QC + in welding (incl rejected from weld_qc)
+  // Tab 2 — Welding: awaiting fitup QC + in welding (incl rejected from weld_qc) + awaiting TPI
   const tab2_awaitingQc = myDprs.filter(d => d.currentStage === 'fitup_qc');
   const tab2_welding    = myDprs.filter(d =>
     d.weldContractorId === cid && d.currentStage === 'welding'
+  );
+  const tab2_tpiPending = myDprs.filter(d =>
+    (d.fitupContractorId === cid || d.weldContractorId === cid) &&
+    ['tpi_fitup','tpi_weld'].includes(d.currentStage)
   );
   // Tab 3 — Complete: awaiting weld inspection (weld_qc + tpi_weld) + cleared
   const tab3_awaitingInsp = myDprs.filter(d => ['weld_qc','tpi_weld'].includes(d.currentStage));
@@ -13358,7 +13438,7 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
 
   // ── Tab counts for header badges ───────────────────────────────────────────
   const tab1Count = tab1.length;
-  const tab2Count = tab2_awaitingQc.length + tab2_welding.length;
+  const tab2Count = tab2_awaitingQc.length + tab2_welding.length + tab2_tpiPending.length;
   const tab3Count = tab3_awaitingInsp.length + tab3_cleared.length;
 
   // ── Tab bar ────────────────────────────────────────────────────────────────
@@ -13476,6 +13556,28 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
                       {tab2_welding.map(d => (
                         <DprCard key={d.id} dpr={d} accent={T.accent} onClick={() => setSelDpr(d)} />
                       ))}
+                    </>
+                  )}
+                  {/* Section C — Awaiting TPI Clearance */}
+                  {tab2_tpiPending.length > 0 && (
+                    <>
+                      <SL title="AWAITING TPI CLEARANCE" count={tab2_tpiPending.length} color={T.amber}
+                        sub="— TPI agency inspection pending" />
+                      {tab2_tpiPending.map(d => {
+                        const o=(orders||[]).find(x=>x.id===d.orderId)||{};
+                        const stage = d.currentStage==="tpi_fitup"?"Fit-Up TPI":"Weld TPI";
+                        return (
+                          <div key={d.id} style={{...css.card,marginBottom:8,borderLeft:`3px solid ${T.amber}`}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                              <div>
+                                <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:13}}>{d.drawingNo}</div>
+                                <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{o.orderNo} · Work complete — awaiting inspector</div>
+                              </div>
+                              <Badge color="amber">{stage} Pending</Badge>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </>
                   )}
                 </>
@@ -18182,9 +18284,32 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
   // ── DPR QC Panel — Fit-Up QC and Weld QC tabs ───────────────────────────────
   const DprQcPanel = ({ dprStage }) => {
     const isFitup = dprStage === "fitup_qc";
-    const label   = isFitup ? "Fit-Up" : "Weld";
-    const nextDprStage  = isFitup ? "welding"  : "complete";
-    const nextInstStage = isFitup ? "welding"   : "complete";
+    const isBlast = dprStage === "blast_qc";
+    const isWeld  = dprStage === "weld_qc";
+    const label   = isFitup ? "Fit-Up" : isBlast ? "Blast" : "Weld";
+
+    // Unified next-stage: checks TPI hold points first, then blast/paint requirements
+    const getQcNextStage = (dpr) => {
+      const order = (orders||[]).find(o=>o.id===dpr?.orderId);
+      const holdPoints = order?.quality?.tpiHoldPoints || [];
+      if (isFitup) return holdPoints.includes("fit_up") ? "tpi_fitup" : "welding";
+      if (isWeld) {
+        if (holdPoints.includes("welding")) return "tpi_weld";
+        return order?.quality?.blastingRequired===false ? "complete" : "blasting";
+      }
+      if (isBlast) {
+        if (holdPoints.includes("blasting")) return "tpi_blast";
+        const hasSpecs = (order?.quality?.paintSpecs||[]).length>0 || (order?.quality?.paintCoats||[]).length>0;
+        return hasSpecs ? "painting" : "complete";
+      }
+      // paint_qc
+      return holdPoints.includes("painting") ? "tpi_paint" : "complete";
+    };
+    const getNextDprStage = getQcNextStage;
+    const getNextInstStage = (dpr) => {
+      const next = getQcNextStage(dpr);
+      return next === "complete" ? "complete" : next;
+    };
 
     const pending = (dprs || []).filter(d => d.currentStage === dprStage);
     const [selId,      setSelId]      = useState(null);
@@ -18194,7 +18319,11 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 
     const CHECKLIST = isFitup
       ? ["Joint fit-up dimensions verified","Root gap within WPS tolerance","Tack welds acceptable","Distortion within limits","Drawing mark-up checked"]
+      : isBlast
+      ? ["Blasting standard achieved (Sa grade verified)","Surface profile within spec (Rz microns)","No visible rust, mill scale, or contamination","Edges and corners adequately blasted","Ambient conditions recorded (humidity, dew point)"]
       : ["Visual weld inspection passed","Weld size/profile meets spec","Undercut / overlap checked","Weld coverage complete","NDE requirements noted"];
+
+    const stageKey = isFitup ? "fitup" : isBlast ? "blast" : "weld";
 
     const selDpr = pending.find(d => d.id === selId);
     const updDpr = (id, patch) => setDprs(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d));
@@ -18210,24 +18339,26 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
     const doApprove = () => {
       if (!selDpr) return;
       const ts = new Date().toISOString();
+      const resolvedNext     = getNextDprStage(selDpr);
+      const resolvedInstNext = getNextInstStage(selDpr);
       updDpr(selDpr.id, {
-        currentStage: nextDprStage,
-        currentStatus: nextDprStage === "complete" ? "complete" : "in_progress",
-        [`${isFitup?"fitup":"weld"}QcApprovedAt`]: ts,
-        [`${isFitup?"fitup":"weld"}QcApprovedBy`]: user.username,
+        currentStage: resolvedNext,
+        currentStatus: resolvedNext === "complete" ? "complete" : "in_progress",
+        [`${stageKey}QcApprovedAt`]: ts,
+        [`${stageKey}QcApprovedBy`]: user.username,
         stageHistory: [...(selDpr.stageHistory||[]), {
           stage: dprStage, action: "approved", by: user.username, at: ts,
           checklist: CHECKLIST.filter(c => checks[c])
         }]
       });
-      advInstances(selDpr, nextInstStage);
+      advInstances(selDpr, resolvedInstNext);
       setSelId(null); setChecks({}); setRejectMode(false); setRejectReason("");
     };
 
     const doReject = () => {
       if (!selDpr || !rejectReason.trim()) return;
       const ts = new Date().toISOString();
-      const prevStage = isFitup ? "fitup" : "welding";
+      const prevStage = isFitup ? "fitup" : isBlast ? "blasting" : "welding";
       updDpr(selDpr.id, {
         currentStage: prevStage, currentStatus: "in_progress",
         stageHistory: [...(selDpr.stageHistory||[]), {
@@ -18307,14 +18438,14 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
             <div style={{ display:"flex", gap:10 }}>
               <button onClick={doApprove} disabled={!allChecked}
                 style={{ ...css.btn.green, flex:1, padding:"10px 0", fontSize:13, opacity:allChecked?1:0.45 }}>
-                ✓ Approve {label} QC — Advance to {nextDprStage==="complete"?"Complete":nextDprStage==="welding"?"Welding":nextDprStage}
+                ✓ Approve {label} QC — Advance to {isFitup?"Welding":isBlast?"Painting":"Blasting/Complete"}
                 {!allChecked && <span style={{ fontSize:11, marginLeft:6 }}>({CHECKLIST.filter(c=>!checks[c]).length} remaining)</span>}
               </button>
               <button onClick={() => setRejectMode(true)} style={{ ...css.btn.ghost, color:T.red, padding:"10px 16px" }}>✕ Reject</button>
             </div>
           ) : (
             <div style={{ padding:14, background:T.redBg, borderRadius:8, border:`1px solid ${T.redLo}` }}>
-              <div style={{ fontSize:12, fontWeight:700, color:T.red, marginBottom:8 }}>Rejection Reason — Drawing returns to {isFitup?"Fit-Up":"Welding"}</div>
+              <div style={{ fontSize:12, fontWeight:700, color:T.red, marginBottom:8 }}>Rejection Reason — Drawing returns to {isFitup?"Fit-Up":isBlast?"Blasting":"Welding"}</div>
               <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} rows={2}
                 placeholder="State reason for rejection…" style={{ ...css.input, width:"100%", resize:"vertical", marginBottom:8 }} />
               <div style={{ display:"flex", gap:8 }}>
@@ -18339,8 +18470,9 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
             const order    = (orders||[]).find(o => o.id === dpr.orderId) || {};
             const fitupCon = (contractors||[]).find(c => c.id === dpr.fitupContractorId);
             const weldCon  = (contractors||[]).find(c => c.id === dpr.weldContractorId);
+            const blastCon = (contractors||[]).find(c => c.id === dpr.blastContractorId);
             const drgInsts = (instances||[]).filter(i => i.drawingId === dpr.drawingId && i.orderId === dpr.orderId && !i.isSideCut);
-            const completedAt = isFitup ? dpr.fitupCompleteAt : dpr.weldCompleteAt;
+            const completedAt = isFitup ? dpr.fitupCompleteAt : isBlast ? dpr.blastCompleteAt : dpr.weldCompleteAt;
             const ageDays = completedAt ? Math.floor((Date.now()-new Date(completedAt).getTime())/86400000) : null;
             return (
               <div key={dpr.id} onClick={() => setSelId(dpr.id)}
@@ -18352,8 +18484,12 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
                     <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo||dpr.drawingId}</div>
                     <div style={{ fontSize:11, color:T.textMid, marginTop:3 }}>{order.orderNo} · {order.clientName}</div>
                     <div style={{ fontSize:11, color:T.textLow, marginTop:4, display:"flex", gap:12 }}>
-                      <span>Fit-Up: <strong style={{color:T.text}}>{fitupCon?.name||"—"}</strong></span>
-                      <span>Weld: <strong style={{color:T.text}}>{weldCon?.name||"—"}</strong></span>
+                      {isBlast
+                        ? <span>Blast: <strong style={{color:T.text}}>{blastCon?.name||"—"}</strong></span>
+                        : isFitup
+                        ? <><span>Fit-Up: <strong style={{color:T.text}}>{fitupCon?.name||"—"}</strong></span><span>Weld: <strong style={{color:T.text}}>{weldCon?.name||"—"}</strong></span></>
+                        : <><span>Fit-Up: <strong style={{color:T.text}}>{fitupCon?.name||"—"}</strong></span><span>Weld: <strong style={{color:T.text}}>{weldCon?.name||"—"}</strong></span></>
+                      }
                       <span>{drgInsts.length} parts</span>
                       {ageDays!==null&&<span style={{color:ageDays>2?T.amber:T.textLow}}>Waiting {ageDays}d</span>}
                     </div>
@@ -18372,13 +18508,251 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
   };
   // ── end DprQcPanel ──────────────────────────────────────────────────────────
 
+  // ── PaintQcPanel — per-coat QC approval ─────────────────────────────────────
+  const PaintQcPanel = () => {
+    const updDpr = (id, patch) => setDprs(prev=>prev.map(d=>d.id===id?{...d,...patch}:d));
+
+    // Build a flat list of all coats pending QC across all painting DPRs
+    // A coat needs QC if: requiresQc !== false AND qcStatus is not "approved"/"rejected"
+    const coatQueue = [];
+    (dprs||[]).filter(d=>d.currentStage==="painting"||d.currentStage==="paint_qc").forEach(dpr=>{
+      const order = (orders||[]).find(o=>o.id===dpr.orderId)||{};
+      const drawing = (order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+      const specs = order.quality?.paintSpecs || (order.quality?.paintCoats?.length?[{specLabel:"A",coats:order.quality.paintCoats}]:[]);
+      const specId = drawing.paintSpecId || (specs[0]?.specLabel) || "A";
+      const spec = specs.find(s=>s.specLabel===specId)||specs[0];
+      const specCoats = spec?.coats || [];
+      (dpr.paintCoats||[]).forEach((coat, ci) => {
+        const specCoat = specCoats[ci] || {};
+        if (specCoat.requiresQc===false) return; // skip coats that don't need QC
+        if (coat.qcStatus==="approved") return; // already done
+        coatQueue.push({ dpr, order, drawing, coat, ci, specCoat,
+          coatLabel:`${coat.type} (Coat ${coat.coatNo||ci+1})` });
+      });
+    });
+
+    // Also handle final paint_qc drawings — where all qc-required coats are approved
+    const finalQueue = (dprs||[]).filter(d=>d.currentStage==="paint_qc"&&
+      !(d.paintCoats||[]).some(c=>c.requiresQc!==false&&c.qcStatus!=="approved"));
+
+    const [selCoat, setSelCoat] = useState(null); // {dprId, coatIdx}
+    const [selFinal, setSelFinal] = useState(null);
+    const [form, setForm] = useState({});
+
+    // ── Per-coat approval ──────────────────────────────────────────────────────
+    const doCoatApprove = (entry) => {
+      const { dpr, ci } = entry;
+      const ts = new Date().toISOString();
+      const updCoats = (dpr.paintCoats||[]).map((c,i)=>i===ci?{...c,
+        qcStatus:"approved", qcApprovedAt:ts, qcApprovedBy:user.username,
+        qcDftReading:parseFloat(form.dft)||null, qcRemarks:form.remarks||""
+      }:c);
+      // Check if all required coats now approved
+      const order = (orders||[]).find(o=>o.id===dpr.orderId)||{};
+      const drawing = (order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+      const specs = order.quality?.paintSpecs || (order.quality?.paintCoats?.length?[{specLabel:"A",coats:order.quality.paintCoats}]:[]);
+      const specId = drawing.paintSpecId || (specs[0]?.specLabel) || "A";
+      const spec = specs.find(s=>s.specLabel===specId)||specs[0];
+      const specCoats = spec?.coats || [];
+      const allDone = updCoats.every((c,i)=>specCoats[i]?.requiresQc===false||c.qcStatus==="approved");
+      const allCoatsApplied = updCoats.length >= specCoats.length;
+      // If all coats applied AND all required QCs done → move to paint_qc or tpi_paint
+      const holdPoints = (order.quality?.tpiHoldPoints||[]);
+      const nextStage = allDone && allCoatsApplied
+        ? (holdPoints.includes("painting") ? "tpi_paint" : "paint_qc")
+        : dpr.currentStage;
+      updDpr(dpr.id, {
+        paintCoats: updCoats,
+        currentStage: nextStage,
+        currentStatus: nextStage==="paint_qc"||nextStage==="tpi_paint" ? "pending_qc" : "in_progress",
+        stageHistory:[...(dpr.stageHistory||[]),{stage:"painting",action:`coat_${ci+1}_qc_approved`,by:user.username,at:ts}]
+      });
+      setSelCoat(null); setForm({});
+    };
+
+    const doCoatReject = (entry) => {
+      const { dpr, ci } = entry;
+      if (!form.remarks?.trim()) return;
+      const ts = new Date().toISOString();
+      const updCoats = (dpr.paintCoats||[]).map((c,i)=>i===ci?{...c,
+        qcStatus:"rejected", qcRejectedAt:ts, qcRejectedBy:user.username, qcRemarks:form.remarks
+      }:c);
+      updDpr(dpr.id, { paintCoats:updCoats,
+        stageHistory:[...(dpr.stageHistory||[]),{stage:"painting",action:`coat_${ci+1}_qc_rejected`,by:user.username,at:ts,reason:form.remarks}]
+      });
+      setSelCoat(null); setForm({});
+    };
+
+    // ── Final paint_qc approval ────────────────────────────────────────────────
+    const doFinalApprove = (dpr) => {
+      const ts = new Date().toISOString();
+      updDpr(dpr.id,{currentStage:"complete",currentStatus:"complete",
+        paintQcApprovedAt:ts,paintQcApprovedBy:user.username,
+        stageHistory:[...(dpr.stageHistory||[]),{stage:"paint_qc",action:"approved",by:user.username,at:ts,remarks:form.remarks||""}]});
+      setInstances(prev=>prev.map(i=>{
+        if(i.drawingId!==dpr.drawingId||i.orderId!==dpr.orderId||i.isSideCut) return i;
+        return {...i,currentStage:"complete",currentStatus:"complete",
+          stageHistory:[...(i.stageHistory||[]),{stage:"paint_qc",completedAt:ts,completedBy:user.username}]};
+      }));
+      setSelFinal(null); setForm({});
+    };
+
+    if (coatQueue.length===0&&finalQueue.length===0) return (
+      <div style={{padding:"40px 20px",textAlign:"center",color:T.textLow,fontSize:13}}>✓ No paint QC pending</div>
+    );
+
+    // ── Coat detail view ───────────────────────────────────────────────────────
+    if (selCoat) {
+      const entry = coatQueue.find(e=>e.dpr.id===selCoat.dprId&&e.ci===selCoat.ci);
+      if (!entry) { setSelCoat(null); return null; }
+      const {dpr, order, coat, specCoat} = entry;
+      const [rejectMode, setRejectMode] = useState(false);
+      return (
+        <div>
+          <button onClick={()=>{setSelCoat(null);setForm({});setRejectMode(false);}} style={{...css.btn.ghost,marginBottom:16}}>← Back to queue</button>
+          <div style={{...css.card,marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+              <div>
+                <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:15}}>{dpr.drawingNo}</div>
+                <div style={{fontSize:12,color:T.textMid,marginTop:3}}>{order.orderNo} · {order.clientName}</div>
+              </div>
+              <Badge color="amber">Coat {coat.coatNo}: {coat.type}</Badge>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+              <div style={{background:T.bgInput,borderRadius:6,padding:"8px 12px"}}>
+                <div style={{fontSize:10,color:T.textMid,fontWeight:700,textTransform:"uppercase"}}>Applied At</div>
+                <div style={{fontSize:12,fontWeight:600,color:T.text,marginTop:2}}>{coat.appliedAt?new Date(coat.appliedAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}):"—"}</div>
+              </div>
+              <div style={{background:T.bgInput,borderRadius:6,padding:"8px 12px"}}>
+                <div style={{fontSize:10,color:T.textMid,fontWeight:700,textTransform:"uppercase"}}>Target DFT</div>
+                <div style={{fontSize:12,fontWeight:600,color:T.text,marginTop:2}}>{specCoat.dft||coat.dft||"—"} μm</div>
+              </div>
+              <div style={{background:T.bgInput,borderRadius:6,padding:"8px 12px"}}>
+                <div style={{fontSize:10,color:T.textMid,fontWeight:700,textTransform:"uppercase"}}>Applied By</div>
+                <div style={{fontSize:12,fontWeight:600,color:T.text,marginTop:2}}>{coat.appliedBy||"—"}</div>
+              </div>
+            </div>
+            {coat.dryTimeOverride&&<div style={{marginTop:10,padding:"6px 10px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber}}>⚠ Dry time was not elapsed when coat was applied</div>}
+            {coat.coatNo===1&&coat.primerWindowOk===false&&<div style={{marginTop:6,padding:"6px 10px",background:T.redBg,borderRadius:4,fontSize:11,color:T.red}}>⚠ Primer applied outside the window</div>}
+          </div>
+          <div style={{...css.card,marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:10,textTransform:"uppercase",letterSpacing:"0.05em"}}>QC Inspection</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div>
+                <label style={css.label}>Actual DFT Reading (μm)</label>
+                <input type="number" value={form.dft||""} onChange={e=>setForm(p=>({...p,dft:e.target.value}))}
+                  placeholder={`Target: ${specCoat.dft||coat.dft||"—"} μm`} style={css.input} />
+              </div>
+              <div>
+                <label style={css.label}>Remarks</label>
+                <input value={form.remarks||""} onChange={e=>setForm(p=>({...p,remarks:e.target.value}))}
+                  placeholder="Observations, instrument used…" style={css.input} />
+              </div>
+            </div>
+          </div>
+          {!rejectMode
+            ? <div style={{display:"flex",gap:10}}>
+                <button onClick={()=>doCoatApprove(entry)} style={{...css.btn.green,flex:1,padding:"11px 0",fontSize:13}}>✓ Approve Coat {coat.coatNo} QC</button>
+                <button onClick={()=>setRejectMode(true)} style={{...css.btn.ghost,color:T.red,padding:"11px 16px"}}>✕ Reject</button>
+              </div>
+            : <div style={{padding:14,background:T.redBg,borderRadius:8,border:`1px solid ${T.redLo}`}}>
+                <div style={{fontSize:12,fontWeight:700,color:T.red,marginBottom:8}}>Rejection Reason — Coat must be reapplied</div>
+                <textarea value={form.remarks||""} onChange={e=>setForm(p=>({...p,remarks:e.target.value}))} rows={2}
+                  style={{...css.input,width:"100%",resize:"vertical",marginBottom:8}} placeholder="State reason…" />
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>doCoatReject(entry)} disabled={!form.remarks?.trim()}
+                    style={{...css.btn.primary,background:T.red,opacity:form.remarks?.trim()?1:0.45}}>Confirm Reject</button>
+                  <button onClick={()=>setRejectMode(false)} style={css.btn.ghost}>Cancel</button>
+                </div>
+              </div>
+          }
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        {/* Per-coat queue */}
+        {coatQueue.length>0&&(
+          <div style={{marginBottom:24}}>
+            <div style={{fontSize:13,fontWeight:700,color:T.textMid,marginBottom:12}}>COAT QC PENDING — {coatQueue.length}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {coatQueue.map((entry,i)=>{
+                const {dpr,order,coat,coatLabel} = entry;
+                const ageHrs = coat.appliedAt ? Math.round((Date.now()-new Date(coat.appliedAt).getTime())/3600000) : null;
+                return (
+                  <div key={`${dpr.id}-${entry.ci}`} onClick={()=>{setSelCoat({dprId:dpr.id,ci:entry.ci});setForm({});}}
+                    style={{...css.card,cursor:"pointer",borderLeft:`3px solid ${T.accent}`}}
+                    onMouseEnter={e=>e.currentTarget.style.background=T.bgHover}
+                    onMouseLeave={e=>e.currentTarget.style.background=T.bgCard}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                      <div>
+                        <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:13}}>{dpr.drawingNo}</div>
+                        <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{order.orderNo} · {coatLabel}</div>
+                        {ageHrs!==null&&<div style={{fontSize:11,color:ageHrs>24?T.amber:T.textLow,marginTop:2}}>Applied {ageHrs}h ago</div>}
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                        <Badge color="amber">{coat.type} QC</Badge>
+                        <span style={{fontSize:11,color:T.textLow}}>Tap to inspect →</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {/* Final paint_qc queue */}
+        {finalQueue.length>0&&(
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:T.textMid,marginBottom:12}}>FINAL PAINT SIGN-OFF — {finalQueue.length}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {finalQueue.map(dpr=>{
+                const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+                const coats=dpr.paintCoats||[];
+                return (
+                  <div key={dpr.id} onClick={()=>{setSelFinal(dpr.id);setForm({});}}
+                    style={{...css.card,cursor:"pointer",borderLeft:`3px solid ${T.green}`}}
+                    onMouseEnter={e=>e.currentTarget.style.background=T.bgHover}
+                    onMouseLeave={e=>e.currentTarget.style.background=T.bgCard}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                      <div>
+                        <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:13}}>{dpr.drawingNo}</div>
+                        <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{order.orderNo} · {order.clientName}</div>
+                        <div style={{fontSize:11,color:T.green,marginTop:2}}>✓ All {coats.length} coats applied and QC approved</div>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                        <Badge color="green">Final Sign-Off</Badge>
+                        <span style={{fontSize:11,color:T.textLow}}>Tap to approve →</span>
+                      </div>
+                    </div>
+                    {selFinal===dpr.id&&(
+                      <div style={{marginTop:12}} onClick={e=>e.stopPropagation()}>
+                        <textarea value={form.remarks||""} onChange={e=>setForm(p=>({...p,remarks:e.target.value}))} rows={2}
+                          placeholder="Final QC remarks…" style={{...css.input,width:"100%",resize:"vertical",marginBottom:8}} />
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={()=>doFinalApprove(dpr)} style={{...css.btn.green,flex:1}}>✓ Approve — Mark Drawing Complete</button>
+                          <button onClick={()=>setSelFinal(null)} style={css.btn.ghost}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ── Inspection tabs config ──
   const INSP_TABS = [
     { id:"cutting_qc", label:"Cutting QC",    stages:["cutting_qc"] },
     { id:"fitup",      label:"Fit-Up QC",     stages:["fitup","tpi_fitup"] },
     { id:"weld",       label:"Weld QC",       stages:["welding","tpi_weld"] },
-    { id:"blast",      label:"Blast QC",      stages:["blasting","tpi_blast"] },
-    { id:"paint",      label:"Paint QC",      stages:["painting","tpi_paint"] },
+    { id:"blast",      label:"Blast QC",      stages:["blast_qc"] },
+    { id:"paint",      label:"Paint QC",      stages:["paint_qc"] },
     { id:"mdcc",       label:"MDCC",          stages:["mdcc"] },
     { id:"tpi",        label:"TPI",           stages:["tpi_fitup","tpi_weld","tpi_blast","tpi_paint"] },
   ];
@@ -18665,6 +19039,8 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
           let pendingCount=0;
           if(t.id==="fitup") pendingCount=(dprs||[]).filter(d=>d.currentStage==="fitup_qc").length;
           else if(t.id==="weld") pendingCount=(dprs||[]).filter(d=>d.currentStage==="weld_qc").length;
+          else if(t.id==="blast") pendingCount=(dprs||[]).filter(d=>d.currentStage==="blast_qc").length;
+          else if(t.id==="paint") pendingCount=(dprs||[]).filter(d=>d.currentStage==="paint_qc").length;
           else if(t.id==="tpi") pendingCount=(dprs||[]).filter(d=>["tpi_fitup","tpi_weld","tpi_blast","tpi_paint"].includes(d.currentStage)).length;
           else if(isInsp) pendingCount=(instances||[]).filter(i=>
             i.currentStatus==="pending_supervisor"&&
@@ -18685,11 +19061,13 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
         })}
       </div>
 
-      {/* Inspection tabs — fitup/weld use DPR-level panel, TPI uses TPI panel, others use instance-level panel */}
-      {tab==="fitup" && <DprQcPanel dprStage="fitup_qc" />}
-      {tab==="weld"  && <DprQcPanel dprStage="weld_qc"  />}
-      {tab==="tpi"   && <TpiQcPanel orders={orders} dprs={dprs} setDprs={setDprs} instances={instances} setInstances={setInstances} user={user} tpiTemplates={tpiTemplates} setTpiTemplates={setTpiTemplates} contractors={contractors} />}
-      {INSP_TABS.filter(t=>t.id!=="fitup"&&t.id!=="weld"&&t.id!=="tpi").map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
+      {/* Inspection tabs — fitup/weld/blast/paint use DPR-level panel, TPI uses TPI panel, others use instance-level panel */}
+      {tab==="fitup"  && <DprQcPanel dprStage="fitup_qc" />}
+      {tab==="weld"   && <DprQcPanel dprStage="weld_qc"  />}
+      {tab==="blast"  && <DprQcPanel dprStage="blast_qc" />}
+      {tab==="paint"  && <PaintQcPanel />}
+      {tab==="tpi"    && <TpiQcPanel orders={orders} dprs={dprs} setDprs={setDprs} instances={instances} setInstances={setInstances} user={user} tpiTemplates={tpiTemplates} setTpiTemplates={setTpiTemplates} contractors={contractors} />}
+      {INSP_TABS.filter(t=>!["fitup","weld","blast","paint","tpi"].includes(t.id)).map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
 
       {/* Admin-only tabs */}
       {tab==="rules"&&isAdmin&&(
@@ -18876,9 +19254,13 @@ const DPR_STAGE_META = {
   fitup_qc:   { label:"Fit-Up QC",     color:"#D97706",  bg:"#FEF3C7" },
   welding:    { label:"Welding",       color:"#7C3AED",  bg:"#EDE9FE" },
   weld_qc:    { label:"Weld QC",       color:"#D97706",  bg:"#FEF3C7" },
+  blasting:   { label:"Blasting",      color:"#B45309",  bg:"#FEF3C7" },
+  blast_qc:   { label:"Blast QC",      color:"#D97706",  bg:"#FEF3C7" },
+  painting:   { label:"Painting",      color:"#1D4ED8",  bg:"#DBEAFE" },
+  paint_qc:   { label:"Paint QC",      color:"#D97706",  bg:"#FEF3C7" },
   complete:   { label:"Complete",      color:"#059669",  bg:"#D1FAE5" },
 };
-const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","welding","weld_qc","complete"];
+const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","welding","weld_qc","blasting","blast_qc","painting","paint_qc","complete"];
 
 const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, onBack }) => {
   const [filterOrder,  setFilterOrder]  = useState("all");
@@ -19204,6 +19586,395 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// BLAST & PAINT CONTRACTOR QUEUE
+// ═══════════════════════════════════════════════════════════════════════════════
+const BlastPaintContractorQueue = ({ user, dprs, setDprs, orders, instances, setInstances }) => {
+  const [tab, setTab] = useState("blasting");
+  const cid = user.contractorId;
+
+  const myDprs = (dprs||[]).filter(d =>
+    d.blastContractorId === cid || d.paintContractorId === cid
+  );
+
+  const updDpr = (id, patch) => setDprs(prev => prev.map(d => d.id===id ? {...d,...patch} : d));
+
+  const advInstances = (dpr, toStage) => {
+    setInstances(prev => prev.map(i => {
+      if (i.drawingId !== dpr.drawingId || i.orderId !== dpr.orderId || i.isSideCut) return i;
+      return { ...i, currentStage: toStage, currentStatus: toStage==="complete"?"complete":"in_progress",
+        stageHistory:[...(i.stageHistory||[]),{stage:i.currentStage,completedAt:new Date().toISOString(),completedBy:user.username}] };
+    }));
+  };
+
+  // Primer window urgency
+  const getPrimerStatus = (dpr, order) => {
+    if (!dpr.blastCompleteAt) return null;
+    const windowHrs = order?.quality?.primerWindowHrs ?? 4;
+    const elapsedMs = Date.now() - new Date(dpr.blastCompleteAt).getTime();
+    const elapsedHrs = elapsedMs / 3600000;
+    const remainingHrs = windowHrs - elapsedHrs;
+    if (remainingHrs > 0) return { ok:true, remainingHrs, pct: Math.max(0,(remainingHrs/windowHrs)*100) };
+    return { ok:false, expiredHrs: -remainingHrs };
+  };
+
+  // ── Tab 1: Blasting ─────────────────────────────────────────────────────────
+  const blastAssigned   = myDprs.filter(d => d.blastContractorId===cid && d.currentStage==="blasting");
+  const blastAwaitingQc = myDprs.filter(d => d.blastContractorId===cid && d.currentStage==="blast_qc");
+  // ── Tab 2: Painting ─────────────────────────────────────────────────────────
+  const paintActive  = myDprs.filter(d => d.paintContractorId===cid && d.currentStage==="painting");
+  const paintAwaitQc = myDprs.filter(d => d.paintContractorId===cid && d.currentStage==="paint_qc");
+  const paintTpiPending = myDprs.filter(d => d.paintContractorId===cid && d.currentStage==="tpi_paint");
+  // ── Tab 3: Complete ─────────────────────────────────────────────────────────
+  const done = myDprs.filter(d => d.currentStage==="complete" &&
+    (d.blastContractorId===cid || d.paintContractorId===cid));
+
+  const SL = ({ title, count, color, sub }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, marginTop:20 }}>
+      <div style={{ fontSize:11, fontWeight:800, color:color||T.textMid, letterSpacing:"0.08em" }}>{title}</div>
+      {count>0&&<div style={{ background:color||T.textMid, color:"#fff", fontSize:10, fontWeight:800, borderRadius:8, padding:"1px 6px" }}>{count}</div>}
+      {sub&&<div style={{ fontSize:11, color:T.textLow }}>{sub}</div>}
+    </div>
+  );
+
+  const getOrder = dpr => (orders||[]).find(o=>o.id===dpr.orderId)||{};
+  const getPaintSpec = (dpr) => {
+    const order = getOrder(dpr);
+    const drawing = (order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+    const specs = order.quality?.paintSpecs || (order.quality?.paintCoats?.length ? [{specLabel:"A",coats:order.quality.paintCoats}] : []);
+    const specId = drawing.paintSpecId || (specs[0]?.specLabel) || "A";
+    return specs.find(s=>s.specLabel===specId) || specs[0] || null;
+  };
+
+  // ── Blast card ──────────────────────────────────────────────────────────────
+  const BlastCard = ({ dpr, mode }) => {
+    const order = getOrder(dpr);
+    const [confirming, setConfirming] = useState(false);
+    const [note, setNote] = useState("");
+
+    const doBlastComplete = () => {
+      const ts = new Date().toISOString();
+      updDpr(dpr.id, {
+        currentStage: "blast_qc", currentStatus: "pending_qc",
+        blastCompleteAt: ts, blastCompleteBy: user.username,
+        blastNote: note,
+        stageHistory: [...(dpr.stageHistory||[]), { stage:"blasting", action:"completed", by:user.username, at:ts, note }]
+      });
+      advInstances(dpr, "blasting");
+      setConfirming(false);
+    };
+
+    return (
+      <div style={{ ...css.card, marginBottom:10, borderLeft:`3px solid ${mode==="active"?T.amber:T.green}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+          <div>
+            <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo}</div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>{order.orderNo} · {order.clientName}</div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+              Standard: <strong style={{color:T.text}}>{order.quality?.blastingStandard||"Sa 2.5"}</strong>
+              {order.quality?.blastingProfile&&<span> · Profile: <strong style={{color:T.text}}>{order.quality.blastingProfile} Rz</strong></span>}
+            </div>
+          </div>
+          <Badge color={mode==="active"?"amber":"green"}>
+            {mode==="active"?"Blasting":"Awaiting Blast QC"}
+          </Badge>
+        </div>
+        {mode==="active" && !confirming && (
+          <button onClick={()=>setConfirming(true)} style={{ ...css.btn.primary, width:"100%", padding:"10px 0", fontSize:13 }}>
+            ✓ Mark Blasting Complete
+          </button>
+        )}
+        {mode==="active" && confirming && (
+          <div style={{ padding:12, background:T.bgInput, borderRadius:6 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>Confirm Blast Complete</div>
+            <label style={css.label}>Notes (optional)</label>
+            <input value={note} onChange={e=>setNote(e.target.value)}
+              placeholder="e.g. Profile achieved Sa 2.5, ambient conditions ok"
+              style={{ ...css.input, marginBottom:10 }} />
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={doBlastComplete} style={{ ...css.btn.green, flex:1 }}>Confirm Complete</button>
+              <button onClick={()=>setConfirming(false)} style={css.btn.ghost}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {mode==="awaiting_qc" && (
+          <div style={{ padding:"8px 12px", background:T.amberBg, border:`1px solid ${T.amber}44`, borderRadius:6, fontSize:11, color:T.amber, fontWeight:700 }}>
+            ⏳ Awaiting Blast QC Sign-Off · Completed {dpr.blastCompleteAt ? new Date(dpr.blastCompleteAt).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "—"}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Paint card ──────────────────────────────────────────────────────────────
+  const PaintCard = ({ dpr, mode }) => {
+    const order   = getOrder(dpr);
+    const spec    = getPaintSpec(dpr);
+    const coats   = spec?.coats || [];
+    const applied = dpr.paintCoats || [];
+    const primerStatus = getPrimerStatus(dpr, order);
+    const [confirming, setConfirming] = useState(false);
+    const [note, setNote] = useState("");
+
+    // Dry time check for previous coat
+    const lastApplied = applied[applied.length - 1];
+    const dryTimeOk = (() => {
+      if (!lastApplied?.appliedAt || !lastApplied?.dryTime) return true;
+      const elapsed = (Date.now() - new Date(lastApplied.appliedAt).getTime()) / 3600000;
+      return elapsed >= lastApplied.dryTime;
+    })();
+    const dryTimeRemaining = (() => {
+      if (!lastApplied?.appliedAt || !lastApplied?.dryTime || dryTimeOk) return 0;
+      const elapsed = (Date.now() - new Date(lastApplied.appliedAt).getTime()) / 3600000;
+      return Math.max(0, lastApplied.dryTime - elapsed);
+    })();
+
+    // QC lock — previous coat must be QC approved (if requiresQc) before next coat
+    const lastAppliedQcOk = (() => {
+      if (!lastApplied) return true; // no previous coat
+      if (lastApplied.requiresQc===false) return true; // QC not needed
+      return lastApplied.qcStatus === "approved";
+    })();
+    const nextCoatIdx = applied.length;
+    const nextCoat    = coats[nextCoatIdx] || null;
+
+    const doCoatComplete = () => {
+      const ts = new Date().toISOString();
+      const newCoat = {
+        coatNo: nextCoatIdx + 1,
+        type: nextCoat?.type || "Coat",
+        dft: nextCoat?.dft || 0,
+        dryTime: nextCoat?.dryTime || 0,
+        appliedAt: ts,
+        appliedBy: user.username,
+        note,
+        primerWindowOk: nextCoatIdx === 0 ? (primerStatus?.ok ?? true) : true,
+        dryTimeOverride: nextCoatIdx > 0 && !dryTimeOk,
+      };
+      const updCoats = [...applied, newCoat];
+      const allCoatsDone = updCoats.length >= coats.length;
+      updDpr(dpr.id, {
+        paintCoats: updCoats,
+        currentStage: allCoatsDone ? "paint_qc" : "painting",
+        currentStatus: allCoatsDone ? "pending_qc" : "in_progress",
+        stageHistory: [...(dpr.stageHistory||[]), {
+          stage:"painting", action:`coat_${nextCoatIdx+1}_complete`,
+          by:user.username, at:ts, coatType:nextCoat?.type, note
+        }]
+      });
+      if (allCoatsDone) advInstances(dpr, "painting");
+      setConfirming(false); setNote("");
+    };
+
+    return (
+      <div style={{ ...css.card, marginBottom:10,
+        borderLeft:`3px solid ${primerStatus&&!primerStatus.ok?T.red:primerStatus?.ok?T.amber:T.accent}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+          <div>
+            <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo}</div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>{order.orderNo} · Spec {spec?.specLabel||"A"}</div>
+          </div>
+          <Badge color={mode==="awaiting_qc"?"amber":"blue"}>
+            {mode==="awaiting_qc" ? "Awaiting Paint QC" : `${applied.length}/${coats.length} coats done`}
+          </Badge>
+        </div>
+
+        {/* Primer window alert */}
+        {primerStatus && applied.length === 0 && (
+          <div style={{ marginBottom:10, padding:"8px 12px", borderRadius:6,
+            background: primerStatus.ok ? T.amberBg : T.redBg,
+            border:`1px solid ${primerStatus.ok ? T.amber : T.red}44` }}>
+            {primerStatus.ok
+              ? <span style={{color:T.amber,fontWeight:700}}>⚡ PRIMER WINDOW — {primerStatus.remainingHrs.toFixed(1)}h remaining</span>
+              : <span style={{color:T.red,fontWeight:700}}>⚠ PRIMER WINDOW EXPIRED — {primerStatus.expiredHrs.toFixed(1)}h ago. Apply primer and flag for QC.</span>
+            }
+          </div>
+        )}
+
+        {/* Coat progress */}
+        <div style={{ display:"flex", gap:4, marginBottom:10 }}>
+          {coats.map((coat, ci) => {
+            const done = ci < applied.length;
+            const current = ci === applied.length;
+            return (
+              <div key={ci} style={{ flex:1, padding:"6px 8px", textAlign:"center", borderRadius:4,
+                background: done?T.greenBg:current?T.bgInput:"transparent",
+                border:`1px solid ${done?T.green:current?T.accent:T.border}` }}>
+                <div style={{ fontSize:10, fontWeight:700, color:done?T.green:current?T.accent:T.textLow }}>
+                  {coat.type}
+                </div>
+                <div style={{ fontSize:9, color:T.textLow }}>{coat.dft} μm DFT</div>
+                {done && (() => {
+                  const ac = applied[ci];
+                  if (coat.requiresQc===false) return <div style={{fontSize:9,color:T.green}}>✓ Done</div>;
+                  if (ac?.qcStatus==="approved") return <div style={{fontSize:9,color:T.green}}>✓ QC ✓</div>;
+                  if (ac?.qcStatus==="rejected") return <div style={{fontSize:9,color:T.red}}>✕ Rejected</div>;
+                  return <div style={{fontSize:9,color:T.amber}}>⏳ QC Pending</div>;
+                })()}
+                {current && !done && <div style={{ fontSize:9, color:T.accent }}>Next</div>}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Dry time warning */}
+        {!dryTimeOk && nextCoat && (
+          <div style={{ marginBottom:8, padding:"6px 10px", background:T.amberBg,
+            border:`1px solid ${T.amber}44`, borderRadius:4, fontSize:11, color:T.amber }}>
+            ⚠ Dry time: {dryTimeRemaining.toFixed(1)}h remaining before {nextCoat.type}
+          </div>
+        )}
+
+        {/* QC lock warning */}
+        {mode==="active" && nextCoat && !lastAppliedQcOk && (
+          <div style={{ marginBottom:8, padding:"8px 12px", background:T.amberBg,
+            border:`1px solid ${T.amber}44`, borderRadius:4, fontSize:11, color:T.amber, fontWeight:700 }}>
+            🔒 Awaiting QC approval for {lastApplied?.type} before {nextCoat.type} can be applied
+          </div>
+        )}
+        {/* Action */}
+        {mode==="active" && nextCoat && !confirming && lastAppliedQcOk && (
+          <button onClick={()=>setConfirming(true)}
+            style={{ ...css.btn.primary, width:"100%", padding:"10px 0", fontSize:13 }}>
+            ✓ Mark {nextCoat.type} Complete
+          </button>
+        )}
+        {mode==="active" && nextCoat && confirming && (
+          <div style={{ padding:12, background:T.bgInput, borderRadius:6 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8 }}>
+              Confirm {nextCoat.type} Applied
+              {!dryTimeOk && <span style={{color:T.amber, marginLeft:8}}>⚠ Dry time not elapsed</span>}
+            </div>
+            <label style={css.label}>Notes (optional)</label>
+            <input value={note} onChange={e=>setNote(e.target.value)}
+              placeholder="e.g. DFT readings, ambient conditions, batch no." style={{ ...css.input, marginBottom:10 }} />
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={doCoatComplete} style={{ ...css.btn.green, flex:1 }}>Confirm</button>
+              <button onClick={()=>{setConfirming(false);setNote("");}} style={css.btn.ghost}>Cancel</button>
+            </div>
+          </div>
+        )}
+        {mode==="awaiting_qc" && (
+          <div style={{ padding:"8px 12px", background:T.amberBg, border:`1px solid ${T.amber}44`,
+            borderRadius:6, fontSize:11, color:T.amber, fontWeight:700 }}>
+            ⏳ All {coats.length} coat{coats.length!==1?"s":""} applied — Awaiting Paint QC Sign-Off
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const TABS = [
+    { id:"blasting", label:"Blasting", count:blastAssigned.length+blastAwaitingQc.length, alert:T.amber },
+    { id:"painting", label:"Painting", count:paintActive.length+paintAwaitQc.length+paintTpiPending.length, alert:T.accent },
+    { id:"complete", label:"Complete",  count:done.length, alert:T.green },
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom:20 }}>
+        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>My Blast & Paint Jobs</div>
+        <div style={{ fontSize:12, color:T.textMid }}>{user.name} · {myDprs.length} drawing{myDprs.length!==1?"s":""}</div>
+      </div>
+
+      {myDprs.length === 0 ? (
+        <InfoBanner color="blue">No blast/paint jobs assigned yet. Assignments are made by the production team once welding is complete and QC cleared.</InfoBanner>
+      ) : (
+        <>
+          <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+            {TABS.map(t => (
+              <button key={t.id} onClick={()=>setTab(t.id)} style={{
+                padding:"10px 18px", fontSize:13, fontWeight:tab===t.id?700:400,
+                color:tab===t.id?T.accent:T.textMid, background:"transparent", border:"none",
+                borderBottom:tab===t.id?`2px solid ${T.accent}`:"2px solid transparent",
+                cursor:"pointer", display:"flex", alignItems:"center", gap:7 }}>
+                {t.label}
+                {t.count>0&&<span style={{ background:tab===t.id?T.accent:t.alert, color:"#fff",
+                  borderRadius:10, fontSize:11, fontWeight:800, padding:"1px 7px" }}>{t.count}</span>}
+              </button>
+            ))}
+          </div>
+
+          {tab==="blasting"&&(
+            <div>
+              {blastAssigned.length===0&&blastAwaitingQc.length===0&&(
+                <div style={{textAlign:"center",padding:48,color:T.textLow}}>
+                  <div style={{fontSize:32,marginBottom:10}}>🔧</div>No blasting jobs assigned
+                </div>
+              )}
+              {blastAssigned.length>0&&<>
+                <SL title="IN BLASTING" count={blastAssigned.length} color={T.amber} />
+                {blastAssigned.map(d=><BlastCard key={d.id} dpr={d} mode="active" />)}
+              </>}
+              {blastAwaitingQc.length>0&&<>
+                <SL title="AWAITING BLAST QC" count={blastAwaitingQc.length} color={T.textMid} />
+                {blastAwaitingQc.map(d=><BlastCard key={d.id} dpr={d} mode="awaiting_qc" />)}
+              </>}
+            </div>
+          )}
+
+          {tab==="painting"&&(
+            <div>
+              {paintActive.length===0&&paintAwaitQc.length===0&&(
+                <div style={{textAlign:"center",padding:48,color:T.textLow}}>
+                  <div style={{fontSize:32,marginBottom:10}}>🎨</div>No painting jobs assigned yet
+                </div>
+              )}
+              {paintActive.length>0&&<>
+                <SL title="IN PAINTING" count={paintActive.length} color={T.accent} />
+                {paintActive.map(d=><PaintCard key={d.id} dpr={d} mode="active" />)}
+              </>}
+              {paintAwaitQc.length>0&&<>
+                <SL title="AWAITING PAINT QC" count={paintAwaitQc.length} color={T.textMid} />
+                {paintAwaitQc.map(d=><PaintCard key={d.id} dpr={d} mode="awaiting_qc" />)}
+              </>}
+              {paintTpiPending.length>0&&<>
+                <SL title="AWAITING TPI CLEARANCE" count={paintTpiPending.length} color={T.amber} sub="— TPI agency to inspect" />
+                {paintTpiPending.map(d=>{
+                  const o=(orders||[]).find(x=>x.id===d.orderId)||{};
+                  return (
+                    <div key={d.id} style={{...css.card,marginBottom:8,borderLeft:`3px solid ${T.amber}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div>
+                          <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{d.drawingNo}</div>
+                          <div style={{fontSize:11,color:T.textMid}}>{o.orderNo} · All coats applied and QC cleared</div>
+                        </div>
+                        <Badge color="amber">Paint TPI Pending</Badge>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>}
+            </div>
+          )}
+
+          {tab==="complete"&&(
+            <div>
+              {done.length===0&&(
+                <div style={{textAlign:"center",padding:48,color:T.textLow}}>No completed jobs yet</div>
+              )}
+              {done.map(d=>{
+                const order=getOrder(d);
+                return (
+                  <div key={d.id} style={{ ...css.card, marginBottom:8, borderLeft:`3px solid ${T.green}` }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <div>
+                        <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent }}>{d.drawingNo}</div>
+                        <div style={{ fontSize:11, color:T.textMid }}>{order.orderNo} · {order.clientName}</div>
+                      </div>
+                      <Badge color="green">Complete ✓</Badge>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
@@ -19219,9 +19990,18 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const [selDrawingId, setSelDrawingId] = useState("");
   const [selStatusDrawing, setSelStatusDrawing] = useState(null); // {drawingId, orderId}
   const [selProgressOrderId, setSelProgressOrderId] = useState("");
+  const [assignForm, setAssignForm] = useState({}); // blast/paint contractor assignment form
 
   // Contractor → own work queue only (after hooks)
-  if (user.role === "contractor") return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} orders={orders||[]} nestingBatches={nestingBatches||[]} dprs={dprs||[]} setDprs={setDprs} />;
+  if (user.role === "contractor") {
+    // Route blast/paint contractors to dedicated queue
+    const cid = user.contractorId;
+    const contr = (contractors||[]).find(c=>c.id===cid)||{};
+    const isBlastPaint = (contr.type||[]).some(t=>["blasting","painting"].includes(t));
+    const isFitWeld = (contr.type||[]).some(t=>["fit_up","welding","cutting"].includes(t));
+    if (isBlastPaint && !isFitWeld) return <BlastPaintContractorQueue user={user} dprs={dprs||[]} setDprs={setDprs} orders={orders||[]} instances={instances} setInstances={setInstances} />;
+    return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} orders={orders||[]} nestingBatches={nestingBatches||[]} dprs={dprs||[]} setDprs={setDprs} />;
+  }
   // Machine operator → machine queue
   if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} orders={orders||[]} nestingBatches={nestingBatches||[]} />;
   // Stage workers (blasting/painting engineers) → stage-filtered work queue
@@ -19277,6 +20057,151 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   }
 
   // ── Blast & Paint Assignment view ──
+  // ── Blast & Paint Assignment Queue ──
+  if (view==="assignments") {
+    const canManage=["super_admin","planning_admin","floor_planner","production_engineer"].includes(user.role);
+    const blastContractors=(contractors||[]).filter(c=>c.active!==false&&(c.type||[]).some(t=>["blasting","painting"].includes(t)));
+
+    // Drawings that completed weld QC and are now at blasting stage
+    const pendingAssignment = (dprs||[]).filter(d =>
+      d.currentStage==="blasting" && !d.blastContractorId
+    );
+    const assigned = (dprs||[]).filter(d =>
+      ["blasting","blast_qc","painting","paint_qc"].includes(d.currentStage) && d.blastContractorId
+    );
+
+    const doAssign = (dprId, blastCid, paintCid) => {
+      const bc = blastContractors.find(c=>c.id===blastCid)||{};
+      const pc = blastContractors.find(c=>c.id===paintCid)||{};
+      const ts = new Date().toISOString();
+      setDprs(prev=>prev.map(d=>d.id!==dprId?d:{...d,
+        blastContractorId:blastCid, blastContractorName:bc.name||"",
+        paintContractorId:paintCid, paintContractorName:pc.name||"",
+        blastAssignedAt:ts, blastAssignedBy:user.username,
+        stageHistory:[...(d.stageHistory||[]),{stage:"blasting",action:"assigned",by:user.username,at:ts,blastContractor:bc.name,paintContractor:pc.name}]
+      }));
+    };
+
+    return (
+      <div>
+        <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:20 }}>
+          <button onClick={()=>setView("dashboard")} style={css.btn.ghost}>← Production</button>
+          <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Blast & Paint Assignments</div>
+          <div style={{ flex:1 }} />
+          {pendingAssignment.length>0&&(
+            <div style={{ background:T.amberBg, border:`1px solid ${T.amber}44`, borderRadius:6,
+              padding:"6px 12px", fontSize:12, color:T.amber, fontWeight:700 }}>
+              ⚠ {pendingAssignment.length} drawing{pendingAssignment.length!==1?"s":""} awaiting assignment
+            </div>
+          )}
+        </div>
+
+        {/* Pending assignment */}
+        {pendingAssignment.length===0&&assigned.length===0&&(
+          <InfoBanner color="blue">No drawings at blasting/painting stage yet. Drawings appear here after Weld QC is approved.</InfoBanner>
+        )}
+
+        {pendingAssignment.length>0&&(
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.amber, marginBottom:12 }}>
+              PENDING ASSIGNMENT — {pendingAssignment.length}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {pendingAssignment.map(dpr => {
+                const order = (orders||[]).find(o=>o.id===dpr.orderId)||{};
+                const drawing = (order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+                const spec = getPaintCoats ? null : null;
+                const paintSpecs = order.quality?.paintSpecs || [];
+                const drawingSpec = paintSpecs.find(s=>s.specLabel===(drawing.paintSpecId||"A"))||paintSpecs[0];
+                const af = assignForm[dpr.id]||{};
+                const blastOnly = (contractors||[]).filter(c=>c.active!==false&&(c.type||[]).includes("blasting"));
+                const paintOnly = (contractors||[]).filter(c=>c.active!==false&&(c.type||[]).includes("painting"));
+                return (
+                  <div key={dpr.id} style={{ ...css.card, borderLeft:`3px solid ${T.amber}` }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
+                      <div>
+                        <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:13 }}>{dpr.drawingNo}</div>
+                        <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                          {order.orderNo} · {order.clientName}
+                          {drawing.assemblyGroup&&<span> · Assembly: {drawing.assemblyGroup}</span>}
+                        </div>
+                        <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                          Blast: <strong style={{color:T.text}}>{order.quality?.blastingStandard||"Sa 2.5"}</strong>
+                          {drawingSpec&&<span> · Paint Spec: <strong style={{color:T.text}}>{drawingSpec.specLabel} ({drawingSpec.coats?.length||0} coats)</strong></span>}
+                          {(drawing.totalWt||0)>0&&<span> · {((drawing.totalWt||0)/1000).toFixed(2)}T</span>}
+                        </div>
+                      </div>
+                      <Badge color="amber">Awaiting Assignment</Badge>
+                    </div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:10, alignItems:"end" }}>
+                      <div>
+                        <label style={css.label}>Blast Contractor</label>
+                        <select value={af.blastCid||""} onChange={e=>setAssignForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),blastCid:e.target.value}}))} style={css.input}>
+                          <option value="">— Select —</option>
+                          {blastOnly.map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" 🏭":""}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={css.label}>Paint Contractor</label>
+                        <select value={af.paintCid||""} onChange={e=>setAssignForm(p=>({...p,[dpr.id]:{...(p[dpr.id]||{}),paintCid:e.target.value}}))} style={css.input}>
+                          <option value="">— Select —</option>
+                          {paintOnly.map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" 🏭":""}</option>)}
+                        </select>
+                      </div>
+                      <button
+                        disabled={!af.blastCid||!af.paintCid}
+                        onClick={()=>{ doAssign(dpr.id, af.blastCid, af.paintCid); setAssignForm(p=>({...p,[dpr.id]:{}})); }}
+                        style={{ ...css.btn.green, opacity:(!af.blastCid||!af.paintCid)?0.45:1, whiteSpace:"nowrap" }}>
+                        ✓ Assign
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Assigned — currently in blast/paint */}
+        {assigned.length>0&&(
+          <div>
+            <div style={{ fontSize:13, fontWeight:700, color:T.textMid, marginBottom:12 }}>
+              ASSIGNED — {assigned.length}
+            </div>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:T.bgInput }}>
+                  {["Drawing","Order","Stage","Blast Contractor","Paint Contractor","Assigned By","Assigned"].map(h=>(
+                    <th key={h} style={{ padding:"7px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {assigned.map((dpr,i)=>{
+                  const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+                  const meta=DPR_STAGE_META[dpr.currentStage]||{label:dpr.currentStage,color:T.textMid,bg:"#F1F5F9"};
+                  return (
+                    <tr key={dpr.id} style={{ background:i%2===0?"transparent":T.bgInput, borderBottom:`1px solid ${T.border}` }}>
+                      <td style={{ padding:"7px 10px", fontFamily:T.fontMono, fontWeight:700, color:T.accent }}>{dpr.drawingNo}</td>
+                      <td style={{ padding:"7px 10px", fontSize:11, color:T.textMid }}>{order.orderNo}</td>
+                      <td style={{ padding:"7px 10px" }}>
+                        <span style={{ display:"inline-block", padding:"2px 8px", borderRadius:99, fontSize:11, fontWeight:700, background:meta.bg, color:meta.color }}>{meta.label}</span>
+                      </td>
+                      <td style={{ padding:"7px 10px", fontSize:11 }}>{dpr.blastContractorName||"—"}</td>
+                      <td style={{ padding:"7px 10px", fontSize:11 }}>{dpr.paintContractorName||"—"}</td>
+                      <td style={{ padding:"7px 10px", fontSize:11, color:T.textMid }}>{dpr.blastAssignedBy||"—"}</td>
+                      <td style={{ padding:"7px 10px", fontSize:11, color:T.textMid }}>{dpr.blastAssignedAt?.slice(0,10)||"—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (view==="blast_paint") {
     const canManage=["super_admin","planning_admin","floor_planner","production_engineer"].includes(user.role);
     const blastPaintStages=new Set(['blasting','tpi_blast','paint_coat_1','paint_coat_2','paint_coat_3','tpi_paint_1','tpi_paint_2','tpi_paint_3']);
@@ -19582,7 +20507,17 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
         <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={css.btn.secondary}>📊 Progress Grid</button>
         {canAssign&&<button onClick={()=>setView("outbound")} style={css.btn.secondary}>🔄 Outbound</button>}
         {["super_admin","planning_admin","floor_planner","production_engineer","supervisor"].includes(user.role)&&(
+          <>
+          <button onClick={()=>setView("assignments")} style={{...css.btn.ghost,fontSize:12,position:"relative"}}>
+            📋 Assignments
+            {(dprs||[]).filter(d=>d.currentStage==="blasting"&&!d.blastContractorId).length>0&&(
+              <span style={{position:"absolute",top:-4,right:-4,background:T.amber,color:"#fff",borderRadius:"50%",fontSize:9,fontWeight:800,width:16,height:16,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {(dprs||[]).filter(d=>d.currentStage==="blasting"&&!d.blastContractorId).length}
+              </span>
+            )}
+          </button>
           <button onClick={()=>setView("blast_paint")} style={{...css.btn.ghost,fontSize:12}}>🎨 Blast & Paint</button>
+          </>
         )}
         <button onClick={()=>setView("register")} style={css.btn.secondary}>📋 Drawing Register</button>
         {(SUPERVISOR_STAGES[user.role]||[]).length>0&&(
