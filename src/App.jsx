@@ -18123,7 +18123,15 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
     (o.drawings||[]).filter(d=>d.receivedDate).forEach(d => {
       const parts = (o.parts||[]).filter(p=>p.drawingId===d.id&&p.fabType==="Fabricate");
       const totalParts = parts.length * (d.qty||1);
-      const cutInsts = (instances||[]).filter(i=>i.drawingId===d.id&&i.orderId===o.id&&["cutting_qc","fitup","welding","tpi_weld","assembly","blasting","tpi_blast","painting","tpi_paint","mdcc","dispatch"].includes(i.currentStage));
+      const DONE_STAGES_STEP1 = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+      const STAGE_ORD_STEP1 = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending'];
+      const partMarkNosStep1 = new Set(parts.map(p=>p.markNo));
+      const bestStep1 = {};
+      (instances||[]).filter(i=>partMarkNosStep1.has(i.markNo)).forEach(i=>{
+        const curr = bestStep1[i.markNo];
+        if(!curr||STAGE_ORD_STEP1.indexOf(i.currentStage)<STAGE_ORD_STEP1.indexOf(curr)) bestStep1[i.markNo]=i.currentStage;
+      });
+      const cutParts = Object.values(bestStep1).filter(s=>DONE_STAGES_STEP1.has(s)).length;
       const matCodes = [...new Set(parts.map(p=>p.matCode).filter(Boolean))];
       const rmCoverage = matCodes.map(mc=>{
         const totalKg = parts.filter(p=>p.matCode===mc).reduce((s,p)=>s+(p.calcTotalWt||p.clientTotalWt||0),0);
@@ -18139,7 +18147,7 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
       },"cutting") : "not_started";
       const rel = (releases||[]).find(r=>(r.drawings||[]).includes(d.id)&&r.orderId===o.id);
       const conName = rel?.contractorName||"";
-      allDrawings.push({ drawingId:d.id, drawingNo:d.drawingNo, title:d.title, orderId:o.id, orderRef:o.id, clientId:o.clientId, assemblyGroup:d.assemblyGroup||"", assemblyName:asmGroup?.assemblyName||"", tier:d.priority<=1?"Critical":"Standard", priority:d.priority||1, totalParts, cutParts:cutInsts.length, matCodes, rmCoverage, hasRM, latestStage, parts, contractorName:conName, endDate:o.endDate||"" });
+      allDrawings.push({ drawingId:d.id, drawingNo:d.drawingNo, title:d.title, orderId:o.id, orderRef:o.id, clientId:o.clientId, assemblyGroup:d.assemblyGroup||"", assemblyName:asmGroup?.assemblyName||"", tier:d.priority<=1?"Critical":"Standard", priority:d.priority||1, totalParts, cutParts, matCodes, rmCoverage, hasRM, latestStage, parts, contractorName:conName, endDate:o.endDate||"" });
     });
   });
 
