@@ -13284,7 +13284,7 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
 
   // Get best (most advanced) stage per markNo across ALL instances
   // Fixes the case where a part was cut in a previous release on a shared sheet
-  const STAGE_ORDER_BEST = ['complete','welding','fitup','fit_up','blasting','painting','cutting_qc','cutting','pending'];
+  const STAGE_ORDER_BEST = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending'];
   const getBestStagePerMarkNo = (markNos) => {
     const best = {};
     const markNoSet = new Set(markNos);
@@ -13304,7 +13304,7 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
     if (!drawing) return { total:0, cutCleared:0, inCutting:0, pct:0 };
     const drgParts = (order.parts||[]).filter(p => p.drawingId === drawing.id && p.fabType === "Fabricate");
     const total = drgParts.length;
-    const DONE = new Set(['cutting_qc','fitup','fit_up','welding','blasting','painting','dispatch','complete']);
+    const DONE = new Set(['cutting_qc','fitup','fit_up','welding','weld_qc','tpi_fitup','tpi_weld','blasting','blast_qc','tpi_blast','painting','paint_qc','tpi_paint','dispatch','complete']);
     const CUTTING = new Set(['cutting']);
     // Use best stage per markNo across ALL instances (any release, including side-cuts)
     // This handles the case where a part was cut in a previous release on a shared sheet
@@ -19384,15 +19384,19 @@ const DPR_STAGE_META = {
   pending:    { label:"Pending",       color:T.textLow,  bg:"#F1F5F9" },
   fitup:      { label:"Fit-Up",        color:"#0E7490",  bg:"#CFFAFE" },
   fitup_qc:   { label:"Fit-Up QC",     color:"#D97706",  bg:"#FEF3C7" },
+  tpi_fitup:  { label:"Fit-Up TPI",    color:"#D97706",  bg:"#FEF3C7" },
   welding:    { label:"Welding",       color:"#7C3AED",  bg:"#EDE9FE" },
   weld_qc:    { label:"Weld QC",       color:"#D97706",  bg:"#FEF3C7" },
+  tpi_weld:   { label:"Weld TPI",      color:"#D97706",  bg:"#FEF3C7" },
   blasting:   { label:"Blasting",      color:"#B45309",  bg:"#FEF3C7" },
   blast_qc:   { label:"Blast QC",      color:"#D97706",  bg:"#FEF3C7" },
+  tpi_blast:  { label:"Blast TPI",     color:"#D97706",  bg:"#FEF3C7" },
   painting:   { label:"Painting",      color:"#1D4ED8",  bg:"#DBEAFE" },
   paint_qc:   { label:"Paint QC",      color:"#D97706",  bg:"#FEF3C7" },
+  tpi_paint:  { label:"Paint TPI",     color:"#D97706",  bg:"#FEF3C7" },
   complete:   { label:"Complete",      color:"#059669",  bg:"#D1FAE5" },
 };
-const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","welding","weld_qc","blasting","blast_qc","painting","paint_qc","complete"];
+const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","tpi_fitup","welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"];
 
 const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, onBack }) => {
   const [filterOrder,  setFilterOrder]  = useState("all");
@@ -19410,8 +19414,8 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
     // Parts readiness — use best stage per markNo across ALL instances (handles side-cut parts)
     const drgParts = (order.parts||[]).filter(p => p.drawingId === dpr.drawingId && p.fabType === "Fabricate");
     const totalParts = drgParts.length;
-    const STAGE_ORD = ['complete','welding','fitup','fit_up','blasting','painting','cutting_qc','cutting','pending'];
-    const DONE_SET = new Set(["cutting_qc","fitup","fit_up","welding","blasting","painting","complete"]);
+    const STAGE_ORD = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending'];
+    const DONE_SET = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
     const partMarkNos = new Set(drgParts.map(p => p.markNo));
     const bestStage = {};
     (instances||[]).filter(i => partMarkNos.has(i.markNo)).forEach(i => {
