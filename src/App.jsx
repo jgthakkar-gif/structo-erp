@@ -9056,19 +9056,20 @@ const DrawingReleaseBanner = ({ order }) => {
 const TabBasicDetails = ({ order, onChange, canEdit, clients }) => {
   const clientList = clients||[];
   const client = clientList.find(c=>c.id===order.clientId)||{};
+  const amdCount = (field) => (order.amendments||[]).filter(a=>a.field===field).length;
   return (
     <div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
         <div><label style={css.label}>Sales Order No</label><input value={order.id} disabled style={{ ...css.input, opacity:0.6 }} /></div>
         <div><label style={css.label}>Status</label><select value={order.status||"active"} onChange={e=>onChange({...order,status:e.target.value})} disabled={!canEdit} style={css.input}><option value="active">Active</option><option value="completed">Completed</option><option value="on_hold">On Hold</option><option value="cancelled">Cancelled</option></select></div>
         <div><label style={css.label}>Client <span style={{color:T.red}}>*</span></label><select value={order.clientId||""} onChange={e=>onChange({...order,clientId:e.target.value})} disabled={!canEdit} style={css.input}><option value="">Select...</option>{clientList.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-        <div><label style={css.label}>Client PO No</label><input value={order.clientPoNo||""} onChange={e=>onChange({...order,clientPoNo:e.target.value})} disabled={!canEdit} style={css.input} /></div>
+        <div><label style={css.label}>Client PO No {amdCount("Client PO No")>0&&<span style={{marginLeft:6,fontSize:10,color:T.amber}}>AMD ×{amdCount("Client PO No")}</span>}</label><input value={order.clientPoNo||""} onChange={e=>onChange({...order,clientPoNo:e.target.value})} disabled={!canEdit} style={css.input} /></div>
         <div style={{ gridColumn:"span 2" }}><label style={css.label}>Project Description</label><input value={order.projectDesc||""} onChange={e=>onChange({...order,projectDesc:e.target.value})} disabled={!canEdit} style={css.input} /></div>
         <div><label style={css.label}>Order Date</label><input type="date" value={order.orderDate||""} onChange={e=>onChange({...order,orderDate:e.target.value})} disabled={!canEdit} style={css.input} /></div>
-        <div><label style={css.label}>End Date</label><input type="date" value={order.endDate||""} onChange={e=>onChange({...order,endDate:e.target.value})} disabled={!canEdit} style={css.input} /></div>
+        <div><label style={css.label}>End Date {amdCount("End Date")>0&&<span style={{marginLeft:6,fontSize:10,color:T.amber,fontWeight:700}}>AMD ×{amdCount("End Date")}</span>}</label><input type="date" value={order.endDate||""} onChange={e=>onChange({...order,endDate:e.target.value})} disabled={!canEdit} style={css.input} /></div>
         <div><label style={css.label}>Order Unit</label><select value={order.orderUnit||"Ton"} onChange={e=>onChange({...order,orderUnit:e.target.value})} disabled={!canEdit} style={css.input}><option>Ton</option><option>Nos</option><option>Kg</option></select></div>
-        <div><label style={css.label}>Rate per {order.orderUnit||"Unit"} (₹)</label><input type="number" value={order.ratePerUnit||""} onChange={e=>onChange({...order,ratePerUnit:+e.target.value,orderValue:(+e.target.value)*(order.orderQty||0)})} disabled={!canEdit} style={css.input} /></div>
-        <div><label style={css.label}>Order Qty ({order.orderUnit||"Unit"})</label><input type="number" value={order.orderQty||""} onChange={e=>onChange({...order,orderQty:+e.target.value,orderValue:(order.ratePerUnit||0)*(+e.target.value)})} disabled={!canEdit} style={css.input} /></div>
+        <div><label style={css.label}>Rate per {order.orderUnit||"Unit"} (₹) {amdCount("Rate per Unit")>0&&<span style={{marginLeft:6,fontSize:10,color:T.amber}}>AMD ×{amdCount("Rate per Unit")}</span>}</label><input type="number" value={order.ratePerUnit||""} onChange={e=>onChange({...order,ratePerUnit:+e.target.value,orderValue:(+e.target.value)*(order.orderQty||0)})} disabled={!canEdit} style={css.input} /></div>
+        <div><label style={css.label}>Order Qty ({order.orderUnit||"Unit"}) {amdCount("Order Qty")>0&&<span style={{marginLeft:6,fontSize:10,color:T.amber}}>AMD ×{amdCount("Order Qty")}</span>}</label><input type="number" value={order.orderQty||""} onChange={e=>onChange({...order,orderQty:+e.target.value,orderValue:(order.ratePerUnit||0)*(+e.target.value)})} disabled={!canEdit} style={css.input} /></div>
         <div><label style={css.label}>Order Value (₹) — Auto</label><input value={fmt.currency(order.orderValue||0)} disabled style={{ ...css.input, opacity:0.7, color:T.green }} /></div>
         <div><label style={css.label}>GST Rate (%)</label><select value={order.gstRate||18} onChange={e=>onChange({...order,gstRate:+e.target.value})} disabled={!canEdit} style={css.input}><option value={0}>0%</option><option value={5}>5%</option><option value={12}>12%</option><option value={18}>18%</option></select></div>
         <div style={{ gridColumn:"span 2", display:"flex", alignItems:"center", gap:10, padding:"8px 0" }}>
@@ -11364,9 +11365,52 @@ const TabMaterialBalance = ({ order, stock, releases, instances, pos, nestingBat
   );
 };
 const TabFinance = ({ order, onChange, canEdit }) => {
-  const [modal, setModal] = useState(null); const [form, setForm] = useState({});
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState({});
   const amds = order.amendments||[];
   const invoices = (order.milestones||[]).flatMap(m=>(m.invoices||[]).map(inv=>({...inv,milestoneName:m.desc})));
+
+  // Amendable fields — label, key on order, display formatter, input type, update patch builder
+  const AMD_FIELDS = [
+    { label:"End Date",      key:"endDate",      type:"date",   fmt: v=>v?new Date(v).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"}):"—", patch: v=>({endDate:v}) },
+    { label:"Order Qty",     key:"orderQty",     type:"number", fmt: v=>`${v||0} ${order.orderUnit||"Ton"}`, patch: v=>({orderQty:+v, orderValue:(order.ratePerUnit||0)*(+v)}) },
+    { label:"Rate per Unit", key:"ratePerUnit",  type:"number", fmt: v=>`₹${fmt.num(v||0)}/Ton`, patch: v=>({ratePerUnit:+v, orderValue:(+v)*(order.orderQty||0)}) },
+    { label:"Client PO No",  key:"clientPoNo",   type:"text",   fmt: v=>v||"—", patch: v=>({clientPoNo:v}) },
+    { label:"Client PO Doc", key:"clientPoDoc",  type:"text",   fmt: v=>v||"—", patch: v=>({clientPoDoc:v}) },
+    { label:"Order Scope",   key:"projectDesc",  type:"text",   fmt: v=>v||"—", patch: v=>({projectDesc:v}) },
+  ];
+
+  const selField = AMD_FIELDS.find(f=>f.label===form.field);
+
+  const openModal = () => setForm({ date:today(), field:"", newVal:"", reason:"", docLink:"" });
+
+  const onFieldSelect = (label) => {
+    const f = AMD_FIELDS.find(x=>x.label===label);
+    setForm(prev=>({ ...prev, field:label,
+      oldVal: f ? f.fmt(order[f.key]) : "",
+      newVal: f ? String(order[f.key]||"") : "",
+    }));
+  };
+
+  const saveAmendment = () => {
+    if (!form.field||!form.newVal||!form.reason?.trim()) return;
+    const f = AMD_FIELDS.find(x=>x.label===form.field);
+    const amd = {
+      id:`AMD-${Date.now()}`,
+      date:form.date||today(),
+      field:form.field,
+      oldVal:form.oldVal||"",
+      newVal:f ? f.fmt(form.newVal) : form.newVal,
+      reason:form.reason.trim(),
+      docLink:form.docLink?.trim()||"",
+      changedBy:"Current User",
+    };
+    // Actually update the order field + log amendment
+    const patch = f ? f.patch(form.newVal) : {};
+    onChange({ ...order, ...patch, amendments:[...amds, amd] });
+    setModal(null); setForm({});
+  };
+
   return (
     <div>
       <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Invoice Register</div>
@@ -11378,23 +11422,86 @@ const TabFinance = ({ order, onChange, canEdit }) => {
           </table>
         </div>
       )}
-      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
         <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Amendment Log</div>
-        {canEdit&&<button onClick={()=>{setForm({date:today()});setModal("add");}} style={css.btn.primary}>+ Log Amendment</button>}
+        {canEdit&&<button onClick={()=>{openModal();setModal("add");}} style={css.btn.primary}>+ Log Amendment</button>}
       </div>
-      {amds.length===0?<div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:24 }}>No amendments recorded</div>:amds.map((a,i)=>(
-        <div key={a.id} style={{ ...css.card, marginBottom:8, borderLeft:`3px solid ${T.amber}` }}>
-          <div style={{ display:"flex", justifyContent:"space-between" }}>
-            <div>
-              <div style={{ display:"flex", gap:8, marginBottom:4 }}><span style={{ fontSize:11, fontFamily:T.fontMono, color:T.textLow }}>AMD-{String(i+1).padStart(3,"0")}</span><span style={{ fontSize:11, color:T.textMid }}>{fmt.date(a.date)}</span><span style={{ fontSize:11, color:T.textMid }}>by {a.changedBy}</span></div>
-              <div style={{ fontSize:13, color:T.text, marginBottom:4 }}><strong>{a.field}</strong>: <span style={{color:T.red}}>{a.oldVal}</span> → <span style={{color:T.green}}>{a.newVal}</span></div>
-              <div style={{ fontSize:12, color:T.textMid }}>{a.reason}</div>
+      {amds.length===0
+        ? <div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:24 }}>No amendments recorded</div>
+        : amds.map((a,i)=>(
+          <div key={a.id} style={{ ...css.card, marginBottom:8, borderLeft:`3px solid ${T.amber}` }}>
+            <div style={{ display:"flex", justifyContent:"space-between" }}>
+              <div>
+                <div style={{ display:"flex", gap:8, marginBottom:4 }}>
+                  <span style={{ fontSize:11, fontFamily:T.fontMono, color:T.textLow }}>AMD-{String(i+1).padStart(3,"0")}</span>
+                  <span style={{ fontSize:11, color:T.textMid }}>{fmt.date(a.date)}</span>
+                  <span style={{ fontSize:11, color:T.textMid }}>by {a.changedBy}</span>
+                </div>
+                <div style={{ fontSize:13, color:T.text, marginBottom:4 }}>
+                  <strong>{a.field}</strong>: <span style={{color:T.red}}>{a.oldVal}</span> → <span style={{color:T.green,fontWeight:700}}>{a.newVal}</span>
+                </div>
+                <div style={{ fontSize:12, color:T.textMid }}>{a.reason}</div>
+              </div>
+              {a.docLink&&<a href={a.docLink} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none", background:T.amberBg, color:T.amber }}>View Doc</a>}
             </div>
-            {a.docLink&&<a href={a.docLink} target="_blank" rel="noreferrer" style={{ ...css.btn.sm, textDecoration:"none", background:T.amberBg, color:T.amber }}>View Doc</a>}
           </div>
-        </div>
-      ))}
-      {modal==="add"&&<Modal title="Log Amendment" onClose={()=>setModal(null)} width={520}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Field Changed</label><input value={form.field||""} onChange={e=>setForm({...form,field:e.target.value})} style={css.input} placeholder="e.g. orderQty" /></div><div><label style={css.label}>Date</label><input type="date" value={form.date||""} onChange={e=>setForm({...form,date:e.target.value})} style={css.input} /></div><div><label style={css.label}>Old Value</label><input value={form.oldVal||""} onChange={e=>setForm({...form,oldVal:e.target.value})} style={css.input} /></div><div><label style={css.label}>New Value</label><input value={form.newVal||""} onChange={e=>setForm({...form,newVal:e.target.value})} style={css.input} /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Reason</label><textarea value={form.reason||""} onChange={e=>setForm({...form,reason:e.target.value})} style={{ ...css.input, minHeight:60, resize:"vertical" }} /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Amendment Doc (Drive Link)</label><input value={form.docLink||""} onChange={e=>setForm({...form,docLink:e.target.value})} style={css.input} placeholder="Drive link..." /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={()=>{ onChange({...order,amendments:[...amds,{...form,id:`AMD-${Date.now()}`,changedBy:"Current User"}]}); setModal(null); }} style={css.btn.primary}>Save Amendment</button></div></Modal>}
+        ))
+      }
+
+      {modal==="add"&&(
+        <Modal title="Log Amendment" onClose={()=>{setModal(null);setForm({});}} width={520}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+            <div>
+              <label style={css.label}>Field to Amend <span style={{color:T.red}}>*</span></label>
+              <select value={form.field||""} onChange={e=>onFieldSelect(e.target.value)} style={css.input}>
+                <option value="">Select field…</option>
+                {AMD_FIELDS.map(f=><option key={f.key} value={f.label}>{f.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={css.label}>Amendment Date</label>
+              <input type="date" value={form.date||today()} onChange={e=>setForm(p=>({...p,date:e.target.value}))} style={css.input} />
+            </div>
+            {form.field&&(
+              <>
+                <div>
+                  <label style={css.label}>Current Value</label>
+                  <input value={form.oldVal||""} disabled style={{ ...css.input, opacity:0.7, background:T.bgInput }} />
+                </div>
+                <div>
+                  <label style={css.label}>New Value <span style={{color:T.red}}>*</span></label>
+                  {selField?.type==="date"
+                    ? <input type="date" value={form.newVal||""} onChange={e=>setForm(p=>({...p,newVal:e.target.value}))} style={css.input} />
+                    : selField?.type==="number"
+                    ? <input type="number" value={form.newVal||""} onChange={e=>setForm(p=>({...p,newVal:e.target.value}))} style={css.input} />
+                    : <input value={form.newVal||""} onChange={e=>setForm(p=>({...p,newVal:e.target.value}))} style={css.input} />
+                  }
+                </div>
+              </>
+            )}
+            <div style={{ gridColumn:"span 2" }}>
+              <label style={css.label}>Reason <span style={{color:T.red}}>*</span></label>
+              <textarea value={form.reason||""} onChange={e=>setForm(p=>({...p,reason:e.target.value}))} rows={3}
+                placeholder="e.g. Client requested delivery extension — ref email 24 Apr 2026"
+                style={{ ...css.input, resize:"vertical" }} />
+            </div>
+            <div style={{ gridColumn:"span 2" }}>
+              <label style={css.label}>Supporting Document (optional)</label>
+              <input value={form.docLink||""} onChange={e=>setForm(p=>({...p,docLink:e.target.value}))} style={css.input} placeholder="Drive link…" />
+            </div>
+          </div>
+          <div style={{ padding:"10px 14px", background:T.amberBg, borderRadius:6, border:`1px solid ${T.amber}44`, fontSize:11, color:T.amber, marginBottom:14 }}>
+            ⚠ This will update the order field immediately and log the change permanently.
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+            <button onClick={()=>{setModal(null);setForm({});}} style={css.btn.ghost}>Cancel</button>
+            <button onClick={saveAmendment} disabled={!form.field||!form.newVal||!form.reason?.trim()}
+              style={{ ...css.btn.primary, opacity:(form.field&&form.newVal&&form.reason?.trim())?1:0.45 }}>
+              ✓ Save Amendment
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
