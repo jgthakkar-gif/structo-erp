@@ -10165,7 +10165,24 @@ const TPI_FIELD_POOL = [
 const HP_LABELS = { fit_up:"Fit-Up", welding:"Welding", blasting:"Blasting", painting:"Painting", rm_inspection:"RM Inspection" };
 const HP_DPR_STAGE = { fit_up:"tpi_fitup", welding:"tpi_weld", blasting:"tpi_blast", painting:"tpi_paint" };
 const HP_PREV_STAGE = { fit_up:"fitup", welding:"welding", blasting:"blasting", painting:"painting" };
-const HP_NEXT_STAGE = { fit_up:"welding", welding:"complete", blasting:"painting", painting:"complete" };
+const HP_NEXT_STAGE = { fit_up:"welding", welding:"__check_order__", blasting:"painting", painting:"complete" };
+// Get the actual next stage after TPI clearance for a given hold point and DPR
+const getHpNextStage = (hp, dpr, orders) => {
+  const order = (orders||[]).find(o=>o.id===dpr?.orderId);
+  const hasPaint = (order?.quality?.paintSpecs||[]).length>0 || (order?.quality?.paintCoats||[]).length>0;
+  if (hp === "welding") {
+    const hasBlasting = order?.quality?.blastingRequired !== false;
+    if (hasBlasting) return "blasting";
+    if (hasPaint) return "painting";
+    return "complete";
+  }
+  if (hp === "blasting") {
+    if (hasPaint) return "painting";
+    return "complete";
+  }
+  // fit_up → welding, painting → complete
+  return HP_NEXT_STAGE[hp] || "complete";
+};
 
 // Resolve a field value from row context {order, drawing, part, tpiRecord}
 function resolveTpiField(fieldId, ctx) {
@@ -10497,7 +10514,10 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
   });
 
   const [activeHp, setActiveHp] = useState(activeTabs[0]||"welding");
-  const countForHp = hp => (dprs||[]).filter(d=>d.currentStage===HP_DPR_STAGE[hp]).length;
+  const countForHp = hp => {
+    const dprStage = HP_DPR_STAGE[hp];
+    return (dprs||[]).filter(d=>d.currentStage===dprStage).length;
+  };
   const updDpr = (id, patch) => setDprs(prev=>prev.map(d=>d.id===id?{...d,...patch}:d));
 
   const advInstances = (dpr, toStage) => {
@@ -10513,12 +10533,14 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
     const dprStage = HP_DPR_STAGE[hp];
     const nextStage = HP_NEXT_STAGE[hp];
 
-    // Awaiting offer: at TPI stage with no offer yet
-    const awaitingOffer = (dprs||[]).filter(d=>d.currentStage===dprStage&&!d.tpiOfferedAt);
-    // Offered: at TPI stage with offer recorded, no outcome
-    const offered = (dprs||[]).filter(d=>d.currentStage===dprStage&&d.tpiOfferedAt&&!d.tpiClearedAt&&!d.tpiFailedAt);
-    // Cleared (passed or waived)
-    const cleared = (dprs||[]).filter(d=>(d.tpiClearedAt||d.tpiWaived)&&(d.tpiRecords||[]).some(r=>r.holdPoint===hp));
+    // Awaiting offer: at TPI stage with no offer record for THIS hold point
+    const hasOfferForHp = d => (d.tpiRecords||[]).some(r=>r.holdPoint===hp&&r.offeredAt);
+    const hasClearanceForHp = d => (d.tpiRecords||[]).some(r=>r.holdPoint===hp&&(r.outcome||r.waivedBy));
+    const awaitingOffer = (dprs||[]).filter(d=>d.currentStage===dprStage&&!hasOfferForHp(d));
+    // Offered: at TPI stage with offer recorded for this hold point, no outcome yet
+    const offered = (dprs||[]).filter(d=>d.currentStage===dprStage&&hasOfferForHp(d)&&!hasClearanceForHp(d));
+    // Cleared (passed or waived) for this hold point
+    const cleared = (dprs||[]).filter(d=>hasClearanceForHp(d)&&(d.tpiRecords||[]).some(r=>r.holdPoint===hp));
 
     const [section, setSection] = useState("offer");
     const [selected, setSelected] = useState(new Set()); // selected DPR IDs for batch offer
@@ -10562,10 +10584,14 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
       [...selected].forEach(dprId=>{
         const dpr=(dprs||[]).find(d=>d.id===dprId);
         if(!dpr) return;
+        // Store offer per holdPoint in tpiRecords — not top-level tpiOfferedAt
+        // This allows each stage's TPI to have its own offer record independently
         updDpr(dprId,{
-          tpiOfferedAt:offerForm.offeredAt, tpiInspector:offerForm.inspector,
-          tpiExpectedDate:offerForm.expectedDate, tpiBatchId:batchId,
-          tpiRecords:[...(dpr.tpiRecords||[]),{holdPoint:hp,offeredAt:offerForm.offeredAt,inspector:offerForm.inspector,expectedDate:offerForm.expectedDate,scope:offerForm.scope||`${HP_LABELS[hp]} inspection`,offeredBy:user.username,batchId}],
+          tpiBatchId:batchId,
+          tpiRecords:[...(dpr.tpiRecords||[]).filter(r=>!(r.holdPoint===hp&&!r.outcome)),
+            {holdPoint:hp,offeredAt:offerForm.offeredAt,inspector:offerForm.inspector,
+             expectedDate:offerForm.expectedDate,scope:offerForm.scope||`${HP_LABELS[hp]} inspection`,
+             offeredBy:user.username,batchId}],
           stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_offered",by:user.username,at:ts,inspector:offerForm.inspector,batchId}]
         });
       });
@@ -10579,6 +10605,7 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
         const dpr=(dprs||[]).find(d=>d.id===dprId); if(!dpr) return;
         const outcome = om.outcome||"pass";
         const isPass = outcome==="pass"||outcome==="conditional_pass"||outcome==="not_inspected";
+        const nextStage = getHpNextStage(hp, dpr, orders);
         const existing = dpr.tpiRecords||[];
         const updRec = [...existing.filter(r=>!(r.holdPoint===hp&&!r.outcome)),
           {...(existing.find(r=>r.holdPoint===hp&&r.offeredAt&&!r.outcome)||{}),
@@ -10599,13 +10626,14 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
       const reason = waiveMap[dprId]; if(!reason?.trim()) return;
       const ts = new Date().toISOString();
       const dpr=(dprs||[]).find(d=>d.id===dprId); if(!dpr) return;
+      const resolvedNext = getHpNextStage(hp, dpr, orders);
       updDpr(dprId,{
-        tpiWaived:true, tpiWaivedReason:reason, tpiClearedAt:ts,
-        currentStage:nextStage, currentStatus:nextStage==="complete"?"complete":"in_progress",
-        tpiRecords:[...(dpr.tpiRecords||[]),{holdPoint:hp,outcome:"waived",reason,waivedBy:user.username,at:ts}],
+        currentStage:resolvedNext, currentStatus:resolvedNext==="complete"?"complete":"in_progress",
+        tpiRecords:[...(dpr.tpiRecords||[]).filter(r=>!(r.holdPoint===hp&&!r.outcome)),
+          {holdPoint:hp,outcome:"waived",reason,waivedBy:user.username,at:ts}],
         stageHistory:[...(dpr.stageHistory||[]),{stage:dprStage,action:"tpi_waived",reason,by:user.username,at:ts}]
       });
-      advInstances(dpr,nextStage);
+      advInstances(dpr,resolvedNext);
       setWaiveMap(p=>({...p,[dprId]:""}));
     };
 
@@ -18677,6 +18705,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
 
     const [selCoat, setSelCoat] = useState(null); // {dprId, coatIdx}
     const [selFinal, setSelFinal] = useState(null);
+    const [rejectMode, setRejectMode] = useState(false);
     const [form, setForm] = useState({});
 
     // ── Per-coat approval ──────────────────────────────────────────────────────
@@ -18746,7 +18775,6 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
       const entry = coatQueue.find(e=>e.dpr.id===selCoat.dprId&&e.ci===selCoat.ci);
       if (!entry) { setSelCoat(null); return null; }
       const {dpr, order, coat, specCoat} = entry;
-      const [rejectMode, setRejectMode] = useState(false);
       return (
         <div>
           <button onClick={()=>{setSelCoat(null);setForm({});setRejectMode(false);}} style={{...css.btn.ghost,marginBottom:16}}>← Back to queue</button>
