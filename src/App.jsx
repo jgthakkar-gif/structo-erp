@@ -5509,6 +5509,9 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       vendorName:v?.name||combineForm.vendorName||"", poDate:combineForm.poDate||today(),
       expectedDelivery:combineForm.expectedDelivery||"", remarks:combineForm.notes||"",
       status:"pending", sourceType:"nesting",
+      poType:combineForm.poType||"rm",
+      transportScope:combineForm.transportScope||"",
+      paymentTerms:combineForm.paymentTerms||[],
       prIds:selectedPrs,
       servedOrders:[], coveredOrders:[], includesStock:false,
       totalValue:allLines.reduce((s,l)=>s+(l.totalPrice||0),0),
@@ -5556,6 +5559,9 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       vendorName:v?.name||"", poDate:csf.poDate||today(),
       expectedDelivery:csf.expectedDelivery||"", remarks:csf.notes||"",
       status:"pending", sourceType:"nesting", prId:pr.id,
+      poType:csf.poType||"rm",
+      transportScope:csf.transportScope||"",
+      paymentTerms:csf.paymentTerms||[],
       servedOrders:[], coveredOrders:[], includesStock:false,
       lines, grns:[], createdBy:user.name, createdDate:today(),
     };
@@ -5852,7 +5858,44 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             <Field label="PO Date"><Input type="date" value={combineForm.poDate||""} onChange={e=>setCombineForm(f=>({...f,poDate:e.target.value}))} /></Field>
             <Field label="Expected Delivery"><Input type="date" value={combineForm.expectedDelivery||""} onChange={e=>setCombineForm(f=>({...f,expectedDelivery:e.target.value}))} /></Field>
             <Field label="Notes"><Input value={combineForm.notes||""} onChange={e=>setCombineForm(f=>({...f,notes:e.target.value}))} placeholder="Optional..." /></Field>
+            <Field label="PO Type">
+              <Sel value={combineForm.poType||"rm"} onChange={e=>setCombineForm(f=>({...f,poType:e.target.value}))}>
+                <option value="rm">RM (Raw Material)</option>
+                <option value="welding_consumable">Welding Consumable</option>
+                <option value="cutting_consumable">Cutting Consumable</option>
+                <option value="blasting_consumable">Blasting Consumable</option>
+                <option value="paint_consumable">Paint Consumable</option>
+                <option value="paint">Paint (tracked separately)</option>
+                <option value="general">General</option>
+              </Sel>
+            </Field>
+            <Field label="Transport Scope">
+              <Sel value={combineForm.transportScope||""} onChange={e=>setCombineForm(f=>({...f,transportScope:e.target.value}))}>
+                <option value="">Select...</option>
+                <option value="supplier">Supplier's scope (FOR destination)</option>
+                <option value="buyer">Buyer's scope (ex-works)</option>
+                <option value="partial">Partial — see notes</option>
+              </Sel>
+            </Field>
           </G2>
+          {/* Payment Terms for combined PO */}
+          <div style={{ margin:"8px 0 12px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em" }}>Payment Terms</div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                {(()=>{ const total=(combineForm.paymentTerms||[]).reduce((s,t)=>s+(+t.pct||0),0); return <span style={{ fontSize:11, fontWeight:700, color:total===100?T.green:total>100?T.red:T.amber }}>{total}% of 100%</span>; })()}
+                <button onClick={()=>setCombineForm(f=>({...f,paymentTerms:[...(f.paymentTerms||[]),{id:Date.now(),pct:"",milestone:"",daysFromMilestone:""}]}))} style={{ ...css.btn.sm }}>+ Add Term</button>
+              </div>
+            </div>
+            {(combineForm.paymentTerms||[]).map((term,ti)=>(
+              <div key={term.id||ti} style={{ display:"grid", gridTemplateColumns:"70px 1fr 70px auto", gap:6, marginBottom:5, alignItems:"center" }}>
+                <input type="number" min={0} max={100} value={term.pct||""} onChange={e=>setCombineForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,pct:e.target.value}:t)}))} style={{ ...css.input, fontSize:11 }} placeholder="%" />
+                <input value={term.milestone||""} onChange={e=>setCombineForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,milestone:e.target.value}:t)}))} style={{ ...css.input, fontSize:11 }} placeholder="Milestone / condition" />
+                <input type="number" min={0} value={term.daysFromMilestone||""} onChange={e=>setCombineForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,daysFromMilestone:e.target.value}:t)}))} style={{ ...css.input, fontSize:11 }} placeholder="Days" />
+                <button onClick={()=>setCombineForm(f=>({...f,paymentTerms:f.paymentTerms.filter((_,i)=>i!==ti)}))} style={{ ...css.btn.ghost, color:T.red, padding:"3px 6px" }}>✕</button>
+              </div>
+            ))}
+          </div>
           {(()=>{
             const matCodes = [...new Set((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>(pr.lots||[]).map(l=>l.matCode)))];
             const anyRateZero = matCodes.some(mc=>!(parseFloat(combineForm.rates?.[mc])||0));
@@ -5918,7 +5961,43 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               <Field label="PO Date"><Input type="date" value={csf.poDate||""} onChange={e=>setConvertSingleForm(f=>({...f,poDate:e.target.value}))} /></Field>
               <Field label="Expected Delivery"><Input type="date" value={csf.expectedDelivery||""} onChange={e=>setConvertSingleForm(f=>({...f,expectedDelivery:e.target.value}))} /></Field>
               <Field label="Notes"><Input value={csf.notes||""} onChange={e=>setConvertSingleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional..." /></Field>
+              <Field label="PO Type">
+                <Sel value={csf.poType||"rm"} onChange={e=>setConvertSingleForm(f=>({...f,poType:e.target.value}))}>
+                  <option value="rm">RM (Raw Material)</option>
+                  <option value="welding_consumable">Welding Consumable</option>
+                  <option value="cutting_consumable">Cutting Consumable</option>
+                  <option value="blasting_consumable">Blasting Consumable</option>
+                  <option value="paint_consumable">Paint Consumable</option>
+                  <option value="paint">Paint (tracked separately)</option>
+                  <option value="general">General</option>
+                </Sel>
+              </Field>
+              <Field label="Transport Scope">
+                <Sel value={csf.transportScope||""} onChange={e=>setConvertSingleForm(f=>({...f,transportScope:e.target.value}))}>
+                  <option value="">Select...</option>
+                  <option value="supplier">Supplier's scope (FOR destination)</option>
+                  <option value="buyer">Buyer's scope (ex-works)</option>
+                  <option value="partial">Partial — see notes</option>
+                </Sel>
+              </Field>
             </G2>
+            <div style={{ margin:"12px 0 4px" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em" }}>Payment Terms</div>
+                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  {(()=>{ const total=(csf.paymentTerms||[]).reduce((s,t)=>s+(+t.pct||0),0); return <span style={{ fontSize:11, fontWeight:700, color:total===100?T.green:total>100?T.red:T.amber }}>{total}% of 100%</span>; })()}
+                  <button onClick={()=>setConvertSingleForm(f=>({...f,paymentTerms:[...(f.paymentTerms||[]),{id:Date.now(),pct:"",milestone:"",daysFromMilestone:""}]}))} style={{ ...css.btn.sm }}>+ Add Term</button>
+                </div>
+              </div>
+              {(csf.paymentTerms||[]).map((term,ti)=>(
+                <div key={term.id||ti} style={{ display:"grid", gridTemplateColumns:"70px 1fr 70px auto", gap:6, marginBottom:5, alignItems:"center" }}>
+                  <input type="number" min={0} max={100} value={term.pct||""} onChange={e=>setConvertSingleForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,pct:e.target.value}:t)}))} style={{ ...css.input, fontSize:11 }} placeholder="%" />
+                  <input value={term.milestone||""} onChange={e=>setConvertSingleForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,milestone:e.target.value}:t)}))} style={{ ...css.input, fontSize:11 }} placeholder="Milestone / condition" />
+                  <input type="number" min={0} value={term.daysFromMilestone||""} onChange={e=>setConvertSingleForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,daysFromMilestone:e.target.value}:t)}))} style={{ ...css.input, fontSize:11 }} placeholder="Days" />
+                  <button onClick={()=>setConvertSingleForm(f=>({...f,paymentTerms:f.paymentTerms.filter((_,i)=>i!==ti)}))} style={{ ...css.btn.ghost, color:T.red, padding:"3px 6px" }}>✕</button>
+                </div>
+              ))}
+            </div>
             <div style={{ marginTop:14 }}>
               {(()=>{
                 const anyRateZero = lineGroups.some(g=>g.dimLines.some(d=>!(d.lineRate>0)));
@@ -6016,6 +6095,26 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             </Field>
             <Field label="PO Date" required><Input type="date" value={form.poDate||""} onChange={e=>setForm(f=>({...f,poDate:e.target.value}))} /></Field>
             <Field label="Expected Delivery"><Input type="date" value={form.expectedDelivery||""} onChange={e=>setForm(f=>({...f,expectedDelivery:e.target.value}))} /></Field>
+            <Field label="PO Type">
+              <Sel value={form.poType||""} onChange={e=>setForm(f=>({...f,poType:e.target.value}))}>
+                <option value="">Select type...</option>
+                <option value="rm">RM (Raw Material)</option>
+                <option value="welding_consumable">Welding Consumable</option>
+                <option value="cutting_consumable">Cutting Consumable</option>
+                <option value="blasting_consumable">Blasting Consumable</option>
+                <option value="paint_consumable">Paint Consumable</option>
+                <option value="paint">Paint (tracked separately)</option>
+                <option value="general">General</option>
+              </Sel>
+            </Field>
+            <Field label="Transport Scope">
+              <Sel value={form.transportScope||""} onChange={e=>setForm(f=>({...f,transportScope:e.target.value}))}>
+                <option value="">Select...</option>
+                <option value="supplier">Supplier's scope (FOR destination)</option>
+                <option value="buyer">Buyer's scope (ex-works)</option>
+                <option value="partial">Partial — see remarks</option>
+              </Sel>
+            </Field>
             <Field label="Orders Served">
               <div style={{ display:"flex", gap:8 }}>
                 {orders.map(o=>(
@@ -6045,6 +6144,43 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             </Field>
             <Field label="Remarks"><Input value={form.remarks||""} onChange={e=>setForm(f=>({...f,remarks:e.target.value}))} /></Field>
           </G2>
+          {/* Payment Terms */}
+          <div style={{ marginTop:12, marginBottom:4 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.06em" }}>Payment Terms</div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                {(()=>{
+                  const terms = form.paymentTerms||[];
+                  const total = terms.reduce((s,t)=>s+(+t.pct||0),0);
+                  return <span style={{ fontSize:11, fontWeight:700, color:total===100?T.green:total>100?T.red:T.amber }}>{total}% of 100%</span>;
+                })()}
+                <button onClick={()=>setForm(f=>({...f,paymentTerms:[...(f.paymentTerms||[]),{id:Date.now(),pct:"",milestone:"",daysFromMilestone:""}]}))} style={{ ...css.btn.sm }}>+ Add Term</button>
+              </div>
+            </div>
+            {(form.paymentTerms||[]).length===0 && (
+              <div style={{ fontSize:11, color:T.textLow, padding:"8px 0" }}>No payment terms added. Click "+ Add Term" to define payment schedule.</div>
+            )}
+            {(form.paymentTerms||[]).map((term,ti)=>(
+              <div key={term.id||ti} style={{ display:"grid", gridTemplateColumns:"80px 1fr 80px auto", gap:8, marginBottom:6, alignItems:"center" }}>
+                <div>
+                  <label style={css.label}>% of PO</label>
+                  <input type="number" min={0} max={100} value={term.pct||""} onChange={e=>setForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,pct:e.target.value}:t)}))}
+                    style={{ ...css.input, fontSize:12 }} placeholder="e.g. 40" />
+                </div>
+                <div>
+                  <label style={css.label}>Milestone / Condition</label>
+                  <input value={term.milestone||""} onChange={e=>setForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,milestone:e.target.value}:t)}))}
+                    style={{ ...css.input, fontSize:12 }} placeholder="e.g. Against delivery + QC clearance" />
+                </div>
+                <div>
+                  <label style={css.label}>Days</label>
+                  <input type="number" min={0} value={term.daysFromMilestone||""} onChange={e=>setForm(f=>({...f,paymentTerms:f.paymentTerms.map((t,i)=>i===ti?{...t,daysFromMilestone:e.target.value}:t)}))}
+                    style={{ ...css.input, fontSize:12 }} placeholder="0" />
+                </div>
+                <button onClick={()=>setForm(f=>({...f,paymentTerms:f.paymentTerms.filter((_,i)=>i!==ti)}))} style={{ ...css.btn.ghost, color:T.red, padding:"3px 8px", marginTop:16 }}>✕</button>
+              </div>
+            ))}
+          </div>
           <div style={{ marginTop:12, marginBottom:8 }}>
             <SectionHd title="PO Lines" action={
               <div style={{ display:"flex", gap:6 }}>
@@ -11395,8 +11531,21 @@ const TabMaterialBalance = ({ order, stock, releases, instances, pos, nestingBat
 const TabFinance = ({ order, onChange, canEdit }) => {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [finTab, setFinTab] = useState("budget");
   const amds = order.amendments||[];
   const invoices = (order.milestones||[]).flatMap(m=>(m.invoices||[]).map(inv=>({...inv,milestoneName:m.desc})));
+  const qty = order.orderQty||0;
+  const budget = order.budget||{};
+  const updBudget = (k,v) => onChange({...order, budget:{...budget, [k]:v}});
+
+  // Budget calculations
+  const rmBudget        = qty*(budget.rmRatePerT||0);
+  const paintBudget     = qty*(budget.paintRatePerT||0);
+  const contractorBudget= qty*(budget.contractorRatePerT||0);
+  const transportBudget = qty*(budget.transportRatePerT||0);
+  const totalBudget     = rmBudget+paintBudget+contractorBudget+transportBudget;
+  const grossMarginEst  = (order.orderValue||0)-totalBudget;
+  const marginPct       = (order.orderValue||0)>0?Math.round(grossMarginEst/(order.orderValue||1)*100):0;
 
   // Amendable fields — label, key on order, display formatter, input type, update patch builder
   const AMD_FIELDS = [
@@ -11441,6 +11590,84 @@ const TabFinance = ({ order, onChange, canEdit }) => {
 
   return (
     <div>
+      {/* Finance sub-tabs */}
+      <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+        {[["budget","Budget"],["invoices","Invoice Register"],["amendments","Amendment Log"]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>setFinTab(id)} style={{ padding:"8px 16px", fontSize:12, fontWeight:finTab===id?700:400, color:finTab===id?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:finTab===id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer" }}>{lbl}</button>
+        ))}
+      </div>
+
+      {/* Budget tab */}
+      {finTab==="budget"&&(
+        <div>
+          <div style={{ ...css.card, marginBottom:16 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>Budget — Cost per Tonne</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+              <div>
+                <label style={css.label}>RM Cost (₹/T)</label>
+                <input type="number" value={budget.rmRatePerT||""} disabled={!canEdit}
+                  onChange={e=>updBudget("rmRatePerT",+e.target.value)} style={css.input} placeholder="e.g. 55000" />
+              </div>
+              <div>
+                <label style={css.label}>Paint Cost (₹/T) <span style={{fontSize:10,color:T.textLow}}>— typically 7–15% of order rate</span></label>
+                <input type="number" value={budget.paintRatePerT||""} disabled={!canEdit}
+                  onChange={e=>updBudget("paintRatePerT",+e.target.value)} style={css.input} placeholder="e.g. 8000" />
+              </div>
+              <div>
+                <label style={css.label}>Contractor Cost (₹/T)</label>
+                <input type="number" value={budget.contractorRatePerT||""} disabled={!canEdit}
+                  onChange={e=>updBudget("contractorRatePerT",+e.target.value)} style={css.input} placeholder="e.g. 12000" />
+              </div>
+              <div>
+                <label style={css.label}>Transport / Outbound (₹/T)</label>
+                <input type="number" value={budget.transportRatePerT||""} disabled={!canEdit}
+                  onChange={e=>updBudget("transportRatePerT",+e.target.value)} style={css.input} placeholder="e.g. 2000" />
+              </div>
+            </div>
+            {totalBudget>0&&(
+              <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:12 }}>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10, marginBottom:12 }}>
+                  {[
+                    ["RM Budget",        rmBudget,         "blue"],
+                    ["Paint Budget",      paintBudget,      "amber"],
+                    ["Contractor Budget", contractorBudget, "purple"],
+                    ["Transport Budget",  transportBudget,  "teal"],
+                  ].map(([lbl,val,col])=>(
+                    <div key={lbl} style={{ background:T.bgInput, borderRadius:6, padding:"8px 12px" }}>
+                      <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:2 }}>{lbl}</div>
+                      <div style={{ fontSize:14, fontWeight:700, color:T.accent }}>{fmt.currency(val)}</div>
+                      <div style={{ fontSize:10, color:T.textLow }}>{(order.orderValue||0)>0?Math.round(val/(order.orderValue||1)*100):0}% of order</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+                  <div style={{ background:T.bgInput, borderRadius:6, padding:"10px 14px" }}>
+                    <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:2 }}>Total Direct Cost</div>
+                    <div style={{ fontSize:16, fontWeight:700, color:T.text }}>{fmt.currency(totalBudget)}</div>
+                  </div>
+                  <div style={{ background:T.bgInput, borderRadius:6, padding:"10px 14px" }}>
+                    <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:2 }}>Order Value</div>
+                    <div style={{ fontSize:16, fontWeight:700, color:T.green }}>{fmt.currency(order.orderValue||0)}</div>
+                  </div>
+                  <div style={{ background:marginPct>=20?T.greenBg:marginPct>=10?T.amberBg:T.redBg, borderRadius:6, padding:"10px 14px", border:`1px solid ${marginPct>=20?T.green:marginPct>=10?T.amber:T.red}44` }}>
+                    <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:2 }}>Gross Margin Est.</div>
+                    <div style={{ fontSize:16, fontWeight:700, color:marginPct>=20?T.green:marginPct>=10?T.amber:T.red }}>{fmt.currency(grossMarginEst)} <span style={{fontSize:12}}>({marginPct}%)</span></div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          {totalBudget===0&&canEdit&&(
+            <div style={{ ...css.card, background:T.bgInput, textAlign:"center", padding:24, color:T.textLow, fontSize:12 }}>
+              Enter cost rates above to see budget breakdown and gross margin estimate.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Invoice Register tab */}
+      {finTab==="invoices"&&(
+      <div>
       <div style={{ fontSize:14, fontWeight:700, color:T.text, marginBottom:12 }}>Invoice Register</div>
       {invoices.length===0?<div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:24 }}>No invoices raised yet. Add from Payment Milestones tab.</div>:(
         <div style={{ overflowX:"auto", marginBottom:20 }}>
@@ -11450,6 +11677,11 @@ const TabFinance = ({ order, onChange, canEdit }) => {
           </table>
         </div>
       )}
+      </div>
+      )}
+      {/* Amendment Log tab */}
+      {finTab==="amendments"&&(
+      <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
         <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Amendment Log</div>
         {canEdit&&<button onClick={()=>{openModal();setModal("add");}} style={css.btn.primary}>+ Log Amendment</button>}
@@ -11529,6 +11761,8 @@ const TabFinance = ({ order, onChange, canEdit }) => {
             </button>
           </div>
         </Modal>
+      )}
+      </div>
       )}
     </div>
   );
