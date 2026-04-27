@@ -8951,80 +8951,630 @@ const ToolsModule = ({ user, orders, materials, nestingRuns, setNestingRuns }) =
 // ═══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
-const Dashboard = ({ user, pos, stock, purchaseReqs, orders }) => {
-  const roleLabel = ROLES_LABEL[user.role]||user.role;
-  const activePOs = pos.filter(p=>p.status!=="cancelled"&&p.status!=="fully_received");
-  const pendingQC = stock.filter(s=>s.rmQcStatus==="pending");
-  const clientPend = stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="pending");
-  const availStock = stock.filter(s=>s.status==="available"&&s.clientInspStatus==="approved");
+const Dashboard = ({ user, pos, stock, purchaseReqs, orders, dprs, instances, nestingBatches, releases, vendors }) => {
+  // ── Tab access by role ──────────────────────────────────────────────────────
+  const DASH_TABS = [
+    { id:"overview",    label:"Overview",    roles:["super_admin","planning_admin","production_engineer","floor_planner","supervisor","qc_admin","store_admin","finance_admin"] },
+    { id:"production",  label:"Production",  roles:["super_admin","planning_admin","production_engineer","floor_planner","supervisor"] },
+    { id:"finance",     label:"Finance",     roles:["super_admin","finance_admin"] },
+    { id:"qc",          label:"QC",          roles:["super_admin","qc_admin","qc_user"] },
+    { id:"stock",       label:"Stock / WIP", roles:["super_admin","store_admin","finance_admin"] },
+  ];
+  const visibleTabs = DASH_TABS.filter(t=>t.roles.includes(user.role));
+  const [tab, setTab] = useState(visibleTabs[0]?.id||"overview");
+  const [periodMode, setPeriodMode] = useState("mtd"); // mtd | ytd
+  const [funnelMode, setFunnelMode] = useState("weight"); // weight | nos
+  const [selOrderIds, setSelOrderIds] = useState([]); // empty = all orders
 
+  // ── Date helpers ────────────────────────────────────────────────────────────
+  const now = new Date();
+  const mtdStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const fyStart  = new Date(now.getMonth()>=3 ? now.getFullYear() : now.getFullYear()-1, 3, 1); // April 1
+  const inMtd    = d => d && new Date(d) >= mtdStart;
+  const inYtd    = d => d && new Date(d) >= fyStart;
+  const inPeriod = d => periodMode==="mtd" ? inMtd(d) : inYtd(d);
+
+  // ── Core computed data ──────────────────────────────────────────────────────
+  const activeOrders  = (orders||[]).filter(o=>o.status==="active");
+  const totalWeightT  = activeOrders.reduce((s,o)=>s+(o.orderQty||0),0);
+
+  // ── Order filter helpers ────────────────────────────────────────────────────
+  const filteredOrders = selOrderIds.length===0 ? activeOrders : activeOrders.filter(o=>selOrderIds.includes(o.id));
+  const filteredDprs   = selOrderIds.length===0 ? (dprs||[]) : (dprs||[]).filter(d=>selOrderIds.includes(d.orderId));
+  const toggleOrder = (id) => setSelOrderIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+
+  const OrderFilterBar = () => (
+    <div style={{ ...css.card, marginBottom:16, display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", padding:"10px 14px" }}>
+      <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.05em", marginRight:4 }}>Order:</div>
+      <button onClick={()=>setSelOrderIds([])} style={{ padding:"4px 12px", fontSize:11, fontWeight:selOrderIds.length===0?700:400, borderRadius:99, border:`1px solid ${selOrderIds.length===0?T.accent:T.border}`, background:selOrderIds.length===0?T.accent:"transparent", color:selOrderIds.length===0?"#fff":T.textMid, cursor:"pointer" }}>
+        All
+      </button>
+      {activeOrders.map(o=>(
+        <button key={o.id} onClick={()=>toggleOrder(o.id)} style={{ padding:"4px 12px", fontSize:11, fontWeight:selOrderIds.includes(o.id)?700:400, borderRadius:99, border:`1px solid ${selOrderIds.includes(o.id)?T.accent:T.border}`, background:selOrderIds.includes(o.id)?T.accent:"transparent", color:selOrderIds.includes(o.id)?"#fff":T.textMid, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+          {o.id}
+          <span style={{ fontSize:10, color:selOrderIds.includes(o.id)?"rgba(255,255,255,0.7)":T.textLow }}>{o.clientName?.split(" ")[0]}</span>
+        </button>
+      ))}
+      {selOrderIds.length>0&&(
+        <span style={{ fontSize:11, color:T.textLow, marginLeft:4 }}>{filteredOrders.length} order{filteredOrders.length!==1?"s":""} selected</span>
+      )}
+    </div>
+  );
+
+  // GRN weight helper
+  const grnWtForPOs = (filterFn) => {
+    return (pos||[]).filter(filterFn).reduce((s,po)=>{
+      return s + (po.grns||[]).reduce((gs,grn)=>{
+        if (!inPeriod(grn.grnDate)) return gs;
+        return gs + (grn.lines||[]).reduce((ls,l)=>ls+(l.wtReceived||0),0);
+      },0);
+    },0)/1000; // convert kg to T
+  };
+  const mtdPurchaseT = grnWtForPOs(po=>true);
+
+  // Dispatch — count DPRs at complete stage with completedAt in period
+  // (using stageHistory to find when they completed)
+  const dispatchDprs = (dprs||[]).filter(d=>{
+    if(d.currentStage!=="complete") return false;
+    const lastStage = (d.stageHistory||[]).filter(h=>h.stage==="complete"||h.action==="approved").slice(-1)[0];
+    return inPeriod(lastStage?.at||d.paintQcApprovedAt||d.weldQcApprovedAt||"");
+  });
+  const dispatchT = dispatchDprs.reduce((s,d)=>{
+    const order=(orders||[]).find(o=>o.id===d.orderId)||{};
+    const drawing=(order.drawings||[]).find(dr=>dr.id===d.drawingId)||{};
+    return s+(drawing.totalWt||0)/1000;
+  },0);
+
+  // ── Funnel counts / weight ──────────────────────────────────────────────────
+  const allDprs = dprs||[];
+  const DONE_STAGES = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+  const WELD_DONE   = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+  const PAINT_DONE  = new Set(["paint_qc","tpi_paint","complete"]);
+  const COMPLETE    = new Set(["complete"]);
+
+  // Per-drawing best stage
+  const drawingStageMap = {};
+  (orders||[]).forEach(o=>{
+    (o.drawings||[]).forEach(d=>{
+      const dpr = allDprs.find(dp=>dp.drawingId===d.id&&dp.orderId===o.id);
+      drawingStageMap[`${o.id}:${d.id}`] = { drawing:d, order:o, dpr, stage:dpr?.currentStage||"pending" };
+    });
+  });
+  const allDrawings = Object.values(drawingStageMap);
+  const totalDrawings = allDrawings.length;
+  const totalDrawingWt = allDrawings.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0);
+
+  // MRP released = has a nesting batch
+  const nestingDrawingIds = new Set((nestingBatches||[]).flatMap(b=>(b.lots||[]).flatMap(l=>(l.sheets||[]).flatMap(s=>(s.parts||[]).map(p=>{
+    const parts = (orders||[]).flatMap(o=>(o.parts||[]).filter(pt=>pt.markNo===p).map(pt=>pt.drawingId));
+    return parts[0]||null;
+  })))));
+  const mrpDrawings = allDrawings.filter(x=>nestingDrawingIds.has(x.drawing.id));
+
+  // RM in stock = has received stock for this drawing's materials
+  // Simplified: order has GRNs received
+  const ordersWithStock = new Set((pos||[]).filter(p=>(p.grns||[]).length>0).flatMap(p=>p.coveredOrders||p.servedOrders||[]));
+  const rmInStockDrawings = allDrawings.filter(x=>ordersWithStock.has(x.order.id));
+
+  const cuttingDone = allDrawings.filter(x=>DONE_STAGES.has(x.stage));
+  const weldDone    = allDrawings.filter(x=>WELD_DONE.has(x.stage));
+  const paintDone   = allDrawings.filter(x=>PAINT_DONE.has(x.stage));
+  const dispatched  = allDrawings.filter(x=>COMPLETE.has(x.stage));
+
+  const funnelStages = [
+    { label:"Drawings\nReceived", val:totalDrawings,           wt:totalDrawingWt,           color:"#2563EB" },
+    { label:"MRP\nDone",          val:mrpDrawings.length,       wt:mrpDrawings.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0),  color:"#2563EB" },
+    { label:"RM\nin Stock",       val:rmInStockDrawings.length, wt:rmInStockDrawings.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0), color:"#2563EB" },
+    { label:"Cutting\nDone",      val:cuttingDone.length,       wt:cuttingDone.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0),  color:"#16A34A" },
+    { label:"Weld\nDone",         val:weldDone.length,          wt:weldDone.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0),     color:"#16A34A" },
+    { label:"Paint\nDone",        val:paintDone.length,         wt:paintDone.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0),    color:"#D97706" },
+    { label:"Complete",           val:dispatched.length,        wt:dispatched.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0),   color:"#6B7280" },
+  ];
+
+  // ── Stage metrics (MTD/YTD) ─────────────────────────────────────────────────
+  // For weight metrics: use DPR stageHistory timestamps
+  const stageWtInPeriod = (stageAction) => {
+    return allDprs.reduce((s,dpr)=>{
+      const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+      const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+      const wt = (drawing.totalWt||0)/1000;
+      const hist = (dpr.stageHistory||[]);
+      const match = hist.find(h=>h.action===stageAction&&inPeriod(h.at));
+      return s+(match?wt:0);
+    },0);
+  };
+  const tpiOfferedWt = (hp) => allDprs.reduce((s,dpr)=>{
+    const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+    const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+    const wt=(drawing.totalWt||0)/1000;
+    const rec=(dpr.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.offeredAt&&inPeriod(r.offeredAt));
+    return s+(rec?wt:0);
+  },0);
+  const tpiClearedWt = (hp) => allDprs.reduce((s,dpr)=>{
+    const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+    const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+    const wt=(drawing.totalWt||0)/1000;
+    const rec=(dpr.tpiRecords||[]).find(r=>r.holdPoint===hp&&r.clearedAt&&inPeriod(r.clearedAt));
+    return s+(rec?wt:0);
+  },0);
+
+  // Simplified: use approvedAt timestamps on DPRs
+  const cutWt     = stageWtInPeriod("completed") || cuttingDone.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0);
+  const weldWt    = weldDone.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0);
+  const blastWt   = allDprs.filter(d=>PAINT_DONE.has(d.currentStage)||d.currentStage==="complete").reduce((s,d)=>{
+    const o=(orders||[]).find(x=>x.id===d.orderId)||{};
+    const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+    return s+(dr.totalWt||0)/1000;
+  },0);
+  const paintWt   = paintDone.reduce((s,x)=>s+(x.drawing.totalWt||0)/1000,0);
+
+  // QC cleared weights
+  const weldQcWt  = allDprs.filter(d=>WELD_DONE.has(d.currentStage)).reduce((s,d)=>{
+    const o=(orders||[]).find(x=>x.id===d.orderId)||{}; const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+    return s+(dr.totalWt||0)/1000;
+  },0);
+  const blastQcWt = allDprs.filter(d=>["tpi_blast","painting","paint_qc","tpi_paint","complete"].includes(d.currentStage)).reduce((s,d)=>{
+    const o=(orders||[]).find(x=>x.id===d.orderId)||{}; const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+    return s+(dr.totalWt||0)/1000;
+  },0);
+  const paintQcWt = allDprs.filter(d=>["tpi_paint","complete"].includes(d.currentStage)).reduce((s,d)=>{
+    const o=(orders||[]).find(x=>x.id===d.orderId)||{}; const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+    return s+(dr.totalWt||0)/1000;
+  },0);
+
+  // ── Bottlenecks — drawings stuck >5 days ────────────────────────────────────
+  const bottlenecks = allDprs.filter(d=>{
+    if(["complete","pending"].includes(d.currentStage)) return false;
+    const lastChange = (d.stageHistory||[]).slice(-1)[0]?.at || d.createdAt || "";
+    if(!lastChange) return false;
+    const days = (Date.now()-new Date(lastChange).getTime())/86400000;
+    return days > 5;
+  }).map(d=>{
+    const o=(orders||[]).find(x=>x.id===d.orderId)||{};
+    const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+    const lastChange=(d.stageHistory||[]).slice(-1)[0]?.at||d.createdAt||"";
+    const days=Math.floor((Date.now()-new Date(lastChange).getTime())/86400000);
+    return { drawingNo:d.drawingNo, orderNo:o.id, stage:d.currentStage, days };
+  }).sort((a,b)=>b.days-a.days).slice(0,5);
+
+  // ── QC tab metrics ──────────────────────────────────────────────────────────
+  const qcPendingCounts = {
+    cutting_qc: (instances||[]).filter(i=>i.currentStage==="cutting_qc").length,
+    fitup_qc:   allDprs.filter(d=>d.currentStage==="fitup_qc").length,
+    weld_qc:    allDprs.filter(d=>d.currentStage==="weld_qc").length,
+    blast_qc:   allDprs.filter(d=>d.currentStage==="blast_qc").length,
+    paint_qc:   allDprs.filter(d=>d.currentStage==="paint_qc").length,
+    tpi:        allDprs.filter(d=>["tpi_fitup","tpi_weld","tpi_blast","tpi_paint"].includes(d.currentStage)).length,
+  };
+
+  // ── Stock / WIP tab ─────────────────────────────────────────────────────────
+  const stockByMat = {};
+  (stock||[]).forEach(lot=>{
+    const mc = lot.matCode||`${lot.sectionType}/${lot.matType}/${lot.grade}/${lot.size}`;
+    if(!stockByMat[mc]) stockByMat[mc]={avail:0,alloc:0,issued:0};
+    const wt=(lot.totalWt||lot.sheetWt||0)/1000;
+    if(lot.status==="available") stockByMat[mc].avail+=wt;
+    else if(lot.status==="allocated") stockByMat[mc].alloc+=wt;
+    else if(lot.status==="issued") stockByMat[mc].issued+=wt;
+  });
+
+  // WIP value = RM received × avg rate - dispatched value
+  const totalRmReceived = (pos||[]).reduce((s,po)=>{
+    return s+(po.grns||[]).reduce((gs,grn)=>{
+      return gs+(grn.lines||[]).reduce((ls,l)=>ls+(l.wtReceived||0),0);
+    },0);
+  },0)/1000; // T
+  const avgRmRate = activeOrders.reduce((s,o)=>s+(o.budget?.rmRatePerT||0),0)/Math.max(activeOrders.length,1);
+  const wipValue = totalRmReceived * avgRmRate;
+
+  // ── Shared sub-components ───────────────────────────────────────────────────
+  const S = ({ label, val, sub, color, large }) => (
+    <div style={{ background:"rgba(0,0,0,0.03)", borderRadius:8, padding:"12px 16px", minWidth:0 }}>
+      <div style={{ fontSize:11, color:"rgba(0,0,0,0.5)", textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize:large?26:20, fontWeight:700, color:color||T.text, fontVariantNumeric:"tabular-nums" }}>{val}</div>
+      {sub&&<div style={{ fontSize:11, color:T.textLow, marginTop:2 }}>{sub}</div>}
+    </div>
+  );
+
+  const StagePill = ({ label, wt, nos, color, sub }) => (
+    <div style={{ background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px" }}>
+      <div style={{ fontSize:10, fontWeight:700, color, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:4 }}>{label}</div>
+      <div style={{ fontSize:18, fontWeight:700, color:T.text }}>
+        {funnelMode==="weight"?`${wt.toFixed(1)}T`:`${nos}`}
+      </div>
+      {sub&&<div style={{ fontSize:10, color:T.textLow, marginTop:2 }}>{sub}</div>}
+    </div>
+  );
+
+  const periodLabel = periodMode==="mtd"
+    ? now.toLocaleDateString("en-IN",{month:"short",year:"numeric"})
+    : `FY${now.getMonth()>=3?now.getFullYear():now.getFullYear()-1}-${String((now.getMonth()>=3?now.getFullYear()+1:now.getFullYear())).slice(-2)}`;
+
+  // ── RENDER ──────────────────────────────────────────────────────────────────
   return (
-    <div>
-      <div style={{ marginBottom:24 }}>
-        <div style={{ fontSize:22, fontWeight:800, color:T.text }}>Welcome back, {(user.name||"").split(" ")[0]} 👋</div>
-        <div style={{ fontSize:13, color:T.textMid }}>{roleLabel} · {new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
-      </div>
-
-      <div style={{ display:"flex", gap:12, marginBottom:24, flexWrap:"wrap" }}>
-        <StatCard label="Active Orders" value={orders.length} sub={`${orders.filter(o=>o.status==="active").length} active`} color={T.accent} />
-        <StatCard label="Open POs" value={activePOs.length} sub={`of ${pos.length} total`} color={T.gold} />
-        <StatCard label="RM QC Pending" value={pendingQC.length} color={pendingQC.length>0?T.amber:T.green} />
-        <StatCard label="Client Insp Pending" value={clientPend.length} sub={clientPend.length>0?"HARD GATE":""} color={clientPend.length>0?T.red:T.green} />
-        <StatCard label="Available Stock Lots" value={availStock.length} color={T.green} />
-        <StatCard label="Material Reqs" value={purchaseReqs.length} color={T.text} />
-      </div>
-
-      {clientPend.length>0 && (
-        <InfoBanner color="red">
-          🚫 <strong>HARD GATE:</strong> {clientPend.length} lot(s) awaiting client inspection — production cannot start on these materials.
-          {clientPend.map(s=>` ${s.lotNo} (${(s.sectionType||s.section)} ${s.size})`).join(",")}
-        </InfoBanner>
-      )}
-
-      {pendingQC.length>0 && (
-        <InfoBanner color="amber">
-          ⚠ {pendingQC.length} lot(s) pending RM QC inspection: {pendingQC.map(s=>s.lotNo).join(", ")}
-        </InfoBanner>
-      )}
-
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginTop:8 }}>
-        {/* PO Status */}
-        <div style={{ ...css.card }}>
-          <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:12 }}>Purchase Orders</div>
-          {pos.map(po=>(
-            <div key={po.id} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${T.border}`, alignItems:"center" }}>
-              <div>
-                <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.accentHi }}>{po.id}</span>
-                <span style={{ fontSize:11, color:T.textMid, marginLeft:8 }}>{(po.vendorName||"").split(" ").slice(0,2).join(" ")}</span>
-              </div>
-              <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                <span style={{ fontSize:11, color:T.textMid, fontFamily:T.fontMono }}>{po.lines.reduce((s,l)=>s+(l.totalPrice||0),0)/1000|0}K</span>
-                <Badge color={poStatusBadge[po.status]||"gray"}>{po.status.replace("_"," ")}</Badge>
-              </div>
-            </div>
-          ))}
+    <div style={{ maxWidth:1200, margin:"0 auto" }}>
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+        <div>
+          <div style={{ fontSize:20, fontWeight:800, color:T.text }}>Dashboard</div>
+          <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>{user.name} · {new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
         </div>
-
-        {/* Stock Summary */}
-        <div style={{ ...css.card }}>
-          <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:12 }}>Stock Summary</div>
-          {stock.map(s=>(
-            <div key={s.id} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${T.border}`, alignItems:"center" }}>
-              <div>
-                <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.text }}>{(s.sectionType||s.section)} {s.size}</span>
-                <span style={{ fontSize:11, color:T.textMid, marginLeft:8 }}>{s.lotNo}</span>
-              </div>
-              <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                <span style={{ fontSize:11, fontFamily:T.fontMono, color:T.green }}>{fmt.num(s.wtAvailable)} kg</span>
-                <Badge color={statusColors2[s.status]||"gray"}>{s.status?.replace("_"," ")}</Badge>
-              </div>
-            </div>
-          ))}
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <div style={{ display:"flex", border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
+            {["mtd","ytd"].map(m=>(
+              <button key={m} onClick={()=>setPeriodMode(m)} style={{ padding:"5px 14px", fontSize:11, fontWeight:periodMode===m?700:400, background:periodMode===m?T.accent:"transparent", color:periodMode===m?"#fff":T.textMid, border:"none", cursor:"pointer", textTransform:"uppercase" }}>{m}</button>
+            ))}
+          </div>
+          <div style={{ fontSize:11, color:T.textMid, background:T.bgInput, padding:"5px 12px", borderRadius:6, border:`1px solid ${T.border}` }}>{periodLabel}</div>
         </div>
       </div>
+
+      {/* Tab bar */}
+      {visibleTabs.length>1&&(
+        <div style={{ display:"flex", gap:0, borderBottom:`1px solid ${T.border}`, marginBottom:20 }}>
+          {visibleTabs.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{ padding:"10px 20px", fontSize:13, fontWeight:tab===t.id?700:400, color:tab===t.id?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:tab===t.id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer" }}>{t.label}</button>
+          ))}
+        </div>
+      )}
+
+      {/* ── OVERVIEW TAB ── */}
+      {tab==="overview"&&(
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          {/* Stat bar */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+            <S label="Active Orders" val={activeOrders.length} sub={`${totalWeightT.toFixed(1)}T total weight`} color={T.accent} large />
+            <S label={`${periodMode.toUpperCase()} Purchase (RM)`} val={`${mtdPurchaseT.toFixed(1)}T`} sub="from GRNs" color={T.text} />
+            <S label={`${periodMode.toUpperCase()} Dispatched`} val={`${dispatchT.toFixed(1)}T`} sub={`${dispatchDprs.length} drawings`} color={dispatchT>0?T.green:T.textMid} />
+            <S label="WIP Value (est.)" val={`₹${(wipValue/1000000).toFixed(1)}Cr`} sub="RM received × avg rate" color={T.amber} />
+          </div>
+
+          {/* Production Funnel */}
+          <div style={{ ...css.card }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Production Funnel — All Active Orders</div>
+              <div style={{ display:"flex", border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
+                {["weight","nos"].map(m=>(
+                  <button key={m} onClick={()=>setFunnelMode(m)} style={{ padding:"4px 12px", fontSize:11, fontWeight:funnelMode===m?700:400, background:funnelMode===m?T.accent:"transparent", color:funnelMode===m?"#fff":T.textMid, border:"none", cursor:"pointer", textTransform:"uppercase" }}>{m}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:6 }}>
+              {funnelStages.map((fs,i)=>{
+                const pct = funnelMode==="weight"
+                  ? (totalDrawingWt>0?Math.round(fs.wt/totalDrawingWt*100):0)
+                  : (totalDrawings>0?Math.round(fs.val/totalDrawings*100):0);
+                return (
+                  <div key={i} style={{ background:T.bgInput, borderRadius:8, padding:"10px 8px", textAlign:"center" }}>
+                    <div style={{ fontSize:18, fontWeight:700, color:fs.color }}>
+                      {funnelMode==="weight"?`${fs.wt.toFixed(1)}`:fs.val}
+                    </div>
+                    <div style={{ fontSize:9, color:T.textLow, margin:"2px 0", whiteSpace:"pre-line", lineHeight:1.3 }}>{fs.label}</div>
+                    <div style={{ height:4, background:T.border, borderRadius:2, marginTop:4, overflow:"hidden" }}>
+                      <div style={{ width:`${pct}%`, height:"100%", background:fs.color, borderRadius:2 }} />
+                    </div>
+                    <div style={{ fontSize:10, color:T.textMid, marginTop:3, fontWeight:600 }}>{pct}%</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Per-order progress */}
+          <div style={{ ...css.card }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>Per-Order Progress</div>
+            {activeOrders.length===0&&<div style={{ color:T.textLow, fontSize:12 }}>No active orders.</div>}
+            {activeOrders.map(o=>{
+              const oDprs = allDprs.filter(d=>d.orderId===o.id);
+              const total = (o.drawings||[]).length||1;
+              const cut   = oDprs.filter(d=>DONE_STAGES.has(d.currentStage)).length;
+              const weld  = oDprs.filter(d=>WELD_DONE.has(d.currentStage)).length;
+              const paint = oDprs.filter(d=>PAINT_DONE.has(d.currentStage)).length;
+              const done  = oDprs.filter(d=>d.currentStage==="complete").length;
+              const cutPct   = Math.round(cut/total*100);
+              const weldPct  = Math.round(weld/total*100);
+              const paintPct = Math.round(paint/total*100);
+              const donePct  = Math.round(done/total*100);
+              const dueDate  = o.endDate?new Date(o.endDate):null;
+              const daysLeft = dueDate?Math.ceil((dueDate-now)/86400000):null;
+              const status   = daysLeft===null?"—":daysLeft<0?"Overdue":daysLeft<=7?"At risk":daysLeft<=15?"Caution":"On track";
+              const statusC  = daysLeft===null?T.textMid:daysLeft<0?T.red:daysLeft<=7?T.red:daysLeft<=15?T.amber:T.green;
+              return (
+                <div key={o.id} style={{ padding:"10px 0", borderBottom:`1px solid ${T.border}`, display:"grid", gridTemplateColumns:"1fr 2fr 80px 80px 90px", gap:12, alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.accent }}>{o.id}</div>
+                    <div style={{ fontSize:10, color:T.textMid, marginTop:1 }}>{o.clientName} · {o.orderQty}T</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize:10, color:T.textMid, marginBottom:3 }}>Cut {cutPct}% · Weld {weldPct}% · Paint {paintPct}% · Done {donePct}%</div>
+                    <div style={{ display:"flex", gap:2, height:6 }}>
+                      <div style={{ width:`${cutPct}%`, background:"#2563EB", borderRadius:2 }} />
+                      <div style={{ width:`${Math.max(0,weldPct-cutPct)}%`, background:"#16A34A", borderRadius:2 }} />
+                      <div style={{ width:`${Math.max(0,paintPct-weldPct)}%`, background:"#D97706", borderRadius:2 }} />
+                      <div style={{ width:`${Math.max(0,donePct-paintPct)}%`, background:"#6B7280", borderRadius:2 }} />
+                      <div style={{ flex:1, background:T.border, borderRadius:2 }} />
+                    </div>
+                  </div>
+                  <div style={{ fontSize:11, color:statusC, fontWeight:600, textAlign:"right" }}>
+                    {daysLeft===null?"—":daysLeft<0?`${-daysLeft}d overdue`:`${daysLeft}d left`}
+                  </div>
+                  <div style={{ fontSize:11, color:T.textMid, textAlign:"right" }}>{o.orderQty}T</div>
+                  <div style={{ textAlign:"right" }}>
+                    <span style={{ display:"inline-block", padding:"2px 8px", borderRadius:99, fontSize:11, fontWeight:700, background:`${statusC}22`, color:statusC }}>{status}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Stage metrics */}
+          <div style={{ ...css.card }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>Stage Metrics — {periodMode.toUpperCase()} (weight in tonnes)</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+              {[
+                { label:"Cutting", color:"#2563EB", main:cutWt, rows:[["QC cleared",cutWt]] },
+                { label:"Welding", color:"#16A34A", main:weldWt, rows:[["QC cleared",weldQcWt],["TPI offered",tpiOfferedWt("welding")],["TPI done",tpiClearedWt("welding")]] },
+                { label:"Blasting", color:"#D97706", main:blastWt, rows:[["QC cleared",blastQcWt],["TPI offered",tpiOfferedWt("blasting")],["TPI done",tpiClearedWt("blasting")]] },
+                { label:"Painting", color:"#7C3AED", main:paintWt, rows:[["QC cleared",paintQcWt],["TPI offered",tpiOfferedWt("painting")],["TPI done",tpiClearedWt("painting")]] },
+              ].map(({ label, color, main, rows })=>(
+                <div key={label} style={{ background:T.bgInput, borderRadius:8, padding:"12px 14px" }}>
+                  <div style={{ fontSize:11, fontWeight:700, color, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>{label}</div>
+                  <div style={{ fontSize:22, fontWeight:700, color:T.text, marginBottom:4 }}>{main.toFixed(1)}T</div>
+                  <div style={{ height:"0.5px", background:T.border, margin:"8px 0" }} />
+                  {rows.map(([lbl,val])=>(
+                    <div key={lbl} style={{ display:"flex", justifyContent:"space-between", fontSize:11, marginTop:4 }}>
+                      <span style={{ color:T.textMid }}>{lbl}</span>
+                      <span style={{ fontWeight:600, color:T.text }}>{val.toFixed(1)}T</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Bottlenecks */}
+          {bottlenecks.length>0&&(
+            <div style={{ ...css.card }}>
+              <div style={{ fontSize:13, fontWeight:700, color:T.amber, marginBottom:12 }}>⚠ Bottlenecks — Stuck &gt;5 days</div>
+              {bottlenecks.map((b,i)=>(
+                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 10px", background:T.bgInput, borderRadius:6, marginBottom:6, borderLeft:`3px solid ${b.days>10?T.red:T.amber}` }}>
+                  <div>
+                    <span style={{ fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.accent }}>{b.drawingNo}</span>
+                    <span style={{ fontSize:11, color:T.textMid, marginLeft:8 }}>{b.orderNo} · {(DPR_STAGE_META[b.stage]||{label:b.stage}).label}</span>
+                  </div>
+                  <span style={{ fontSize:11, fontWeight:700, color:b.days>10?T.red:T.amber }}>{b.days}d waiting</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── PRODUCTION TAB ── */}
+      {tab==="production"&&(
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <OrderFilterBar />
+          <div style={{ ...css.card }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:4 }}>Production — Contractor Performance</div>
+            <div style={{ fontSize:11, color:T.textLow, marginBottom:14 }}>Tonnes cleared per stage · {periodMode.toUpperCase()}</div>
+            {/* Contractor race */}
+            {(() => {
+              const contractors = [...new Set(filteredDprs.flatMap(d=>[d.fitupContractorName,d.weldContractorName,d.blastContractorName,d.paintContractorName].filter(Boolean)))];
+              if(contractors.length===0) return <div style={{color:T.textLow,fontSize:12}}>No contractor data yet.</div>;
+              return contractors.map(name=>{
+                const cDprs = filteredDprs.filter(d=>d.fitupContractorName===name||d.weldContractorName===name||d.blastContractorName===name||d.paintContractorName===name);
+                const wt = cDprs.filter(d=>WELD_DONE.has(d.currentStage)).reduce((s,d)=>{
+                  const o=(orders||[]).find(x=>x.id===d.orderId)||{}; const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+                  return s+(dr.totalWt||0)/1000;
+                },0);
+                const maxWt = totalDrawingWt||1;
+                const pct = Math.min(100,Math.round(wt/maxWt*100));
+                return (
+                  <div key={name} style={{ marginBottom:12 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                      <span style={{ fontSize:12, fontWeight:600, color:T.text }}>{name}</span>
+                      <span style={{ fontSize:12, fontWeight:700, color:T.accent }}>{wt.toFixed(1)}T</span>
+                    </div>
+                    <div style={{ height:10, background:T.bgInput, borderRadius:5, overflow:"hidden", border:`1px solid ${T.border}` }}>
+                      <div style={{ width:`${pct}%`, height:"100%", background:T.accent, borderRadius:5, transition:"width 0.5s ease" }} />
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+
+          <div style={{ ...css.card }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>DPR Stage Summary{selOrderIds.length>0?` — ${filteredOrders.map(o=>o.id).join(", ")}`:""}</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
+              {Object.entries(DPR_STAGE_META).filter(([k])=>k!=="pending").map(([stage,meta])=>{
+                const count = filteredDprs.filter(d=>d.currentStage===stage).length;
+                if(count===0) return null;
+                return (
+                  <div key={stage} style={{ background:`${meta.bg}`, borderRadius:6, padding:"8px 12px", border:`1px solid ${meta.color}22` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:meta.color, textTransform:"uppercase", letterSpacing:"0.05em" }}>{meta.label}</div>
+                    <div style={{ fontSize:20, fontWeight:700, color:meta.color, marginTop:2 }}>{count}</div>
+                    <div style={{ fontSize:10, color:T.textLow }}>drawings</div>
+                  </div>
+                );
+              }).filter(Boolean)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── FINANCE TAB ── */}
+      {tab==="finance"&&(
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <OrderFilterBar />
+          {filteredOrders.map(o=>{
+            const budget = o.budget||{};
+            const qty = o.orderQty||0;
+            const rmBudget = qty*(budget.rmRatePerT||0);
+            const paintBudget = qty*(budget.paintRatePerT||0);
+            const contractorBudget = qty*(budget.contractorRatePerT||0);
+            const transportBudget = qty*(budget.transportRatePerT||0);
+            const totalBudget = rmBudget+paintBudget+contractorBudget+transportBudget;
+            const margin = (o.orderValue||0)-totalBudget;
+            const marginPct = (o.orderValue||0)>0?Math.round(margin/(o.orderValue||1)*100):0;
+            // Actual RM spend
+            const orderPos = (pos||[]).filter(p=>(p.servedOrders||p.coveredOrders||[]).includes(o.id));
+            const rmSpend = orderPos.filter(p=>p.poType==="rm"||!p.poType).reduce((s,p)=>s+(p.lines||[]).reduce((ls,l)=>ls+(l.totalPrice||0),0),0);
+            const paintSpend = orderPos.filter(p=>p.poType==="paint").reduce((s,p)=>s+(p.lines||[]).reduce((ls,l)=>ls+(l.totalPrice||0),0),0);
+            return (
+              <div key={o.id} style={{ ...css.card }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
+                  <div>
+                    <div style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, fontSize:14 }}>{o.id}</div>
+                    <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>{o.clientName} · {o.projectDesc}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:T.green }}>{fmt.currency(o.orderValue||0)}</div>
+                    <div style={{ fontSize:11, color:T.textMid }}>Order Value</div>
+                  </div>
+                </div>
+                {totalBudget>0?(
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:8 }}>
+                    {[
+                      ["RM Budget",fmt.currency(rmBudget),"Actual: "+fmt.currency(rmSpend)],
+                      ["Paint Budget",fmt.currency(paintBudget),"Actual: "+fmt.currency(paintSpend)],
+                      ["Contractor",fmt.currency(contractorBudget),"—"],
+                      ["Transport",fmt.currency(transportBudget),"—"],
+                      ["Gross Margin",fmt.currency(margin),`${marginPct}%`],
+                    ].map(([lbl,val,sub])=>(
+                      <div key={lbl} style={{ background:lbl==="Gross Margin"?`${marginPct>=20?T.green:marginPct>=10?T.amber:T.red}11`:T.bgInput, borderRadius:6, padding:"8px 12px" }}>
+                        <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", marginBottom:2 }}>{lbl}</div>
+                        <div style={{ fontSize:13, fontWeight:700, color:lbl==="Gross Margin"?marginPct>=20?T.green:marginPct>=10?T.amber:T.red:T.text }}>{val}</div>
+                        <div style={{ fontSize:10, color:T.textLow }}>{sub}</div>
+                      </div>
+                    ))}
+                  </div>
+                ):(
+                  <div style={{ color:T.textLow, fontSize:12 }}>No budget defined. Go to Orders → Finance & Amendments → Budget tab.</div>
+                )}
+              </div>
+            );
+          })}
+          {filteredOrders.length===0&&<div style={{color:T.textLow,fontSize:12}}>No orders selected.</div>}
+        </div>
+      )}
+
+      {/* ── QC TAB ── */}
+      {tab==="qc"&&(
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <OrderFilterBar />
+          <div style={{ ...css.card }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>QC Queue — Pending Now</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+              {[
+                ["Cutting QC",   (instances||[]).filter(i=>i.currentStage==="cutting_qc"&&(selOrderIds.length===0||selOrderIds.includes(i.orderId))).length, "#2563EB"],
+                ["Fit-Up QC",    filteredDprs.filter(d=>d.currentStage==="fitup_qc").length,   "#0E7490"],
+                ["Weld QC",      filteredDprs.filter(d=>d.currentStage==="weld_qc").length,    "#7C3AED"],
+                ["Blast QC",     filteredDprs.filter(d=>d.currentStage==="blast_qc").length,   "#D97706"],
+                ["Paint QC",     filteredDprs.filter(d=>d.currentStage==="paint_qc").length,   "#1D4ED8"],
+                ["TPI Hold",     filteredDprs.filter(d=>["tpi_fitup","tpi_weld","tpi_blast","tpi_paint"].includes(d.currentStage)).length, "#B45309"],
+              ].map(([lbl,cnt,col])=>(
+                <div key={lbl} style={{ background:cnt>0?`${col}11`:T.bgInput, border:`1px solid ${cnt>0?col+"33":T.border}`, borderRadius:8, padding:"12px 16px" }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:col, textTransform:"uppercase", letterSpacing:"0.05em" }}>{lbl}</div>
+                  <div style={{ fontSize:28, fontWeight:800, color:cnt>0?col:T.textLow, marginTop:4 }}>{cnt}</div>
+                  <div style={{ fontSize:10, color:T.textLow }}>{cnt===0?"✓ Clear":"pending"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ ...css.card }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>Drawings by Stage</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              {Object.entries(DPR_STAGE_META).map(([stage,meta])=>{
+                const count = filteredDprs.filter(d=>d.currentStage===stage).length;
+                if(count===0&&stage==="pending") return null;
+                return (
+                  <div key={stage} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 12px", background:T.bgInput, borderRadius:6 }}>
+                    <span style={{ display:"inline-block", padding:"2px 8px", borderRadius:99, fontSize:11, fontWeight:700, background:meta.bg, color:meta.color }}>{meta.label}</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:count>0?T.text:T.textLow }}>{count}</span>
+                  </div>
+                );
+              }).filter(Boolean)}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── STOCK / WIP TAB ── */}
+      {tab==="stock"&&(
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <OrderFilterBar />
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+            <S label="Total RM Received" val={`${totalRmReceived.toFixed(1)}T`} color={T.accent} />
+            <S label="WIP Value (est.)" val={`₹${(wipValue/1000000).toFixed(2)}Cr`} color={T.amber} sub={`@ avg ₹${Math.round(avgRmRate).toLocaleString("en-IN")}/T`} />
+            <S label="Stock Lots" val={(stock||[]).length} sub={`${(stock||[]).filter(s=>s.status==="available").length} available`} color={T.green} />
+          </div>
+          {/* Per-order WIP breakdown when filtered */}
+          {selOrderIds.length>0&&(
+            <div style={{ ...css.card }}>
+              <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>WIP by Selected Order</div>
+              {filteredOrders.map(o=>{
+                const oDprs = filteredDprs.filter(d=>d.orderId===o.id);
+                const pendingWt = oDprs.filter(d=>!["complete"].includes(d.currentStage)).reduce((s,d)=>{
+                  const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{}; return s+(dr.totalWt||0)/1000;
+                },0);
+                const doneWt = oDprs.filter(d=>d.currentStage==="complete").reduce((s,d)=>{
+                  const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{}; return s+(dr.totalWt||0)/1000;
+                },0);
+                const rmRate = o.budget?.rmRatePerT||avgRmRate;
+                return (
+                  <div key={o.id} style={{ padding:"10px 0", borderBottom:`1px solid ${T.border}`, display:"grid", gridTemplateColumns:"1fr 80px 80px 100px", gap:12, alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.accent }}>{o.id}</div>
+                      <div style={{ fontSize:11, color:T.textMid }}>{o.clientName}</div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.amber }}>{pendingWt.toFixed(1)}T</div>
+                      <div style={{ fontSize:10, color:T.textLow }}>in WIP</div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.green }}>{doneWt.toFixed(1)}T</div>
+                      <div style={{ fontSize:10, color:T.textLow }}>complete</div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:12, fontWeight:700, color:T.text }}>₹{((pendingWt*rmRate)/100000).toFixed(1)}L</div>
+                      <div style={{ fontSize:10, color:T.textLow }}>WIP value</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div style={{ ...css.card }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:14 }}>Stock by Material Code</div>
+            {Object.keys(stockByMat).length===0&&<div style={{color:T.textLow,fontSize:12}}>No stock data.</div>}
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead>
+                <tr style={{ background:T.bgInput }}>
+                  {["Material Code","Available (T)","Allocated (T)","Issued (T)"].map(h=>(
+                    <th key={h} style={{ padding:"7px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", borderBottom:`1px solid ${T.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(stockByMat).map(([mc,vals],i)=>(
+                  <tr key={mc} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"transparent":T.bgInput }}>
+                    <td style={{ padding:"7px 10px", fontFamily:T.fontMono, fontSize:11, color:T.accent }}>{mc}</td>
+                    <td style={{ padding:"7px 10px", fontWeight:600, color:vals.avail>0?T.green:T.textLow }}>{vals.avail.toFixed(3)}</td>
+                    <td style={{ padding:"7px 10px", color:vals.alloc>0?T.amber:T.textLow }}>{vals.alloc.toFixed(3)}</td>
+                    <td style={{ padding:"7px 10px", color:T.textMid }}>{vals.issued.toFixed(3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+
 const statusColors2 = { available:"green", allocated:"blue", qc_hold:"amber", rejected:"red", consumed:"gray" };
 
 // ─── PLACEHOLDER ──────────────────────────────────────────────────────────────
@@ -21292,7 +21842,7 @@ export default function App() {
 
   const renderMod = () => {
     switch(mod) {
-      case "dashboard": return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
+      case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setMod={setMod} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
@@ -21304,7 +21854,7 @@ export default function App() {
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
       case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} />;
-      default:          return <Dashboard user={user} pos={pos} stock={stock} purchaseReqs={purchaseReqs} orders={orders} />;
+      default:          return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
     }
   };
 
