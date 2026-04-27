@@ -367,6 +367,10 @@ const USERS = [
   { id:"USR-008", name:"Arjun Patil",       username:"arjun.qc",        password:"qc123",      role:"qc_user",            active:true },
   { id:"U035", name:"In-House Team A",      username:"inhouse.a",       password:"con123",     role:"contractor",         active:true, contractorId:"CON-005" },
   { id:"U036", name:"In-House Team B",      username:"inhouse.b",       password:"con123",     role:"contractor",         active:true, contractorId:"CON-006" },
+  { id:"U037", name:"Ajay Rahangdale",      username:"ajay.rahangdale", password:"prod123",    role:"production_admin",   active:true },
+  { id:"U038", name:"Anmol Vaidya",         username:"anmol.vaidya",    password:"pe123",      role:"production_engineer",active:true },
+  { id:"U039", name:"Vibhor Suryavanshi",   username:"vibhor.suryavanshi",password:"pe123",    role:"production_engineer",active:true },
+  { id:"U040", name:"Pramita Madam",        username:"pramita.madam",   password:"pur123",     role:"purchase_admin",     active:true },
 ];
 
 // ─── CONTRACTORS ──────────────────────────────────────────────────────────────
@@ -3202,7 +3206,7 @@ const DevToolsMaster = ({ user, setInstances, setReleases, setNestingRuns, setOr
   );
 };
 
-const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, consumables, setConsumables, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders, setMod, setInstances, setReleases, setNestingRuns }) => {
+const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, consumables, setConsumables, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders, setMod, setInstances, setReleases, setNestingRuns, productionEngineers, setProductionEngineers, dprs }) => {
   const tabs = [
     { id:"company",     label:"Company Details",     show: user.role==="super_admin" },
     { id:"prodstd",     label:"Production Standards", show: ["super_admin","planning_admin"].includes(user.role) },
@@ -3217,6 +3221,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
     { id:"tpi",         label:"TPI Agencies"      },
     { id:"makes",       label:"Approved Makes"    },
     { id:"machines",    label:"Machines",          show: user.role==="super_admin" },
+    { id:"prod_engineers", label:"Production Engineers", show: ["super_admin","production_admin"].includes(user.role) },
     { id:"users",       label:"Users",             show: user.role==="super_admin" },
     { id:"devtools",    label:"⚙ Dev Tools",       show: user.role==="super_admin" },
   ].filter(t=>t.show!==false);
@@ -3242,9 +3247,10 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       {activeTab==="consumables" && <ConsumablesMaster user={user} consumables={consumables} setConsumables={setConsumables} />}
       {activeTab==="tpi"         && <TPIMaster         user={user} tpiAgencies={tpiAgencies} />}
       {activeTab==="makes"       && <ApprovedMakesMaster user={user} approvedMakes={approvedMakes} />}
-      {activeTab==="machines"    && <MachinesMaster    user={user} machines={machines} setMachines={setMachines} />}
-      {activeTab==="users"       && <UsersMaster       user={user} />}
-      {activeTab==="devtools"    && <DevToolsMaster    user={user} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} setOrders={setOrders} setMod={setMod} />}
+      {activeTab==="machines"      && <MachinesMaster    user={user} machines={machines} setMachines={setMachines} />}
+      {activeTab==="prod_engineers"&& <MastersPEScreen />}
+      {activeTab==="users"         && <UsersMaster       user={user} />}
+      {activeTab==="devtools"      && <DevToolsMaster    user={user} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} setOrders={setOrders} setMod={setMod} />}
     </div>
   );
 };
@@ -12951,7 +12957,7 @@ const Login = ({ onLogin }) => {
           <div style={{ marginTop:18, padding:12, background:T.bg, borderRadius:8 }}>
             <div style={{ fontSize:10, color:T.textMid, fontWeight:700, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.05em" }}>Quick Logins</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
-              {[["Super Admin","rajesh.kumar","admin123"],["Planning Admin","vikram.singh","plan123"],["Planning User","neha.gupta","plan123"],["Purchase","deepak.rao","pur123"],["Store Admin","mohan.das","store123"],["QC Admin","priya.mehta","qc123"],["Floor Planner","suresh.patel","prod123"],["Finance Admin","sameer.shah","fin123"],["Dispatch","ramesh.kulkarni","disp123"],["Contractor","krishna.fab","con123"],["Machine Op","ajay.kadam","machine123"],["In-House A","inhouse.a","con123"],["In-House B","inhouse.b","con123"],["Blast/Paint","ganesh.blast","con123"]].map(([role,un,pw])=>(
+              {[["Super Admin","rajesh.kumar","admin123"],["Planning Admin","vikram.singh","plan123"],["Prod Admin","ajay.rahangdale","prod123"],["PE Anmol","anmol.vaidya","pe123"],["PE Vibhor","vibhor.suryavanshi","pe123"],["Purchase","pramita.madam","pur123"],["Store Admin","mohan.das","store123"],["QC Admin","priya.mehta","qc123"],["Floor Planner","suresh.patel","prod123"],["Finance Admin","sameer.shah","fin123"],["Dispatch","ramesh.kulkarni","disp123"],["Contractor","krishna.fab","con123"],["Machine Op","ajay.kadam","machine123"],["In-House A","inhouse.a","con123"],["In-House B","inhouse.b","con123"],["Blast/Paint","ganesh.blast","con123"]].map(([role,un,pw])=>(
                 <button key={role} onClick={()=>{setU(un);setP(pw);}} style={{ ...css.btn.ghost, textAlign:"left", fontSize:11, background:T.bgCard, borderRadius:4, border:`1px solid ${T.border}`, padding:"4px 8px" }}>{role}</button>
               ))}
             </div>
@@ -21793,6 +21799,10 @@ export default function App() {
   const [overrideLog, setOverrideLog]   = useState(() => { try { const s=localStorage.getItem('structo_overrideLog'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [issueRequests, setIssueRequests] = useState(() => { try { const s=localStorage.getItem('structo_issueRequests'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [tpiTemplates, setTpiTemplates] = useState(() => { try { const s=localStorage.getItem('structo_tpiTemplates'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [productionEngineers, setProductionEngineers] = useState(() => { try { const s=localStorage.getItem('structo_productionEngineers'); return s?JSON.parse(s):[
+    { id:"PE-001", userId:"anmol.vaidya",          name:"Anmol Vaidya",        stages:["welding","blasting"], orderIds:[] },
+    { id:"PE-002", userId:"vibhor.suryavanshi",     name:"Vibhor Suryavanshi",  stages:["cutting","welding"],  orderIds:[] },
+  ]; } catch { return []; } });
   const [productionStandards, setProductionStandards] = useState({
     blastThresholds: { amberHours: 3, redHours: 4 },
     tiers: [
@@ -21830,6 +21840,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('structo_overrideLog',     JSON.stringify(overrideLog));     } catch(e) { console.warn('Storage full',e); } }, [overrideLog]);
   useEffect(() => { try { localStorage.setItem('structo_issueRequests',   JSON.stringify(issueRequests));   } catch(e) { console.warn('Storage full',e); } }, [issueRequests]);
   useEffect(() => { try { localStorage.setItem('structo_tpiTemplates',   JSON.stringify(tpiTemplates));   } catch(e) { console.warn('Storage full',e); } }, [tpiTemplates]);
+  useEffect(() => { try { localStorage.setItem('structo_productionEngineers', JSON.stringify(productionEngineers)); } catch(e) { console.warn('Storage full',e); } }, [productionEngineers]);
   useEffect(() => { try { localStorage.setItem('structo_welders',         JSON.stringify(welders));         } catch(e) { console.warn('Storage full',e); } }, [welders]);
   useEffect(() => { try { localStorage.setItem('structo_contractors',     JSON.stringify(contractors));     } catch(e) { console.warn('Storage full',e); } }, [contractors]);
   useEffect(() => { try { localStorage.setItem('structo_machines',        JSON.stringify(machines));        } catch(e) { console.warn('Storage full',e); } }, [machines]);
@@ -21840,7 +21851,582 @@ export default function App() {
   const roleLabel = ROLES_LABEL[user.role]||user.role;
   const initials = user.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
 
+
+  // ── Production Admin: Drawing Assignment Screen ─────────────────────────────
+  const ProductionAdminScreen = () => {
+    const [selDrawings, setSelDrawings] = useState(new Set());
+    const [assignForm, setAssignForm]   = useState({ peId:"", stage:"welding", contractorId:"" });
+    const [filterOrder, setFilterOrder] = useState("");
+    const [filterUnassigned, setFilterUnassigned] = useState(true);
+    const [view, setView] = useState("assign"); // assign | pe_overview
+
+    const allDrawings = (orders||[]).filter(o=>o.status==="active").flatMap(o=>
+      (o.drawings||[]).map(d=>{
+        const dpr = (dprs||[]).find(dp=>dp.drawingId===d.id&&dp.orderId===o.id);
+        const pe  = (productionEngineers||[]).find(p=>
+          (dpr?.peAssignments||[]).some(a=>a.peId===p.id)
+        );
+        return { drawing:d, order:o, dpr, peAssigned:pe?.name||"", stage:dpr?.currentStage||"pending" };
+      })
+    ).filter(x=>filterOrder?x.order.id===filterOrder:true)
+     .filter(x=>filterUnassigned?(!(dprs||[]).find(d=>d.drawingId===x.drawing.id)?.peAssignments?.length):true);
+
+    const doAssign = () => {
+      if (!assignForm.peId||selDrawings.size===0) return;
+      const pe = (productionEngineers||[]).find(p=>p.id===assignForm.peId);
+      const con = (contractors||[]).find(c=>c.id===assignForm.contractorId);
+      const ts = new Date().toISOString();
+      // Update DPRs with PE assignment
+      setDprs(prev=>prev.map(dpr=>{
+        if (!selDrawings.has(dpr.drawingId)) return dpr;
+        return {...dpr,
+          peAssignments:[...(dpr.peAssignments||[]),{
+            peId:assignForm.peId, peName:pe?.name||"",
+            stage:assignForm.stage,
+            contractorId:assignForm.contractorId||"",
+            contractorName:con?.name||"",
+            assignedAt:ts, assignedBy:user.username
+          }],
+          ...(assignForm.contractorId&&assignForm.stage==="welding"?{weldContractorId:assignForm.contractorId,weldContractorName:con?.name||""}:{}),
+          ...(assignForm.contractorId&&assignForm.stage==="fitup"?{fitupContractorId:assignForm.contractorId,fitupContractorName:con?.name||""}:{}),
+          ...(assignForm.contractorId&&assignForm.stage==="blasting"?{blastContractorId:assignForm.contractorId,blastContractorName:con?.name||""}:{}),
+          ...(assignForm.contractorId&&assignForm.stage==="painting"?{paintContractorId:assignForm.contractorId,paintContractorName:con?.name||""}:{}),
+        };
+      }));
+      // Update PE order assignments
+      if (pe) {
+        const orderIds = [...new Set([...(pe.orderIds||[]), ...[...selDrawings].map(dId=>{
+          const o=(orders||[]).find(x=>(x.drawings||[]).some(d=>d.id===dId));
+          return o?.id;
+        }).filter(Boolean)])];
+        setProductionEngineers(prev=>prev.map(p=>p.id===pe.id?{...p,orderIds}:p));
+      }
+      setSelDrawings(new Set()); setAssignForm({peId:"",stage:"welding",contractorId:""});
+    };
+
+    const STAGE_OPTIONS = ["cutting","fitup","welding","blasting","painting"];
+
+    return (
+      <div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:20}}>
+          <div style={{fontSize:18,fontWeight:800,color:T.text}}>Production Admin</div>
+          <div style={{flex:1}}/>
+          <button onClick={()=>setView("assign")} style={{...css.btn[view==="assign"?"primary":"ghost"]}}>Drawing Assignment</button>
+          <button onClick={()=>setView("pe_overview")} style={{...css.btn[view==="pe_overview"?"primary":"ghost"]}}>PE Overview</button>
+        </div>
+
+        {view==="assign"&&(
+          <div style={{display:"flex",gap:16}}>
+            {/* Left: Drawing list */}
+            <div style={{flex:1}}>
+              <div style={{...css.card,marginBottom:12,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <select value={filterOrder} onChange={e=>setFilterOrder(e.target.value)} style={{...css.input,width:200}}>
+                  <option value="">All Orders</option>
+                  {(orders||[]).filter(o=>o.status==="active").map(o=><option key={o.id} value={o.id}>{o.id}</option>)}
+                </select>
+                <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer"}}>
+                  <input type="checkbox" checked={filterUnassigned} onChange={e=>setFilterUnassigned(e.target.checked)} />
+                  Unassigned only
+                </label>
+                <div style={{flex:1}}/>
+                <button onClick={()=>setSelDrawings(new Set(allDrawings.map(x=>x.drawing.id)))} style={css.btn.ghost}>Select All</button>
+                <button onClick={()=>setSelDrawings(new Set())} style={css.btn.ghost}>Clear</button>
+                <span style={{fontSize:12,color:T.textMid}}>{selDrawings.size} selected</span>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:"65vh",overflowY:"auto"}}>
+                {allDrawings.length===0&&<div style={{color:T.textLow,padding:24,textAlign:"center"}}>No drawings match filter.</div>}
+                {allDrawings.map(({drawing,order,dpr,peAssigned,stage})=>{
+                  const sel = selDrawings.has(drawing.id);
+                  const meta = DPR_STAGE_META[stage]||{label:"Pending",color:T.textLow,bg:"#F1F5F9"};
+                  return (
+                    <div key={drawing.id} onClick={()=>{const ns=new Set(selDrawings);sel?ns.delete(drawing.id):ns.add(drawing.id);setSelDrawings(ns);}}
+                      style={{...css.card,cursor:"pointer",borderLeft:`3px solid ${sel?T.accent:T.border}`,background:sel?`${T.accent}11`:T.bgCard,padding:"8px 12px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <input type="checkbox" checked={sel} onChange={()=>{}} style={{pointerEvents:"none"}} />
+                          <div>
+                            <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:12}}>{drawing.drawingNo}</div>
+                            <div style={{fontSize:10,color:T.textMid}}>{order.id} · {((drawing.totalWt||0)/1000).toFixed(2)}T</div>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                          {peAssigned&&<span style={{fontSize:10,color:T.green}}>PE: {peAssigned}</span>}
+                          <span style={{display:"inline-block",padding:"2px 8px",borderRadius:99,fontSize:10,fontWeight:700,background:meta.bg,color:meta.color}}>{meta.label}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            {/* Right: Assignment form */}
+            <div style={{width:280}}>
+              <div style={{...css.card}}>
+                <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>Assign Selected</div>
+                <label style={css.label}>Production Engineer <span style={{color:T.red}}>*</span></label>
+                <select value={assignForm.peId} onChange={e=>setAssignForm(p=>({...p,peId:e.target.value}))} style={{...css.input,marginBottom:10}}>
+                  <option value="">Select PE...</option>
+                  {(productionEngineers||[]).map(pe=>(
+                    <option key={pe.id} value={pe.id}>{pe.name} ({pe.stages?.join(", ")||"all stages"})</option>
+                  ))}
+                </select>
+                <label style={css.label}>Stage</label>
+                <select value={assignForm.stage} onChange={e=>setAssignForm(p=>({...p,stage:e.target.value}))} style={{...css.input,marginBottom:10}}>
+                  {STAGE_OPTIONS.map(s=><option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+                </select>
+                <label style={css.label}>Contractor (optional)</label>
+                <select value={assignForm.contractorId} onChange={e=>setAssignForm(p=>({...p,contractorId:e.target.value}))} style={{...css.input,marginBottom:14}}>
+                  <option value="">Assign later</option>
+                  {(contractors||[]).filter(c=>c.active!==false).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <button onClick={doAssign} disabled={!assignForm.peId||selDrawings.size===0}
+                  style={{...css.btn.primary,width:"100%",padding:"10px 0",opacity:(!assignForm.peId||selDrawings.size===0)?0.4:1}}>
+                  ✓ Assign {selDrawings.size} Drawing{selDrawings.size!==1?"s":""}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {view==="pe_overview"&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12}}>
+            {(productionEngineers||[]).map(pe=>{
+              const peDprs=(dprs||[]).filter(d=>(d.peAssignments||[]).some(a=>a.peId===pe.id));
+              const byStage={};
+              peDprs.forEach(d=>{ byStage[d.currentStage]=(byStage[d.currentStage]||0)+1; });
+              return (
+                <div key={pe.id} style={{...css.card}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                    <div>
+                      <div style={{fontSize:14,fontWeight:700,color:T.text}}>{pe.name}</div>
+                      <div style={{fontSize:11,color:T.textMid,marginTop:2}}>Stages: {(pe.stages||[]).join(", ")||"all"}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:20,fontWeight:800,color:T.accent}}>{peDprs.length}</div>
+                      <div style={{fontSize:10,color:T.textLow}}>drawings</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {Object.entries(byStage).map(([stage,cnt])=>{
+                      const meta=DPR_STAGE_META[stage]||{label:stage,color:T.textMid,bg:"#F1F5F9"};
+                      return <span key={stage} style={{padding:"2px 8px",borderRadius:99,fontSize:10,fontWeight:700,background:meta.bg,color:meta.color}}>{meta.label}: {cnt}</span>;
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Production Engineer: Scoped Dashboard ───────────────────────────────────
+  const ProductionEngineerDashboard = () => {
+    const [peTab, setPeTab] = useState("work");
+    // Find this user's PE record
+    const myPe = (productionEngineers||[]).find(p=>p.userId===user.username);
+    const myDprs = myPe
+      ? (dprs||[]).filter(d=>(d.peAssignments||[]).some(a=>a.peId===myPe.id))
+      : [];
+    const myOrders = (orders||[]).filter(o=>myPe?(myPe.orderIds||[]).includes(o.id)||myDprs.some(d=>d.orderId===o.id):false);
+
+    const DONE_STAGES = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+    const WELD_DONE   = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+
+    // MTD weight cleared
+    const now = new Date();
+    const mtdStart = new Date(now.getFullYear(),now.getMonth(),1);
+    const mtdWt = myDprs.filter(d=>WELD_DONE.has(d.currentStage)).reduce((s,d)=>{
+      const o=(orders||[]).find(x=>x.id===d.orderId)||{};
+      const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+      return s+(dr.totalWt||0)/1000;
+    },0);
+
+    // All PEs for race comparison
+    const allPeStats = (productionEngineers||[]).map(pe=>{
+      const peDprs=(dprs||[]).filter(d=>(d.peAssignments||[]).some(a=>a.peId===pe.id));
+      const wt = peDprs.filter(d=>WELD_DONE.has(d.currentStage)).reduce((s,d)=>{
+        const o=(orders||[]).find(x=>x.id===d.orderId)||{};
+        const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
+        return s+(dr.totalWt||0)/1000;
+      },0);
+      return { ...pe, wt, isMe: pe.id===myPe?.id };
+    }).sort((a,b)=>b.wt-a.wt);
+    const maxWt = Math.max(...allPeStats.map(p=>p.wt),1);
+
+    if (!myPe) return (
+      <div style={{...css.card,textAlign:"center",padding:40}}>
+        <div style={{fontSize:32,marginBottom:12}}>👷</div>
+        <div style={{fontSize:14,fontWeight:700,color:T.text}}>Not yet assigned</div>
+        <div style={{fontSize:12,color:T.textMid,marginTop:6}}>Ask your Production Admin to assign drawings to you.</div>
+      </div>
+    );
+
+    return (
+      <div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:20}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:T.text}}>My Work — {user.name}</div>
+            <div style={{fontSize:12,color:T.textMid}}>Stages: {(myPe.stages||[]).join(", ")} · {myDprs.length} drawings assigned</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
+          {[["work","My Drawings"],["stats","My Stats / Race"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setPeTab(id)} style={{padding:"10px 18px",fontSize:13,fontWeight:peTab===id?700:400,color:peTab===id?T.accent:T.textMid,background:"transparent",border:"none",borderBottom:peTab===id?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer"}}>{lbl}</button>
+          ))}
+        </div>
+
+        {peTab==="work"&&(
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+              {[["Assigned",myDprs.length,T.accent],["In Progress",myDprs.filter(d=>!["pending","complete"].includes(d.currentStage)).length,T.amber],["Complete",myDprs.filter(d=>d.currentStage==="complete").length,T.green]].map(([lbl,val,col])=>(
+                <div key={lbl} style={{background:T.bgInput,borderRadius:8,padding:"12px 16px"}}>
+                  <div style={{fontSize:11,color:T.textMid,textTransform:"uppercase",letterSpacing:"0.05em"}}>{lbl}</div>
+                  <div style={{fontSize:24,fontWeight:800,color:col,marginTop:4}}>{val}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {myDprs.length===0&&<div style={{color:T.textLow,padding:24,textAlign:"center"}}>No drawings assigned yet.</div>}
+              {myDprs.map(dpr=>{
+                const o=(orders||[]).find(x=>x.id===dpr.orderId)||{};
+                const dr=(o.drawings||[]).find(x=>x.id===dpr.drawingId)||{};
+                const meta=DPR_STAGE_META[dpr.currentStage]||{label:"Pending",color:T.textLow,bg:"#F1F5F9"};
+                const myAssignment=(dpr.peAssignments||[]).find(a=>a.peId===myPe.id)||{};
+                return (
+                  <div key={dpr.id} style={{...css.card,padding:"8px 14px",borderLeft:`3px solid ${meta.color}`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div>
+                        <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:13}}>{dpr.drawingNo}</div>
+                        <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{o.id} · {((dr.totalWt||0)/1000).toFixed(2)}T · {myAssignment.stage||""}</div>
+                        {myAssignment.contractorName&&<div style={{fontSize:11,color:T.textLow}}>Contractor: {myAssignment.contractorName}</div>}
+                      </div>
+                      <span style={{display:"inline-block",padding:"3px 10px",borderRadius:99,fontSize:11,fontWeight:700,background:meta.bg,color:meta.color}}>{meta.label}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {peTab==="stats"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            <div style={{...css.card}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:4}}>MTD Performance Race</div>
+              <div style={{fontSize:11,color:T.textLow,marginBottom:16}}>Tonnes cleared (weld done and beyond) this month</div>
+              {allPeStats.map((pe,i)=>(
+                <div key={pe.id} style={{marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:13,fontWeight:600,color:pe.isMe?T.accent:T.text}}>{i+1}. {pe.name}</span>
+                      {pe.isMe&&<span style={{fontSize:10,background:`${T.accent}22`,color:T.accent,padding:"1px 6px",borderRadius:99,fontWeight:700}}>You</span>}
+                    </div>
+                    <span style={{fontSize:13,fontWeight:700,color:pe.isMe?T.accent:T.text}}>{pe.wt.toFixed(1)}T</span>
+                  </div>
+                  <div style={{height:12,background:T.bgInput,borderRadius:6,overflow:"hidden",border:`1px solid ${T.border}`}}>
+                    <div style={{width:`${Math.round(pe.wt/maxWt*100)}%`,height:"100%",background:pe.isMe?T.accent:"rgba(0,0,0,0.15)",borderRadius:6,transition:"width 0.5s ease"}} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{...css.card}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>My Stage Breakdown</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}}>
+                {(myPe.stages||[]).map(stage=>{
+                  const cnt=myDprs.filter(d=>{
+                    if(stage==="welding") return WELD_DONE.has(d.currentStage);
+                    if(stage==="cutting") return DONE_STAGES.has(d.currentStage);
+                    return d.currentStage===stage||d.currentStage===`${stage}_qc`;
+                  }).length;
+                  return (
+                    <div key={stage} style={{background:T.bgInput,borderRadius:8,padding:"10px 14px"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:T.textMid,textTransform:"uppercase"}}>{stage} done</div>
+                      <div style={{fontSize:22,fontWeight:800,color:T.green,marginTop:4}}>{cnt}</div>
+                      <div style={{fontSize:10,color:T.textLow}}>of {myDprs.length} assigned</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Purchase Admin Dashboard ─────────────────────────────────────────────────
+  const PurchaseAdminDashboard = () => {
+    const [pTab, setPTab] = useState("pr");
+    const pendingPRs = (purchaseReqs||[]).filter(p=>p.status==="pending"||p.status==="approved");
+    const allPos = (pos||[]);
+    const pendingPos = allPos.filter(p=>p.status!=="fully_received"&&p.status!=="cancelled");
+    const overduePos = pendingPos.filter(p=>p.expectedDelivery&&new Date(p.expectedDelivery)<new Date());
+
+    return (
+      <div>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:20}}>Purchase Dashboard — {user.name}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
+          {[["Pending PRs",pendingPRs.length,T.amber],["Open POs",pendingPos.length,T.accent],["Overdue POs",overduePos.length,overduePos.length>0?T.red:T.green],["Total PO Value",`₹${(allPos.reduce((s,p)=>s+(p.totalValue||p.lines?.reduce((ls,l)=>ls+(l.totalPrice||0),0)||0),0)/100000).toFixed(1)}L`,T.text]].map(([lbl,val,col])=>(
+            <div key={lbl} style={{background:T.bgInput,borderRadius:8,padding:"12px 16px"}}>
+              <div style={{fontSize:11,color:T.textMid,textTransform:"uppercase",letterSpacing:"0.05em"}}>{lbl}</div>
+              <div style={{fontSize:22,fontWeight:800,color:col,marginTop:4}}>{val}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
+          {[["pr","PR Queue"],["po","PO Tracker"],["grn","GRN Pending"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setPTab(id)} style={{padding:"10px 18px",fontSize:13,fontWeight:pTab===id?700:400,color:pTab===id?T.accent:T.textMid,background:"transparent",border:"none",borderBottom:pTab===id?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer"}}>{lbl}</button>
+          ))}
+        </div>
+
+        {pTab==="pr"&&(
+          <div>
+            {pendingPRs.length===0&&<div style={{color:T.textLow,padding:24,textAlign:"center"}}>✓ No pending purchase requisitions</div>}
+            {pendingPRs.map(pr=>(
+              <div key={pr.id} style={{...css.card,marginBottom:8,borderLeft:`3px solid ${T.amber}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{pr.id}</div>
+                    <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{pr.nestingBatchId} · {(pr.lots||[]).length} materials · {(pr.lots||[]).reduce((s,l)=>s+(l.sheetCount||0),0)} sheets</div>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <Badge color="amber">{pr.status}</Badge>
+                    <span style={{fontSize:11,color:T.textLow}}>{pr.createdAt?.slice(0,10)||""}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {pTab==="po"&&(
+          <div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr style={{background:T.bgInput}}>{["PO No","Vendor","Type","Value","Expected","Status","Payment Terms"].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:T.textMid,textTransform:"uppercase",borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
+              <tbody>
+                {pendingPos.map((po,i)=>{
+                  const val=(po.totalValue||po.lines?.reduce((s,l)=>s+(l.totalPrice||0),0)||0);
+                  const overdue=po.expectedDelivery&&new Date(po.expectedDelivery)<new Date();
+                  const ptTotal=(po.paymentTerms||[]).reduce((s,t)=>s+(+t.pct||0),0);
+                  return (
+                    <tr key={po.id} style={{borderBottom:`1px solid ${T.border}`,background:overdue?`${T.red}08`:i%2===0?"transparent":T.bgInput}}>
+                      <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontSize:11,color:T.accent}}>{po.id}</td>
+                      <td style={{padding:"7px 10px",fontSize:11}}>{po.vendorName}</td>
+                      <td style={{padding:"7px 10px"}}><Badge color="blue">{po.poType||"rm"}</Badge></td>
+                      <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontWeight:600}}>{fmt.currency(val)}</td>
+                      <td style={{padding:"7px 10px",fontSize:11,color:overdue?T.red:T.textMid,fontWeight:overdue?700:400}}>{po.expectedDelivery||"—"}{overdue?" ⚠":""}</td>
+                      <td style={{padding:"7px 10px"}}><Badge color={po.status==="fully_received"?"green":po.status==="partial"?"amber":"gray"}>{po.status}</Badge></td>
+                      <td style={{padding:"7px 10px",fontSize:11,color:ptTotal===100?T.green:ptTotal>0?T.amber:T.textLow}}>{ptTotal>0?`${ptTotal}% defined`:"Not set"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {pTab==="grn"&&(
+          <div>
+            {pendingPos.filter(p=>p.lines?.some(l=>(l.wtOrdered||0)>(l.wtReceived||0))).map(po=>{
+              const pending=po.lines?.filter(l=>(l.wtOrdered||0)>(l.wtReceived||0))||[];
+              const daysSince=po.poDate?Math.floor((Date.now()-new Date(po.poDate).getTime())/86400000):null;
+              return (
+                <div key={po.id} style={{...css.card,marginBottom:8,borderLeft:`3px solid ${daysSince>30?T.red:T.amber}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                    <div>
+                      <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{po.id} — {po.vendorName}</div>
+                      <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{pending.length} lines pending GRN · {daysSince} days since PO</div>
+                    </div>
+                    {daysSince>30&&<Badge color="red">Overdue by {daysSince-30}d</Badge>}
+                  </div>
+                  {pending.slice(0,3).map(l=>(
+                    <div key={l.id} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderBottom:`1px solid ${T.border}`}}>
+                      <span style={{fontFamily:T.fontMono,color:T.textMid}}>{l.matCode}</span>
+                      <span>{fmt.num(l.wtReceived||0)} / {fmt.num(l.wtOrdered||0)} kg received</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Planning Admin Dashboard ─────────────────────────────────────────────────
+  const PlanningAdminDashboard = () => {
+    const [plTab, setPlTab] = useState("drawings");
+    return (
+      <div>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:20}}>Planning Dashboard — {user.name}</div>
+        <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
+          {[["drawings","Drawing Register"],["nesting","Nesting Status"],["balance","Material Balance"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setPlTab(id)} style={{padding:"10px 18px",fontSize:13,fontWeight:plTab===id?700:400,color:plTab===id?T.accent:T.textMid,background:"transparent",border:"none",borderBottom:plTab===id?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer"}}>{lbl}</button>
+          ))}
+        </div>
+
+        {plTab==="drawings"&&(
+          <div>
+            {(orders||[]).filter(o=>o.status==="active").map(o=>{
+              const total=(o.drawings||[]).length;
+              const released=(o.drawings||[]).filter(d=>(dprs||[]).some(dp=>dp.drawingId===d.id&&dp.orderId===o.id)).length;
+              const unreleased=total-released;
+              return (
+                <div key={o.id} style={{...css.card,marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <div>
+                      <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{o.id}</div>
+                      <div style={{fontSize:11,color:T.textMid}}>{o.clientName} · {total} drawings</div>
+                    </div>
+                    <div style={{display:"flex",gap:10,fontSize:12}}>
+                      <span style={{color:T.green,fontWeight:700}}>{released} released</span>
+                      <span style={{color:unreleased>0?T.amber:T.textLow,fontWeight:unreleased>0?700:400}}>{unreleased} unreleased</span>
+                    </div>
+                  </div>
+                  <div style={{height:6,background:T.bgInput,borderRadius:3,overflow:"hidden"}}>
+                    <div style={{width:`${total>0?Math.round(released/total*100):0}%`,height:"100%",background:T.green,borderRadius:3}} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {plTab==="nesting"&&(
+          <div>
+            {(nestingBatches||[]).slice().reverse().map(b=>(
+              <div key={b.id} style={{...css.card,marginBottom:8}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div>
+                    <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{b.id}</div>
+                    <div style={{fontSize:11,color:T.textMid}}>{(b.lots||[]).length} materials · {(b.lots||[]).reduce((s,l)=>s+(l.sheets||[]).length,0)} sheets</div>
+                  </div>
+                  <Badge color={b.status==="confirmed"?"green":b.status==="draft"?"amber":"gray"}>{b.status||"draft"}</Badge>
+                </div>
+              </div>
+            ))}
+            {(nestingBatches||[]).length===0&&<div style={{color:T.textLow,padding:24,textAlign:"center"}}>No nesting batches yet.</div>}
+          </div>
+        )}
+
+        {plTab==="balance"&&(
+          <div>
+            {(orders||[]).filter(o=>o.status==="active").map(o=>{
+              const orderPos=(pos||[]).filter(p=>(p.servedOrders||p.coveredOrders||[]).includes(o.id));
+              const ordered=orderPos.reduce((s,p)=>s+(p.lines||[]).reduce((ls,l)=>ls+(l.wtOrdered||0),0),0)/1000;
+              const received=orderPos.reduce((s,p)=>s+(p.grns||[]).reduce((gs,g)=>gs+(g.lines||[]).reduce((ls,l)=>ls+(l.wtReceived||0),0),0),0)/1000;
+              const required=o.orderQty||0;
+              return (
+                <div key={o.id} style={{...css.card,marginBottom:10}}>
+                  <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,marginBottom:8}}>{o.id} — {o.clientName}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+                    {[["Required",`${required}T`,T.text],["Ordered",`${ordered.toFixed(1)}T`,T.accent],["Received",`${received.toFixed(1)}T`,T.green]].map(([lbl,val,col])=>(
+                      <div key={lbl} style={{background:T.bgInput,borderRadius:6,padding:"8px 12px"}}>
+                        <div style={{fontSize:10,color:T.textMid,fontWeight:700,textTransform:"uppercase"}}>{lbl}</div>
+                        <div style={{fontSize:16,fontWeight:700,color:col,marginTop:2}}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── Masters: Production Engineers ───────────────────────────────────────────
+  const MastersPEScreen = () => {
+    const [form, setForm] = useState(null); // null=list, {}=edit
+    const STAGE_OPTIONS = ["cutting","fitup","welding","blasting","painting"];
+    const peUsers = USERS.filter(u=>u.role==="production_engineer");
+
+    const save = () => {
+      if (!form.name||!form.userId) return;
+      if (form.id) {
+        setProductionEngineers(prev=>prev.map(p=>p.id===form.id?{...form}:p));
+      } else {
+        setProductionEngineers(prev=>[...prev,{...form,id:`PE-${Date.now()}`}]);
+      }
+      setForm(null);
+    };
+
+    if (form) return (
+      <div>
+        <button onClick={()=>setForm(null)} style={{...css.btn.ghost,marginBottom:16}}>← Back</button>
+        <div style={{...css.card,maxWidth:500}}>
+          <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:16}}>{form.id?"Edit":"Add"} Production Engineer</div>
+          <label style={css.label}>User Account</label>
+          <select value={form.userId||""} onChange={e=>{const u=peUsers.find(x=>x.username===e.target.value);setForm(p=>({...p,userId:e.target.value,name:u?.name||p.name}));}} style={{...css.input,marginBottom:10}}>
+            <option value="">Select user...</option>
+            {peUsers.map(u=><option key={u.username} value={u.username}>{u.name} ({u.username})</option>)}
+          </select>
+          <label style={css.label}>Display Name</label>
+          <input value={form.name||""} onChange={e=>setForm(p=>({...p,name:e.target.value}))} style={{...css.input,marginBottom:10}} />
+          <label style={css.label}>Stage Responsibilities</label>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+            {STAGE_OPTIONS.map(s=>(
+              <label key={s} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12}}>
+                <input type="checkbox" checked={(form.stages||[]).includes(s)}
+                  onChange={e=>setForm(p=>({...p,stages:e.target.checked?[...(p.stages||[]),s]:(p.stages||[]).filter(x=>x!==s)}))} />
+                {s.charAt(0).toUpperCase()+s.slice(1)}
+              </label>
+            ))}
+          </div>
+          <label style={css.label}>Assigned Orders</label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+            {(orders||[]).filter(o=>o.status==="active").map(o=>(
+              <label key={o.id} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12}}>
+                <input type="checkbox" checked={(form.orderIds||[]).includes(o.id)}
+                  onChange={e=>setForm(p=>({...p,orderIds:e.target.checked?[...(p.orderIds||[]),o.id]:(p.orderIds||[]).filter(x=>x!==o.id)}))} />
+                {o.id}
+              </label>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={save} disabled={!form.name||!form.userId} style={{...css.btn.primary,opacity:(!form.name||!form.userId)?0.4:1}}>Save</button>
+            <button onClick={()=>setForm(null)} style={css.btn.ghost}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    );
+
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{fontSize:14,fontWeight:700,color:T.text}}>Production Engineers</div>
+          <button onClick={()=>setForm({name:"",userId:"",stages:[],orderIds:[]})} style={css.btn.primary}>+ Add Engineer</button>
+        </div>
+        {(productionEngineers||[]).length===0&&<div style={{color:T.textLow,padding:24,textAlign:"center"}}>No production engineers configured yet.</div>}
+        {(productionEngineers||[]).map(pe=>{
+          const assignedDprs=(dprs||[]).filter(d=>(d.peAssignments||[]).some(a=>a.peId===pe.id));
+          return (
+            <div key={pe.id} style={{...css.card,marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:T.text}}>{pe.name}</div>
+                  <div style={{fontSize:11,color:T.textMid,marginTop:2}}>@{pe.userId} · Stages: {(pe.stages||[]).join(", ")||"none"}</div>
+                  <div style={{fontSize:11,color:T.textMid}}>Orders: {(pe.orderIds||[]).join(", ")||"none"} · {assignedDprs.length} drawings assigned</div>
+                </div>
+                <button onClick={()=>setForm({...pe})} style={css.btn.ghost}>Edit</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const renderMod = () => {
+    // Role-specific routing overrides
+    if (user.role==="production_admin")   return mod==="masters" ? <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} /> : <ProductionAdminScreen />;
+    if (user.role==="production_engineer") return <ProductionEngineerDashboard />;
+    if (user.role==="purchase_admin")      return <PurchaseAdminDashboard />;
+    if (user.role==="planning_admin")      return mod==="dashboard" ? <PlanningAdminDashboard /> : null;
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setMod={setMod} />;
@@ -21853,7 +22439,7 @@ export default function App() {
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
-      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} />;
+      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} />;
       default:          return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
     }
   };
