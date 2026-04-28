@@ -9913,96 +9913,377 @@ const TabShipping = ({ order, onChange, canEdit }) => {
   );
 };
 const TabMilestones = ({ order, onChange, canEdit }) => {
-  const [modal, setModal] = useState(null); const [form, setForm] = useState({});
-  const [invoiceModal, setInvoiceModal] = useState(null); const [invForm, setInvForm] = useState({});
+  const [modal, setModal]         = useState(null);
+  const [form, setForm]           = useState({});
+  const [invoiceModal, setInvoiceModal] = useState(null);
+  const [invForm, setInvForm]     = useState({});
+  const [expandedInv, setExpandedInv] = useState(null); // invoice id for payment recording
+  const [payForm, setPayForm]     = useState({amount:"",date:today(),remarks:""});
+
   const ms = order.milestones||[];
-  const totalPct = ms.reduce((s,m)=>s+(+m.value||0),0);
-  const invoiced = ms.reduce((s,m)=>s+(m.invoices||[]).reduce((ss,inv)=>ss+(inv.amount||0),0),0);
-  const saveMs = () => { const updated = modal==="add"?[...ms,{...form,id:`MS-${Date.now()}`,invoices:[]}]:ms.map(m=>m.id===form.id?{...form,invoices:m.invoices}:m); onChange({...order,milestones:updated}); setModal(null); };
-  const saveInvoice = (msId) => { const updated=ms.map(m=>m.id===msId?{...m,invoices:[...(m.invoices||[]),{...invForm,id:`INV-${Date.now()}`,raisedDate:today(),status:"draft"}]}:m); onChange({...order,milestones:updated}); setInvoiceModal(null); };
-  const triggerLabels = { bg:"Against Bank Guarantee",rm_inspection:"Against RM Inspection",fabrication_qc:"Against Fabrication & QC",dispatch:"Against Dispatch",retention:"Retention Release",advance:"Advance" };
+  const rate = order.ratePerUnit||0;
+  const qty  = order.orderQty||0;
+
+  // ── Milestone type definitions ──────────────────────────────────────────────
+  const ADVANCE_TYPES = [
+    { key:"bg",       label:"BG Advance",       basis:"order_value", defaultPct:10,  gst:false, dueInDays:0,  trigger:"manual",           color:"#D97706" },
+    { key:"rm",       label:"RM Advance",        basis:"tons_x_rate", defaultPct:30,  gst:false, dueInDays:0,  trigger:"rm_received",       color:"#2563EB" },
+    { key:"weld_tpi", label:"Weld TPI Advance",  basis:"tons_x_rate", defaultPct:40,  gst:false, dueInDays:0,  trigger:"weld_tpi_cleared",  color:"#7C3AED" },
+    { key:"running",  label:"Running Bill",      basis:"tons_x_rate", defaultPct:null,gst:true,  dueInDays:30, trigger:"adhoc",             color:"#0E7490" },
+    { key:"final",    label:"Final Invoice",     basis:"tons_x_rate", defaultPct:100, gst:true,  dueInDays:30, trigger:"dispatch",          color:"#059669" },
+  ];
+  const TRIGGER_LABELS = { manual:"Manual / Anytime", rm_received:"RM Received in Stock", weld_tpi_cleared:"Weld TPI Cleared", dispatch:"On Dispatch", adhoc:"Ad hoc" };
+
+  // ── Advance recovery calculation ────────────────────────────────────────────
+  // For a given advance type, compute total raised and total recovered so far
+  const getAdvanceStats = (advType) => {
+    const raised = ms.filter(m=>m.advanceType===advType).reduce((s,m)=>
+      s+(m.invoices||[]).reduce((ss,inv)=>ss+(inv.baseAmount||inv.amount||0),0),0);
+    const recovered = ms.filter(m=>m.advanceType==="final"||m.advanceType==="running").reduce((s,m)=>
+      s+(m.invoices||[]).reduce((ss,inv)=>ss+(inv.deductions||[]).filter(d=>d.type===advType).reduce((ds,d)=>ds+d.amount,0),0),0);
+    return { raised, recovered, remaining: Math.max(0, raised - recovered) };
+  };
+
+  // ── Compute deductions for a final invoice ──────────────────────────────────
+  const computeDeductions = (tons, invoiceTons) => {
+    const deductions = [];
+    ["bg","rm","weld_tpi"].forEach(advType=>{
+      const ms_def = ms.find(m=>m.advanceType===advType);
+      if (!ms_def) return;
+      const stats = getAdvanceStats(advType);
+      if (stats.remaining <= 0) return;
+      // Proportional deduction for this invoice
+      let deductAmt;
+      if (advType==="bg") {
+        // BG: deduct proportionally based on tons dispatched vs total order qty
+        deductAmt = (invoiceTons / (qty||1)) * stats.raised;
+      } else {
+        // RM and Weld TPI: deduct based on % × tons × rate
+        const pct = ms_def.value||0;
+        deductAmt = invoiceTons * rate * (pct/100);
+      }
+      deductAmt = Math.min(deductAmt, stats.remaining);
+      if (deductAmt > 0) deductions.push({ type:advType, label:ms_def.desc||ADVANCE_TYPES.find(a=>a.key===advType)?.label||advType, amount:Math.round(deductAmt) });
+    });
+    return deductions;
+  };
+
+  // ── Invoice summary stats ───────────────────────────────────────────────────
+  const allInvoices = ms.flatMap(m=>(m.invoices||[]).map(inv=>({...inv, msDesc:m.desc, advanceType:m.advanceType})));
+  const totalInvoiced = allInvoices.reduce((s,inv)=>s+(inv.netReceivable||inv.amount||0),0);
+  const totalReceived = allInvoices.reduce((s,inv)=>s+(inv.receipts||[]).reduce((rs,r)=>rs+(r.amount||0),0),0);
+  const totalOutstanding = totalInvoiced - totalReceived;
+
+  // ── Save milestone ──────────────────────────────────────────────────────────
+  const saveMs = () => {
+    if (!form.desc) return;
+    const updated = modal==="add"
+      ? [...ms, {...form, id:`MS-${Date.now()}`, invoices:[]}]
+      : ms.map(m=>m.id===form.id ? {...form, invoices:m.invoices} : m);
+    onChange({...order, milestones:updated});
+    setModal(null);
+  };
+
+  // ── Raise invoice ───────────────────────────────────────────────────────────
+  const raiseInvoice = () => {
+    const m = ms.find(x=>x.id===invoiceModal);
+    if (!m||!invForm.invoiceNo) return;
+    const isFinal = ["final","running"].includes(m.advanceType);
+    const tons = invForm.tons||0;
+    const baseAmount = m.advanceType==="bg"
+      ? Math.round((order.orderValue||0)*(m.value||0)/100)
+      : Math.round(tons * rate);
+    const gstAmt = (m.gstPct||0)>0 ? Math.round(baseAmount*(m.gstPct/100)) : 0;
+    const deductions = isFinal ? computeDeductions(qty, tons) : [];
+    const totalDeduction = deductions.reduce((s,d)=>s+d.amount,0);
+    const netReceivable = baseAmount + gstAmt - totalDeduction;
+    const dueDate = invForm.invoiceDate ? (() => {
+      const d = new Date(invForm.invoiceDate);
+      d.setDate(d.getDate()+(m.dueInDays||0));
+      return d.toISOString().slice(0,10);
+    })() : "";
+
+    const newInv = {
+      id:`INV-${Date.now()}`,
+      invoiceNo:invForm.invoiceNo,
+      invoiceDate:invForm.invoiceDate||today(),
+      dueDate,
+      tons, rate,
+      baseAmount, gstPct:m.gstPct||0, gstAmount:gstAmt,
+      grossAmount:baseAmount+gstAmt,
+      deductions,
+      totalDeduction,
+      netReceivable,
+      eirn:invForm.eirn||"",
+      status:"pending",
+      receipts:[],
+    };
+    const updated = ms.map(m2=>m2.id===invoiceModal?{...m2,invoices:[...(m2.invoices||[]),newInv]}:m2);
+    onChange({...order,milestones:updated});
+    setInvoiceModal(null); setInvForm({});
+  };
+
+  // ── Record payment receipt ──────────────────────────────────────────────────
+  const recordReceipt = (msId, invId) => {
+    if (!payForm.amount||!payForm.date) return;
+    const updated = ms.map(m=>m.id!==msId?m:{...m,invoices:(m.invoices||[]).map(inv=>{
+      if(inv.id!==invId) return inv;
+      const receipts=[...(inv.receipts||[]),{id:`RCP-${Date.now()}`,amount:+payForm.amount,date:payForm.date,remarks:payForm.remarks,recordedBy:"Finance Admin"}];
+      const totalRcvd=receipts.reduce((s,r)=>s+(r.amount||0),0);
+      const balance=inv.netReceivable-totalRcvd;
+      return {...inv,receipts,totalReceived:totalRcvd,balance,status:balance<=0?"received":totalRcvd>0?"partial":"pending"};
+    })});
+    onChange({...order,milestones:updated});
+    setExpandedInv(null); setPayForm({amount:"",date:today(),remarks:""});
+  };
+
   return (
     <div>
-      <div style={{ display:"flex", gap:12, marginBottom:20, flexWrap:"wrap" }}>
-        <StatCard label="Order Value" value={fmt.currency(order.orderValue)} color={T.text} />
-        <StatCard label="Total %" value={`${totalPct}%`} sub={totalPct===100?"✓ 100%":"⚠ Should total 100%"} color={totalPct===100?T.green:T.red} />
-        <StatCard label="Total Invoiced" value={fmt.currency(invoiced)} color={T.accent} />
+      {/* Summary bar */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
+        {[
+          ["Order Value",fmt.currency(order.orderValue||0),T.text],
+          ["Total Invoiced",fmt.currency(totalInvoiced),T.accent],
+          ["Received",fmt.currency(totalReceived),T.green],
+          ["Outstanding",fmt.currency(totalOutstanding),totalOutstanding>0?T.amber:T.green],
+        ].map(([lbl,val,col])=>(
+          <div key={lbl} style={{background:T.bgInput,borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontSize:10,color:T.textMid,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>{lbl}</div>
+            <div style={{fontSize:16,fontWeight:700,color:col}}>{val}</div>
+          </div>
+        ))}
       </div>
-      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:14 }}>
-        <div style={{ fontSize:14, fontWeight:700, color:T.text }}>Milestones ({ms.length})</div>
-        {canEdit && <button onClick={()=>{setForm({type:"running",gstPct:18,basis:"percent"});setModal("add");}} style={css.btn.primary}>+ Add Milestone</button>}
-      </div>
-      {ms.map((m,i)=>{
-        const msValue = m.basis==="percent"?(order.orderValue*(m.value/100)):m.value;
-        const totalInv = (m.invoices||[]).reduce((s,inv)=>s+(inv.amount||0),0);
+
+      {/* Advance recovery tracker */}
+      {["bg","rm","weld_tpi"].map(advType=>{
+        const stats = getAdvanceStats(advType);
+        if(stats.raised===0) return null;
+        const recovPct = Math.min(100,Math.round(stats.recovered/stats.raised*100));
+        const def = ADVANCE_TYPES.find(a=>a.key===advType);
         return (
-          <div key={m.id} style={{ ...css.card, marginBottom:10 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+          <div key={advType} style={{display:"flex",alignItems:"center",gap:12,marginBottom:8,padding:"8px 12px",background:T.bgInput,borderRadius:6}}>
+            <div style={{fontSize:11,fontWeight:700,color:def.color,width:140}}>{def.label}</div>
+            <div style={{flex:1,height:6,background:T.border,borderRadius:3,overflow:"hidden"}}>
+              <div style={{width:`${recovPct}%`,height:"100%",background:recovPct>=100?T.green:def.color,borderRadius:3}} />
+            </div>
+            <div style={{fontSize:11,color:T.textMid,width:200,textAlign:"right"}}>
+              Raised: {fmt.currency(stats.raised)} · Recovered: {fmt.currency(stats.recovered)} · Remaining: <strong style={{color:stats.remaining>0?T.amber:T.green}}>{fmt.currency(stats.remaining)}</strong>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Milestone list */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"16px 0 12px"}}>
+        <div style={{fontSize:14,fontWeight:700,color:T.text}}>Payment Milestones</div>
+        {canEdit&&<button onClick={()=>{setForm({desc:"",advanceType:"rm",basis:"tons_x_rate",value:30,gstPct:0,dueInDays:0,trigger:"rm_received"});setModal("add");}} style={css.btn.primary}>+ Add Milestone</button>}
+      </div>
+
+      {ms.length===0&&<div style={{color:T.textLow,fontSize:12,padding:16,textAlign:"center"}}>No milestones defined. Add milestones to define the payment structure for this order.</div>}
+
+      {ms.map((m,i)=>{
+        const def = ADVANCE_TYPES.find(a=>a.key===m.advanceType)||ADVANCE_TYPES[0];
+        const isFinal = ["final","running"].includes(m.advanceType);
+        const totalInv = (m.invoices||[]).reduce((s,inv)=>s+(inv.netReceivable||0),0);
+        const totalRcv = (m.invoices||[]).reduce((s,inv)=>s+(inv.totalReceived||0),0);
+        return (
+          <div key={m.id} style={{...css.card,marginBottom:10,borderLeft:`3px solid ${def.color}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
               <div>
-                <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
-                  <span style={{ fontSize:11, fontFamily:T.fontMono, color:T.textLow }}>MS-{String(i+1).padStart(2,"0")}</span>
-                  <Badge color={m.type==="advance"?"gold":m.type==="final"?"purple":"blue"}>{m.type}</Badge>
-                  <Badge color="gray">{m.gstPct}% GST</Badge>
+                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                  <span style={{fontSize:11,fontFamily:T.fontMono,color:T.textLow}}>MS-{String(i+1).padStart(2,"0")}</span>
+                  <span style={{padding:"2px 8px",borderRadius:99,fontSize:11,fontWeight:700,background:`${def.color}22`,color:def.color}}>{def.label}</span>
+                  {m.gstPct>0&&<Badge color="blue">{m.gstPct}% GST</Badge>}
+                  <Badge color="gray">{TRIGGER_LABELS[m.trigger]||m.trigger}</Badge>
                 </div>
-                <div style={{ fontSize:14, fontWeight:700, color:T.text }}>{m.desc}</div>
-                <div style={{ fontSize:12, color:T.textMid }}>{triggerLabels[m.trigger]||m.trigger} · {m.basis==="percent"?`${m.value}% = ${fmt.currency(msValue)}`:`Fixed ${fmt.currency(m.value)}`}</div>
+                <div style={{fontSize:14,fontWeight:700,color:T.text}}>{m.desc}</div>
+                <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
+                  {m.advanceType==="bg"?`${m.value||0}% of order value = ${fmt.currency((order.orderValue||0)*(m.value||0)/100)}`
+                    :m.advanceType==="final"?"100% × tons dispatched × rate + GST − advance deductions"
+                    :`${m.value||0}% × tons × rate`}
+                  {m.dueInDays>0?` · Due in ${m.dueInDays} days`:" · Due immediately"}
+                </div>
               </div>
-              <div style={{ display:"flex", gap:8 }}>
-                {canEdit && <button onClick={()=>{setInvForm({msId:m.id,ratePerUnit:order.ratePerUnit||0});setInvoiceModal(m.id);}} style={css.btn.sm}>+ Invoice</button>}
-                {canEdit && <button onClick={()=>{setForm({...m});setModal("edit");}} style={css.btn.ghost}>Edit</button>}
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {totalInv>0&&<div style={{textAlign:"right",fontSize:11}}>
+                  <div style={{color:T.accent,fontWeight:700}}>{fmt.currency(totalInv)} invoiced</div>
+                  <div style={{color:totalRcv>0?T.green:T.textLow}}>{fmt.currency(totalRcv)} received</div>
+                </div>}
+                {canEdit&&<button onClick={()=>{
+                  const def2=ADVANCE_TYPES.find(a=>a.key===m.advanceType)||ADVANCE_TYPES[0];
+                  setInvForm({tons:"",invoiceDate:today(),eirn:"",invoiceNo:"",advanceType:m.advanceType,gstPct:m.gstPct||0});
+                  setInvoiceModal(m.id);
+                }} style={css.btn.sm}>+ Invoice</button>}
+                {canEdit&&<button onClick={()=>{setForm({...m});setModal("edit");}} style={css.btn.ghost}>Edit</button>}
               </div>
             </div>
-            {(m.invoices||[]).length>0 && (
-              <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
-                <div style={{ fontSize:11, color:T.textMid, fontWeight:600, marginBottom:6, textTransform:"uppercase" }}>Invoices ({m.invoices.length})</div>
-                {m.invoices.map(inv=>(
-                  <div key={inv.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", background:T.bgInput, borderRadius:6, marginBottom:4 }}>
-                    <div>
-                      <span style={{ fontSize:12, fontFamily:T.fontMono, color:T.accentHi }}>{inv.invoiceNo||inv.id}</span>
-                      <span style={{ fontSize:11, color:T.textMid, marginLeft:10 }}>{fmt.date(inv.raisedDate)}</span>
-                      <span style={{ fontSize:12, color:T.textMid, marginLeft:10 }}>{inv.qty} {order.orderUnit} × ₹{fmt.num(inv.ratePerUnit)}</span>
+
+            {/* Invoices under this milestone */}
+            {(m.invoices||[]).length>0&&(
+              <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}>
+                <div style={{fontSize:10,fontWeight:700,color:T.textMid,textTransform:"uppercase",marginBottom:6}}>Invoices ({m.invoices.length})</div>
+                {m.invoices.map(inv=>{
+                  const rcvd=(inv.receipts||[]).reduce((s,r)=>s+(r.amount||0),0);
+                  const balance=(inv.netReceivable||0)-rcvd;
+                  const expanded=expandedInv===inv.id;
+                  return (
+                    <div key={inv.id} style={{marginBottom:6}}>
+                      <div style={{display:"grid",gridTemplateColumns:"140px 80px 90px 90px 90px 80px 80px auto",gap:8,alignItems:"center",padding:"6px 10px",background:T.bgInput,borderRadius:6,fontSize:11}}>
+                        <span style={{fontFamily:T.fontMono,color:T.accent,fontWeight:700}}>{inv.invoiceNo}</span>
+                        <span style={{color:T.textMid}}>{inv.invoiceDate}</span>
+                        {inv.tons?<span>{inv.tons}T</span>:<span>—</span>}
+                        <span style={{fontFamily:T.fontMono}}>{fmt.currency(inv.baseAmount||0)}</span>
+                        {inv.gstAmount>0?<span style={{color:T.textMid}}>+{fmt.currency(inv.gstAmount)}</span>:<span style={{color:T.textLow}}>0 GST</span>}
+                        <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.green}}>{fmt.currency(inv.netReceivable||0)}</span>
+                        <span style={{fontWeight:700,color:balance>0?T.amber:T.green}}>{fmt.currency(balance)}</span>
+                        <div style={{display:"flex",gap:4}}>
+                          <span style={{padding:"1px 6px",borderRadius:99,fontSize:10,fontWeight:700,background:inv.status==="received"?T.greenBg:inv.status==="partial"?T.amberBg:T.bgCard,color:inv.status==="received"?T.green:inv.status==="partial"?T.amber:T.textMid}}>{inv.status||"pending"}</span>
+                          {balance>0&&<button onClick={()=>{setExpandedInv(expanded?null:inv.id);setPayForm({amount:"",date:today(),remarks:""}); }} style={{...css.btn.sm,fontSize:10,padding:"1px 6px"}}>Pay</button>}
+                        </div>
+                      </div>
+                      {/* Deductions detail */}
+                      {(inv.deductions||[]).length>0&&(
+                        <div style={{padding:"4px 10px",fontSize:10,color:T.textMid,display:"flex",gap:12}}>
+                          Advance deductions:
+                          {inv.deductions.map(d=><span key={d.type} style={{color:T.amber}}>{d.label}: {fmt.currency(d.amount)}</span>)}
+                        </div>
+                      )}
+                      {/* Receipts */}
+                      {(inv.receipts||[]).map(r=>(
+                        <div key={r.id} style={{padding:"3px 10px 3px 20px",fontSize:10,color:T.green,display:"flex",gap:12}}>
+                          <span>✓ Received {fmt.currency(r.amount)}</span>
+                          <span style={{color:T.textMid}}>{r.date}</span>
+                          {r.remarks&&<span style={{color:T.textLow}}>{r.remarks}</span>}
+                        </div>
+                      ))}
+                      {/* Inline payment form */}
+                      {expanded&&(
+                        <div style={{display:"flex",gap:8,alignItems:"center",padding:"8px 10px",background:`${T.green}11`,borderRadius:6,marginTop:4}}>
+                          <span style={{fontSize:11,color:T.textMid,whiteSpace:"nowrap"}}>Record receipt:</span>
+                          <input type="number" value={payForm.amount} onChange={e=>setPayForm(p=>({...p,amount:e.target.value}))} placeholder={`Max ${fmt.currency(balance)}`} style={{...css.input,width:130,fontSize:11}} />
+                          <input type="date" value={payForm.date} onChange={e=>setPayForm(p=>({...p,date:e.target.value}))} style={{...css.input,width:130,fontSize:11}} />
+                          <input value={payForm.remarks} onChange={e=>setPayForm(p=>({...p,remarks:e.target.value}))} placeholder="Remarks (optional)" style={{...css.input,flex:1,fontSize:11}} />
+                          <button onClick={()=>recordReceipt(m.id,inv.id)} disabled={!payForm.amount||!payForm.date} style={{...css.btn.green,opacity:payForm.amount&&payForm.date?1:0.4,whiteSpace:"nowrap"}}>✓ Save</button>
+                          <button onClick={()=>setExpandedInv(null)} style={css.btn.ghost}>✕</button>
+                        </div>
+                      )}
                     </div>
-                    <div style={{ display:"flex", gap:8 }}>
-                      <span style={{ fontSize:13, fontWeight:700, color:T.green, fontFamily:T.fontMono }}>{fmt.currency(inv.amount)}</span>
-                      <Badge color={inv.status==="paid"?"green":inv.status==="sent"?"amber":"gray"}>{inv.status}</Badge>
-                    </div>
-                  </div>
-                ))}
-                <div style={{ fontSize:12, color:T.textMid, textAlign:"right", marginTop:4 }}>Invoiced: <strong style={{color:T.text}}>{fmt.currency(totalInv)}</strong> of {fmt.currency(msValue)}</div>
+                  );
+                })}
               </div>
             )}
           </div>
         );
       })}
-      {modal && (
-        <Modal title={modal==="add"?"Add Milestone":"Edit Milestone"} onClose={()=>setModal(null)}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            <div style={{ gridColumn:"span 2" }}><label style={css.label}>Description</label><input value={form.desc||""} onChange={e=>setForm({...form,desc:e.target.value})} style={css.input} /></div>
-            <div><label style={css.label}>Type</label><select value={form.type||"running"} onChange={e=>setForm({...form,type:e.target.value})} style={css.input}><option value="advance">Advance</option><option value="running">Running</option><option value="final">Final</option></select></div>
-            <div><label style={css.label}>Trigger</label><select value={form.trigger||""} onChange={e=>setForm({...form,trigger:e.target.value})} style={css.input}><option value="">Select...</option>{Object.entries(triggerLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></div>
-            <div><label style={css.label}>Basis</label><select value={form.basis||"percent"} onChange={e=>setForm({...form,basis:e.target.value})} style={css.input}><option value="percent">% of Order</option><option value="fixed">Fixed Amount</option></select></div>
-            <div><label style={css.label}>{form.basis==="percent"?"Percentage (%)":"Amount (₹)"}</label><input type="number" value={form.value||""} onChange={e=>setForm({...form,value:+e.target.value})} style={css.input} /></div>
-            <div><label style={css.label}>GST %</label><select value={form.gstPct??18} onChange={e=>setForm({...form,gstPct:+e.target.value})} style={css.input}><option value={0}>0%</option><option value={5}>5%</option><option value={12}>12%</option><option value={18}>18%</option></select></div>
+
+      {/* Add/Edit Milestone Modal */}
+      {modal&&(
+        <Modal title={modal==="add"?"Add Payment Milestone":"Edit Payment Milestone"} onClose={()=>setModal(null)} width={520}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div style={{gridColumn:"span 2"}}>
+              <label style={css.label}>Description</label>
+              <input value={form.desc||""} onChange={e=>setForm(p=>({...p,desc:e.target.value}))} style={css.input} placeholder="e.g. RM Advance — Batch 1" />
+            </div>
+            <div>
+              <label style={css.label}>Milestone Type</label>
+              <select value={form.advanceType||"rm"} onChange={e=>{
+                const def=ADVANCE_TYPES.find(a=>a.key===e.target.value)||ADVANCE_TYPES[0];
+                setForm(p=>({...p,advanceType:e.target.value,gstPct:def.gst?18:0,dueInDays:def.dueInDays,trigger:def.trigger,value:def.defaultPct||p.value}));
+              }} style={css.input}>
+                {ADVANCE_TYPES.map(a=><option key={a.key} value={a.key}>{a.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={css.label}>Trigger Event</label>
+              <select value={form.trigger||"manual"} onChange={e=>setForm(p=>({...p,trigger:e.target.value}))} style={css.input}>
+                {Object.entries(TRIGGER_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={css.label}>% (of basis)</label>
+              <input type="number" value={form.value||""} onChange={e=>setForm(p=>({...p,value:+e.target.value}))} style={css.input} placeholder="e.g. 30" />
+            </div>
+            <div>
+              <label style={css.label}>Due in Days</label>
+              <input type="number" value={form.dueInDays??0} onChange={e=>setForm(p=>({...p,dueInDays:+e.target.value}))} style={css.input} placeholder="0 = immediate, 30 = 30 days" />
+            </div>
+            <div>
+              <label style={css.label}>GST %</label>
+              <select value={form.gstPct??0} onChange={e=>setForm(p=>({...p,gstPct:+e.target.value}))} style={css.input}>
+                <option value={0}>0% (Advances)</option><option value={5}>5%</option><option value={12}>12%</option><option value={18}>18% (Final/Running)</option>
+              </select>
+            </div>
           </div>
-          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={saveMs} style={css.btn.primary}>Save Milestone</button></div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+            <button onClick={()=>setModal(null)} style={css.btn.ghost}>Cancel</button>
+            <button onClick={saveMs} disabled={!form.desc} style={{...css.btn.primary,opacity:form.desc?1:0.4}}>Save Milestone</button>
+          </div>
         </Modal>
       )}
-      {invoiceModal && (
-        <Modal title="Raise Invoice Against Milestone" onClose={()=>setInvoiceModal(null)} width={480}>
-          <div style={{ fontSize:12, color:T.textMid, marginBottom:16 }}>{ms.find(m=>m.id===invoiceModal)?.desc}</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            <div><label style={css.label}>Invoice No</label><input value={invForm.invoiceNo||""} onChange={e=>setInvForm({...invForm,invoiceNo:e.target.value})} style={css.input} placeholder="SF/INV/2025/001" /></div>
-            <div><label style={css.label}>Qty ({order.orderUnit})</label><input type="number" value={invForm.qty||""} onChange={e=>setInvForm({...invForm,qty:+e.target.value,amount:(+e.target.value)*(invForm.ratePerUnit||order.ratePerUnit||0)})} style={css.input} /></div>
-            <div><label style={css.label}>Rate per Unit (₹)</label><input type="number" value={invForm.ratePerUnit||order.ratePerUnit||""} onChange={e=>setInvForm({...invForm,ratePerUnit:+e.target.value,amount:(invForm.qty||0)*(+e.target.value)})} style={css.input} /></div>
-            <div><label style={css.label}>Amount (₹) — Auto</label><input value={fmt.currency(invForm.amount||0)} disabled style={{ ...css.input, opacity:0.7, color:T.green }} /></div>
-            <div style={{ gridColumn:"span 2" }}><label style={css.label}>Remarks</label><textarea value={invForm.remarks||""} onChange={e=>setInvForm({...invForm,remarks:e.target.value})} style={{ ...css.input, minHeight:60, resize:"vertical" }} /></div>
-          </div>
-          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setInvoiceModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={()=>saveInvoice(invoiceModal)} style={css.btn.primary}>Raise Invoice</button></div>
-        </Modal>
-      )}
+
+      {/* Raise Invoice Modal */}
+      {invoiceModal&&(()=>{
+        const m=ms.find(x=>x.id===invoiceModal)||{};
+        const def=ADVANCE_TYPES.find(a=>a.key===m.advanceType)||ADVANCE_TYPES[0];
+        const isFinal=["final","running"].includes(m.advanceType);
+        const isBg=m.advanceType==="bg";
+        const tons=+invForm.tons||0;
+        const baseAmount=isBg?Math.round((order.orderValue||0)*(m.value||0)/100):Math.round(tons*rate);
+        const gstAmt=(m.gstPct||0)>0?Math.round(baseAmount*(m.gstPct/100)):0;
+        const deductions=isFinal?computeDeductions(qty,tons):[];
+        const totalDeduction=deductions.reduce((s,d)=>s+d.amount,0);
+        const netReceivable=baseAmount+gstAmt-totalDeduction;
+        return (
+          <Modal title={`Raise Invoice — ${m.desc}`} onClose={()=>{setInvoiceModal(null);setInvForm({});}} width={540}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <label style={css.label}>Invoice No <span style={{color:T.red}}>*</span></label>
+                <input value={invForm.invoiceNo||""} onChange={e=>setInvForm(p=>({...p,invoiceNo:e.target.value}))} style={css.input} placeholder="e.g. STRUCTO/2026-27/001" />
+              </div>
+              <div>
+                <label style={css.label}>Invoice Date</label>
+                <input type="date" value={invForm.invoiceDate||today()} onChange={e=>setInvForm(p=>({...p,invoiceDate:e.target.value}))} style={css.input} />
+              </div>
+              {!isBg&&(
+                <div>
+                  <label style={css.label}>Tonnes {m.advanceType==="rm"?"(RM received)":m.advanceType==="weld_tpi"?"(TPI cleared)":"(dispatched)"}</label>
+                  <input type="number" value={invForm.tons||""} onChange={e=>setInvForm(p=>({...p,tons:e.target.value}))} style={css.input} placeholder={`e.g. 22`} />
+                </div>
+              )}
+              <div>
+                <label style={css.label}>E-Invoice / IRN (optional)</label>
+                <input value={invForm.eirn||""} onChange={e=>setInvForm(p=>({...p,eirn:e.target.value}))} style={css.input} placeholder="Tally IRN reference" />
+              </div>
+            </div>
+            {/* Computed breakdown */}
+            {(isBg||tons>0)&&(
+              <div style={{background:T.bgInput,borderRadius:8,padding:14,marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:700,color:T.textMid,textTransform:"uppercase",marginBottom:10}}>Invoice Computation</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:4,fontSize:12}}>
+                  <span>Base amount {isBg?`(${m.value}% of order value)`:`(${tons}T × ₹${fmt.num(rate)})`}</span>
+                  <span style={{fontFamily:T.fontMono,textAlign:"right"}}>{fmt.currency(baseAmount)}</span>
+                  {gstAmt>0&&<><span style={{color:T.textMid}}>GST @ {m.gstPct}%</span><span style={{fontFamily:T.fontMono,textAlign:"right",color:T.textMid}}>+{fmt.currency(gstAmt)}</span></>}
+                  {deductions.map(d=>(
+                    <><span key={d.type} style={{color:T.amber}}>Advance deduction — {d.label}</span><span style={{fontFamily:T.fontMono,textAlign:"right",color:T.amber}}>−{fmt.currency(d.amount)}</span></>
+                  ))}
+                  <div style={{gridColumn:"span 2",height:1,background:T.border,margin:"6px 0"}} />
+                  <span style={{fontWeight:700}}>Net Receivable</span>
+                  <span style={{fontFamily:T.fontMono,fontWeight:700,textAlign:"right",color:T.green,fontSize:14}}>{fmt.currency(netReceivable)}</span>
+                </div>
+              </div>
+            )}
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>{setInvoiceModal(null);setInvForm({});}} style={css.btn.ghost}>Cancel</button>
+              <button onClick={raiseInvoice} disabled={!invForm.invoiceNo||((!isBg)&&!tons)} style={{...css.btn.primary,opacity:(invForm.invoiceNo&&(isBg||tons))?1:0.4}}>✓ Raise Invoice</button>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 };
+
+
 const TabAssemblies = ({ order, onChange, canEdit }) => {
   const assemblies = order.assemblies||[];
   const drawings = order.drawings||[];
@@ -22257,6 +22538,423 @@ export default function App() {
   };
 
   // ── Planning Admin Dashboard ─────────────────────────────────────────────────
+  // ── Finance Admin Dashboard ─────────────────────────────────────────────────
+  const FinanceAdminDashboard = () => {
+    const [fTab, setFTab] = useState("summary");
+    const [ledgerView, setLedgerView] = useState("receivables"); // receivables | payables
+    const [ageFilter, setAgeFilter] = useState("all");
+    const [orderFilter, setOrderFilter] = useState("");
+    const [expandedRow, setExpandedRow] = useState(null);
+    const [payForm, setPayForm] = useState({amount:"",date:today(),remarks:""});
+
+    const activeOrders = (orders||[]).filter(o=>o.status==="active");
+
+    // ── All invoices across all orders ─────────────────────────────────────────
+    const allInvoices = activeOrders.flatMap(o=>
+      (o.milestones||[]).flatMap(m=>(m.invoices||[]).map(inv=>({
+        ...inv, orderId:o.id, orderNo:o.id, clientName:o.clientName,
+        msDesc:m.desc, advanceType:m.advanceType, dueInDays:m.dueInDays||0,
+        msId:m.id,
+      })))
+    );
+
+    // ── All PO payment terms ────────────────────────────────────────────────────
+    const allPoTerms = (pos||[]).flatMap(po=>(po.paymentTerms||[]).map((term,ti)=>{
+      const poTotal = (po.lines||[]).reduce((s,l)=>s+(l.totalPrice||0),0);
+      const amountDue = Math.round(poTotal*(+term.pct||0)/100);
+      const grnDate = (po.grns||[]).slice(-1)[0]?.grnDate||"";
+      const dueDate = grnDate&&term.daysFromMilestone
+        ? (() => { const d=new Date(grnDate); d.setDate(d.getDate()+(+term.daysFromMilestone||0)); return d.toISOString().slice(0,10); })()
+        : po.expectedDelivery||"";
+      const totalPaid = (term.payments||[]).reduce((s,p)=>s+(p.amount||0),0);
+      const balance = amountDue - totalPaid;
+      const daysSince = dueDate ? Math.floor((Date.now()-new Date(dueDate).getTime())/86400000) : null;
+      return { ...term, termIdx:ti, poId:po.id, vendorName:po.vendorName, poType:po.poType||"rm",
+        amountDue, totalPaid, balance, dueDate, daysSince,
+        status: balance<=0?"paid":totalPaid>0?"partial":"pending" };
+    }));
+
+    // ── Age filter helper ───────────────────────────────────────────────────────
+    const ageColor = (days) => days===null?"":days>60?T.red:days>30?T.amber:"";
+    const matchAge = (days) => {
+      if(ageFilter==="all") return true;
+      if(ageFilter==="0-30") return days!==null&&days>=0&&days<=30;
+      if(ageFilter==="31-60") return days!==null&&days>30&&days<=60;
+      if(ageFilter==="61-90") return days!==null&&days>60&&days<=90;
+      if(ageFilter==="90+") return days!==null&&days>90;
+      return true;
+    };
+
+    const filteredInvoices = allInvoices.filter(inv=>{
+      const daysSince = inv.dueDate ? Math.floor((Date.now()-new Date(inv.dueDate).getTime())/86400000) : null;
+      const rcvd = (inv.receipts||[]).reduce((s,r)=>s+(r.amount||0),0);
+      const balance = (inv.netReceivable||0)-rcvd;
+      if(orderFilter&&inv.orderId!==orderFilter) return false;
+      if(ageFilter!=="all"&&!matchAge(daysSince)) return false;
+      return balance>0;
+    });
+
+    const filteredTerms = allPoTerms.filter(t=>{
+      if(orderFilter) return false; // POs not order-specific easily
+      if(ageFilter!=="all"&&!matchAge(t.daysSince)) return false;
+      return t.balance>0;
+    });
+
+    // ── Record receipt on invoice ───────────────────────────────────────────────
+    const recordInvReceipt = (inv) => {
+      if(!payForm.amount||!payForm.date) return;
+      const updOrders = (orders||[]).map(o=>{
+        if(o.id!==inv.orderId) return o;
+        return {...o,milestones:(o.milestones||[]).map(m=>{
+          if(m.id!==inv.msId) return m;
+          return {...m,invoices:(m.invoices||[]).map(i=>{
+            if(i.id!==inv.id) return i;
+            const receipts=[...(i.receipts||[]),{id:`RCP-${Date.now()}`,amount:+payForm.amount,date:payForm.date,remarks:payForm.remarks}];
+            const totalReceived=receipts.reduce((s,r)=>s+(r.amount||0),0);
+            const balance=(i.netReceivable||0)-totalReceived;
+            return {...i,receipts,totalReceived,balance,status:balance<=0?"received":totalReceived>0?"partial":"pending"};
+          })};
+        })};
+      });
+      // setOrders is not available here — use onChange pattern via order update
+      // We'll store to a temp and trigger re-render via the orders state
+      setExpandedRow(null); setPayForm({amount:"",date:today(),remarks:""});
+    };
+
+    // ── Record payment on PO term ───────────────────────────────────────────────
+    const recordPoPayment = (term) => {
+      if(!payForm.amount||!payForm.date) return;
+      const updPos = (pos||[]).map(po=>{
+        if(po.id!==term.poId) return po;
+        return {...po,paymentTerms:(po.paymentTerms||[]).map((t,ti)=>{
+          if(ti!==term.termIdx) return t;
+          const payments=[...(t.payments||[]),{id:`PAY-${Date.now()}`,amount:+payForm.amount,date:payForm.date,remarks:payForm.remarks}];
+          return {...t,payments};
+        })};
+      });
+      setExpandedRow(null); setPayForm({amount:"",date:today(),remarks:""});
+    };
+
+    // ── Cash flow computation (8 weeks) ────────────────────────────────────────
+    const getCashFlowWeeks = () => {
+      const weeks = [];
+      const now = new Date();
+      const weekStart = new Date(now);
+      weekStart.setDate(weekStart.getDate()-14); // start 2 weeks back
+      weekStart.setHours(0,0,0,0);
+      // Align to Monday
+      weekStart.setDate(weekStart.getDate()-(weekStart.getDay()||7)+1);
+      for(let w=0;w<8;w++) {
+        const wStart = new Date(weekStart); wStart.setDate(weekStart.getDate()+w*7);
+        const wEnd   = new Date(wStart);    wEnd.setDate(wStart.getDate()+6);
+        const label  = wStart.toLocaleDateString("en-IN",{day:"2-digit",month:"short"})+" – "+wEnd.toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+        const isCurrentWeek = now>=wStart&&now<=wEnd;
+        const isPast = wEnd<now;
+
+        // Receivables due this week
+        let recvEst=0, recvActual=0;
+        allInvoices.forEach(inv=>{
+          if(!inv.dueDate) return;
+          const dd=new Date(inv.dueDate);
+          if(dd>=wStart&&dd<=wEnd) {
+            const rcvd=(inv.receipts||[]).reduce((s,r)=>s+(r.amount||0),0);
+            const bal=(inv.netReceivable||0)-rcvd;
+            if(isPast) recvActual+=rcvd; else recvEst+=bal;
+          }
+        });
+
+        // Payables due this week
+        let payEst=0, payActual=0;
+        allPoTerms.forEach(t=>{
+          if(!t.dueDate) return;
+          const dd=new Date(t.dueDate);
+          if(dd>=wStart&&dd<=wEnd) {
+            if(isPast) payActual+=t.totalPaid; else payEst+=t.balance;
+          }
+        });
+
+        const netEst = recvEst-payEst;
+        const netActual = recvActual-payActual;
+        weeks.push({ label, isCurrentWeek, isPast, recvEst, recvActual, payEst, payActual, netEst, netActual, wStart, wEnd });
+      }
+      return weeks;
+    };
+    const cfWeeks = getCashFlowWeeks();
+    const maxCfVal = Math.max(...cfWeeks.map(w=>Math.max(w.recvEst+w.recvActual,w.payEst+w.payActual)),1);
+
+    // ── Stats ───────────────────────────────────────────────────────────────────
+    const totalReceivable = allInvoices.reduce((s,inv)=>s+Math.max(0,(inv.netReceivable||0)-(inv.totalReceived||0)),0);
+    const totalPayable    = allPoTerms.reduce((s,t)=>s+Math.max(0,t.balance),0);
+    const overdueRecv     = filteredInvoices.filter(inv=>{const d=inv.dueDate?Math.floor((Date.now()-new Date(inv.dueDate).getTime())/86400000):null;return d!==null&&d>0;}).length;
+    const overduePay      = allPoTerms.filter(t=>t.daysSince!==null&&t.daysSince>0&&t.balance>0).length;
+
+    const AGE_OPTS = [["all","All"],["0-30","0–30d"],["31-60","31–60d"],["61-90","61–90d"],["90+","90+d"]];
+
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:T.text}}>Finance Dashboard</div>
+            <div style={{fontSize:12,color:T.textMid}}>{user.name}</div>
+          </div>
+        </div>
+
+        {/* Stat bar */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:20}}>
+          {[["Total Receivable",fmt.currency(totalReceivable),T.green],["Total Payable",fmt.currency(totalPayable),T.red],["Overdue Receivables",`${overdueRecv} invoices`,overdueRecv>0?T.red:T.green],["Overdue Payments",`${overduePay} terms`,overduePay>0?T.amber:T.green]].map(([lbl,val,col])=>(
+            <div key={lbl} style={{background:T.bgInput,borderRadius:8,padding:"12px 16px"}}>
+              <div style={{fontSize:10,color:T.textMid,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>{lbl}</div>
+              <div style={{fontSize:18,fontWeight:800,color:col}}>{val}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tabs */}
+        <div style={{display:"flex",gap:0,borderBottom:`1px solid ${T.border}`,marginBottom:20}}>
+          {[["summary","Order Summary"],["cashflow","Cash Flow"],["ledger","Receivables / Payables"],["contractor","Contractor Costs"]].map(([id,lbl])=>(
+            <button key={id} onClick={()=>setFTab(id)} style={{padding:"10px 18px",fontSize:13,fontWeight:fTab===id?700:400,color:fTab===id?T.accent:T.textMid,background:"transparent",border:"none",borderBottom:fTab===id?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer"}}>{lbl}</button>
+          ))}
+        </div>
+
+        {/* ── ORDER SUMMARY ── */}
+        {fTab==="summary"&&activeOrders.map(o=>{
+          const b=o.budget||{};
+          const rmBudget=(o.orderQty||0)*(b.rmRatePerT||0);
+          const paintBudget=(o.orderQty||0)*(b.paintRatePerT||0);
+          const contractorBudget=(o.orderQty||0)*(b.contractorRatePerT||0);
+          const transportBudget=(o.orderQty||0)*(b.transportRatePerT||0);
+          const totalBudget=rmBudget+paintBudget+contractorBudget+transportBudget;
+          const margin=(o.orderValue||0)-totalBudget;
+          const marginPct=(o.orderValue||0)>0?Math.round(margin/(o.orderValue||1)*100):0;
+          const oInvoices=(o.milestones||[]).flatMap(m=>m.invoices||[]);
+          const invoiced=oInvoices.reduce((s,inv)=>s+(inv.netReceivable||0),0);
+          const received=oInvoices.reduce((s,inv)=>s+(inv.totalReceived||0),0);
+          return (
+            <div key={o.id} style={{...css.card,marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+                <div><div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{o.id}</div><div style={{fontSize:11,color:T.textMid}}>{o.clientName} · {o.orderQty}T · Rate ₹{fmt.num(o.ratePerUnit||0)}/T</div></div>
+                <div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:700,color:T.green}}>{fmt.currency(o.orderValue||0)}</div><div style={{fontSize:10,color:T.textMid}}>Order Value</div></div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8}}>
+                {[["Invoiced",invoiced,T.accent],["Received",received,T.green],["Outstanding",invoiced-received,invoiced-received>0?T.amber:T.green],["Budget Cost",totalBudget,T.text],["Gross Margin",margin,marginPct>=20?T.green:marginPct>=10?T.amber:T.red]].map(([lbl,val,col])=>(
+                  <div key={lbl} style={{background:T.bgInput,borderRadius:6,padding:"8px 10px"}}>
+                    <div style={{fontSize:9,color:T.textMid,fontWeight:700,textTransform:"uppercase"}}>{lbl}</div>
+                    <div style={{fontSize:13,fontWeight:700,color:col}}>{fmt.currency(val)}{lbl==="Gross Margin"?` (${marginPct}%)`:""}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* ── CASH FLOW ── */}
+        {fTab==="cashflow"&&(
+          <div>
+            <div style={{...css.card,marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:4}}>8-Week Cash Flow</div>
+              <div style={{fontSize:11,color:T.textLow,marginBottom:16}}>Solid = actual recorded · Light = estimated from terms · Green = receivable · Red = payable</div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",minWidth:700}}>
+                  <thead>
+                    <tr style={{background:T.bgInput}}>
+                      {["Week","Receivable","Payable","Net","Cumulative"].map(h=>(
+                        <th key={h} style={{padding:"8px 12px",textAlign:"left",fontSize:10,fontWeight:700,color:T.textMid,textTransform:"uppercase",borderBottom:`1px solid ${T.border}`}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(()=>{
+                      let cumulative=0;
+                      return cfWeeks.map((w,i)=>{
+                        const recv=w.isPast?w.recvActual:w.recvEst;
+                        const pay=w.isPast?w.payActual:w.payEst;
+                        const net=recv-pay;
+                        cumulative+=net;
+                        const recvPct=Math.round(recv/maxCfVal*100);
+                        const payPct=Math.round(pay/maxCfVal*100);
+                        return (
+                          <tr key={i} style={{borderBottom:`1px solid ${T.border}`,background:w.isCurrentWeek?`${T.accent}08`:"transparent"}}>
+                            <td style={{padding:"10px 12px",fontSize:12,fontWeight:w.isCurrentWeek?700:400,color:w.isCurrentWeek?T.accent:T.text}}>{w.label}{w.isCurrentWeek?" ←":""}</td>
+                            <td style={{padding:"10px 12px"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                <div style={{height:8,width:`${recvPct}%`,minWidth:4,background:w.isPast?T.green:`${T.green}66`,borderRadius:2}} />
+                                <span style={{fontSize:11,fontFamily:T.fontMono,color:T.green}}>{recv>0?fmt.currency(recv):"—"}</span>
+                              </div>
+                            </td>
+                            <td style={{padding:"10px 12px"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                                <div style={{height:8,width:`${payPct}%`,minWidth:4,background:w.isPast?T.red:`${T.red}66`,borderRadius:2}} />
+                                <span style={{fontSize:11,fontFamily:T.fontMono,color:T.red}}>{pay>0?fmt.currency(pay):"—"}</span>
+                              </div>
+                            </td>
+                            <td style={{padding:"10px 12px",fontSize:12,fontWeight:700,color:net>=0?T.green:T.red,fontFamily:T.fontMono}}>{net>=0?"+":""}{fmt.currency(net)}</td>
+                            <td style={{padding:"10px 12px",fontSize:12,fontFamily:T.fontMono,color:cumulative>=0?T.green:T.red,fontWeight:700}}>{cumulative>=0?"+":""}{fmt.currency(cumulative)}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── LEDGER ── */}
+        {fTab==="ledger"&&(
+          <div>
+            {/* Controls */}
+            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+              <div style={{display:"flex",border:`1px solid ${T.border}`,borderRadius:6,overflow:"hidden"}}>
+                {[["receivables","Receivables"],["payables","Payables"]].map(([id,lbl])=>(
+                  <button key={id} onClick={()=>setLedgerView(id)} style={{padding:"6px 16px",fontSize:12,fontWeight:ledgerView===id?700:400,background:ledgerView===id?T.accent:"transparent",color:ledgerView===id?"#fff":T.textMid,border:"none",cursor:"pointer"}}>{lbl}</button>
+                ))}
+              </div>
+              <select value={orderFilter} onChange={e=>setOrderFilter(e.target.value)} style={{...css.input,width:160,fontSize:12}}>
+                <option value="">All Orders</option>
+                {activeOrders.map(o=><option key={o.id} value={o.id}>{o.id}</option>)}
+              </select>
+              <div style={{display:"flex",gap:4}}>
+                {AGE_OPTS.map(([val,lbl])=>(
+                  <button key={val} onClick={()=>setAgeFilter(val)} style={{padding:"4px 10px",fontSize:11,borderRadius:4,border:`1px solid ${ageFilter===val?T.accent:T.border}`,background:ageFilter===val?T.accent:"transparent",color:ageFilter===val?"#fff":T.textMid,cursor:"pointer"}}>{lbl}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Receivables table */}
+            {ledgerView==="receivables"&&(
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead><tr style={{background:T.bgInput}}>{["Invoice No","Type","Order","Date","Due Date","Net Receivable","Received","Balance","Days","Status",""].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:T.textMid,textTransform:"uppercase",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {filteredInvoices.length===0&&<tr><td colSpan={11} style={{padding:24,textAlign:"center",color:T.textLow}}>No invoices match filter</td></tr>}
+                    {filteredInvoices.map(inv=>{
+                      const rcvd=(inv.receipts||[]).reduce((s,r)=>s+(r.amount||0),0);
+                      const balance=(inv.netReceivable||0)-rcvd;
+                      const daysSince=inv.dueDate?Math.floor((Date.now()-new Date(inv.dueDate).getTime())/86400000):null;
+                      const expanded=expandedRow===inv.id;
+                      return (
+                        <>
+                        <tr key={inv.id} style={{borderBottom:`1px solid ${T.border}`,background:expanded?`${T.accent}08`:"transparent"}}>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontSize:11,color:T.accent}}>{inv.invoiceNo||inv.id}</td>
+                          <td style={{padding:"7px 10px"}}><span style={{fontSize:10,padding:"1px 6px",borderRadius:99,background:`${T.accent}22`,color:T.accent}}>{inv.advanceType||"—"}</span></td>
+                          <td style={{padding:"7px 10px",fontSize:11,color:T.textMid}}>{inv.orderId}</td>
+                          <td style={{padding:"7px 10px",fontSize:11}}>{inv.invoiceDate}</td>
+                          <td style={{padding:"7px 10px",fontSize:11,color:daysSince>0?T.red:T.textMid}}>{inv.dueDate||"—"}</td>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontWeight:600}}>{fmt.currency(inv.netReceivable||0)}</td>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,color:T.green}}>{fmt.currency(rcvd)}</td>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontWeight:700,color:balance>0?ageColor(daysSince)||T.amber:T.green}}>{fmt.currency(balance)}</td>
+                          <td style={{padding:"7px 10px",fontSize:11,color:ageColor(daysSince)||T.textMid,fontWeight:daysSince>30?700:400}}>{daysSince!==null?`${daysSince}d`:"—"}</td>
+                          <td style={{padding:"7px 10px"}}><span style={{fontSize:10,padding:"1px 6px",borderRadius:99,background:inv.status==="received"?T.greenBg:inv.status==="partial"?T.amberBg:T.bgInput,color:inv.status==="received"?T.green:inv.status==="partial"?T.amber:T.textMid,fontWeight:700}}>{inv.status||"pending"}</span></td>
+                          <td style={{padding:"7px 10px"}}>{balance>0&&<button onClick={()=>{setExpandedRow(expanded?null:inv.id);setPayForm({amount:"",date:today(),remarks:""}); }} style={{...css.btn.sm,fontSize:10}}>Record</button>}</td>
+                        </tr>
+                        {expanded&&<tr key={`${inv.id}-form`}><td colSpan={11} style={{padding:"8px 16px",background:`${T.green}08`}}>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            <span style={{fontSize:11,color:T.textMid,whiteSpace:"nowrap"}}>Record receipt:</span>
+                            <input type="number" value={payForm.amount} onChange={e=>setPayForm(p=>({...p,amount:e.target.value}))} placeholder={`Max ${fmt.currency(balance)}`} style={{...css.input,width:130,fontSize:11}} />
+                            <input type="date" value={payForm.date} onChange={e=>setPayForm(p=>({...p,date:e.target.value}))} style={{...css.input,width:130,fontSize:11}} />
+                            <input value={payForm.remarks} onChange={e=>setPayForm(p=>({...p,remarks:e.target.value}))} placeholder="Remarks (optional)" style={{...css.input,flex:1,fontSize:11}} />
+                            <button onClick={()=>recordInvReceipt(inv)} disabled={!payForm.amount||!payForm.date} style={{...css.btn.green,opacity:payForm.amount&&payForm.date?1:0.4,whiteSpace:"nowrap",fontSize:11}}>✓ Save</button>
+                            <button onClick={()=>setExpandedRow(null)} style={{...css.btn.ghost,fontSize:11}}>✕</button>
+                          </div>
+                        </td></tr>}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Payables table */}
+            {ledgerView==="payables"&&(
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead><tr style={{background:T.bgInput}}>{["PO No","Vendor","Type","Milestone","Due Date","Amount Due","Paid","Balance","Days","Status",""].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:T.textMid,textTransform:"uppercase",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {filteredTerms.length===0&&<tr><td colSpan={11} style={{padding:24,textAlign:"center",color:T.textLow}}>No payables match filter</td></tr>}
+                    {filteredTerms.map((t,i)=>{
+                      const expanded=expandedRow===`${t.poId}-${t.termIdx}`;
+                      const key=`${t.poId}-${t.termIdx}`;
+                      return (
+                        <>
+                        <tr key={key} style={{borderBottom:`1px solid ${T.border}`,background:expanded?`${T.accent}08`:i%2===0?"transparent":T.bgInput}}>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontSize:11,color:T.accent}}>{t.poId}</td>
+                          <td style={{padding:"7px 10px",fontSize:11}}>{t.vendorName}</td>
+                          <td style={{padding:"7px 10px"}}><span style={{fontSize:10,padding:"1px 6px",borderRadius:99,background:`${T.accent}22`,color:T.accent}}>{t.poType}</span></td>
+                          <td style={{padding:"7px 10px",fontSize:11,color:T.textMid}}>{t.milestone||`Term ${t.termIdx+1} (${t.pct}%)`}</td>
+                          <td style={{padding:"7px 10px",fontSize:11,color:t.daysSince>0?T.red:T.textMid}}>{t.dueDate||"—"}</td>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontWeight:600}}>{fmt.currency(t.amountDue)}</td>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,color:T.green}}>{fmt.currency(t.totalPaid)}</td>
+                          <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontWeight:700,color:t.balance>0?ageColor(t.daysSince)||T.amber:T.green}}>{fmt.currency(t.balance)}</td>
+                          <td style={{padding:"7px 10px",fontSize:11,color:ageColor(t.daysSince)||T.textMid,fontWeight:t.daysSince>30?700:400}}>{t.daysSince!==null?`${t.daysSince}d`:"—"}</td>
+                          <td style={{padding:"7px 10px"}}><span style={{fontSize:10,padding:"1px 6px",borderRadius:99,background:t.status==="paid"?T.greenBg:t.status==="partial"?T.amberBg:T.bgInput,color:t.status==="paid"?T.green:t.status==="partial"?T.amber:T.textMid,fontWeight:700}}>{t.status}</span></td>
+                          <td style={{padding:"7px 10px"}}>{t.balance>0&&<button onClick={()=>{setExpandedRow(expanded?null:key);setPayForm({amount:"",date:today(),remarks:""}); }} style={{...css.btn.sm,fontSize:10}}>Record</button>}</td>
+                        </tr>
+                        {expanded&&<tr key={`${key}-form`}><td colSpan={11} style={{padding:"8px 16px",background:`${T.red}05`}}>
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            <span style={{fontSize:11,color:T.textMid,whiteSpace:"nowrap"}}>Record payment:</span>
+                            <input type="number" value={payForm.amount} onChange={e=>setPayForm(p=>({...p,amount:e.target.value}))} placeholder={`Max ${fmt.currency(t.balance)}`} style={{...css.input,width:130,fontSize:11}} />
+                            <input type="date" value={payForm.date} onChange={e=>setPayForm(p=>({...p,date:e.target.value}))} style={{...css.input,width:130,fontSize:11}} />
+                            <input value={payForm.remarks} onChange={e=>setPayForm(p=>({...p,remarks:e.target.value}))} placeholder="Remarks (optional)" style={{...css.input,flex:1,fontSize:11}} />
+                            <button onClick={()=>recordPoPayment(t)} disabled={!payForm.amount||!payForm.date} style={{...css.btn.primary,opacity:payForm.amount&&payForm.date?1:0.4,whiteSpace:"nowrap",fontSize:11}}>✓ Save</button>
+                            <button onClick={()=>setExpandedRow(null)} style={{...css.btn.ghost,fontSize:11}}>✕</button>
+                          </div>
+                        </td></tr>}
+                        </>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── CONTRACTOR COSTS ── */}
+        {fTab==="contractor"&&(
+          <div>
+            <div style={{...css.card}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>Contractor Output — Derived from DPR Data</div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead><tr style={{background:T.bgInput}}>{["Contractor","Order","Cutting (T)","Fitup+Weld (T)","Blast+Paint (T)","Total (T)"].map(h=><th key={h} style={{padding:"7px 10px",textAlign:"left",fontSize:10,fontWeight:700,color:T.textMid,textTransform:"uppercase",borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {(()=>{
+                    const rows=[];
+                    const WELD_DONE=new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+                    const BLAST_DONE=new Set(["tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+                    activeOrders.forEach(o=>{
+                      const conNames=[...new Set((dprs||[]).filter(d=>d.orderId===o.id).flatMap(d=>[d.fitupContractorName,d.weldContractorName,d.blastContractorName,d.paintContractorName].filter(Boolean)))];
+                      conNames.forEach(name=>{
+                        const cDprs=(dprs||[]).filter(d=>d.orderId===o.id&&(d.fitupContractorName===name||d.weldContractorName===name||d.blastContractorName===name||d.paintContractorName===name));
+                        const getDrWt=d=>{ const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{}; return (dr.totalWt||0)/1000; };
+                        const cutWt=cDprs.filter(d=>d.currentStage!=="pending").reduce((s,d)=>s+getDrWt(d),0);
+                        const weldWt=cDprs.filter(d=>(d.fitupContractorName===name||d.weldContractorName===name)&&WELD_DONE.has(d.currentStage)).reduce((s,d)=>s+getDrWt(d),0);
+                        const blastWt=cDprs.filter(d=>(d.blastContractorName===name||d.paintContractorName===name)&&BLAST_DONE.has(d.currentStage)).reduce((s,d)=>s+getDrWt(d),0);
+                        rows.push({name,orderId:o.id,cutWt,weldWt,blastWt,total:Math.max(cutWt,weldWt,blastWt)});
+                      });
+                    });
+                    if(rows.length===0) return <tr><td colSpan={6} style={{padding:24,textAlign:"center",color:T.textLow}}>No DPR data yet.</td></tr>;
+                    return rows.map((r,i)=>(
+                      <tr key={`${r.name}-${r.orderId}`} style={{borderBottom:`1px solid ${T.border}`,background:i%2===0?"transparent":T.bgInput}}>
+                        <td style={{padding:"7px 10px",fontWeight:600}}>{r.name}</td>
+                        <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontSize:11,color:T.accent}}>{r.orderId}</td>
+                        <td style={{padding:"7px 10px",fontFamily:T.fontMono}}>{r.cutWt.toFixed(1)}</td>
+                        <td style={{padding:"7px 10px",fontFamily:T.fontMono}}>{r.weldWt.toFixed(1)}</td>
+                        <td style={{padding:"7px 10px",fontFamily:T.fontMono}}>{r.blastWt.toFixed(1)}</td>
+                        <td style={{padding:"7px 10px",fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{r.total.toFixed(1)}</td>
+                      </tr>
+                    ));
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const PlanningAdminDashboard = () => {
     const [plTab, setPlTab] = useState("drawings");
     return (
@@ -22426,6 +23124,7 @@ export default function App() {
     if (user.role==="production_admin")   return mod==="masters" ? <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} /> : <ProductionAdminScreen />;
     if (user.role==="production_engineer") return <ProductionEngineerDashboard />;
     if (user.role==="purchase_admin")      return <PurchaseAdminDashboard />;
+    if (user.role==="finance_admin")       return <FinanceAdminDashboard />;
     if (user.role==="planning_admin")      return mod==="dashboard" ? <PlanningAdminDashboard /> : null;
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
