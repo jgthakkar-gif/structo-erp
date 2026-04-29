@@ -9033,9 +9033,9 @@ const Dashboard = ({ user, pos, stock, purchaseReqs, orders, dprs, instances, ne
 
   // ── Funnel counts / weight ──────────────────────────────────────────────────
   const allDprs = dprs||[];
-  const DONE_STAGES = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
-  const WELD_DONE   = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
-  const PAINT_DONE  = new Set(["paint_qc","tpi_paint","complete"]);
+  const DONE_STAGES = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
+  const WELD_DONE   = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
+  const PAINT_DONE  = new Set(["paint_qc","tpi_paint","mdcc","complete"]);
   const COMPLETE    = new Set(["complete"]);
 
   // Per-drawing best stage
@@ -9119,11 +9119,11 @@ const Dashboard = ({ user, pos, stock, purchaseReqs, orders, dprs, instances, ne
     const o=(orders||[]).find(x=>x.id===d.orderId)||{}; const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
     return s+(dr.totalWt||0)/1000;
   },0);
-  const blastQcWt = allDprs.filter(d=>["tpi_blast","painting","paint_qc","tpi_paint","complete"].includes(d.currentStage)).reduce((s,d)=>{
+  const blastQcWt = allDprs.filter(d=>["tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"].includes(d.currentStage)).reduce((s,d)=>{
     const o=(orders||[]).find(x=>x.id===d.orderId)||{}; const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
     return s+(dr.totalWt||0)/1000;
   },0);
-  const paintQcWt = allDprs.filter(d=>["tpi_paint","complete"].includes(d.currentStage)).reduce((s,d)=>{
+  const paintQcWt = allDprs.filter(d=>["tpi_paint","mdcc","complete"].includes(d.currentStage)).reduce((s,d)=>{
     const o=(orders||[]).find(x=>x.id===d.orderId)||{}; const dr=(o.drawings||[]).find(x=>x.id===d.drawingId)||{};
     return s+(dr.totalWt||0)/1000;
   },0);
@@ -11138,7 +11138,7 @@ const TPI_FIELD_POOL = [
 const HP_LABELS = { fit_up:"Fit-Up", welding:"Welding", blasting:"Blasting", painting:"Painting", rm_inspection:"RM Inspection" };
 const HP_DPR_STAGE = { fit_up:"tpi_fitup", welding:"tpi_weld", blasting:"tpi_blast", painting:"tpi_paint" };
 const HP_PREV_STAGE = { fit_up:"fitup", welding:"welding", blasting:"blasting", painting:"painting" };
-const HP_NEXT_STAGE = { fit_up:"welding", welding:"__check_order__", blasting:"painting", painting:"complete" };
+const HP_NEXT_STAGE = { fit_up:"welding", welding:"__check_order__", blasting:"painting", painting:"mdcc" };
 // Get the actual next stage after TPI clearance for a given hold point and DPR
 const getHpNextStage = (hp, dpr, orders) => {
   const order = (orders||[]).find(o=>o.id===dpr?.orderId);
@@ -11151,9 +11151,10 @@ const getHpNextStage = (hp, dpr, orders) => {
   }
   if (hp === "blasting") {
     if (hasPaint) return "painting";
-    return "complete";
+    return "mdcc";
   }
-  // fit_up → welding, painting → complete
+  // fit_up → welding, painting TPI → mdcc
+  if (hp === "painting") return "mdcc";
   return HP_NEXT_STAGE[hp] || "complete";
 };
 
@@ -12696,7 +12697,7 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
   const receivedDrawingKg = receivedDrawings.reduce((s,d)=>s+(d.totalWt||0),0);
   const receivedDrawingCount = receivedDrawings.length;
   const drawingsReceivedKg = fabDrawings.filter(d=>d.receivedDate).reduce((s,d)=>s+(d.totalWt||0),0);
-  const PAST_CUTTING = new Set(['fitup','tpi_fitup','welding','tpi_weld','assembly','blasting','tpi_blast','painting','tpi_paint','dispatch','complete']);
+  const PAST_CUTTING = new Set(['fitup','tpi_fitup','welding','tpi_weld','assembly','blasting','tpi_blast','painting','tpi_paint','mdcc','dispatch','complete']);
   const cuttingDoneKg = fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&PAST_CUTTING.has(inst.currentStage))).reduce((s,d)=>s+(d.totalWt||0),0);
   const DISPATCH_STAGES = new Set(['dispatch','complete','dispatched']);
   const dispatchKg = fabDrawings.filter(d=>(instances||[]).some(inst=>inst.drawingId===d.id&&inst.orderId===order.id&&DISPATCH_STAGES.has(inst.currentStage))).reduce((s,d)=>s+(d.totalWt||0),0);
@@ -19222,7 +19223,7 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
     (o.drawings||[]).filter(d=>d.receivedDate).forEach(d => {
       const parts = (o.parts||[]).filter(p=>p.drawingId===d.id&&p.fabType==="Fabricate");
       const totalParts = parts.length * (d.qty||1);
-      const DONE_STAGES_STEP1 = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+      const DONE_STAGES_STEP1 = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
       const STAGE_ORD_STEP1 = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending'];
       const partMarkNosStep1 = new Set(parts.map(p=>p.markNo));
       const bestStep1 = {};
@@ -19514,6 +19515,473 @@ const STAGE_TO_PROCESS = {
   assembly:'Assembly QC',
 };
 
+// ── MDCC Module ─────────────────────────────────────────────────────────────
+const MDCCModule = ({ dprs, setDprs, orders, user }) => {
+  const [selDpr, setSelDpr] = useState(null);
+  const [linkForm, setLinkForm] = useState({});
+
+  const DEFAULT_DOCS = [
+    { key:"mtc",        label:"Mill Test Certificate (MTC)",      required:true },
+    { key:"weld_map",   label:"Weld Map + WPS Records",           required:true },
+    { key:"dim_report", label:"Dimensional Inspection Report",    required:true },
+    { key:"ndt",        label:"NDT / RT Records",                 required:false },
+    { key:"dft",        label:"Paint DFT Records",                required:true },
+    { key:"client_sof", label:"Client Sign-off / Final Cert",     required:true },
+  ];
+
+  // All DPRs at mdcc stage
+  const mdccDprs = (dprs||[]).filter(d=>d.currentStage==="mdcc");
+
+  const getOrderDocs = (dpr) => {
+    const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+    return order.quality?.mdccDocs?.length>0 ? order.quality.mdccDocs : DEFAULT_DOCS;
+  };
+
+  const getChecklist = (dpr) => dpr.mdccChecklist||{};
+
+  const toggleItem = (dpr, key) => {
+    const ts = new Date().toISOString();
+    const existing = dpr.mdccChecklist||{};
+    const item = existing[key]||{};
+    const verified = !item.verified;
+    setDprs(prev=>prev.map(d=>d.id!==dpr.id?d:{...d,
+      mdccChecklist:{...existing,[key]:{...item,verified,verifiedBy:verified?user.username:"",verifiedAt:verified?ts:""}}
+    }));
+  };
+
+  const setLink = (dpr, key, link) => {
+    const existing = dpr.mdccChecklist||{};
+    const item = existing[key]||{};
+    setDprs(prev=>prev.map(d=>d.id!==dpr.id?d:{...d,
+      mdccChecklist:{...existing,[key]:{...item,link}}
+    }));
+  };
+
+  const clearForDispatch = (dpr) => {
+    const ts = new Date().toISOString();
+    setDprs(prev=>prev.map(d=>d.id!==dpr.id?d:{...d,
+      currentStage:"complete", currentStatus:"complete",
+      mdccClearedAt:ts, mdccClearedBy:user.username,
+      stageHistory:[...(d.stageHistory||[]),{stage:"mdcc",action:"cleared",by:user.username,at:ts}]
+    }));
+    setSelDpr(null);
+  };
+
+  const canClear = (dpr) => {
+    const docs = getOrderDocs(dpr);
+    const checklist = getChecklist(dpr);
+    return docs.filter(d=>d.required).every(d=>checklist[d.key]?.verified);
+  };
+
+  if (selDpr) {
+    const dpr = (dprs||[]).find(d=>d.id===selDpr.id)||selDpr;
+    const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+    const docs = getOrderDocs(dpr);
+    const checklist = getChecklist(dpr);
+    const doneCount = docs.filter(d=>checklist[d.key]?.verified).length;
+    const reqDone = docs.filter(d=>d.required&&checklist[d.key]?.verified).length;
+    const reqTotal = docs.filter(d=>d.required).length;
+    const ready = canClear(dpr);
+
+    return (
+      <div>
+        <button onClick={()=>setSelDpr(null)} style={{...css.btn.ghost,marginBottom:16}}>← Back to MDCC Queue</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20}}>
+          <div>
+            <div style={{fontFamily:T.fontMono,fontSize:16,fontWeight:800,color:T.accent}}>{dpr.drawingNo}</div>
+            <div style={{fontSize:12,color:T.textMid,marginTop:2}}>{order.id} · {order.clientName}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:13,fontWeight:700,color:ready?T.green:T.amber}}>{reqDone}/{reqTotal} required items verified</div>
+            <div style={{fontSize:11,color:T.textLow}}>{doneCount} of {docs.length} total</div>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{height:6,background:T.border,borderRadius:3,overflow:"hidden",marginBottom:20}}>
+          <div style={{width:`${Math.round(reqDone/Math.max(reqTotal,1)*100)}%`,height:"100%",background:ready?T.green:T.amber,borderRadius:3,transition:"width 0.3s"}}/>
+        </div>
+
+        {/* Checklist */}
+        <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
+          {docs.map(doc=>{
+            const item=checklist[doc.key]||{};
+            const [showLink,setShowLink]=useState(false);
+            const [linkVal,setLinkVal]=useState(item.link||"");
+            return (
+              <div key={doc.key} style={{...css.card,borderLeft:`3px solid ${item.verified?T.green:doc.required?T.amber:T.border}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{display:"flex",gap:12,alignItems:"flex-start",flex:1}}>
+                    <input type="checkbox" checked={!!item.verified} onChange={()=>toggleItem(dpr,doc.key)}
+                      style={{marginTop:3,cursor:"pointer",width:16,height:16}} />
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                        <span style={{fontSize:13,fontWeight:600,color:T.text}}>{doc.label}</span>
+                        {doc.required&&<Badge color="amber">Required</Badge>}
+                        {item.verified&&<Badge color="green">✓ Verified</Badge>}
+                      </div>
+                      {item.verified&&<div style={{fontSize:11,color:T.textLow,marginTop:2}}>
+                        By {item.verifiedBy} · {item.verifiedAt?.slice(0,10)||""}
+                      </div>}
+                      {/* Document link */}
+                      {item.link&&!showLink&&(
+                        <div style={{display:"flex",gap:8,alignItems:"center",marginTop:6}}>
+                          <a href={item.link} target="_blank" rel="noreferrer"
+                            style={{fontSize:11,color:T.accent,textDecoration:"none"}}>📎 View Document ↗</a>
+                          <button onClick={()=>{setShowLink(true);setLinkVal(item.link||"");}} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px"}}>Edit</button>
+                        </div>
+                      )}
+                      {!item.link&&!showLink&&(
+                        <button onClick={()=>setShowLink(true)} style={{...css.btn.ghost,fontSize:10,marginTop:6}}>+ Add Document Link</button>
+                      )}
+                      {showLink&&(
+                        <div style={{display:"flex",gap:6,alignItems:"center",marginTop:6}}>
+                          <input value={linkVal} onChange={e=>setLinkVal(e.target.value)}
+                            placeholder="Paste Google Drive / OneDrive link..." style={{...css.input,fontSize:11,flex:1}} />
+                          <button onClick={()=>{setLink(dpr,doc.key,linkVal);setShowLink(false);}} style={css.btn.primary}>Save</button>
+                          <button onClick={()=>setShowLink(false)} style={css.btn.ghost}>✕</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button onClick={()=>clearForDispatch(dpr)} disabled={!ready}
+          style={{...css.btn.green,width:"100%",padding:"12px 0",fontSize:14,opacity:ready?1:0.4}}>
+          {ready?"✓ Clear for Dispatch — Mark MDCC Complete":"Complete all required items to clear for dispatch"}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{fontSize:16,fontWeight:800,color:T.text,marginBottom:4}}>MDCC Dossier Queue</div>
+      <div style={{fontSize:12,color:T.textMid,marginBottom:20}}>{mdccDprs.length} drawing{mdccDprs.length!==1?"s":""} awaiting MDCC clearance</div>
+      {mdccDprs.length===0&&(
+        <div style={{...css.card,textAlign:"center",padding:48,color:T.textLow}}>
+          <div style={{fontSize:32,marginBottom:12}}>📋</div>
+          <div>No drawings at MDCC stage yet.</div>
+          <div style={{fontSize:11,marginTop:6}}>Drawings appear here after paint QC / TPI is cleared.</div>
+        </div>
+      )}
+      {mdccDprs.map(dpr=>{
+        const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+        const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+        const docs=getOrderDocs(dpr);
+        const checklist=getChecklist(dpr);
+        const doneReq=docs.filter(d=>d.required&&checklist[d.key]?.verified).length;
+        const totalReq=docs.filter(d=>d.required).length;
+        const pct=Math.round(doneReq/Math.max(totalReq,1)*100);
+        const ready=canClear(dpr);
+        return (
+          <div key={dpr.id} style={{...css.card,marginBottom:10,cursor:"pointer",borderLeft:`3px solid ${ready?T.green:T.amber}`}}
+            onClick={()=>setSelDpr(dpr)}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{dpr.drawingNo}</div>
+                <div style={{fontSize:11,color:T.textMid,marginTop:2}}>{order.id} · {order.clientName} · {((drawing.totalWt||0)/1000).toFixed(2)}T</div>
+              </div>
+              <div style={{display:"flex",gap:12,alignItems:"center"}}>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:ready?T.green:T.amber}}>{doneReq}/{totalReq}</div>
+                  <div style={{fontSize:10,color:T.textLow}}>required</div>
+                </div>
+                <div style={{width:60,height:6,background:T.border,borderRadius:3,overflow:"hidden"}}>
+                  <div style={{width:`${pct}%`,height:"100%",background:ready?T.green:T.amber,borderRadius:3}}/>
+                </div>
+                <Badge color={ready?"green":"amber"}>{ready?"Ready":"Pending"}</Badge>
+                <span style={{fontSize:12,color:T.textMid}}>→</span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ── Dispatch Module ──────────────────────────────────────────────────────────
+const DispatchModule = ({ dprs, setDprs, orders, challans, setChallans, user }) => {
+  const [selDrawings, setSelDrawings] = useState(new Set());
+  const [challanForm, setChallanForm] = useState({
+    date: today(), vehicleNo:"", driverName:"", lrNo:"", transporter:"", remarks:""
+  });
+  const [view, setView] = useState("create"); // create | history
+  const [printChallan, setPrintChallan] = useState(null);
+
+  // All dispatched and ready drawings
+  const readyDprs = (dprs||[]).filter(d=>
+    d.currentStage==="complete" && d.mdccClearedAt && !d.dispatchedAt
+  );
+  const dispatchedDprs = (dprs||[]).filter(d=>d.dispatchedAt);
+
+  const getDrInfo = (dpr) => {
+    const order=(orders||[]).find(o=>o.id===dpr.orderId)||{};
+    const drawing=(order.drawings||[]).find(d=>d.id===dpr.drawingId)||{};
+    return {order, drawing, wt:(drawing.totalWt||0)/1000};
+  };
+
+  const selectedWt = [...selDrawings].reduce((s,id)=>{
+    const dpr=(dprs||[]).find(d=>d.id===id);
+    if(!dpr) return s;
+    const {wt}=getDrInfo(dpr);
+    return s+wt;
+  },0);
+
+  // Auto-generate challan number
+  const nextChallanNo = () => {
+    const fy = new Date().getMonth()>=3 ? new Date().getFullYear() : new Date().getFullYear()-1;
+    const fyStr = `${String(fy).slice(-2)}-${String(fy+1).slice(-2)}`;
+    const seq = ((challans||[]).length+1).toString().padStart(3,"0");
+    return `DC/${fyStr}/${seq}`;
+  };
+
+  const createChallan = () => {
+    if(!challanForm.vehicleNo||selDrawings.size===0) return;
+    const ts = new Date().toISOString();
+    const challanNo = nextChallanNo();
+    const drawings = [...selDrawings].map(id=>{
+      const dpr=(dprs||[]).find(d=>d.id===id)||{};
+      const {order,drawing,wt}=getDrInfo(dpr);
+      return {dprId:id, drawingNo:dpr.drawingNo, orderId:dpr.orderId, orderNo:order.id,
+        clientName:order.clientName||"", totalWt:wt};
+    });
+
+    // Create challan record
+    const newChallan = {
+      id:`CHALLAN-${Date.now()}`, challanNo,
+      date:challanForm.date||today(),
+      vehicleNo:challanForm.vehicleNo, driverName:challanForm.driverName,
+      lrNo:challanForm.lrNo, transporter:challanForm.transporter,
+      remarks:challanForm.remarks,
+      drawings, totalWt:selectedWt,
+      createdBy:user.username, createdAt:ts, status:"dispatched"
+    };
+    setChallans(prev=>[...prev, newChallan]);
+
+    // Mark DPRs as dispatched
+    setDprs(prev=>prev.map(d=>!selDrawings.has(d.id)?d:{...d,
+      dispatchedAt:ts, challanNo, vehicleNo:challanForm.vehicleNo,
+      stageHistory:[...(d.stageHistory||[]),{stage:"complete",action:"dispatched",challanNo,by:user.username,at:ts}]
+    }));
+
+    setSelDrawings(new Set());
+    setChallanForm({date:today(),vehicleNo:"",driverName:"",lrNo:"",transporter:"",remarks:""});
+    setPrintChallan(newChallan);
+  };
+
+  // Print view
+  if (printChallan) {
+    const company = JSON.parse(localStorage.getItem('structo_company')||'{}');
+    return (
+      <div>
+        <div style={{display:"flex",gap:8,marginBottom:16,displayPrint:"none"}}>
+          <button onClick={()=>window.print()} style={css.btn.primary}>🖨 Print Challan</button>
+          <button onClick={()=>setPrintChallan(null)} style={css.btn.ghost}>← Back</button>
+        </div>
+        <div style={{background:"#fff",color:"#000",padding:32,maxWidth:700,margin:"0 auto",border:"1px solid #ccc",fontFamily:"serif"}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+            <div>
+              <div style={{fontSize:20,fontWeight:700}}>{company.name||"STRUCTO FABRICATION"}</div>
+              <div style={{fontSize:12}}>{company.address||""}</div>
+              <div style={{fontSize:12}}>GST: {company.gstin||""}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div style={{fontSize:16,fontWeight:700}}>DELIVERY CHALLAN</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#1d4ed8"}}>{printChallan.challanNo}</div>
+              <div style={{fontSize:12}}>Date: {printChallan.date}</div>
+            </div>
+          </div>
+          <hr/>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,margin:"12px 0"}}>
+            <div>
+              <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",marginBottom:4}}>To</div>
+              <div style={{fontSize:13,fontWeight:700}}>{[...new Set(printChallan.drawings.map(d=>d.clientName))].join(", ")}</div>
+            </div>
+            <div>
+              <div style={{fontSize:11}}>Vehicle: <strong>{printChallan.vehicleNo}</strong></div>
+              {printChallan.driverName&&<div style={{fontSize:11}}>Driver: {printChallan.driverName}</div>}
+              {printChallan.lrNo&&<div style={{fontSize:11}}>LR/Bilti: {printChallan.lrNo}</div>}
+              {printChallan.transporter&&<div style={{fontSize:11}}>Transporter: {printChallan.transporter}</div>}
+            </div>
+          </div>
+          <hr/>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginTop:12}}>
+            <thead>
+              <tr style={{background:"#f1f5f9"}}>
+                {["Sr","Drawing No","Order","Weight (T)"].map(h=>(
+                  <th key={h} style={{padding:"6px 8px",textAlign:"left",borderBottom:"1px solid #cbd5e1"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {printChallan.drawings.map((d,i)=>(
+                <tr key={d.dprId} style={{borderBottom:"1px solid #e2e8f0"}}>
+                  <td style={{padding:"5px 8px"}}>{i+1}</td>
+                  <td style={{padding:"5px 8px",fontFamily:"monospace",fontWeight:600}}>{d.drawingNo}</td>
+                  <td style={{padding:"5px 8px"}}>{d.orderNo}</td>
+                  <td style={{padding:"5px 8px",textAlign:"right"}}>{d.totalWt.toFixed(3)}</td>
+                </tr>
+              ))}
+              <tr style={{borderTop:"2px solid #64748b",fontWeight:700}}>
+                <td colSpan={3} style={{padding:"6px 8px",textAlign:"right"}}>TOTAL</td>
+                <td style={{padding:"6px 8px",textAlign:"right"}}>{printChallan.totalWt.toFixed(3)}</td>
+              </tr>
+            </tbody>
+          </table>
+          {printChallan.remarks&&<div style={{marginTop:12,fontSize:12}}>Remarks: {printChallan.remarks}</div>}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:24,marginTop:40,paddingTop:16,borderTop:"1px solid #cbd5e1"}}>
+            <div style={{textAlign:"center"}}>
+              <div style={{borderTop:"1px solid #000",paddingTop:4,fontSize:11}}>Prepared By</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{borderTop:"1px solid #000",paddingTop:4,fontSize:11}}>Checked By</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{borderTop:"1px solid #000",paddingTop:4,fontSize:11}}>Received By</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+        <div style={{fontSize:16,fontWeight:800,color:T.text}}>Dispatch</div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setView("create")} style={{...css.btn[view==="create"?"primary":"ghost"]}}>Create Challan</button>
+          <button onClick={()=>setView("history")} style={{...css.btn[view==="history"?"primary":"ghost"]}}>Challan History ({(challans||[]).length})</button>
+        </div>
+      </div>
+
+      {view==="create"&&(
+        <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
+          {/* Left: Drawing selector */}
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:10}}>
+              Ready for Dispatch — {readyDprs.length} drawing{readyDprs.length!==1?"s":""}
+            </div>
+            {readyDprs.length===0&&(
+              <div style={{...css.card,textAlign:"center",padding:32,color:T.textLow}}>
+                <div style={{fontSize:28,marginBottom:8}}>🚚</div>
+                No drawings ready for dispatch yet.<br/>
+                <span style={{fontSize:11}}>Complete MDCC dossier to make drawings dispatch-ready.</span>
+              </div>
+            )}
+            {/* Group by order */}
+            {[...new Set(readyDprs.map(d=>d.orderId))].map(orderId=>{
+              const orderDprs=readyDprs.filter(d=>d.orderId===orderId);
+              const order=(orders||[]).find(o=>o.id===orderId)||{};
+              const allSel=orderDprs.every(d=>selDrawings.has(d.id));
+              return (
+                <div key={orderId} style={{...css.card,marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                    <div>
+                      <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent}}>{orderId}</span>
+                      <span style={{fontSize:11,color:T.textMid,marginLeft:8}}>{order.clientName}</span>
+                    </div>
+                    <button onClick={()=>{
+                      const ns=new Set(selDrawings);
+                      if(allSel) orderDprs.forEach(d=>ns.delete(d.id));
+                      else orderDprs.forEach(d=>ns.add(d.id));
+                      setSelDrawings(ns);
+                    }} style={{...css.btn.ghost,fontSize:11}}>
+                      {allSel?"Deselect All":"Select All"}
+                    </button>
+                  </div>
+                  {orderDprs.map(dpr=>{
+                    const {drawing,wt}=getDrInfo(dpr);
+                    const sel=selDrawings.has(dpr.id);
+                    return (
+                      <div key={dpr.id} onClick={()=>{const ns=new Set(selDrawings);sel?ns.delete(dpr.id):ns.add(dpr.id);setSelDrawings(ns);}}
+                        style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                          padding:"6px 10px",marginBottom:4,borderRadius:6,cursor:"pointer",
+                          background:sel?`${T.accent}22`:T.bgInput,border:`1px solid ${sel?T.accent:T.border}`}}>
+                        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                          <input type="checkbox" checked={sel} onChange={()=>{}} style={{pointerEvents:"none"}}/>
+                          <div>
+                            <div style={{fontFamily:T.fontMono,fontSize:12,fontWeight:700,color:T.accent}}>{dpr.drawingNo}</div>
+                            <div style={{fontSize:10,color:T.textLow}}>MDCC cleared {dpr.mdccClearedAt?.slice(0,10)||""}</div>
+                          </div>
+                        </div>
+                        <span style={{fontFamily:T.fontMono,fontSize:12,color:T.textMid}}>{wt.toFixed(3)}T</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Right: Challan form */}
+          <div style={{width:300}}>
+            <div style={{...css.card}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:14}}>Challan Details</div>
+              <div style={{padding:"8px 12px",background:T.bgInput,borderRadius:6,marginBottom:12}}>
+                <div style={{fontSize:11,color:T.textMid}}>Selected</div>
+                <div style={{fontSize:18,fontWeight:800,color:T.accent}}>{selDrawings.size} drawings</div>
+                <div style={{fontSize:12,color:T.textMid}}>{selectedWt.toFixed(3)}T gross weight</div>
+              </div>
+              <label style={css.label}>Date</label>
+              <input type="date" value={challanForm.date} onChange={e=>setChallanForm(p=>({...p,date:e.target.value}))} style={{...css.input,marginBottom:8}} />
+              <label style={css.label}>Vehicle No <span style={{color:T.red}}>*</span></label>
+              <input value={challanForm.vehicleNo} onChange={e=>setChallanForm(p=>({...p,vehicleNo:e.target.value}))} style={{...css.input,marginBottom:8}} placeholder="e.g. MH-31-AB-1234"/>
+              <label style={css.label}>Driver Name (optional)</label>
+              <input value={challanForm.driverName} onChange={e=>setChallanForm(p=>({...p,driverName:e.target.value}))} style={{...css.input,marginBottom:8}} />
+              <label style={css.label}>LR / Bilti No (optional)</label>
+              <input value={challanForm.lrNo} onChange={e=>setChallanForm(p=>({...p,lrNo:e.target.value}))} style={{...css.input,marginBottom:8}} />
+              <label style={css.label}>Transporter (optional)</label>
+              <input value={challanForm.transporter} onChange={e=>setChallanForm(p=>({...p,transporter:e.target.value}))} style={{...css.input,marginBottom:8}} />
+              <label style={css.label}>Remarks</label>
+              <input value={challanForm.remarks} onChange={e=>setChallanForm(p=>({...p,remarks:e.target.value}))} style={{...css.input,marginBottom:14}} />
+              <button onClick={createChallan} disabled={!challanForm.vehicleNo||selDrawings.size===0}
+                style={{...css.btn.primary,width:"100%",padding:"10px 0",opacity:challanForm.vehicleNo&&selDrawings.size>0?1:0.4}}>
+                🚚 Create & Dispatch
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {view==="history"&&(
+        <div>
+          {(challans||[]).length===0&&<div style={{...css.card,textAlign:"center",padding:32,color:T.textLow}}>No challans created yet.</div>}
+          {[...(challans||[])].reverse().map(ch=>(
+            <div key={ch.id} style={{...css.card,marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                <div>
+                  <div style={{fontFamily:T.fontMono,fontWeight:700,color:T.accent,fontSize:14}}>{ch.challanNo}</div>
+                  <div style={{fontSize:11,color:T.textMid,marginTop:2}}>
+                    {ch.date} · {ch.vehicleNo} {ch.driverName?`· ${ch.driverName}`:""} {ch.lrNo?`· LR: ${ch.lrNo}`:""}
+                  </div>
+                  <div style={{fontSize:11,color:T.textMid}}>{ch.drawings?.length} drawings · {ch.totalWt?.toFixed(3)}T</div>
+                </div>
+                <button onClick={()=>setPrintChallan(ch)} style={css.btn.ghost}>🖨 Print</button>
+              </div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {(ch.drawings||[]).map(d=>(
+                  <span key={d.dprId} style={{fontFamily:T.fontMono,fontSize:10,padding:"2px 6px",background:T.bgInput,borderRadius:4,color:T.accent}}>{d.drawingNo}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ── Interim TPI Panel (inside TpiQcPanel context) ────────────────────────────
+// Handled inline in TpiQcPanel via tpiRecords with visitNo field
+
+
 const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates }) => {
   const isAdmin = ["super_admin","qc_admin"].includes(user.role);
   const [tab, setTab] = useState("cutting_qc");
@@ -19539,8 +20007,8 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
         const hasSpecs = (order?.quality?.paintSpecs||[]).length>0 || (order?.quality?.paintCoats||[]).length>0;
         return hasSpecs ? "painting" : "complete";
       }
-      // paint_qc
-      return holdPoints.includes("painting") ? "tpi_paint" : "complete";
+      // paint_qc → mdcc (always goes to MDCC dossier before dispatch)
+      return holdPoints.includes("painting") ? "tpi_paint" : "mdcc";
     };
     const getNextDprStage = getQcNextStage;
     const getNextInstStage = (dpr) => {
@@ -20306,7 +20774,8 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
       {tab==="blast"  && <DprQcPanel dprStage="blast_qc" />}
       {tab==="paint"  && <PaintQcPanel />}
       {tab==="tpi"    && <TpiQcPanel orders={orders} dprs={dprs} setDprs={setDprs} instances={instances} setInstances={setInstances} user={user} tpiTemplates={tpiTemplates} setTpiTemplates={setTpiTemplates} contractors={contractors} />}
-      {INSP_TABS.filter(t=>!["fitup","weld","blast","paint","tpi"].includes(t.id)).map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
+      {tab==="mdcc"   && <MDCCModule dprs={dprs} setDprs={setDprs} orders={orders} user={user} />}
+      {INSP_TABS.filter(t=>!["fitup","weld","blast","paint","tpi","mdcc"].includes(t.id)).map(t=>tab===t.id&&<InspectionPanel key={t.id} stages={t.stages} />)}
 
       {/* Admin-only tabs */}
       {tab==="rules"&&isAdmin&&(
@@ -20501,9 +20970,10 @@ const DPR_STAGE_META = {
   painting:   { label:"Painting",      color:"#1D4ED8",  bg:"#DBEAFE" },
   paint_qc:   { label:"Paint QC",      color:"#D97706",  bg:"#FEF3C7" },
   tpi_paint:  { label:"Paint TPI",     color:"#D97706",  bg:"#FEF3C7" },
+  mdcc:       { label:"MDCC Dossier",  color:"#6D28D9",  bg:"#EDE9FE" },
   complete:   { label:"Complete",      color:"#059669",  bg:"#D1FAE5" },
 };
-const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","tpi_fitup","welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"];
+const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","tpi_fitup","welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"];
 
 const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, onBack }) => {
   const [filterOrder,  setFilterOrder]  = useState("all");
@@ -20522,7 +20992,7 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
     const drgParts = (order.parts||[]).filter(p => p.drawingId === dpr.drawingId && p.fabType === "Fabricate");
     const totalParts = drgParts.length;
     const STAGE_ORD = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending'];
-    const DONE_SET = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+    const DONE_SET = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
     const partMarkNos = new Set(drgParts.map(p => p.markNo));
     const bestStage = {};
     (instances||[]).filter(i => partMarkNos.has(i.markNo)).forEach(i => {
@@ -22080,6 +22550,7 @@ export default function App() {
   const [overrideLog, setOverrideLog]   = useState(() => { try { const s=localStorage.getItem('structo_overrideLog'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [issueRequests, setIssueRequests] = useState(() => { try { const s=localStorage.getItem('structo_issueRequests'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [tpiTemplates, setTpiTemplates] = useState(() => { try { const s=localStorage.getItem('structo_tpiTemplates'); return s?JSON.parse(s):[]; } catch { return []; } });
+  const [challans, setChallans] = useState(() => { try { const s=localStorage.getItem('structo_challans'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [productionEngineers, setProductionEngineers] = useState(() => { try { const s=localStorage.getItem('structo_productionEngineers'); return s?JSON.parse(s):[
     { id:"PE-001", userId:"anmol.vaidya",          name:"Anmol Vaidya",        stages:["welding","blasting"], orderIds:[] },
     { id:"PE-002", userId:"vibhor.suryavanshi",     name:"Vibhor Suryavanshi",  stages:["cutting","welding"],  orderIds:[] },
@@ -22122,6 +22593,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('structo_issueRequests',   JSON.stringify(issueRequests));   } catch(e) { console.warn('Storage full',e); } }, [issueRequests]);
   useEffect(() => { try { localStorage.setItem('structo_tpiTemplates',   JSON.stringify(tpiTemplates));   } catch(e) { console.warn('Storage full',e); } }, [tpiTemplates]);
   useEffect(() => { try { localStorage.setItem('structo_productionEngineers', JSON.stringify(productionEngineers)); } catch(e) { console.warn('Storage full',e); } }, [productionEngineers]);
+  useEffect(() => { try { localStorage.setItem('structo_challans', JSON.stringify(challans)); } catch(e) { console.warn('Storage full',e); } }, [challans]);
   useEffect(() => { try { localStorage.setItem('structo_welders',         JSON.stringify(welders));         } catch(e) { console.warn('Storage full',e); } }, [welders]);
   useEffect(() => { try { localStorage.setItem('structo_contractors',     JSON.stringify(contractors));     } catch(e) { console.warn('Storage full',e); } }, [contractors]);
   useEffect(() => { try { localStorage.setItem('structo_machines',        JSON.stringify(machines));        } catch(e) { console.warn('Storage full',e); } }, [machines]);
@@ -22312,8 +22784,8 @@ export default function App() {
       : [];
     const myOrders = (orders||[]).filter(o=>myPe?(myPe.orderIds||[]).includes(o.id)||myDprs.some(d=>d.orderId===o.id):false);
 
-    const DONE_STAGES = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
-    const WELD_DONE   = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+    const DONE_STAGES = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
+    const WELD_DONE   = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
 
     // MTD weight cleared
     const now = new Date();
@@ -22921,8 +23393,8 @@ export default function App() {
                 <tbody>
                   {(()=>{
                     const rows=[];
-                    const WELD_DONE=new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
-                    const BLAST_DONE=new Set(["tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+                    const WELD_DONE=new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
+                    const BLAST_DONE=new Set(["tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
                     activeOrders.forEach(o=>{
                       const conNames=[...new Set((dprs||[]).filter(d=>d.orderId===o.id).flatMap(d=>[d.fitupContractorName,d.weldContractorName,d.blastContractorName,d.paintContractorName].filter(Boolean)))];
                       conNames.forEach(name=>{
@@ -23124,8 +23596,8 @@ export default function App() {
     const [paTab, setPaTab] = useState("floor");
     const allDprs = dprs||[];
     const activeOrders = (orders||[]).filter(o=>o.status==="active");
-    const WELD_DONE = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
-    const DONE = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","complete"]);
+    const WELD_DONE = new Set(["weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
+    const DONE = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
 
     const getDrWt = (dpr) => {
       const o=(orders||[]).find(x=>x.id===dpr.orderId)||{};
@@ -23706,6 +24178,8 @@ export default function App() {
     );
   };
 
+
+
   const renderMod = () => {
     // Role-specific routing overrides
     if (user.role==="production_admin")   return mod==="masters" ? <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} /> : <ProductionAdminFullDashboard />;
@@ -23725,7 +24199,7 @@ export default function App() {
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
-      case "dispatch":  return <Placeholder title="Dispatch" session="Session 5" icon="🚚" desc="Partial dispatch, per-vehicle challans, gate-out, bilti/LR upload." />;
+      case "dispatch":  return <DispatchModule dprs={dprs||[]} setDprs={setDprs} orders={orders||[]} challans={challans||[]} setChallans={setChallans} user={user} />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} />;
       case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} />;
       default:          return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
