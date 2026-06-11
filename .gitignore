@@ -1,6 +1,12 @@
 node_modules/
 dist/
+dist-backup*/
 .env
 .env.local
 *.backup*
+.DS_Store
+src/.DS_Store
+src/modules/.DS_Store
+Archive.zip
+.netlify/
 
