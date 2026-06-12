@@ -13124,6 +13124,8 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
 // PRODUCTION: DRAWING ASSIGNMENT (Production Manager View)
 // ═══════════════════════════════════════════════════════════════════════════════
 export {
+  // Tab components for OrderDetail
+  TabQuality, TabMaterialBalance, TabFinance,
   // Helper functions
   migrateDrawingInstances, buildDefaultProcessSteps, getDIPipelineNext, getPipelineLabel,
   genLotNo, buildRmUnitId, buildOffcutRmUnitId, parseRmUnitIdNew,

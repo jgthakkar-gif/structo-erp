@@ -10,6 +10,7 @@ import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
 import { migrateDrawingInstances, buildDefaultProcessSteps, getDIPipelineNext, getPipelineLabel,
   genLotNo, buildRmUnitId, buildOffcutRmUnitId,
+  TabQuality, TabMaterialBalance, TabFinance,
   STAGE_OPTS, STAGE_SEQ_LABELS, SUBOPS_CUT, SUBOPS_WELD, ROLE_STAGE_MAP,
   DEFAULT_PIPELINE_STEPS, DEFAULT_PROCESS_TYPES, OUTBOUND_TASKS, OUTBOUND_TYPES,
   TPI_STAGES, STAGE_NEXT, STAGE_CHECKLISTS, SUPERVISOR_STAGES,
