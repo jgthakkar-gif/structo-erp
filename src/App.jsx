@@ -5,7 +5,8 @@ import { T, css } from "./theme.js";
 import { fmt, today, getFinancialYear, genOrderId, normMatCode, normSize, buildMatCode,
   calcSheetWt, buildDIId, getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
-  parseCSVLine, parseCSVText, can, ROLE_DEFAULT_PERMS, USERS } from "./helpers.js";
+  parseCSVLine, parseCSVText, can, ROLE_DEFAULT_PERMS, USERS,
+  computePaintableArea } from "./helpers.js";
 import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
 import { migrateDrawingInstances, buildDefaultProcessSteps, getDIPipelineNext, getPipelineLabel,
@@ -15547,100 +15548,7 @@ const UniqueIdCell = ({ order, drg, part }) => {
 // ─── TAB: DRAWING PART LIST ───────────────────────────────────────────────────
 // ─── PAINT AREA CALCULATOR ────────────────────────────────────────────────────
 // Returns gross paintable area in m² for one physical piece
-const computePaintableArea = (part, drawing) => {
-  const sec = (part.section||part.sectionType||"").toUpperCase().replace(/\s+/g,"");
-  const L = parseFloat(part.length)||0;
-  const W = parseFloat(part.width)||0;
-  const size = (part.size||"").toUpperCase().replace(/MM/g,"").trim();
-
-  // Plate-type sections — both faces + 4 edges
-  const isPlate = ["PLATE","CHEQ","SHEET","FLAT"].includes(sec);
-  if (isPlate && L>0 && W>0) {
-    const t = parseFloat(size)||0; // thickness in mm
-    const faceArea = 2 * (L/1000) * (W/1000);
-    const edgeArea = t>0 ? 2*(L+W)/1000*(t/1000) : 0;
-    return faceArea + edgeArea;
-  }
-
-  // ROD — cylindrical surface
-  if (sec==="ROD" && L>0) {
-    const d = parseFloat(size)||0;
-    return Math.PI * (d/1000) * (L/1000);
-  }
-
-  // BAR — 4 faces
-  if (sec==="BAR" && L>0) {
-    const dims = size.split("X").map(parseFloat).filter(Boolean);
-    const s1 = dims[0]||0; const s2 = dims[1]||s1;
-    return 2*(s1+s2)/1000*(L/1000);
-  }
-
-  // Section types — perimeter × length (IS 808 values in m per metre)
-  const SECTION_PERIMETERS = {
-    // ISA equal angles
-    "ISA/25X25X3":0.097,"ISA/25X25X5":0.093,"ISA/30X30X3":0.117,"ISA/35X35X3":0.137,
-    "ISA/40X40X3":0.157,"ISA/40X40X5":0.153,"ISA/45X45X3":0.177,"ISA/45X45X5":0.173,
-    "ISA/50X50X5":0.193,"ISA/50X50X6":0.191,"ISA/55X55X6":0.211,"ISA/60X60X5":0.233,
-    "ISA/60X60X6":0.231,"ISA/65X65X6":0.251,"ISA/65X65X8":0.247,"ISA/65X65X10":0.243,
-    "ISA/70X70X6":0.271,"ISA/75X75X6":0.291,"ISA/75X75X8":0.287,"ISA/75X75X10":0.283,
-    "ISA/80X80X6":0.311,"ISA/80X80X8":0.307,"ISA/90X90X6":0.351,"ISA/90X90X8":0.347,
-    "ISA/90X90X10":0.343,"ISA/100X100X6":0.391,"ISA/100X100X8":0.387,"ISA/100X100X10":0.383,
-    "ISA/100X100X12":0.379,"ISA/110X110X8":0.427,"ISA/130X130X10":0.503,"ISA/150X150X10":0.583,
-    "ISA/150X150X12":0.579,"ISA/150X150X15":0.573,"ISA/150X150X16":0.571,"ISA/200X200X16":0.771,
-    // ISMB
-    "ISMB/100":0.482,"ISMB/125":0.602,"ISMB/150":0.726,"ISMB/175":0.826,"ISMB/200":0.946,
-    "ISMB/225":1.060,"ISMB/250":1.178,"ISMB/300":1.406,"ISMB/350":1.578,"ISMB/400":1.762,
-    "ISMB/450":1.938,"ISMB/500":2.170,"ISMB/550":2.376,"ISMB/600":2.582,
-    // ISMC
-    "ISMC/75":0.370,"ISMC/100":0.500,"ISMC/125":0.614,"ISMC/150":0.738,"ISMC/175":0.852,
-    "ISMC/200":0.966,"ISMC/225":1.074,"ISMC/250":1.186,"ISMC/300":1.410,"ISMC/400":1.858,
-    // ISLB
-    "ISLB/75":0.358,"ISLB/100":0.454,"ISLB/125":0.574,"ISLB/150":0.694,"ISLB/175":0.782,
-    "ISLB/200":0.886,"ISLB/225":0.994,"ISLB/250":1.098,"ISLB/275":1.202,"ISLB/300":1.306,
-    "ISLB/350":1.518,"ISLB/400":1.690,"ISLB/450":1.906,"ISLB/500":2.118,"ISLB/550":2.322,
-    "ISLB/600":2.530,
-    // ISWB
-    "ISWB/150":0.666,"ISWB/175":0.766,"ISWB/200":0.858,"ISWB/225":0.962,"ISWB/250":1.050,
-    "ISWB/300":1.234,"ISWB/350":1.418,"ISWB/400":1.594,"ISWB/450":1.778,"ISWB/500":1.962,
-    "ISWB/550":2.146,"ISWB/600":2.330,
-    // RHS
-    "RHS/100X50X4":0.296,"RHS/100X50X5":0.296,"RHS/100X50X6":0.296,"RHS/120X60X4":0.356,
-    "RHS/150X75X5":0.446,"RHS/150X100X5":0.496,"RHS/200X100X5":0.596,"RHS/200X100X6":0.596,
-    "RHS/250X150X6":0.796,"RHS/300X200X8":0.996,
-    // SHS
-    "SHS/40X4":0.152,"SHS/50X4":0.192,"SHS/50X5":0.190,"SHS/60X4":0.232,"SHS/75X5":0.290,
-    "SHS/100X5":0.390,"SHS/100X6":0.388,"SHS/125X6":0.488,"SHS/150X6":0.588,"SHS/200X8":0.784,
-    // ISHT
-    "ISHT/50":0.194,"ISHT/60":0.234,"ISHT/70":0.274,"ISHT/80":0.314,"ISHT/100":0.394,
-    "ISHT/125":0.494,"ISHT/150":0.594,
-  };
-
-  // Look up perimeter
-  const sectionKey = `${sec}/${size}`;
-  const perim = SECTION_PERIMETERS[sectionKey];
-  if (perim && L>0) return perim * (L/1000);
-
-  // NPB/WPB — use flange width × 2 + web depth × 2 as approximate perimeter
-  if (["NPB","WPB","ISWB"].includes(sec) && L>0) {
-    const dims = size.split("X").map(parseFloat).filter(Boolean);
-    if (dims.length>=2) {
-      const depth=dims[0]/1000; const width=dims[1]/1000;
-      return (2*depth + 2*width) * (L/1000); // approximate
-    }
-  }
-
-  // ROPIPE — π × OD × L (from schedule table OD values)
-  const PIPE_OD = {"15NB":0.02135,"20NB":0.02667,"25NB":0.03338,"32NB":0.04216,
-    "40NB":0.04826,"50NB":0.06033,"65NB":0.07312,"80NB":0.08890,"100NB":0.11430,
-    "125NB":0.14130,"150NB":0.16830,"200NB":0.21910,"250NB":0.27305,"300NB":0.32385};
-  if (sec==="ROPIPE" && L>0) {
-    const nbMatch = size.match(/(\d+NB)/i);
-    const od = nbMatch ? PIPE_OD[nbMatch[1].toUpperCase()] : null;
-    if (od) return Math.PI * od * (L/1000);
-  }
-
-  return null; // cannot calculate
-};
+// computePaintableArea imported from helpers.js
 
 const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) => {
   const [modal, setModal] = useState(null); const [form, setForm] = useState({}); const [filterDrg, setFilterDrg] = useState("all");
