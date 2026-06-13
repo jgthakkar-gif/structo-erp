@@ -5483,86 +5483,93 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [showSvg, setShowSvg] = React.useState(false);
 
-  const hasPositions = (sheet.parts||[]).some(p=>p.x !== null && p.x !== undefined);
+  const hasPositions = (sheet.placements||sheet.parts||[]).some(p=>p.x != null);
 
-  // SVG layout generator
+  // SVG layout generator — accurate coordinate mapping matching NestingCenter output
   const renderSvg = () => {
-    const svgW = 600; const svgH = 200;
-    const pad = 12;
-    const shL = sheet.sheetLen || parseFloat((sheet.sheetDim||"0X0").split("X")[0]) || 1000;
-    const shW = sheet.sheetWid || parseFloat((sheet.sheetDim||"0X0").split("X")[1]) || 500;
+    const svgW = 620; const pad = 14;
+    const shL = sheet.sheetLen || parseFloat((sheet.sheetDim||"0X0").split("X")[0]) || 2500;
+    const shW = sheet.sheetWid || parseFloat((sheet.sheetDim||"0X0").split("X")[1]) || 1250;
+    // Maintain aspect ratio: sheet width maps to svgH, sheet length maps to svgW
     const scaleX = (svgW - pad*2) / shL;
-    const scaleY = (svgH - pad*2) / shW;
-    const scale = Math.min(scaleX, scaleY);
-    const colors = ["#BFDBFE","#BBF7D0","#FDE68A","#DDD6FE","#A5F3FC","#FECACA","#D1FAE5","#FED7AA"];
-    const strokes= ["#1D4ED8","#15803D","#B45309","#6D28D9","#0E7490","#B91C1C","#047857","#C2410C"];
+    const svgH = Math.round(shW * scaleX);  // height scales with same factor
+    const scale = scaleX;
+
+    // Colour palette — one per unique markNo
+    const markNos = [...new Set((sheet.placements||sheet.parts||[]).map(p=>p.markNo))];
+    const palette = ["#BFDBFE","#BBF7D0","#FDE68A","#DDD6FE","#A5F3FC","#FECACA","#D1FAE5","#FED7AA","#E0E7FF","#FCE7F3"];
+    const borderPal=["#1D4ED8","#15803D","#B45309","#6D28D9","#0E7490","#B91C1C","#047857","#C2410C","#4338CA","#BE185D"];
+    const colorMap = {};
+    markNos.forEach((mn,i)=>{ colorMap[mn]={ fill:palette[i%palette.length], stroke:borderPal[i%borderPal.length] }; });
+
+    // NestingCenter coordinate system: origin = bottom-left of sheet, Y goes UP
+    // SVG coordinate system: origin = top-left, Y goes DOWN
+    // Conversion: svgY = svgH - (ncY * scale) - (partHeight * scale)
+    // Rotation: NestingCenter CCW in radians, applied around InsertionPt (= bottom-left of part pre-rotation)
+    const placements = sheet.placements || [];
+
     return (
-      <svg width={svgW} height={svgH+40} style={{display:"block",margin:"8px auto",border:"1px solid #CBD5E1",borderRadius:4,background:"#F8FAFC"}}>
-        {/* Sheet outline */}
-        <rect x={pad} y={pad} width={shL*scale} height={shW*scale}
+      <svg width={svgW} height={svgH + 30}
+        style={{display:"block",margin:"8px auto",border:"1px solid #CBD5E1",borderRadius:4,background:"#F8FAFC",overflow:"visible"}}>
+        {/* Sheet background */}
+        <rect x={pad} y={0} width={shL*scale} height={svgH}
           fill="#F1F5F9" stroke="#94A3B8" strokeWidth={1.5} />
-        {/* Offcut zone */}
+        {/* Offcut zone — right side after LengthUsed */}
         {sheet.lengthUsed != null && sheet.lengthUsed < shL && (
-          <rect x={pad + sheet.lengthUsed*scale} y={pad}
-            width={(shL - sheet.lengthUsed)*scale} height={shW*scale}
-            fill="#FEF9C3" stroke="#D97706" strokeWidth={1} strokeDasharray="5,3" opacity={0.7} />
+          <>
+            <rect x={pad + sheet.lengthUsed*scale} y={0}
+              width={(shL - sheet.lengthUsed)*scale} height={svgH}
+              fill="#FEF9C3" stroke="none" opacity={0.6} />
+            <line x1={pad + sheet.lengthUsed*scale} y1={0}
+                  x2={pad + sheet.lengthUsed*scale} y2={svgH}
+                  stroke="#D97706" strokeWidth={1.5} strokeDasharray="5,3" />
+            {(shL - sheet.lengthUsed)*scale > 35 && (
+              <text x={pad + sheet.lengthUsed*scale + (shL-sheet.lengthUsed)*scale/2}
+                    y={svgH/2} textAnchor="middle" fontSize={9} fill="#D97706"
+                    fontFamily="monospace" fontWeight="700">OFFCUT</text>
+            )}
+          </>
         )}
-        {sheet.lengthUsed != null && sheet.lengthUsed < shL && (
-          <line x1={pad + sheet.lengthUsed*scale} y1={pad}
-                x2={pad + sheet.lengthUsed*scale} y2={pad + shW*scale}
-                stroke="#D97706" strokeWidth={1.5} strokeDasharray="4,2" />
-        )}
-        {/* Parts */}
-        {hasPositions && (sheet.parts||[]).map((p,pi)=>{
+        {/* Each part placement — correct coordinate flip + rotation */}
+        {placements.map((p, pi)=>{
           if (p.x == null) return null;
-          const rawW = p.partW || 80;
-          const rawH = p.partH || 50;
-          const rot = p.rotation || 0;
-          const degCCW = rot * 180 / Math.PI;
-          const rx = pad + p.x * scale;
-          const ry = pad + p.y * scale;
-          const pw = rawW * scale;
-          const ph = rawH * scale;
-          const cx = rx + pw / 2;
-          const cy = ry + ph / 2;
-          const col = colors[pi % colors.length];
-          const str = strokes[pi % strokes.length];
+          const pw = (p.partW || 100) * scale;
+          const ph = (p.partH || 100) * scale;
+          const rot = p.rotation || 0;  // CCW radians
+          const degCW = -(rot * 180 / Math.PI);  // SVG rotate() is CW, NC is CCW
+
+          // InsertionPt in NC coords = bottom-left of the (pre-rotation) bounding box of part
+          // After Y-flip: svgX = pad + nc.X * scale, svgY = svgH - nc.Y * scale - ph
+          // But rotation is around InsertionPt, so we translate there, rotate, translate back
+          const svgX = pad + p.x * scale;
+          const svgY = svgH - p.y * scale - ph;
+
+          const col = colorMap[p.markNo] || { fill:"#E2E8F0", stroke:"#475569" };
+          const cx = svgX + pw/2;
+          const cy = svgY + ph/2;
           const minDim = Math.min(pw, ph);
-          const fontSize = Math.max(6, Math.min(9, minDim * 0.35));
+          const fs = Math.max(5, Math.min(10, minDim * 0.28));
+
           return (
-            <g key={pi} transform={`rotate(${-degCCW}, ${rx}, ${ry})`}>
-              <rect x={rx} y={ry} width={pw} height={ph}
-                fill={col} stroke={str} strokeWidth={0.8} opacity={0.9} />
-              {minDim > 14 && (
-                <text x={cx} y={cy + fontSize*0.35} textAnchor="middle"
-                  fontSize={fontSize} fontFamily="monospace" fill={str} fontWeight="700">
+            <g key={pi} transform={`rotate(${degCW}, ${svgX}, ${svgY + ph})`}>
+              <rect x={svgX} y={svgY} width={pw} height={ph}
+                fill={col.fill} stroke={col.stroke} strokeWidth={0.8} opacity={0.92} />
+              {minDim > 12 && (
+                <text x={cx} y={cy + fs*0.35} textAnchor="middle"
+                  fontSize={fs} fontFamily="monospace" fill={col.stroke} fontWeight="700">
                   {p.markNo}
-                </text>
-              )}
-              {minDim > 22 && p.qty > 1 && (
-                <text x={cx} y={cy + fontSize*1.4} textAnchor="middle"
-                  fontSize={fontSize-1} fontFamily="monospace" fill={str} opacity={0.7}>
-                  ×{p.qty}
                 </text>
               )}
             </g>
           );
         })}
-        <text x={pad} y={svgH+16} fontSize={9} fill="#64748B" fontFamily="monospace">
-          {sheet.sheetDim} · {sheet.utilisPct}% utilisation
-          {sheet.offcutDim ? ` · Offcut: ${sheet.offcutDim}mm` : ""}
+        {/* Bottom label bar */}
+        <text x={pad} y={svgH+18} fontSize={9} fill="#64748B" fontFamily="monospace">
+          {sheet.sheetDim} · {sheet.utilisPct}% util{sheet.offcutDim?` · Offcut: ${sheet.offcutDim}mm`:""}
         </text>
         {sheet.lengthUsed != null && (
-          <text x={svgW-pad} y={svgH+16} fontSize={9} fill="#D97706" fontFamily="monospace" textAnchor="end">
+          <text x={svgW-pad} y={svgH+18} fontSize={9} fill="#D97706" fontFamily="monospace" textAnchor="end">
             ▶ Used: {sheet.lengthUsed}mm
-          </text>
-        )}
-        {sheet.lengthUsed != null && sheet.offcutDim && (shL - sheet.lengthUsed) * scale > 30 && (
-          <text
-            x={pad + sheet.lengthUsed*scale + (shL - sheet.lengthUsed)*scale/2}
-            y={pad + shW*scale/2}
-            textAnchor="middle" fontSize={8} fill="#D97706" fontFamily="monospace" fontWeight="700">
-            OFFCUT
           </text>
         )}
       </svg>
@@ -5594,20 +5601,15 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
               <span key={pi} style={{fontSize:11,fontFamily:T.fontMono,background:T.bgInput,
                 border:`1px solid ${T.border}`,borderRadius:3,padding:"2px 6px"}}>
                 {p.markNo} ×{p.qty}
-                {p.partW&&<span style={{fontSize:9,color:T.textLow,marginLeft:3}}>
-                  {p.partW}{p.partH?`×${p.partH}`:""}mm
-                </span>}
-                {p.x!=null&&<span style={{fontSize:9,color:T.accent,marginLeft:3}}>
-                  @({Math.round(p.x)},{Math.round(p.y)}){p.rotation>0.1?` ${Math.round(p.rotation*180/Math.PI)}°`:""}
-                </span>}
+                {p.partW&&<span style={{fontSize:9,color:T.textLow,marginLeft:3}}>{p.partW}{p.partH?`×${p.partH}`:""}mm</span>}
               </span>
             ))}
           </div>
           {/* Offcut info */}
           {sheet.offcutDim && (
             <div style={{fontSize:11,color:T.green,marginBottom:6}}>
-              📐 Offcut: <strong>{sheet.offcutDim}</strong> mm
-              <span style={{color:T.textLow,marginLeft:6}}>(sheet {sheet.sheetLen}mm − LengthUsed {sheet.lengthUsed}mm = {sheet.offcutDim.split("X")[0]}mm remainder · confirm before creating stock)</span>
+              📐 Indicative offcut: <strong>{sheet.offcutDim}</strong> mm
+              <span style={{color:T.textLow,marginLeft:6}}>(from LengthUsed={sheet.lengthUsed}mm — operator should verify and adjust)</span>
             </div>
           )}
           {/* SVG layout */}
@@ -5738,24 +5740,30 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         const rm = nestRawPlates[rp.RawPlateIndex]||nestRawPlates[0]||{};
         const sheetDim = rm.RectangularShape ? `${rm.RectangularShape.Length}X${rm.RectangularShape.Width}` : rm.Name||`Sheet${idx+1}`;
         const utilisPct = rp.LengthUsed!=null ? +((1-(rp.Scrap||0))*100).toFixed(1) : (result?.Result?.NP??0);
-        const partsOnSheet = (rp.PartsNested||[]).reduce((acc,pn)=>{
-          const p=nestParts[pn.PartIndex]; if(!p) return acc;
-          const qty=pn.Quantity??1;
-          // NestingCenter API wraps position/rotation inside Transformation object
+        // Store every individual placement (not collapsed) so SVG can render each one correctly.
+        // Also keep a summary list for the parts badge display.
+        const placements = (rp.PartsNested||[]).flatMap(pn=>{
+          const p=nestParts[pn.PartIndex]; if(!p) return [];
           const tf = pn.Transformation || {};
           const ins = tf.InsertionPt || {};
+          const qty = pn.Quantity ?? 1;
           const partW = p.RectangularShape?.Length ?? null;
           const partH = p.RectangularShape?.Width ?? null;
-          const ex=acc.find(a=>a.markNo===p.Name);
-          if(ex) { ex.qty+=qty; }
-          else acc.push({
-            markNo:p.Name, qty,
+          // Expand qty>1 identical placements (same position = stacked, rare but handle gracefully)
+          return Array.from({length:qty}, ()=>({
+            markNo: p.Name,
             x: ins.X ?? null,
             y: ins.Y ?? null,
             rotation: tf.Rotation ?? 0,
             mirror: tf.Mirror ?? false,
             partW, partH,
-          });
+          }));
+        });
+        // Summary for badge list (qty per markNo)
+        const partsOnSheet = placements.reduce((acc,pl)=>{
+          const ex=acc.find(a=>a.markNo===pl.markNo);
+          if(ex) ex.qty++;
+          else acc.push({ markNo:pl.markNo, qty:1, partW:pl.partW, partH:pl.partH, x:pl.x, y:pl.y, rotation:pl.rotation });
           return acc;
         },[]);
         // Offcut calculation from LengthUsed
@@ -5775,7 +5783,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         // Track whether this sheet came from existing stock (lot or offcut) — exclude from PR
         const srcRm = rawMaterials[rp.RawPlateIndex];
         const isFromStock = srcRm?.isStock === true;
-        return {sheetNo:idx+1,sheetDim,groupNo,sheetInGroup,utilisPct,parts:partsOnSheet,rmUnitId,isFromStock,lotId:srcRm?.lotId||null,
+        return {sheetNo:idx+1,sheetDim,groupNo,sheetInGroup,utilisPct,parts:partsOnSheet,placements,rmUnitId,isFromStock,lotId:srcRm?.lotId||null,
           lengthUsed: lengthUsed !== null ? Math.round(lengthUsed) : null,
           offcutDim, sheetLen, sheetWid,
         };
@@ -5787,19 +5795,17 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:+(result?.Result?.NP??0).toFixed(1),scrapPct:+(result?.Result?.Scrap??0).toFixed(1),status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
-      // Per-dimension weight breakdown for purchased sheets only
       const dimWtMap = {};
       newSheets.forEach(sh=>{
-        const k = sh.sheetDim||"?";
-        if(!dimWtMap[k]) dimWtMap[k]={ sheetDim:k, qty:0, wtPerSheet:nestingSheetWt(row.matCode, sh.sheetDim), totalWt:0 };
+        const k=sh.sheetDim||"?";
+        if(!dimWtMap[k]) dimWtMap[k]={sheetDim:k,qty:0,wtPerSheet:nestingSheetWt(row.matCode,sh.sheetDim),totalWt:0};
         dimWtMap[k].qty++;
-        dimWtMap[k].totalWt = Math.round(dimWtMap[k].qty * dimWtMap[k].wtPerSheet * 100) / 100;
+        dimWtMap[k].totalWt=Math.round(dimWtMap[k].qty*dimWtMap[k].wtPerSheet*100)/100;
       });
-      const dimWtBreakdown = Object.values(dimWtMap);
-      const totalRmWt = Math.round(dimWtBreakdown.reduce((s,d)=>s+d.totalWt,0)*100)/100;
-      // Net parts weight — from MRP tab wtRequired (calcTotalWt × drg.qty, same as what MRP shows)
-      const netPartsWt = row.wtRequired || 0;
-      const extraWt = Math.round((totalRmWt - netPartsWt)*100)/100;
+      const dimWtBreakdown=Object.values(dimWtMap);
+      const totalRmWt=Math.round(dimWtBreakdown.reduce((s,d)=>s+d.totalWt,0)*100)/100;
+      const netPartsWt=row.wtRequired||0;
+      const extraWt=Math.round((totalRmWt-netPartsWt)*100)/100;
       setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:sheets.length?+(sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/sheets.length).toFixed(1):0,sheets,parts:allParts,dimWtBreakdown,totalRmWt,netPartsWt,extraWt});
       setApiProgress("Done!");
       setExported(true);
@@ -5985,59 +5991,36 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                     : " No new material to purchase — all covered by stock."}
                 </div>
               )}
-              {/* Weight breakdown table */}
-              {nestPrResult.dimWtBreakdown && nestPrResult.dimWtBreakdown.length > 0 && (
+              {nestPrResult.dimWtBreakdown&&nestPrResult.dimWtBreakdown.length>0&&(
                 <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:6,padding:"10px 12px",marginBottom:10}}>
-                  <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>
-                    RM Weight to Order (purchased sheets only)
-                  </div>
+                  <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>RM Weight to Order (purchased sheets only)</div>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                    <thead>
-                      <tr style={{borderBottom:`1px solid ${T.border}`}}>
-                        <th style={{textAlign:"left",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Sheet size</th>
-                        <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Qty</th>
-                        <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Wt/sheet</th>
-                        <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Total wt</th>
-                      </tr>
-                    </thead>
+                    <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
+                      <th style={{textAlign:"left",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Sheet size</th>
+                      <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Qty</th>
+                      <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Wt/sheet</th>
+                      <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Total wt</th>
+                    </tr></thead>
                     <tbody>
                       {nestPrResult.dimWtBreakdown.map((d,di)=>(
                         <tr key={di} style={{borderBottom:`1px solid ${T.border}44`}}>
                           <td style={{padding:"4px 6px",fontFamily:T.fontMono,color:T.text}}>{d.sheetDim}</td>
                           <td style={{padding:"4px 6px",textAlign:"right",color:T.text}}>{d.qty}</td>
-                          <td style={{padding:"4px 6px",textAlign:"right",color:T.textMid,fontFamily:T.fontMono}}>
-                            {d.wtPerSheet>0?`${d.wtPerSheet.toFixed(1)} kg`:"—"}
-                          </td>
-                          <td style={{padding:"4px 6px",textAlign:"right",fontWeight:600,color:T.text,fontFamily:T.fontMono}}>
-                            {d.totalWt>0?`${d.totalWt.toFixed(1)} kg`:"—"}
-                          </td>
+                          <td style={{padding:"4px 6px",textAlign:"right",color:T.textMid,fontFamily:T.fontMono}}>{d.wtPerSheet>0?`${d.wtPerSheet.toFixed(1)} kg`:"—"}</td>
+                          <td style={{padding:"4px 6px",textAlign:"right",fontWeight:600,color:T.text,fontFamily:T.fontMono}}>{d.totalWt>0?`${d.totalWt.toFixed(1)} kg`:"—"}</td>
                         </tr>
                       ))}
                       <tr style={{borderTop:`2px solid ${T.border}`,background:T.bgInput}}>
                         <td colSpan={3} style={{padding:"5px 6px",fontWeight:700,color:T.text}}>Total RM to order</td>
-                        <td style={{padding:"5px 6px",textAlign:"right",fontWeight:700,color:T.text,fontFamily:T.fontMono}}>
-                          {nestPrResult.totalRmWt>0?`${nestPrResult.totalRmWt.toFixed(1)} kg`:"—"}
-                        </td>
+                        <td style={{padding:"5px 6px",textAlign:"right",fontWeight:700,color:T.text,fontFamily:T.fontMono}}>{nestPrResult.totalRmWt>0?`${nestPrResult.totalRmWt.toFixed(1)} kg`:"—"}</td>
                       </tr>
                     </tbody>
                   </table>
-                  {nestPrResult.netPartsWt > 0 && (
+                  {nestPrResult.netPartsWt>0&&(
                     <div style={{display:"flex",gap:16,marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}44`,flexWrap:"wrap"}}>
-                      <span style={{fontSize:11,color:T.textMid}}>
-                        Net parts wt: <strong style={{color:T.text}}>{nestPrResult.netPartsWt.toFixed(1)} kg</strong>
-                      </span>
-                      <span style={{fontSize:11,color:T.textMid}}>
-                        Extra (scrap + kerf): <strong style={{color:nestPrResult.extraWt>0?T.amber:T.green}}>
-                          {nestPrResult.extraWt>0?"+":""}{nestPrResult.extraWt.toFixed(1)} kg
-                        </strong>
-                      </span>
-                      {nestPrResult.totalRmWt>0&&nestPrResult.netPartsWt>0&&(
-                        <span style={{fontSize:11,color:T.textMid}}>
-                          Yield: <strong style={{color:T.green}}>
-                            {(nestPrResult.netPartsWt/nestPrResult.totalRmWt*100).toFixed(1)}%
-                          </strong>
-                        </span>
-                      )}
+                      <span style={{fontSize:11,color:T.textMid}}>Net parts wt: <strong style={{color:T.text}}>{nestPrResult.netPartsWt.toFixed(1)} kg</strong></span>
+                      <span style={{fontSize:11,color:T.textMid}}>Extra (scrap+kerf): <strong style={{color:nestPrResult.extraWt>0?T.amber:T.green}}>{nestPrResult.extraWt>0?"+":""}{nestPrResult.extraWt.toFixed(1)} kg</strong></span>
+                      {nestPrResult.totalRmWt>0&&<span style={{fontSize:11,color:T.textMid}}>Yield: <strong style={{color:T.green}}>{(nestPrResult.netPartsWt/nestPrResult.totalRmWt*100).toFixed(1)}%</strong></span>}
                     </div>
                   )}
                 </div>
