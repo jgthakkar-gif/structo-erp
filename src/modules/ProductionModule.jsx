@@ -353,6 +353,216 @@ const TpiQcPanel = ({ orders, dprs, setDprs, instances, setInstances, user, tpiT
 };
 
 
+// ─── TPI FIELD POOL ───────────────────────────────────────────────────────────
+const TPI_FIELD_POOL = [
+  { id:"orderNo",       label:"Order No",          source:"order" },
+  { id:"clientName",    label:"Client Name",        source:"order" },
+  { id:"drawingNo",     label:"Drawing No",         source:"drawing" },
+  { id:"drawingRev",    label:"Rev",                source:"drawing" },
+  { id:"drawingDate",   label:"Drawing Date",       source:"drawing" },
+  { id:"assemblyGroup", label:"Assembly Group",     source:"drawing" },
+  { id:"markNo",        label:"Mark No",            source:"part" },
+  { id:"description",   label:"Description / Component", source:"part" },
+  { id:"qty",           label:"Qty",                source:"part" },
+  { id:"unitWt",        label:"Unit Wt (kg)",       source:"calc" },
+  { id:"totalWt",       label:"Total Wt (kg)",      source:"calc" },
+  { id:"grade",         label:"Material Grade",     source:"part" },
+  { id:"thickness",     label:"Thickness / Size",   source:"part" },
+  { id:"welderId",      label:"Welder ID",          source:"tpi" },
+  { id:"welderName",    label:"Welder Name",        source:"tpi" },
+  { id:"wpsNo",         label:"WPS No",             source:"tpi" },
+  { id:"jointId",       label:"Joint ID",           source:"tpi" },
+  { id:"weldType",      label:"Weld Type",          source:"tpi" },
+  { id:"ndtType",       label:"NDT Type",           source:"tpi" },
+  { id:"ndtResult",     label:"NDT Result",         source:"tpi" },
+  { id:"fitupResult",   label:"Fit-Up Result",      source:"tpi" },
+  { id:"dimResult",     label:"Dimensional Result", source:"tpi" },
+  { id:"remarks",       label:"Inspector Remarks",  source:"tpi" },
+  { id:"acceptReject",  label:"Accept / Reject",    source:"tpi" },
+  { id:"certNo",        label:"Certificate No",     source:"tpi" },
+  { id:"inspDate",      label:"Inspection Date",    source:"tpi" },
+  { id:"stage",         label:"Stage",              source:"meta" },
+];
+
+const getHpNextStage = (hp, dpr, orders) => {
+  const order = (orders||[]).find(o=>o.id===dpr?.orderId);
+  const hasPaint = (order?.quality?.paintSpecs||[]).length>0 || (order?.quality?.paintCoats||[]).length>0;
+  if (hp==="welding") { const hasBlasting=order?.quality?.blastingRequired!==false; if(hasBlasting) return "blasting"; if(hasPaint) return "painting"; return "complete"; }
+  if (hp==="blasting") { if(hasPaint) return "painting"; return "mdcc"; }
+  if (hp==="painting") return "mdcc";
+  return HP_NEXT_STAGE[hp]||"complete";
+};
+
+function resolveTpiField(fieldId, ctx) {
+  const { order, drawing, part, tpiRecord } = ctx;
+  const q = order?.quality||{};
+  const unitWt = part?.unitWt||0;
+  switch(fieldId) {
+    case "orderNo":       return order?.orderNo||"";
+    case "clientName":    return order?.clientName||"";
+    case "drawingNo":     return drawing?.drawingNo||drawing?.id||"";
+    case "drawingRev":    return drawing?.rev||"";
+    case "drawingDate":   return drawing?.drawingDate?new Date(drawing.drawingDate).toLocaleDateString("en-IN"):"";
+    case "assemblyGroup": return drawing?.assemblyGroup||"";
+    case "markNo":        return part?.markNo||"";
+    case "description":   return part?.desc||"";
+    case "qty":           return part?.qtyPerDrg||"";
+    case "unitWt":        return unitWt>0?unitWt.toFixed(2):"";
+    case "totalWt":       return unitWt>0?(unitWt*(part?.qtyPerDrg||1)).toFixed(2):"";
+    case "grade":         return part?.grade||"";
+    case "thickness":     return part?.size||part?.thickness||"";
+    case "welderId":      return tpiRecord?.welderId||"";
+    case "welderName":    return tpiRecord?.welderName||"";
+    case "wpsNo":         return tpiRecord?.wpsNo||(q.weldSpecs?.[0]?.wpsDoc?"Per WPS":"");
+    case "jointId":       return tpiRecord?.jointId||"";
+    case "weldType":      return tpiRecord?.weldType||"";
+    case "ndtType":       return tpiRecord?.ndtType||"";
+    case "ndtResult":     return tpiRecord?.ndtResult||"";
+    case "fitupResult":   return tpiRecord?.fitupResult||"";
+    case "dimResult":     return tpiRecord?.dimResult||"";
+    case "remarks":       return tpiRecord?.remarks||"";
+    case "acceptReject":  return tpiRecord?.outcome==="pass"||tpiRecord?.outcome==="conditional_pass"?"Accept":tpiRecord?.outcome==="fail"?"Reject":"";
+    case "certNo":        return tpiRecord?.certNo||"";
+    case "inspDate":      return tpiRecord?.inspDate?new Date(tpiRecord.inspDate).toLocaleDateString("en-IN"):"";
+    case "stage":         return HP_LABELS[tpiRecord?.holdPoint]||"";
+    default:              return "";
+  }
+}
+
+const TpiQualitySetup = ({ order, onChange, canEdit, tpiAgencies }) => {
+  const q = order.quality||{};
+  const updQ = (k,v) => onChange({...order, quality:{...q,[k]:v}});
+  const [templateBuilderHp, setTemplateBuilderHp] = React.useState(null);
+  const [savedTemplates, setSavedTemplates] = React.useState(()=>{ try { return JSON.parse(localStorage.getItem("structo_tpiTemplates")||"[]"); } catch { return []; } });
+  const persistTemplates = (arr) => { setSavedTemplates(arr); try { localStorage.setItem("structo_tpiTemplates",JSON.stringify(arr)); } catch {} };
+  const HP_LIST = [["rm_inspection","RM Inspection"],["fit_up","Fit-Up"],["welding","Welding"],["blasting","Blasting"],["painting","Painting"]];
+  const activeHps = q.tpiHoldPoints||[];
+  const tpiConfig = q.tpiConfig||{};
+  const tpiOrderTemplates = q.tpiOrderTemplates||{};
+  const updConfig = (hp,patch) => updQ("tpiConfig",{...tpiConfig,[hp]:{...(tpiConfig[hp]||{}),...patch}});
+  const updTemplate = (hp,cols) => updQ("tpiOrderTemplates",{...tpiOrderTemplates,[hp]:cols});
+  const DEFAULT_COLS = [{field:"markNo",label:"Mark No"},{field:"description",label:"Description"},{field:"qty",label:"Qty"},{field:"unitWt",label:"Unit Wt (kg)"},{field:"totalWt",label:"Total Wt (kg)"},{field:"grade",label:"Material Grade"},{field:"acceptReject",label:"Accept / Reject"},{field:"remarks",label:"Remarks"}];
+  const getTemplate = (hp) => tpiOrderTemplates[hp]||DEFAULT_COLS;
+  const setTemplate = (hp,cols) => updTemplate(hp,cols);
+  const TPI_AGENCIES_LOCAL = [{id:"TPI-001",name:"Bureau Veritas"},{id:"TPI-002",name:"Lloyd's Register"},{id:"TPI-003",name:"DNV GL"},{id:"TPI-004",name:"SGS"},{id:"TPI-005",name:"Intertek"}];
+
+  const TemplateBuilder = ({hp}) => {
+    const [cols,setCols] = React.useState(getTemplate(hp).map((c,i)=>({...c,_id:i})));
+    const [newField,setNewField] = React.useState("");
+    const [newLabel,setNewLabel] = React.useState("");
+    const save = () => { setTemplate(hp,cols.map(({_id,...c})=>c)); setTemplateBuilderHp(null); };
+    const moveUp = (i) => { if(i===0) return; const n=[...cols]; [n[i-1],n[i]]=[n[i],n[i-1]]; setCols(n); };
+    const moveDown = (i) => { if(i===cols.length-1) return; const n=[...cols]; [n[i],n[i+1]]=[n[i+1],n[i]]; setCols(n); };
+    const del = (i) => setCols(cols.filter((_,j)=>j!==i));
+    const addCol = () => { if(!newField) return; const pool=TPI_FIELD_POOL.find(f=>f.id===newField); setCols([...cols,{field:newField,label:newLabel||pool?.label||newField,_id:Date.now()}]); setNewField(""); setNewLabel(""); };
+    const sampleParts = (order.parts||[]).filter(p=>p.fabType==="Fabricate").slice(0,2);
+    const saveAsTemplate = () => { const name=window.prompt("Template name:"); if(!name) return; persistTemplates([...savedTemplates,{id:`TPITMPL-${Date.now()}`,clientId:order.clientId,clientName:order.clientName,holdPoint:hp,name,columns:cols.map(({_id,...c})=>c)}]); };
+    const clientTemplates = savedTemplates.filter(t=>t.clientId===order.clientId&&t.holdPoint===hp);
+    return (
+      <div style={{...css.card,marginTop:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text}}>Report Template — {HP_LABELS[hp]}</div>
+          <div style={{display:"flex",gap:8}}>
+            {clientTemplates.length>0&&<select onChange={e=>{const t=savedTemplates.find(x=>x.id===e.target.value);if(t)setCols(t.columns.map((c,i)=>({...c,_id:i})));}} style={{...css.input,width:"auto",fontSize:11}}><option value="">Load saved template…</option>{clientTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select>}
+            <button onClick={saveAsTemplate} style={{...css.btn.ghost,fontSize:11}}>💾 Save as Template</button>
+            <button onClick={save} style={css.btn.green}>✓ Apply</button>
+            <button onClick={()=>setTemplateBuilderHp(null)} style={css.btn.ghost}>✕</button>
+          </div>
+        </div>
+        <div style={{marginBottom:14}}>
+          {cols.map((col,i)=>(
+            <div key={col._id||i} style={{display:"grid",gridTemplateColumns:"26px 1fr 1fr 60px",gap:6,marginBottom:4,alignItems:"center"}}>
+              <span style={{fontSize:11,color:T.textLow,textAlign:"center"}}>{i+1}</span>
+              <div style={{fontSize:12,color:T.accent,fontFamily:T.fontMono,padding:"5px 8px",background:T.bgInput,borderRadius:4}}>{TPI_FIELD_POOL.find(f=>f.id===col.field)?.label||col.field}</div>
+              <input value={col.label} onChange={e=>{const n=[...cols];n[i]={...n[i],label:e.target.value};setCols(n);}} style={{...css.input,fontSize:12}} />
+              <div style={{display:"flex",gap:3}}>
+                <button onClick={()=>moveUp(i)} disabled={i===0} style={{...css.btn.ghost,padding:"3px 6px",fontSize:11,opacity:i===0?0.3:1}}>↑</button>
+                <button onClick={()=>moveDown(i)} disabled={i===cols.length-1} style={{...css.btn.ghost,padding:"3px 6px",fontSize:11,opacity:i===cols.length-1?0.3:1}}>↓</button>
+                <button onClick={()=>del(i)} style={{...css.btn.ghost,padding:"3px 6px",fontSize:11,color:T.red}}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:16,padding:"10px 12px",background:T.bgInput,borderRadius:6}}>
+          <select value={newField} onChange={e=>{setNewField(e.target.value);setNewLabel(TPI_FIELD_POOL.find(f=>f.id===e.target.value)?.label||"");}} style={{...css.input,width:"auto",fontSize:12}}><option value="">Add field…</option>{TPI_FIELD_POOL.filter(f=>!cols.find(c=>c.field===f.id)).map(f=><option key={f.id} value={f.id}>{f.label}</option>)}</select>
+          <input value={newLabel} onChange={e=>setNewLabel(e.target.value)} placeholder="Custom header (optional)" style={{...css.input,fontSize:12,flex:1}} />
+          <button onClick={addCol} disabled={!newField} style={{...css.btn.primary,opacity:newField?1:0.4}}>+ Add</button>
+        </div>
+        {sampleParts.length>0&&<div style={{overflowX:"auto",borderRadius:6,border:`1px solid ${T.border}`}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}><thead><tr style={{background:T.bgInput}}><th style={{padding:"6px 8px",fontWeight:700,color:T.textMid,fontSize:10}}>#</th>{cols.map((col,i)=><th key={i} style={{padding:"6px 8px",fontWeight:700,color:T.textMid,fontSize:10}}>{col.label}</th>)}</tr></thead><tbody>{sampleParts.map((part,ri)=>{const drg=(order.drawings||[]).find(d=>d.id===part.drawingId)||{};const ctx={order,drawing:drg,part:{...part,unitWt:part.unitWt||(part.wt||0)/Math.max(part.qtyPerDrg||1,1)},tpiRecord:{}};return(<tr key={part.markNo} style={{background:ri%2===0?"transparent":T.bgInput}}><td style={{padding:"5px 8px",color:T.textLow,borderBottom:`1px solid ${T.border}`}}>{ri+1}</td>{cols.map((col,ci)=><td key={ci} style={{padding:"5px 8px",color:T.text,borderBottom:`1px solid ${T.border}`}}>{resolveTpiField(col.field,ctx)||<span style={{color:T.textLow}}>—</span>}</td>)}</tr>);})}</tbody></table></div>}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{...css.card}}>
+      <div style={{marginBottom:16}}>
+        <div style={css.label}>TPI Required</div>
+        <div style={{display:"flex",gap:12,marginTop:4}}>
+          {[[true,"Yes"],[false,"No"]].map(([v,l])=>(
+            <label key={String(v)} style={{display:"flex",alignItems:"center",gap:8,cursor:canEdit?"pointer":"default"}}>
+              <input type="radio" checked={q.tpiRequired===v} onChange={()=>canEdit&&updQ("tpiRequired",v)} disabled={!canEdit} />
+              <span style={{color:T.text}}>{l}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      {q.tpiRequired&&(
+        <>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+            <div>
+              <label style={css.label}>TPI Agency</label>
+              <select value={q.tpiAgencyId||""} disabled={!canEdit} style={css.input}
+                onChange={e=>{const agencyList=tpiAgencies?.length?tpiAgencies:TPI_AGENCIES_LOCAL;const a=agencyList.find(t=>t.id===e.target.value);onChange({...order,quality:{...q,tpiAgencyId:e.target.value,tpiAgencyName:a?.name||""}});}}>
+                <option value="">Select agency…</option>
+                {(tpiAgencies?.length?tpiAgencies:TPI_AGENCIES_LOCAL).map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={css.label}>Hold Points</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:4}}>
+                {HP_LIST.map(([hp,label])=>(
+                  <label key={hp} style={{display:"flex",alignItems:"center",gap:6,cursor:canEdit?"pointer":"default"}}>
+                    <input type="checkbox" checked={activeHps.includes(hp)} disabled={!canEdit}
+                      onChange={e=>{const pts=activeHps;updQ("tpiHoldPoints",e.target.checked?[...pts,hp]:pts.filter(p=>p!==hp));}} />
+                    <span style={{fontSize:12,color:T.text}}>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          {activeHps.filter(hp=>hp!=="rm_inspection").map(hp=>{
+            const cfg=tpiConfig[hp]||{};
+            const coveragePct=cfg.coveragePct??100;
+            return (
+              <div key={hp} style={{...css.card,background:T.bgInput,marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <div style={{fontSize:13,fontWeight:700,color:T.text}}>{HP_LABELS[hp]} TPI</div>
+                  {canEdit&&<button onClick={()=>setTemplateBuilderHp(templateBuilderHp===hp?null:hp)} style={{...css.btn.ghost,fontSize:11,color:T.accent}}>{templateBuilderHp===hp?"▲ Close Template":"📋 Configure Report Template"}</button>}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+                  <div>
+                    <label style={css.label}>Coverage %</label>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <input type="number" min={1} max={100} value={coveragePct} disabled={!canEdit}
+                        onChange={e=>updConfig(hp,{coveragePct:Math.min(100,Math.max(1,+e.target.value))})}
+                        style={{...css.input,width:70}} />
+                      <span style={{fontSize:12,color:coveragePct<100?T.amber:T.green,fontWeight:700}}>{coveragePct<100?`Partial — ${coveragePct}%`:"Full"}</span>
+                    </div>
+                  </div>
+                  {coveragePct<100&&<div><label style={css.label}>Selection Method</label><select value={cfg.selectionMethod||"first"} disabled={!canEdit} onChange={e=>updConfig(hp,{selectionMethod:e.target.value})} style={css.input}><option value="first">First N drawings</option><option value="random">Random</option><option value="manual">Manual pick</option></select></div>}
+                  {hp==="welding"&&<div><label style={css.label}>NDT Required</label><div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:4}}>{["RT","UT","MPI","VT"].map(ndt=>(<label key={ndt} style={{display:"flex",alignItems:"center",gap:4,cursor:canEdit?"pointer":"default",fontSize:12}}><input type="checkbox" checked={((cfg.ndtTypes||[])).includes(ndt)} disabled={!canEdit} onChange={e=>{const t=cfg.ndtTypes||[];updConfig(hp,{ndtTypes:e.target.checked?[...t,ndt]:t.filter(x=>x!==ndt)});}} />{ndt}</label>))}</div></div>}
+                </div>
+                {templateBuilderHp===hp&&canEdit&&<TemplateBuilder hp={hp} />}
+                {templateBuilderHp!==hp&&<div style={{marginTop:10,fontSize:11,color:T.textLow}}>Report columns: <span style={{color:T.textMid}}>{getTemplate(hp).map(c=>c.label).join(" · ")}</span></div>}
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+};
+
 // ─── VendorTagInput ───────────────────────────────────────────────────────────
 const VendorTagInput = ({ value, onChange, vendors, disabled }) => {
   const [query, setQuery]   = React.useState("");
