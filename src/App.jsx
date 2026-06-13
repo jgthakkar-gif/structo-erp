@@ -15989,8 +15989,8 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
       {(()=>{
         const fParts = filtered.length;
         const fPcs   = filtered.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.qtyPerDrg||0)*(drg?.qty||1); },0);
-        const fClientWt = filtered.reduce((s,p)=>s+(p.clientTotalWt||0),0);
-        const fCalcWt   = filtered.reduce((s,p)=>s+(p.calcTotalWt||0),0);
+        const fClientWt = filtered.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.clientTotalWt||0)*(drg?.qty||1); },0);
+        const fCalcWt   = filtered.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.calcTotalWt||0)*(drg?.qty||1); },0);
         const fTotalWt  = filtered.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.calcTotalWt||p.clientTotalWt||0)*(drg?.qty||1); },0);
         const isFiltered = activeFilterCount>0;
         return (
@@ -16033,7 +16033,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
               {label:"Mark No",key:null},{label:"Unique ID",key:null},{label:"Description",key:null},
               {label:"Fab/BO",key:"fabType",type:"multi"},{label:"Material Code",key:"matCode",type:"multi"},
               {label:"L(mm)",key:"length",type:"range"},{label:"W(mm)",key:"width",type:"range"},
-              {label:"Qty",key:"qtyPerDrg",type:"range"},{label:"Client Wt",key:null},{label:"Calc Wt",key:null},
+              {label:"Qty",key:"qtyPerDrg",type:"range"},{label:"Client Unit Wt",key:null},{label:"Calc Wt",key:null},
               {label:"Drg Qty",key:null},{label:"Total Wt",key:"totalWt",type:"range"},
               {label:"Joints",key:"jointsAllowed",type:"multi"},{label:"Source",key:"source",type:"multi"},
               {label:"Req Ops",key:"requiredOps",type:"multi"},{label:"RM Cover",key:null},{label:"Paint%",key:null},{label:"Unit m²",key:null},{label:"Total m²",key:null},{label:"Client Mark",key:null},{label:"Client Tag",key:"clientTag",type:"multi"},{label:"User Field 1",key:null},{label:"Part DXF",key:null},{label:"",key:null}
@@ -16140,7 +16140,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"right" }}>{fmt.num(p.length)}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"right", color:(p.width>0)?T.text:T.textLow }}>{p.width>0?fmt.num(p.width):"—"}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"center" }}>{p.qtyPerDrg}</td>
-                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.amber, textAlign:"right" }}>{p.clientTotalWt?.toFixed(2)}</td>
+                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.amber, textAlign:"right" }}>{(p.clientUnitWt||p.clientTotalWt)?.toFixed(2)}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.green, textAlign:"right" }}>{p.calcTotalWt?.toFixed(2)}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"center", color:drg?.qty>1?T.accent:T.textLow, fontWeight:drg?.qty>1?700:400 }}>
                   {drg?.qty||1}{drg?.qty>1&&<span style={{fontSize:10,marginLeft:2}}>×</span>}
@@ -16523,7 +16523,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
                 <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}><Badge color={r.fabType==="Fabricate"?"blue":"gray"}>{r.fabType==="Fabricate"?"Fab":"B/O"}</Badge></td>
                 <td style={{ padding:"5px 8px", fontFamily:T.fontMono, fontSize:11, color:r._libMatched?T.accentHi:T.textMid, borderBottom:`1px solid ${T.border}` }}>{r.matCode||`${r.section} ${r.size}`}</td>
                 <td style={{ padding:"5px 8px", fontFamily:T.fontMono, textAlign:"center", borderBottom:`1px solid ${T.border}` }}>{r.qtyPerDrg}</td>
-                <td style={{ padding:"5px 8px", fontFamily:T.fontMono, color:T.amber, textAlign:"right", borderBottom:`1px solid ${T.border}` }}>{r.clientTotalWt?.toFixed(2)}</td>
+                <td style={{ padding:"5px 8px", fontFamily:T.fontMono, color:T.amber, textAlign:"right", borderBottom:`1px solid ${T.border}` }}>{(r.clientUnitWt||r.clientTotalWt)?.toFixed(2)}</td>
                 <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}><Badge color={srcColor[r.source]||"gray"}>{r.source}</Badge></td>
                 <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}>{r._drgMatched?<Badge color="green">✓</Badge>:<Badge color="amber">—</Badge>}</td>
                 <td style={{ padding:"5px 8px", borderBottom:`1px solid ${T.border}` }}>{r._libMatched?<Badge color="green">✓</Badge>:r.section?<Badge color="amber">—</Badge>:<Badge color="gray">N/A</Badge>}</td>
