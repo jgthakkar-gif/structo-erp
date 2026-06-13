@@ -1145,6 +1145,245 @@ const MATERIALS_LIBRARY = [
   { id:"ML-526", sectionType:"CHS", matType:"MS", grade:"IS1239", size:"300NB/L/323.9OD×5.4", isPlate:false, wtPerMetre:42.5, wtPerM2:null, standardLengths:[6000], active:true, matCode:"CHS/MS/IS1239/300NB/L", nominalBore:"300NB", pipeSeries:"L", outsideDiameter:323.9, wallThickness:5.4 },
   { id:"ML-527", sectionType:"CHS", matType:"MS", grade:"IS1239", size:"300NB/M/323.9OD×7.14", isPlate:false, wtPerMetre:55.9, wtPerM2:null, standardLengths:[6000], active:true, matCode:"CHS/MS/IS1239/300NB/M", nominalBore:"300NB", pipeSeries:"M", outsideDiameter:323.9, wallThickness:7.14 },
   { id:"ML-528", sectionType:"CHS", matType:"MS", grade:"IS1239", size:"300NB/H/323.9OD×8.74", isPlate:false, wtPerMetre:68.0, wtPerM2:null, standardLengths:[6000], active:true, matCode:"CHS/MS/IS1239/300NB/H", nominalBore:"300NB", pipeSeries:"H", outsideDiameter:323.9, wallThickness:8.74 },
+  // ── UB — Universal Beams (Jindal, BS4-1:1993) ────────────────────────────────
+  { id:"ML-529", sectionType:"UB", matType:"MS", grade:"E250", size:"203x133x25.1", isPlate:false, wtPerMetre:25.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/203x133x25.1" },
+  { id:"ML-530", sectionType:"UB", matType:"MS", grade:"E350", size:"203x133x25.1", isPlate:false, wtPerMetre:25.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/203x133x25.1" },
+  { id:"ML-531", sectionType:"UB", matType:"MS", grade:"E250", size:"203x133x30.0", isPlate:false, wtPerMetre:30.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/203x133x30.0" },
+  { id:"ML-532", sectionType:"UB", matType:"MS", grade:"E350", size:"203x133x30.0", isPlate:false, wtPerMetre:30.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/203x133x30.0" },
+  { id:"ML-533", sectionType:"UB", matType:"MS", grade:"E250", size:"254x146x31.1", isPlate:false, wtPerMetre:31.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/254x146x31.1" },
+  { id:"ML-534", sectionType:"UB", matType:"MS", grade:"E350", size:"254x146x31.1", isPlate:false, wtPerMetre:31.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/254x146x31.1" },
+  { id:"ML-535", sectionType:"UB", matType:"MS", grade:"E250", size:"254x146x37.0", isPlate:false, wtPerMetre:37.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/254x146x37.0" },
+  { id:"ML-536", sectionType:"UB", matType:"MS", grade:"E350", size:"254x146x37.0", isPlate:false, wtPerMetre:37.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/254x146x37.0" },
+  { id:"ML-537", sectionType:"UB", matType:"MS", grade:"E250", size:"254x146x43.0", isPlate:false, wtPerMetre:43.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/254x146x43.0" },
+  { id:"ML-538", sectionType:"UB", matType:"MS", grade:"E350", size:"254x146x43.0", isPlate:false, wtPerMetre:43.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/254x146x43.0" },
+  { id:"ML-539", sectionType:"UB", matType:"MS", grade:"E250", size:"305x165x40.3", isPlate:false, wtPerMetre:40.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/305x165x40.3" },
+  { id:"ML-540", sectionType:"UB", matType:"MS", grade:"E350", size:"305x165x40.3", isPlate:false, wtPerMetre:40.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/305x165x40.3" },
+  { id:"ML-541", sectionType:"UB", matType:"MS", grade:"E250", size:"305x165x46.1", isPlate:false, wtPerMetre:46.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/305x165x46.1" },
+  { id:"ML-542", sectionType:"UB", matType:"MS", grade:"E350", size:"305x165x46.1", isPlate:false, wtPerMetre:46.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/305x165x46.1" },
+  { id:"ML-543", sectionType:"UB", matType:"MS", grade:"E250", size:"305x165x54.0", isPlate:false, wtPerMetre:54.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/305x165x54.0" },
+  { id:"ML-544", sectionType:"UB", matType:"MS", grade:"E350", size:"305x165x54.0", isPlate:false, wtPerMetre:54.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/305x165x54.0" },
+  { id:"ML-545", sectionType:"UB", matType:"MS", grade:"E250", size:"356x171x45.0", isPlate:false, wtPerMetre:45.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/356x171x45.0" },
+  { id:"ML-546", sectionType:"UB", matType:"MS", grade:"E350", size:"356x171x45.0", isPlate:false, wtPerMetre:45.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/356x171x45.0" },
+  { id:"ML-547", sectionType:"UB", matType:"MS", grade:"E250", size:"356x171x51.0", isPlate:false, wtPerMetre:51.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/356x171x51.0" },
+  { id:"ML-548", sectionType:"UB", matType:"MS", grade:"E350", size:"356x171x51.0", isPlate:false, wtPerMetre:51.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/356x171x51.0" },
+  { id:"ML-549", sectionType:"UB", matType:"MS", grade:"E250", size:"356x171x57.0", isPlate:false, wtPerMetre:57.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/356x171x57.0" },
+  { id:"ML-550", sectionType:"UB", matType:"MS", grade:"E350", size:"356x171x57.0", isPlate:false, wtPerMetre:57.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/356x171x57.0" },
+  { id:"ML-551", sectionType:"UB", matType:"MS", grade:"E250", size:"356x171x67.1", isPlate:false, wtPerMetre:67.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/356x171x67.1" },
+  { id:"ML-552", sectionType:"UB", matType:"MS", grade:"E350", size:"356x171x67.1", isPlate:false, wtPerMetre:67.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/356x171x67.1" },
+  { id:"ML-553", sectionType:"UB", matType:"MS", grade:"E250", size:"406x178x54.1", isPlate:false, wtPerMetre:54.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/406x178x54.1" },
+  { id:"ML-554", sectionType:"UB", matType:"MS", grade:"E350", size:"406x178x54.1", isPlate:false, wtPerMetre:54.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/406x178x54.1" },
+  { id:"ML-555", sectionType:"UB", matType:"MS", grade:"E250", size:"406x178x60.1", isPlate:false, wtPerMetre:60.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/406x178x60.1" },
+  { id:"ML-556", sectionType:"UB", matType:"MS", grade:"E350", size:"406x178x60.1", isPlate:false, wtPerMetre:60.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/406x178x60.1" },
+  { id:"ML-557", sectionType:"UB", matType:"MS", grade:"E250", size:"406x178x67.1", isPlate:false, wtPerMetre:67.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/406x178x67.1" },
+  { id:"ML-558", sectionType:"UB", matType:"MS", grade:"E350", size:"406x178x67.1", isPlate:false, wtPerMetre:67.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/406x178x67.1" },
+  { id:"ML-559", sectionType:"UB", matType:"MS", grade:"E250", size:"406x178x74.2", isPlate:false, wtPerMetre:74.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/406x178x74.2" },
+  { id:"ML-560", sectionType:"UB", matType:"MS", grade:"E350", size:"406x178x74.2", isPlate:false, wtPerMetre:74.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/406x178x74.2" },
+  { id:"ML-561", sectionType:"UB", matType:"MS", grade:"E250", size:"457x152x52.3", isPlate:false, wtPerMetre:52.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x152x52.3" },
+  { id:"ML-562", sectionType:"UB", matType:"MS", grade:"E350", size:"457x152x52.3", isPlate:false, wtPerMetre:52.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x152x52.3" },
+  { id:"ML-563", sectionType:"UB", matType:"MS", grade:"E250", size:"457x152x59.8", isPlate:false, wtPerMetre:59.8, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x152x59.8" },
+  { id:"ML-564", sectionType:"UB", matType:"MS", grade:"E350", size:"457x152x59.8", isPlate:false, wtPerMetre:59.8, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x152x59.8" },
+  { id:"ML-565", sectionType:"UB", matType:"MS", grade:"E250", size:"457x152x67.2", isPlate:false, wtPerMetre:67.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x152x67.2" },
+  { id:"ML-566", sectionType:"UB", matType:"MS", grade:"E350", size:"457x152x67.2", isPlate:false, wtPerMetre:67.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x152x67.2" },
+  { id:"ML-567", sectionType:"UB", matType:"MS", grade:"E250", size:"457x152x74.2", isPlate:false, wtPerMetre:74.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x152x74.2" },
+  { id:"ML-568", sectionType:"UB", matType:"MS", grade:"E350", size:"457x152x74.2", isPlate:false, wtPerMetre:74.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x152x74.2" },
+  { id:"ML-569", sectionType:"UB", matType:"MS", grade:"E250", size:"457x152x82.1", isPlate:false, wtPerMetre:82.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x152x82.1" },
+  { id:"ML-570", sectionType:"UB", matType:"MS", grade:"E350", size:"457x152x82.1", isPlate:false, wtPerMetre:82.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x152x82.1" },
+  { id:"ML-571", sectionType:"UB", matType:"MS", grade:"E250", size:"457x191x67.1", isPlate:false, wtPerMetre:67.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x191x67.1" },
+  { id:"ML-572", sectionType:"UB", matType:"MS", grade:"E350", size:"457x191x67.1", isPlate:false, wtPerMetre:67.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x191x67.1" },
+  { id:"ML-573", sectionType:"UB", matType:"MS", grade:"E250", size:"457x191x74.3", isPlate:false, wtPerMetre:74.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x191x74.3" },
+  { id:"ML-574", sectionType:"UB", matType:"MS", grade:"E350", size:"457x191x74.3", isPlate:false, wtPerMetre:74.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x191x74.3" },
+  { id:"ML-575", sectionType:"UB", matType:"MS", grade:"E250", size:"457x191x82.0", isPlate:false, wtPerMetre:82.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x191x82.0" },
+  { id:"ML-576", sectionType:"UB", matType:"MS", grade:"E350", size:"457x191x82.0", isPlate:false, wtPerMetre:82.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x191x82.0" },
+  { id:"ML-577", sectionType:"UB", matType:"MS", grade:"E250", size:"457x191x89.3", isPlate:false, wtPerMetre:89.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x191x89.3" },
+  { id:"ML-578", sectionType:"UB", matType:"MS", grade:"E350", size:"457x191x89.3", isPlate:false, wtPerMetre:89.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x191x89.3" },
+  { id:"ML-579", sectionType:"UB", matType:"MS", grade:"E250", size:"457x191x98.3", isPlate:false, wtPerMetre:98.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/457x191x98.3" },
+  { id:"ML-580", sectionType:"UB", matType:"MS", grade:"E350", size:"457x191x98.3", isPlate:false, wtPerMetre:98.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/457x191x98.3" },
+  { id:"ML-581", sectionType:"UB", matType:"MS", grade:"E250", size:"533x210x82.2", isPlate:false, wtPerMetre:82.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/533x210x82.2" },
+  { id:"ML-582", sectionType:"UB", matType:"MS", grade:"E350", size:"533x210x82.2", isPlate:false, wtPerMetre:82.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/533x210x82.2" },
+  { id:"ML-583", sectionType:"UB", matType:"MS", grade:"E250", size:"533x210x92.1", isPlate:false, wtPerMetre:92.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/533x210x92.1" },
+  { id:"ML-584", sectionType:"UB", matType:"MS", grade:"E350", size:"533x210x92.1", isPlate:false, wtPerMetre:92.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/533x210x92.1" },
+  { id:"ML-585", sectionType:"UB", matType:"MS", grade:"E250", size:"533x210x101.0", isPlate:false, wtPerMetre:101.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/533x210x101.0" },
+  { id:"ML-586", sectionType:"UB", matType:"MS", grade:"E350", size:"533x210x101.0", isPlate:false, wtPerMetre:101.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/533x210x101.0" },
+  { id:"ML-587", sectionType:"UB", matType:"MS", grade:"E250", size:"533x210x109.0", isPlate:false, wtPerMetre:109.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/533x210x109.0" },
+  { id:"ML-588", sectionType:"UB", matType:"MS", grade:"E350", size:"533x210x109.0", isPlate:false, wtPerMetre:109.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/533x210x109.0" },
+  { id:"ML-589", sectionType:"UB", matType:"MS", grade:"E250", size:"533x210x122.0", isPlate:false, wtPerMetre:122.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/533x210x122.0" },
+  { id:"ML-590", sectionType:"UB", matType:"MS", grade:"E350", size:"533x210x122.0", isPlate:false, wtPerMetre:122.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/533x210x122.0" },
+  { id:"ML-591", sectionType:"UB", matType:"MS", grade:"E250", size:"610x229x101.2", isPlate:false, wtPerMetre:101.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/610x229x101.2" },
+  { id:"ML-592", sectionType:"UB", matType:"MS", grade:"E350", size:"610x229x101.2", isPlate:false, wtPerMetre:101.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/610x229x101.2" },
+  { id:"ML-593", sectionType:"UB", matType:"MS", grade:"E250", size:"610x229x113.0", isPlate:false, wtPerMetre:113.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/610x229x113.0" },
+  { id:"ML-594", sectionType:"UB", matType:"MS", grade:"E350", size:"610x229x113.0", isPlate:false, wtPerMetre:113.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/610x229x113.0" },
+  { id:"ML-595", sectionType:"UB", matType:"MS", grade:"E250", size:"610x229x125.1", isPlate:false, wtPerMetre:125.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/610x229x125.1" },
+  { id:"ML-596", sectionType:"UB", matType:"MS", grade:"E350", size:"610x229x125.1", isPlate:false, wtPerMetre:125.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/610x229x125.1" },
+  { id:"ML-597", sectionType:"UB", matType:"MS", grade:"E250", size:"610x229x139.9", isPlate:false, wtPerMetre:139.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/610x229x139.9" },
+  { id:"ML-598", sectionType:"UB", matType:"MS", grade:"E350", size:"610x229x139.9", isPlate:false, wtPerMetre:139.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/610x229x139.9" },
+
+  // ── UC — Universal Columns (Jindal, BS4-1:1993) ──────────────────────────────
+  { id:"ML-599", sectionType:"UC", matType:"MS", grade:"E250", size:"152x152x23.0", isPlate:false, wtPerMetre:23.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/152x152x23.0" },
+  { id:"ML-600", sectionType:"UC", matType:"MS", grade:"E350", size:"152x152x23.0", isPlate:false, wtPerMetre:23.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/152x152x23.0" },
+  { id:"ML-601", sectionType:"UC", matType:"MS", grade:"E250", size:"152x152x30.0", isPlate:false, wtPerMetre:30.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/152x152x30.0" },
+  { id:"ML-602", sectionType:"UC", matType:"MS", grade:"E350", size:"152x152x30.0", isPlate:false, wtPerMetre:30.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/152x152x30.0" },
+  { id:"ML-603", sectionType:"UC", matType:"MS", grade:"E250", size:"152x152x37.0", isPlate:false, wtPerMetre:37.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/152x152x37.0" },
+  { id:"ML-604", sectionType:"UC", matType:"MS", grade:"E350", size:"152x152x37.0", isPlate:false, wtPerMetre:37.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/152x152x37.0" },
+  { id:"ML-605", sectionType:"UC", matType:"MS", grade:"E250", size:"203x203x46.1", isPlate:false, wtPerMetre:46.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/203x203x46.1" },
+  { id:"ML-606", sectionType:"UC", matType:"MS", grade:"E350", size:"203x203x46.1", isPlate:false, wtPerMetre:46.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/203x203x46.1" },
+  { id:"ML-607", sectionType:"UC", matType:"MS", grade:"E250", size:"203x203x52.0", isPlate:false, wtPerMetre:52.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/203x203x52.0" },
+  { id:"ML-608", sectionType:"UC", matType:"MS", grade:"E350", size:"203x203x52.0", isPlate:false, wtPerMetre:52.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/203x203x52.0" },
+  { id:"ML-609", sectionType:"UC", matType:"MS", grade:"E250", size:"203x203x60.0", isPlate:false, wtPerMetre:60.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/203x203x60.0" },
+  { id:"ML-610", sectionType:"UC", matType:"MS", grade:"E350", size:"203x203x60.0", isPlate:false, wtPerMetre:60.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/203x203x60.0" },
+  { id:"ML-611", sectionType:"UC", matType:"MS", grade:"E250", size:"203x203x71.0", isPlate:false, wtPerMetre:71.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/203x203x71.0" },
+  { id:"ML-612", sectionType:"UC", matType:"MS", grade:"E350", size:"203x203x71.0", isPlate:false, wtPerMetre:71.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/203x203x71.0" },
+  { id:"ML-613", sectionType:"UC", matType:"MS", grade:"E250", size:"203x203x86.1", isPlate:false, wtPerMetre:86.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/203x203x86.1" },
+  { id:"ML-614", sectionType:"UC", matType:"MS", grade:"E350", size:"203x203x86.1", isPlate:false, wtPerMetre:86.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/203x203x86.1" },
+  { id:"ML-615", sectionType:"UC", matType:"MS", grade:"E250", size:"254x254x73.1", isPlate:false, wtPerMetre:73.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/254x254x73.1" },
+  { id:"ML-616", sectionType:"UC", matType:"MS", grade:"E350", size:"254x254x73.1", isPlate:false, wtPerMetre:73.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/254x254x73.1" },
+  { id:"ML-617", sectionType:"UC", matType:"MS", grade:"E250", size:"254x254x88.9", isPlate:false, wtPerMetre:88.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/254x254x88.9" },
+  { id:"ML-618", sectionType:"UC", matType:"MS", grade:"E350", size:"254x254x88.9", isPlate:false, wtPerMetre:88.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/254x254x88.9" },
+  { id:"ML-619", sectionType:"UC", matType:"MS", grade:"E250", size:"254x254x107.1", isPlate:false, wtPerMetre:107.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/254x254x107.1" },
+  { id:"ML-620", sectionType:"UC", matType:"MS", grade:"E350", size:"254x254x107.1", isPlate:false, wtPerMetre:107.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/254x254x107.1" },
+  { id:"ML-621", sectionType:"UC", matType:"MS", grade:"E250", size:"254x254x132.0", isPlate:false, wtPerMetre:132.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/254x254x132.0" },
+  { id:"ML-622", sectionType:"UC", matType:"MS", grade:"E350", size:"254x254x132.0", isPlate:false, wtPerMetre:132.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/254x254x132.0" },
+  { id:"ML-623", sectionType:"UC", matType:"MS", grade:"E250", size:"254x254x167.1", isPlate:false, wtPerMetre:167.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/254x254x167.1" },
+  { id:"ML-624", sectionType:"UC", matType:"MS", grade:"E350", size:"254x254x167.1", isPlate:false, wtPerMetre:167.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/254x254x167.1" },
+  { id:"ML-625", sectionType:"UC", matType:"MS", grade:"E250", size:"305x305x96.9", isPlate:false, wtPerMetre:96.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/305x305x96.9" },
+  { id:"ML-626", sectionType:"UC", matType:"MS", grade:"E350", size:"305x305x96.9", isPlate:false, wtPerMetre:96.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/305x305x96.9" },
+  { id:"ML-627", sectionType:"UC", matType:"MS", grade:"E250", size:"305x305x117.9", isPlate:false, wtPerMetre:117.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/305x305x117.9" },
+  { id:"ML-628", sectionType:"UC", matType:"MS", grade:"E350", size:"305x305x117.9", isPlate:false, wtPerMetre:117.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/305x305x117.9" },
+  { id:"ML-629", sectionType:"UC", matType:"MS", grade:"E250", size:"305x305x136.9", isPlate:false, wtPerMetre:136.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/305x305x136.9" },
+  { id:"ML-630", sectionType:"UC", matType:"MS", grade:"E350", size:"305x305x136.9", isPlate:false, wtPerMetre:136.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/305x305x136.9" },
+  { id:"ML-631", sectionType:"UC", matType:"MS", grade:"E250", size:"305x305x158.1", isPlate:false, wtPerMetre:158.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/305x305x158.1" },
+  { id:"ML-632", sectionType:"UC", matType:"MS", grade:"E350", size:"305x305x158.1", isPlate:false, wtPerMetre:158.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/305x305x158.1" },
+  { id:"ML-633", sectionType:"UC", matType:"MS", grade:"E250", size:"305x305x198.1", isPlate:false, wtPerMetre:198.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/305x305x198.1" },
+  { id:"ML-634", sectionType:"UC", matType:"MS", grade:"E350", size:"305x305x198.1", isPlate:false, wtPerMetre:198.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/305x305x198.1" },
+  { id:"ML-635", sectionType:"UC", matType:"MS", grade:"E250", size:"305x305x240.0", isPlate:false, wtPerMetre:240.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/305x305x240.0" },
+  { id:"ML-636", sectionType:"UC", matType:"MS", grade:"E350", size:"305x305x240.0", isPlate:false, wtPerMetre:240.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/305x305x240.0" },
+  { id:"ML-637", sectionType:"UC", matType:"MS", grade:"E250", size:"305x305x282.9", isPlate:false, wtPerMetre:282.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/305x305x282.9" },
+  { id:"ML-638", sectionType:"UC", matType:"MS", grade:"E350", size:"305x305x282.9", isPlate:false, wtPerMetre:282.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/305x305x282.9" },
+  { id:"ML-639", sectionType:"UC", matType:"MS", grade:"E250", size:"356x368x129.0", isPlate:false, wtPerMetre:129.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/356x368x129.0" },
+  { id:"ML-640", sectionType:"UC", matType:"MS", grade:"E350", size:"356x368x129.0", isPlate:false, wtPerMetre:129.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/356x368x129.0" },
+  { id:"ML-641", sectionType:"UC", matType:"MS", grade:"E250", size:"356x368x152.9", isPlate:false, wtPerMetre:152.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/356x368x152.9" },
+  { id:"ML-642", sectionType:"UC", matType:"MS", grade:"E350", size:"356x368x152.9", isPlate:false, wtPerMetre:152.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/356x368x152.9" },
+  { id:"ML-643", sectionType:"UC", matType:"MS", grade:"E250", size:"356x368x177.0", isPlate:false, wtPerMetre:177.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/356x368x177.0" },
+  { id:"ML-644", sectionType:"UC", matType:"MS", grade:"E350", size:"356x368x177.0", isPlate:false, wtPerMetre:177.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/356x368x177.0" },
+  { id:"ML-645", sectionType:"UC", matType:"MS", grade:"E250", size:"356x368x201.9", isPlate:false, wtPerMetre:201.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E250/356x368x201.9" },
+  { id:"ML-646", sectionType:"UC", matType:"MS", grade:"E350", size:"356x368x201.9", isPlate:false, wtPerMetre:201.9, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UC/MS/E350/356x368x201.9" },
+
+  // ── NPB — Narrow Parallel Beams (SAIL DSP/ISP, IS 12778/DIN 1025) ────────────
+  { id:"ML-647", sectionType:"NPB", matType:"MS", grade:"E250", size:"100x55x8.1", isPlate:false, wtPerMetre:8.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/100x55x8.1" },
+  { id:"ML-648", sectionType:"NPB", matType:"MS", grade:"E350", size:"100x55x8.1", isPlate:false, wtPerMetre:8.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/100x55x8.1" },
+  { id:"ML-649", sectionType:"NPB", matType:"MS", grade:"E250", size:"120x60x10.37", isPlate:false, wtPerMetre:10.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/120x60x10.37" },
+  { id:"ML-650", sectionType:"NPB", matType:"MS", grade:"E350", size:"120x60x10.37", isPlate:false, wtPerMetre:10.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/120x60x10.37" },
+  { id:"ML-651", sectionType:"NPB", matType:"MS", grade:"E250", size:"140x70x12.89", isPlate:false, wtPerMetre:12.89, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/140x70x12.89" },
+  { id:"ML-652", sectionType:"NPB", matType:"MS", grade:"E350", size:"140x70x12.89", isPlate:false, wtPerMetre:12.89, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/140x70x12.89" },
+  { id:"ML-653", sectionType:"NPB", matType:"MS", grade:"E250", size:"160x80x15.77", isPlate:false, wtPerMetre:15.77, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/160x80x15.77" },
+  { id:"ML-654", sectionType:"NPB", matType:"MS", grade:"E350", size:"160x80x15.77", isPlate:false, wtPerMetre:15.77, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/160x80x15.77" },
+  { id:"ML-655", sectionType:"NPB", matType:"MS", grade:"E250", size:"180x90x15.37", isPlate:false, wtPerMetre:15.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/180x90x15.37" },
+  { id:"ML-656", sectionType:"NPB", matType:"MS", grade:"E350", size:"180x90x15.37", isPlate:false, wtPerMetre:15.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/180x90x15.37" },
+  { id:"ML-657", sectionType:"NPB", matType:"MS", grade:"E250", size:"180x90x18.8", isPlate:false, wtPerMetre:18.8, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/180x90x18.8" },
+  { id:"ML-658", sectionType:"NPB", matType:"MS", grade:"E350", size:"180x90x18.8", isPlate:false, wtPerMetre:18.8, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/180x90x18.8" },
+  { id:"ML-659", sectionType:"NPB", matType:"MS", grade:"E250", size:"180x90x21.27", isPlate:false, wtPerMetre:21.27, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/180x90x21.27" },
+  { id:"ML-660", sectionType:"NPB", matType:"MS", grade:"E350", size:"180x90x21.27", isPlate:false, wtPerMetre:21.27, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/180x90x21.27" },
+  { id:"ML-661", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x100x18.42", isPlate:false, wtPerMetre:18.42, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x100x18.42" },
+  { id:"ML-662", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x100x18.42", isPlate:false, wtPerMetre:18.42, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x100x18.42" },
+  { id:"ML-663", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x100x22.36", isPlate:false, wtPerMetre:22.36, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x100x22.36" },
+  { id:"ML-664", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x100x22.36", isPlate:false, wtPerMetre:22.36, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x100x22.36" },
+  { id:"ML-665", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x100x25.09", isPlate:false, wtPerMetre:25.09, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x100x25.09" },
+  { id:"ML-666", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x100x25.09", isPlate:false, wtPerMetre:25.09, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x100x25.09" },
+  { id:"ML-667", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x130x27.37", isPlate:false, wtPerMetre:27.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x130x27.37" },
+  { id:"ML-668", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x130x27.37", isPlate:false, wtPerMetre:27.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x130x27.37" },
+  { id:"ML-669", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x130x31.55", isPlate:false, wtPerMetre:31.55, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x130x31.55" },
+  { id:"ML-670", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x130x31.55", isPlate:false, wtPerMetre:31.55, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x130x31.55" },
+  { id:"ML-671", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x150x30.45", isPlate:false, wtPerMetre:30.45, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x150x30.45" },
+  { id:"ML-672", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x150x30.45", isPlate:false, wtPerMetre:30.45, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x150x30.45" },
+  { id:"ML-673", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x165x35.68", isPlate:false, wtPerMetre:35.68, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x165x35.68" },
+  { id:"ML-674", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x165x35.68", isPlate:false, wtPerMetre:35.68, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x165x35.68" },
+  { id:"ML-675", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x165x42.47", isPlate:false, wtPerMetre:42.47, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x165x42.47" },
+  { id:"ML-676", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x165x42.47", isPlate:false, wtPerMetre:42.47, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x165x42.47" },
+  { id:"ML-677", sectionType:"NPB", matType:"MS", grade:"E250", size:"200x165x48.0", isPlate:false, wtPerMetre:48.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/200x165x48.0" },
+  { id:"ML-678", sectionType:"NPB", matType:"MS", grade:"E350", size:"200x165x48.0", isPlate:false, wtPerMetre:48.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/200x165x48.0" },
+  { id:"ML-679", sectionType:"NPB", matType:"MS", grade:"E250", size:"220x110x22.18", isPlate:false, wtPerMetre:22.18, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/220x110x22.18" },
+  { id:"ML-680", sectionType:"NPB", matType:"MS", grade:"E350", size:"220x110x22.18", isPlate:false, wtPerMetre:22.18, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/220x110x22.18" },
+  { id:"ML-681", sectionType:"NPB", matType:"MS", grade:"E250", size:"220x110x26.2", isPlate:false, wtPerMetre:26.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/220x110x26.2" },
+  { id:"ML-682", sectionType:"NPB", matType:"MS", grade:"E350", size:"220x110x26.2", isPlate:false, wtPerMetre:26.2, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/220x110x26.2" },
+  { id:"ML-683", sectionType:"NPB", matType:"MS", grade:"E250", size:"220x110x29.35", isPlate:false, wtPerMetre:29.35, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/220x110x29.35" },
+  { id:"ML-684", sectionType:"NPB", matType:"MS", grade:"E350", size:"220x110x29.35", isPlate:false, wtPerMetre:29.35, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/220x110x29.35" },
+  { id:"ML-685", sectionType:"NPB", matType:"MS", grade:"E250", size:"240x120x26.15", isPlate:false, wtPerMetre:26.15, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/240x120x26.15" },
+  { id:"ML-686", sectionType:"NPB", matType:"MS", grade:"E350", size:"240x120x26.15", isPlate:false, wtPerMetre:26.15, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/240x120x26.15" },
+  { id:"ML-687", sectionType:"NPB", matType:"MS", grade:"E250", size:"240x120x30.71", isPlate:false, wtPerMetre:30.71, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/240x120x30.71" },
+  { id:"ML-688", sectionType:"NPB", matType:"MS", grade:"E350", size:"240x120x30.71", isPlate:false, wtPerMetre:30.71, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/240x120x30.71" },
+  { id:"ML-689", sectionType:"NPB", matType:"MS", grade:"E250", size:"240x120x34.31", isPlate:false, wtPerMetre:34.31, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/240x120x34.31" },
+  { id:"ML-690", sectionType:"NPB", matType:"MS", grade:"E350", size:"240x120x34.31", isPlate:false, wtPerMetre:34.31, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/240x120x34.31" },
+  { id:"ML-691", sectionType:"NPB", matType:"MS", grade:"E250", size:"250x125x30.11", isPlate:false, wtPerMetre:30.11, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/250x125x30.11" },
+  { id:"ML-692", sectionType:"NPB", matType:"MS", grade:"E350", size:"250x125x30.11", isPlate:false, wtPerMetre:30.11, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/250x125x30.11" },
+  { id:"ML-693", sectionType:"NPB", matType:"MS", grade:"E250", size:"250x150x34.08", isPlate:false, wtPerMetre:34.08, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/250x150x34.08" },
+  { id:"ML-694", sectionType:"NPB", matType:"MS", grade:"E350", size:"250x150x34.08", isPlate:false, wtPerMetre:34.08, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/250x150x34.08" },
+  { id:"ML-695", sectionType:"NPB", matType:"MS", grade:"E250", size:"250x150x39.78", isPlate:false, wtPerMetre:39.78, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/250x150x39.78" },
+  { id:"ML-696", sectionType:"NPB", matType:"MS", grade:"E350", size:"250x150x39.78", isPlate:false, wtPerMetre:39.78, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/250x150x39.78" },
+  { id:"ML-697", sectionType:"NPB", matType:"MS", grade:"E250", size:"250x150x46.48", isPlate:false, wtPerMetre:46.48, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/250x150x46.48" },
+  { id:"ML-698", sectionType:"NPB", matType:"MS", grade:"E350", size:"250x150x46.48", isPlate:false, wtPerMetre:46.48, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/250x150x46.48" },
+  { id:"ML-699", sectionType:"NPB", matType:"MS", grade:"E250", size:"250x175x43.94", isPlate:false, wtPerMetre:43.94, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/250x175x43.94" },
+  { id:"ML-700", sectionType:"NPB", matType:"MS", grade:"E350", size:"250x175x43.94", isPlate:false, wtPerMetre:43.94, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/250x175x43.94" },
+  { id:"ML-701", sectionType:"NPB", matType:"MS", grade:"E250", size:"270x135x30.73", isPlate:false, wtPerMetre:30.73, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/270x135x30.73" },
+  { id:"ML-702", sectionType:"NPB", matType:"MS", grade:"E350", size:"270x135x30.73", isPlate:false, wtPerMetre:30.73, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/270x135x30.73" },
+  { id:"ML-703", sectionType:"NPB", matType:"MS", grade:"E250", size:"270x135x42.26", isPlate:false, wtPerMetre:42.26, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/270x135x42.26" },
+  { id:"ML-704", sectionType:"NPB", matType:"MS", grade:"E350", size:"270x135x42.26", isPlate:false, wtPerMetre:42.26, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/270x135x42.26" },
+  { id:"ML-705", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x150x36.52", isPlate:false, wtPerMetre:36.52, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x150x36.52" },
+  { id:"ML-706", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x150x36.52", isPlate:false, wtPerMetre:36.52, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x150x36.52" },
+  { id:"ML-707", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x150x42.24", isPlate:false, wtPerMetre:42.24, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x150x42.24" },
+  { id:"ML-708", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x150x42.24", isPlate:false, wtPerMetre:42.24, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x150x42.24" },
+  { id:"ML-709", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x150x49.32", isPlate:false, wtPerMetre:49.32, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x150x49.32" },
+  { id:"ML-710", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x150x49.32", isPlate:false, wtPerMetre:49.32, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x150x49.32" },
+  { id:"ML-711", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x165x39.88", isPlate:false, wtPerMetre:39.88, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x165x39.88" },
+  { id:"ML-712", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x165x39.88", isPlate:false, wtPerMetre:39.88, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x165x39.88" },
+  { id:"ML-713", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x165x45.76", isPlate:false, wtPerMetre:45.76, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x165x45.76" },
+  { id:"ML-714", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x165x45.76", isPlate:false, wtPerMetre:45.76, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x165x45.76" },
+  { id:"ML-715", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x165x53.46", isPlate:false, wtPerMetre:53.46, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x165x53.46" },
+  { id:"ML-716", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x165x53.46", isPlate:false, wtPerMetre:53.46, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x165x53.46" },
+  { id:"ML-717", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x200x59.56", isPlate:false, wtPerMetre:59.56, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x200x59.56" },
+  { id:"ML-718", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x200x59.56", isPlate:false, wtPerMetre:59.56, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x200x59.56" },
+  { id:"ML-719", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x200x66.75", isPlate:false, wtPerMetre:66.75, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x200x66.75" },
+  { id:"ML-720", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x200x66.75", isPlate:false, wtPerMetre:66.75, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x200x66.75" },
+  { id:"ML-721", sectionType:"NPB", matType:"MS", grade:"E250", size:"300x200x75.37", isPlate:false, wtPerMetre:75.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/300x200x75.37" },
+  { id:"ML-722", sectionType:"NPB", matType:"MS", grade:"E350", size:"300x200x75.37", isPlate:false, wtPerMetre:75.37, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/300x200x75.37" },
+  { id:"ML-723", sectionType:"NPB", matType:"MS", grade:"E250", size:"330x160x49.15", isPlate:false, wtPerMetre:49.15, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/330x160x49.15" },
+  { id:"ML-724", sectionType:"NPB", matType:"MS", grade:"E350", size:"330x160x49.15", isPlate:false, wtPerMetre:49.15, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/330x160x49.15" },
+  { id:"ML-725", sectionType:"NPB", matType:"MS", grade:"E250", size:"350x170x57.09", isPlate:false, wtPerMetre:57.09, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/350x170x57.09" },
+  { id:"ML-726", sectionType:"NPB", matType:"MS", grade:"E350", size:"350x170x57.09", isPlate:false, wtPerMetre:57.09, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/350x170x57.09" },
+  { id:"ML-727", sectionType:"NPB", matType:"MS", grade:"E250", size:"350x250x79.18", isPlate:false, wtPerMetre:79.18, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/350x250x79.18" },
+  { id:"ML-728", sectionType:"NPB", matType:"MS", grade:"E350", size:"350x250x79.18", isPlate:false, wtPerMetre:79.18, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/350x250x79.18" },
+  { id:"ML-729", sectionType:"NPB", matType:"MS", grade:"E250", size:"400x180x57.38", isPlate:false, wtPerMetre:57.38, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/400x180x57.38" },
+  { id:"ML-730", sectionType:"NPB", matType:"MS", grade:"E350", size:"400x180x57.38", isPlate:false, wtPerMetre:57.38, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/400x180x57.38" },
+  { id:"ML-731", sectionType:"NPB", matType:"MS", grade:"E250", size:"400x180x66.3", isPlate:false, wtPerMetre:66.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/400x180x66.3" },
+  { id:"ML-732", sectionType:"NPB", matType:"MS", grade:"E350", size:"400x180x66.3", isPlate:false, wtPerMetre:66.3, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/400x180x66.3" },
+  { id:"ML-733", sectionType:"NPB", matType:"MS", grade:"E250", size:"400x180x75.66", isPlate:false, wtPerMetre:75.66, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/400x180x75.66" },
+  { id:"ML-734", sectionType:"NPB", matType:"MS", grade:"E350", size:"400x180x75.66", isPlate:false, wtPerMetre:75.66, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/400x180x75.66" },
+  { id:"ML-735", sectionType:"NPB", matType:"MS", grade:"E250", size:"400x200x67.28", isPlate:false, wtPerMetre:67.28, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/400x200x67.28" },
+  { id:"ML-736", sectionType:"NPB", matType:"MS", grade:"E350", size:"400x200x67.28", isPlate:false, wtPerMetre:67.28, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/400x200x67.28" },
+  { id:"ML-737", sectionType:"NPB", matType:"MS", grade:"E250", size:"450x190x67.15", isPlate:false, wtPerMetre:67.15, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/450x190x67.15" },
+  { id:"ML-738", sectionType:"NPB", matType:"MS", grade:"E350", size:"450x190x67.15", isPlate:false, wtPerMetre:67.15, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/450x190x67.15" },
+  { id:"ML-739", sectionType:"NPB", matType:"MS", grade:"E250", size:"450x190x77.57", isPlate:false, wtPerMetre:77.57, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/450x190x77.57" },
+  { id:"ML-740", sectionType:"NPB", matType:"MS", grade:"E350", size:"450x190x77.57", isPlate:false, wtPerMetre:77.57, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/450x190x77.57" },
+  { id:"ML-741", sectionType:"NPB", matType:"MS", grade:"E250", size:"450x190x92.36", isPlate:false, wtPerMetre:92.36, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/450x190x92.36" },
+  { id:"ML-742", sectionType:"NPB", matType:"MS", grade:"E350", size:"450x190x92.36", isPlate:false, wtPerMetre:92.36, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/450x190x92.36" },
+  { id:"ML-743", sectionType:"NPB", matType:"MS", grade:"E250", size:"500x200x79.36", isPlate:false, wtPerMetre:79.36, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/500x200x79.36" },
+  { id:"ML-744", sectionType:"NPB", matType:"MS", grade:"E350", size:"500x200x79.36", isPlate:false, wtPerMetre:79.36, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/500x200x79.36" },
+  { id:"ML-745", sectionType:"NPB", matType:"MS", grade:"E250", size:"500x200x90.68", isPlate:false, wtPerMetre:90.68, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/500x200x90.68" },
+  { id:"ML-746", sectionType:"NPB", matType:"MS", grade:"E350", size:"500x200x90.68", isPlate:false, wtPerMetre:90.68, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/500x200x90.68" },
+  { id:"ML-747", sectionType:"NPB", matType:"MS", grade:"E250", size:"500x200x107.31", isPlate:false, wtPerMetre:107.31, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/500x200x107.31" },
+  { id:"ML-748", sectionType:"NPB", matType:"MS", grade:"E350", size:"500x200x107.31", isPlate:false, wtPerMetre:107.31, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/500x200x107.31" },
+  { id:"ML-749", sectionType:"NPB", matType:"MS", grade:"E250", size:"550x210x105.52", isPlate:false, wtPerMetre:105.52, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/550x210x105.52" },
+  { id:"ML-750", sectionType:"NPB", matType:"MS", grade:"E350", size:"550x210x105.52", isPlate:false, wtPerMetre:105.52, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/550x210x105.52" },
+  { id:"ML-751", sectionType:"NPB", matType:"MS", grade:"E250", size:"600x220x107.56", isPlate:false, wtPerMetre:107.56, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/600x220x107.56" },
+  { id:"ML-752", sectionType:"NPB", matType:"MS", grade:"E350", size:"600x220x107.56", isPlate:false, wtPerMetre:107.56, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/600x220x107.56" },
+  { id:"ML-753", sectionType:"NPB", matType:"MS", grade:"E250", size:"600x220x122.45", isPlate:false, wtPerMetre:122.45, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/600x220x122.45" },
+  { id:"ML-754", sectionType:"NPB", matType:"MS", grade:"E350", size:"600x220x122.45", isPlate:false, wtPerMetre:122.45, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/600x220x122.45" },
+  { id:"ML-755", sectionType:"NPB", matType:"MS", grade:"E250", size:"600x220x154.46", isPlate:false, wtPerMetre:154.46, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/600x220x154.46" },
+  { id:"ML-756", sectionType:"NPB", matType:"MS", grade:"E350", size:"600x220x154.46", isPlate:false, wtPerMetre:154.46, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/600x220x154.46" },
+  { id:"ML-757", sectionType:"NPB", matType:"MS", grade:"E250", size:"750x270x145.29", isPlate:false, wtPerMetre:145.29, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/750x270x145.29" },
+  { id:"ML-758", sectionType:"NPB", matType:"MS", grade:"E350", size:"750x270x145.29", isPlate:false, wtPerMetre:145.29, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/750x270x145.29" },
+  { id:"ML-759", sectionType:"NPB", matType:"MS", grade:"E250", size:"750x270x174.54", isPlate:false, wtPerMetre:174.54, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/750x270x174.54" },
+  { id:"ML-760", sectionType:"NPB", matType:"MS", grade:"E350", size:"750x270x174.54", isPlate:false, wtPerMetre:174.54, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/750x270x174.54" },
+  { id:"ML-761", sectionType:"NPB", matType:"MS", grade:"E250", size:"750x270x202.48", isPlate:false, wtPerMetre:202.48, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E250/750x270x202.48" },
+  { id:"ML-762", sectionType:"NPB", matType:"MS", grade:"E350", size:"750x270x202.48", isPlate:false, wtPerMetre:202.48, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"NPB/MS/E350/750x270x202.48" },
 ];
 
 // ─── PAINT LIBRARY ────────────────────────────────────────────────────────────
@@ -5483,93 +5722,59 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [showSvg, setShowSvg] = React.useState(false);
 
-  const hasPositions = (sheet.placements||sheet.parts||[]).some(p=>p.x != null);
+  const hasPositions = (sheet.parts||[]).some(p=>p.x !== null && p.x !== undefined);
 
-  // SVG layout generator — accurate coordinate mapping matching NestingCenter output
+  // SVG layout generator
   const renderSvg = () => {
-    const svgW = 620; const pad = 14;
-    const shL = sheet.sheetLen || parseFloat((sheet.sheetDim||"0X0").split("X")[0]) || 2500;
-    const shW = sheet.sheetWid || parseFloat((sheet.sheetDim||"0X0").split("X")[1]) || 1250;
-    // Maintain aspect ratio: sheet width maps to svgH, sheet length maps to svgW
+    const svgW = 540; const svgH = 160;
+    const pad = 10;
+    const shL = sheet.sheetLen || parseFloat((sheet.sheetDim||"0X0").split("X")[0]) || 1000;
+    const shW = sheet.sheetWid || parseFloat((sheet.sheetDim||"0X0").split("X")[1]) || 500;
     const scaleX = (svgW - pad*2) / shL;
-    const svgH = Math.round(shW * scaleX);  // height scales with same factor
-    const scale = scaleX;
-
-    // Colour palette — one per unique markNo
-    const markNos = [...new Set((sheet.placements||sheet.parts||[]).map(p=>p.markNo))];
-    const palette = ["#BFDBFE","#BBF7D0","#FDE68A","#DDD6FE","#A5F3FC","#FECACA","#D1FAE5","#FED7AA","#E0E7FF","#FCE7F3"];
-    const borderPal=["#1D4ED8","#15803D","#B45309","#6D28D9","#0E7490","#B91C1C","#047857","#C2410C","#4338CA","#BE185D"];
-    const colorMap = {};
-    markNos.forEach((mn,i)=>{ colorMap[mn]={ fill:palette[i%palette.length], stroke:borderPal[i%borderPal.length] }; });
-
-    // NestingCenter coordinate system: origin = bottom-left of sheet, Y goes UP
-    // SVG coordinate system: origin = top-left, Y goes DOWN
-    // Conversion: svgY = svgH - (ncY * scale) - (partHeight * scale)
-    // Rotation: NestingCenter CCW in radians, applied around InsertionPt (= bottom-left of part pre-rotation)
-    const placements = sheet.placements || [];
+    const scaleY = (svgH - pad*2) / shW;
+    const scale = Math.min(scaleX, scaleY);
+    const colors = ["#DBEAFE","#DCFCE7","#FEF3C7","#EDE9FE","#CFFAFE","#FFE4E6","#F0FDF4","#FFF7ED"];
 
     return (
-      <svg width={svgW} height={svgH + 30}
-        style={{display:"block",margin:"8px auto",border:"1px solid #CBD5E1",borderRadius:4,background:"#F8FAFC",overflow:"visible"}}>
-        {/* Sheet background */}
-        <rect x={pad} y={0} width={shL*scale} height={svgH}
-          fill="#F1F5F9" stroke="#94A3B8" strokeWidth={1.5} />
-        {/* Offcut zone — right side after LengthUsed */}
-        {sheet.lengthUsed != null && sheet.lengthUsed < shL && (
-          <>
-            <rect x={pad + sheet.lengthUsed*scale} y={0}
-              width={(shL - sheet.lengthUsed)*scale} height={svgH}
-              fill="#FEF9C3" stroke="none" opacity={0.6} />
-            <line x1={pad + sheet.lengthUsed*scale} y1={0}
-                  x2={pad + sheet.lengthUsed*scale} y2={svgH}
-                  stroke="#D97706" strokeWidth={1.5} strokeDasharray="5,3" />
-            {(shL - sheet.lengthUsed)*scale > 35 && (
-              <text x={pad + sheet.lengthUsed*scale + (shL-sheet.lengthUsed)*scale/2}
-                    y={svgH/2} textAnchor="middle" fontSize={9} fill="#D97706"
-                    fontFamily="monospace" fontWeight="700">OFFCUT</text>
-            )}
-          </>
+      <svg width={svgW} height={svgH+30} style={{display:"block",margin:"8px auto",border:"1px solid #CBD5E1",borderRadius:4,background:"#F8FAFC"}}>
+        {/* Sheet outline */}
+        <rect x={pad} y={pad} width={shL*scale} height={shW*scale}
+          fill="#F1F5F9" stroke="#94A3B8" strokeWidth={1} />
+        {/* Offcut zone */}
+        {sheet.lengthUsed && sheet.lengthUsed < shL && (
+          <rect x={pad + sheet.lengthUsed*scale} y={pad}
+            width={(shL - sheet.lengthUsed)*scale} height={shW*scale}
+            fill="#FEF9C3" stroke="#D97706" strokeWidth={1} strokeDasharray="4,2" opacity={0.6} />
         )}
-        {/* Each part placement — correct coordinate flip + rotation */}
-        {placements.map((p, pi)=>{
-          if (p.x == null) return null;
-          const pw = (p.partW || 100) * scale;
-          const ph = (p.partH || 100) * scale;
-          const rot = p.rotation || 0;  // CCW radians
-          const degCW = -(rot * 180 / Math.PI);  // SVG rotate() is CW, NC is CCW
-
-          // InsertionPt in NC coords = bottom-left of the (pre-rotation) bounding box of part
-          // After Y-flip: svgX = pad + nc.X * scale, svgY = svgH - nc.Y * scale - ph
-          // But rotation is around InsertionPt, so we translate there, rotate, translate back
-          const svgX = pad + p.x * scale;
-          const svgY = svgH - p.y * scale - ph;
-
-          const col = colorMap[p.markNo] || { fill:"#E2E8F0", stroke:"#475569" };
-          const cx = svgX + pw/2;
-          const cy = svgY + ph/2;
-          const minDim = Math.min(pw, ph);
-          const fs = Math.max(5, Math.min(10, minDim * 0.28));
-
+        {/* Parts */}
+        {hasPositions && (sheet.parts||[]).map((p,pi)=>{
+          if (p.x === null || p.x === undefined) return null;
+          // Get part dimensions from markNo — use stored size if available
+          const pw = 80; const ph = 50; // fallback dimensions in mm
+          const isRot = Math.abs((p.rotation||0)) > 0.1;
+          const rx = pad + p.x * scale;
+          const ry = pad + p.y * scale;
+          const pw2 = isRot ? ph*scale : pw*scale;
+          const ph2 = isRot ? pw*scale : ph*scale;
           return (
-            <g key={pi} transform={`rotate(${degCW}, ${svgX}, ${svgY + ph})`}>
-              <rect x={svgX} y={svgY} width={pw} height={ph}
-                fill={col.fill} stroke={col.stroke} strokeWidth={0.8} opacity={0.92} />
-              {minDim > 12 && (
-                <text x={cx} y={cy + fs*0.35} textAnchor="middle"
-                  fontSize={fs} fontFamily="monospace" fill={col.stroke} fontWeight="700">
-                  {p.markNo}
-                </text>
-              )}
+            <g key={pi}>
+              <rect x={rx} y={ry} width={pw2} height={ph2}
+                fill={colors[pi%colors.length]} stroke="#1D4ED8" strokeWidth={0.8} opacity={0.85} />
+              <text x={rx+pw2/2} y={ry+ph2/2+4} textAnchor="middle"
+                fontSize={9} fontFamily="monospace" fill="#1D4ED8" fontWeight="600">
+                {p.markNo}
+              </text>
             </g>
           );
         })}
-        {/* Bottom label bar */}
-        <text x={pad} y={svgH+18} fontSize={9} fill="#64748B" fontFamily="monospace">
-          {sheet.sheetDim} · {sheet.utilisPct}% util{sheet.offcutDim?` · Offcut: ${sheet.offcutDim}mm`:""}
+        {/* Labels */}
+        <text x={pad} y={svgH+22} fontSize={9} fill="#64748B" fontFamily="monospace">
+          {sheet.sheetDim} · {sheet.utilisPct}% util
+          {sheet.offcutDim ? ` · Offcut: ${sheet.offcutDim}` : ""}
         </text>
-        {sheet.lengthUsed != null && (
-          <text x={svgW-pad} y={svgH+18} fontSize={9} fill="#D97706" fontFamily="monospace" textAnchor="end">
-            ▶ Used: {sheet.lengthUsed}mm
+        {sheet.lengthUsed && (
+          <text x={svgW-pad} y={svgH+22} fontSize={9} fill="#D97706" fontFamily="monospace" textAnchor="end">
+            Used: {sheet.lengthUsed}mm
           </text>
         )}
       </svg>
@@ -5601,7 +5806,9 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
               <span key={pi} style={{fontSize:11,fontFamily:T.fontMono,background:T.bgInput,
                 border:`1px solid ${T.border}`,borderRadius:3,padding:"2px 6px"}}>
                 {p.markNo} ×{p.qty}
-                {p.partW&&<span style={{fontSize:9,color:T.textLow,marginLeft:3}}>{p.partW}{p.partH?`×${p.partH}`:""}mm</span>}
+                {p.x!==null&&p.x!==undefined&&<span style={{fontSize:9,color:T.textLow,marginLeft:3}}>
+                  ({Math.round(p.x)},{Math.round(p.y)}) {p.rotation>0.1?`${Math.round(p.rotation*180/Math.PI)}°`:""}
+                </span>}
               </span>
             ))}
           </div>
@@ -5740,30 +5947,17 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         const rm = nestRawPlates[rp.RawPlateIndex]||nestRawPlates[0]||{};
         const sheetDim = rm.RectangularShape ? `${rm.RectangularShape.Length}X${rm.RectangularShape.Width}` : rm.Name||`Sheet${idx+1}`;
         const utilisPct = rp.LengthUsed!=null ? +((1-(rp.Scrap||0))*100).toFixed(1) : (result?.Result?.NP??0);
-        // Store every individual placement (not collapsed) so SVG can render each one correctly.
-        // Also keep a summary list for the parts badge display.
-        const placements = (rp.PartsNested||[]).flatMap(pn=>{
-          const p=nestParts[pn.PartIndex]; if(!p) return [];
-          const tf = pn.Transformation || {};
-          const ins = tf.InsertionPt || {};
-          const qty = pn.Quantity ?? 1;
-          const partW = p.RectangularShape?.Length ?? null;
-          const partH = p.RectangularShape?.Width ?? null;
-          // Expand qty>1 identical placements (same position = stacked, rare but handle gracefully)
-          return Array.from({length:qty}, ()=>({
-            markNo: p.Name,
-            x: ins.X ?? null,
-            y: ins.Y ?? null,
-            rotation: tf.Rotation ?? 0,
-            mirror: tf.Mirror ?? false,
-            partW, partH,
-          }));
-        });
-        // Summary for badge list (qty per markNo)
-        const partsOnSheet = placements.reduce((acc,pl)=>{
-          const ex=acc.find(a=>a.markNo===pl.markNo);
-          if(ex) ex.qty++;
-          else acc.push({ markNo:pl.markNo, qty:1, partW:pl.partW, partH:pl.partH, x:pl.x, y:pl.y, rotation:pl.rotation });
+        const partsOnSheet = (rp.PartsNested||[]).reduce((acc,pn)=>{
+          const p=nestParts[pn.PartIndex]; if(!p) return acc;
+          const qty=pn.Quantity??1; const ex=acc.find(a=>a.markNo===p.Name);
+          if(ex) ex.qty+=qty;
+          else acc.push({
+            markNo:p.Name, qty,
+            x: pn.InsertionPt?.X ?? null,
+            y: pn.InsertionPt?.Y ?? null,
+            rotation: pn.Rotation ?? 0,
+            mirror: pn.Mirror ?? false,
+          });
           return acc;
         },[]);
         // Offcut calculation from LengthUsed
@@ -5783,7 +5977,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         // Track whether this sheet came from existing stock (lot or offcut) — exclude from PR
         const srcRm = rawMaterials[rp.RawPlateIndex];
         const isFromStock = srcRm?.isStock === true;
-        return {sheetNo:idx+1,sheetDim,groupNo,sheetInGroup,utilisPct,parts:partsOnSheet,placements,rmUnitId,isFromStock,lotId:srcRm?.lotId||null,
+        return {sheetNo:idx+1,sheetDim,groupNo,sheetInGroup,utilisPct,parts:partsOnSheet,rmUnitId,isFromStock,lotId:srcRm?.lotId||null,
           lengthUsed: lengthUsed !== null ? Math.round(lengthUsed) : null,
           offcutDim, sheetLen, sheetWid,
         };
@@ -5795,18 +5989,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:+(result?.Result?.NP??0).toFixed(1),scrapPct:+(result?.Result?.Scrap??0).toFixed(1),status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
-      const dimWtMap = {};
-      newSheets.forEach(sh=>{
-        const k=sh.sheetDim||"?";
-        if(!dimWtMap[k]) dimWtMap[k]={sheetDim:k,qty:0,wtPerSheet:nestingSheetWt(row.matCode,sh.sheetDim),totalWt:0};
-        dimWtMap[k].qty++;
-        dimWtMap[k].totalWt=Math.round(dimWtMap[k].qty*dimWtMap[k].wtPerSheet*100)/100;
-      });
-      const dimWtBreakdown=Object.values(dimWtMap);
-      const totalRmWt=Math.round(dimWtBreakdown.reduce((s,d)=>s+d.totalWt,0)*100)/100;
-      const netPartsWt=row.wtRequired||0;
-      const extraWt=Math.round((totalRmWt-netPartsWt)*100)/100;
-      setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:sheets.length?+(sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/sheets.length).toFixed(1):0,sheets,parts:allParts,dimWtBreakdown,totalRmWt,netPartsWt,extraWt});
+      setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:sheets.length?+(sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/sheets.length).toFixed(1):0,sheets,parts:allParts});
       setApiProgress("Done!");
       setExported(true);
     } catch(e) {
@@ -5846,14 +6029,9 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           </div>
           {row.totalAreaMm2>0&&<div style={{fontSize:12,color:T.textMid}}>
             Total area: {(row.totalAreaMm2/1e6).toFixed(2)} m²
-            {row.wtRequired>0&&<span style={{marginLeft:10,color:T.green,fontWeight:600}}>· Net wt: {Math.round(row.wtRequired).toLocaleString()} kg</span>}
           </div>}
           {row.totalLengthMm>0&&<div style={{fontSize:12,color:T.textMid}}>
             Total length: {(row.totalLengthMm/1000).toFixed(1)} m
-            {row.wtRequired>0&&<span style={{marginLeft:10,color:T.green,fontWeight:600}}>· Net wt: {Math.round(row.wtRequired).toLocaleString()} kg</span>}
-          </div>}
-          {!row.totalAreaMm2&&!row.totalLengthMm&&row.wtRequired>0&&<div style={{fontSize:12,color:T.textMid}}>
-            Net wt: <span style={{color:T.green,fontWeight:600}}>{Math.round(row.wtRequired).toLocaleString()} kg</span>
           </div>}
           {(()=>{ const missing=(allParts||[]).filter(p=>!(p.length>0)||(p.section||"").toUpperCase()==="PLATE"&&!(p.width>0)); return missing.length>0?<div style={{marginTop:6,padding:"4px 8px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber}}>⚠ {missing.length} part(s) missing dimensions — will use 100×100mm fallback: {missing.map(p=>p.markNo).join(", ")}</div>:null; })()}
         </div>
@@ -5991,40 +6169,6 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                     : " No new material to purchase — all covered by stock."}
                 </div>
               )}
-              {nestPrResult.dimWtBreakdown&&nestPrResult.dimWtBreakdown.length>0&&(
-                <div style={{background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:6,padding:"10px 12px",marginBottom:10}}>
-                  <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>RM Weight to Order (purchased sheets only)</div>
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                    <thead><tr style={{borderBottom:`1px solid ${T.border}`}}>
-                      <th style={{textAlign:"left",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Sheet size</th>
-                      <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Qty</th>
-                      <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Wt/sheet</th>
-                      <th style={{textAlign:"right",padding:"3px 6px",color:T.textMid,fontWeight:600}}>Total wt</th>
-                    </tr></thead>
-                    <tbody>
-                      {nestPrResult.dimWtBreakdown.map((d,di)=>(
-                        <tr key={di} style={{borderBottom:`1px solid ${T.border}44`}}>
-                          <td style={{padding:"4px 6px",fontFamily:T.fontMono,color:T.text}}>{d.sheetDim}</td>
-                          <td style={{padding:"4px 6px",textAlign:"right",color:T.text}}>{d.qty}</td>
-                          <td style={{padding:"4px 6px",textAlign:"right",color:T.textMid,fontFamily:T.fontMono}}>{d.wtPerSheet>0?`${d.wtPerSheet.toFixed(1)} kg`:"—"}</td>
-                          <td style={{padding:"4px 6px",textAlign:"right",fontWeight:600,color:T.text,fontFamily:T.fontMono}}>{d.totalWt>0?`${d.totalWt.toFixed(1)} kg`:"—"}</td>
-                        </tr>
-                      ))}
-                      <tr style={{borderTop:`2px solid ${T.border}`,background:T.bgInput}}>
-                        <td colSpan={3} style={{padding:"5px 6px",fontWeight:700,color:T.text}}>Total RM to order</td>
-                        <td style={{padding:"5px 6px",textAlign:"right",fontWeight:700,color:T.text,fontFamily:T.fontMono}}>{nestPrResult.totalRmWt>0?`${nestPrResult.totalRmWt.toFixed(1)} kg`:"—"}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  {nestPrResult.netPartsWt>0&&(
-                    <div style={{display:"flex",gap:16,marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}44`,flexWrap:"wrap"}}>
-                      <span style={{fontSize:11,color:T.textMid}}>Net parts wt: <strong style={{color:T.text}}>{nestPrResult.netPartsWt.toFixed(1)} kg</strong></span>
-                      <span style={{fontSize:11,color:T.textMid}}>Extra (scrap+kerf): <strong style={{color:nestPrResult.extraWt>0?T.amber:T.green}}>{nestPrResult.extraWt>0?"+":""}{nestPrResult.extraWt.toFixed(1)} kg</strong></span>
-                      {nestPrResult.totalRmWt>0&&<span style={{fontSize:11,color:T.textMid}}>Yield: <strong style={{color:T.green}}>{(nestPrResult.netPartsWt/nestPrResult.totalRmWt*100).toFixed(1)}%</strong></span>}
-                    </div>
-                  )}
-                </div>
-              )}
               {/* Sheet detail cards */}
               <div style={{marginBottom:10}}>
                 {(nestPrResult.sheets||[]).map((sh,si)=>(
@@ -6070,7 +6214,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                   dimMap[k].qty++;
                 });
                 const lots = [{ matCode:row.matCode, sheetCount:nestPrResult.totalSheets, parts:(nestPrResult.parts||[]), lines:Object.values(dimMap) }];
-                setPurchaseReqs(prev=>[...(prev||[]),{id:`PR-NEST-${Date.now()}`,type:"nesting",nestingBatchId:nestPrResult.batchId,matCode:row.matCode,section:row.section,matType:row.matType||"MS",grade:row.grade,size:row.size,sheetsRequired:nestPrResult.totalSheets,wtRequired:nestPrResult.totalRmWt||0,netPartsWt:nestPrResult.netPartsWt||0,status:"pending",createdAt:today(),createdBy:user.username,remarks:`From nesting ${nestPrResult.batchId} · ${nestPrResult.stockSheetsUsed||0} sheet(s) from stock reserved · RM: ${(nestPrResult.totalRmWt||0).toFixed(1)}kg · Net parts: ${(nestPrResult.netPartsWt||0).toFixed(1)}kg`,approvedMakes:"",lots}]);
+                setPurchaseReqs(prev=>[...(prev||[]),{id:`PR-NEST-${Date.now()}`,type:"nesting",nestingBatchId:nestPrResult.batchId,matCode:row.matCode,section:row.section,matType:row.matType||"MS",grade:row.grade,size:row.size,sheetsRequired:nestPrResult.totalSheets,wtRequired:0,status:"pending",createdAt:today(),createdBy:user.username,remarks:`From nesting ${nestPrResult.batchId} · ${nestPrResult.stockSheetsUsed||0} sheet(s) from stock reserved`,approvedMakes:"",lots}]);
                 onClose();
               }} style={css.btn.primary}>📋 Raise PR & Close</button>
             ) : (
