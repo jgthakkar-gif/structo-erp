@@ -5487,55 +5487,82 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
 
   // SVG layout generator
   const renderSvg = () => {
-    const svgW = 540; const svgH = 160;
-    const pad = 10;
+    const svgW = 600; const svgH = 200;
+    const pad = 12;
     const shL = sheet.sheetLen || parseFloat((sheet.sheetDim||"0X0").split("X")[0]) || 1000;
     const shW = sheet.sheetWid || parseFloat((sheet.sheetDim||"0X0").split("X")[1]) || 500;
     const scaleX = (svgW - pad*2) / shL;
     const scaleY = (svgH - pad*2) / shW;
     const scale = Math.min(scaleX, scaleY);
-    const colors = ["#DBEAFE","#DCFCE7","#FEF3C7","#EDE9FE","#CFFAFE","#FFE4E6","#F0FDF4","#FFF7ED"];
-
+    const colors = ["#BFDBFE","#BBF7D0","#FDE68A","#DDD6FE","#A5F3FC","#FECACA","#D1FAE5","#FED7AA"];
+    const strokes= ["#1D4ED8","#15803D","#B45309","#6D28D9","#0E7490","#B91C1C","#047857","#C2410C"];
     return (
-      <svg width={svgW} height={svgH+30} style={{display:"block",margin:"8px auto",border:"1px solid #CBD5E1",borderRadius:4,background:"#F8FAFC"}}>
+      <svg width={svgW} height={svgH+40} style={{display:"block",margin:"8px auto",border:"1px solid #CBD5E1",borderRadius:4,background:"#F8FAFC"}}>
         {/* Sheet outline */}
         <rect x={pad} y={pad} width={shL*scale} height={shW*scale}
-          fill="#F1F5F9" stroke="#94A3B8" strokeWidth={1} />
+          fill="#F1F5F9" stroke="#94A3B8" strokeWidth={1.5} />
         {/* Offcut zone */}
-        {sheet.lengthUsed && sheet.lengthUsed < shL && (
+        {sheet.lengthUsed != null && sheet.lengthUsed < shL && (
           <rect x={pad + sheet.lengthUsed*scale} y={pad}
             width={(shL - sheet.lengthUsed)*scale} height={shW*scale}
-            fill="#FEF9C3" stroke="#D97706" strokeWidth={1} strokeDasharray="4,2" opacity={0.6} />
+            fill="#FEF9C3" stroke="#D97706" strokeWidth={1} strokeDasharray="5,3" opacity={0.7} />
+        )}
+        {sheet.lengthUsed != null && sheet.lengthUsed < shL && (
+          <line x1={pad + sheet.lengthUsed*scale} y1={pad}
+                x2={pad + sheet.lengthUsed*scale} y2={pad + shW*scale}
+                stroke="#D97706" strokeWidth={1.5} strokeDasharray="4,2" />
         )}
         {/* Parts */}
         {hasPositions && (sheet.parts||[]).map((p,pi)=>{
-          if (p.x === null || p.x === undefined) return null;
-          // Get part dimensions from markNo — use stored size if available
-          const pw = 80; const ph = 50; // fallback dimensions in mm
-          const isRot = Math.abs((p.rotation||0)) > 0.1;
+          if (p.x == null) return null;
+          const rawW = p.partW || 80;
+          const rawH = p.partH || 50;
+          const rot = p.rotation || 0;
+          const degCCW = rot * 180 / Math.PI;
           const rx = pad + p.x * scale;
           const ry = pad + p.y * scale;
-          const pw2 = isRot ? ph*scale : pw*scale;
-          const ph2 = isRot ? pw*scale : ph*scale;
+          const pw = rawW * scale;
+          const ph = rawH * scale;
+          const cx = rx + pw / 2;
+          const cy = ry + ph / 2;
+          const col = colors[pi % colors.length];
+          const str = strokes[pi % strokes.length];
+          const minDim = Math.min(pw, ph);
+          const fontSize = Math.max(6, Math.min(9, minDim * 0.35));
           return (
-            <g key={pi}>
-              <rect x={rx} y={ry} width={pw2} height={ph2}
-                fill={colors[pi%colors.length]} stroke="#1D4ED8" strokeWidth={0.8} opacity={0.85} />
-              <text x={rx+pw2/2} y={ry+ph2/2+4} textAnchor="middle"
-                fontSize={9} fontFamily="monospace" fill="#1D4ED8" fontWeight="600">
-                {p.markNo}
-              </text>
+            <g key={pi} transform={`rotate(${-degCCW}, ${rx}, ${ry})`}>
+              <rect x={rx} y={ry} width={pw} height={ph}
+                fill={col} stroke={str} strokeWidth={0.8} opacity={0.9} />
+              {minDim > 14 && (
+                <text x={cx} y={cy + fontSize*0.35} textAnchor="middle"
+                  fontSize={fontSize} fontFamily="monospace" fill={str} fontWeight="700">
+                  {p.markNo}
+                </text>
+              )}
+              {minDim > 22 && p.qty > 1 && (
+                <text x={cx} y={cy + fontSize*1.4} textAnchor="middle"
+                  fontSize={fontSize-1} fontFamily="monospace" fill={str} opacity={0.7}>
+                  ×{p.qty}
+                </text>
+              )}
             </g>
           );
         })}
-        {/* Labels */}
-        <text x={pad} y={svgH+22} fontSize={9} fill="#64748B" fontFamily="monospace">
-          {sheet.sheetDim} · {sheet.utilisPct}% util
-          {sheet.offcutDim ? ` · Offcut: ${sheet.offcutDim}` : ""}
+        <text x={pad} y={svgH+16} fontSize={9} fill="#64748B" fontFamily="monospace">
+          {sheet.sheetDim} · {sheet.utilisPct}% utilisation
+          {sheet.offcutDim ? ` · Offcut: ${sheet.offcutDim}mm` : ""}
         </text>
-        {sheet.lengthUsed && (
-          <text x={svgW-pad} y={svgH+22} fontSize={9} fill="#D97706" fontFamily="monospace" textAnchor="end">
-            Used: {sheet.lengthUsed}mm
+        {sheet.lengthUsed != null && (
+          <text x={svgW-pad} y={svgH+16} fontSize={9} fill="#D97706" fontFamily="monospace" textAnchor="end">
+            ▶ Used: {sheet.lengthUsed}mm
+          </text>
+        )}
+        {sheet.lengthUsed != null && sheet.offcutDim && (shL - sheet.lengthUsed) * scale > 30 && (
+          <text
+            x={pad + sheet.lengthUsed*scale + (shL - sheet.lengthUsed)*scale/2}
+            y={pad + shW*scale/2}
+            textAnchor="middle" fontSize={8} fill="#D97706" fontFamily="monospace" fontWeight="700">
+            OFFCUT
           </text>
         )}
       </svg>
@@ -5567,8 +5594,11 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
               <span key={pi} style={{fontSize:11,fontFamily:T.fontMono,background:T.bgInput,
                 border:`1px solid ${T.border}`,borderRadius:3,padding:"2px 6px"}}>
                 {p.markNo} ×{p.qty}
-                {p.x!==null&&p.x!==undefined&&<span style={{fontSize:9,color:T.textLow,marginLeft:3}}>
-                  ({Math.round(p.x)},{Math.round(p.y)}) {p.rotation>0.1?`${Math.round(p.rotation*180/Math.PI)}°`:""}
+                {p.partW&&<span style={{fontSize:9,color:T.textLow,marginLeft:3}}>
+                  {p.partW}{p.partH?`×${p.partH}`:""}mm
+                </span>}
+                {p.x!=null&&<span style={{fontSize:9,color:T.accent,marginLeft:3}}>
+                  @({Math.round(p.x)},{Math.round(p.y)}){p.rotation>0.1?` ${Math.round(p.rotation*180/Math.PI)}°`:""}
                 </span>}
               </span>
             ))}
@@ -5576,8 +5606,8 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
           {/* Offcut info */}
           {sheet.offcutDim && (
             <div style={{fontSize:11,color:T.green,marginBottom:6}}>
-              📐 Indicative offcut: <strong>{sheet.offcutDim}</strong> mm
-              <span style={{color:T.textLow,marginLeft:6}}>(from LengthUsed={sheet.lengthUsed}mm — operator should verify and adjust)</span>
+              📐 Offcut: <strong>{sheet.offcutDim}</strong> mm
+              <span style={{color:T.textLow,marginLeft:6}}>(sheet {sheet.sheetLen}mm − LengthUsed {sheet.lengthUsed}mm = {sheet.offcutDim.split("X")[0]}mm remainder · confirm before creating stock)</span>
             </div>
           )}
           {/* SVG layout */}
@@ -5710,14 +5740,21 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         const utilisPct = rp.LengthUsed!=null ? +((1-(rp.Scrap||0))*100).toFixed(1) : (result?.Result?.NP??0);
         const partsOnSheet = (rp.PartsNested||[]).reduce((acc,pn)=>{
           const p=nestParts[pn.PartIndex]; if(!p) return acc;
-          const qty=pn.Quantity??1; const ex=acc.find(a=>a.markNo===p.Name);
-          if(ex) ex.qty+=qty;
+          const qty=pn.Quantity??1;
+          // NestingCenter API wraps position/rotation inside Transformation object
+          const tf = pn.Transformation || {};
+          const ins = tf.InsertionPt || {};
+          const partW = p.RectangularShape?.Length ?? null;
+          const partH = p.RectangularShape?.Width ?? null;
+          const ex=acc.find(a=>a.markNo===p.Name);
+          if(ex) { ex.qty+=qty; }
           else acc.push({
             markNo:p.Name, qty,
-            x: pn.InsertionPt?.X ?? null,
-            y: pn.InsertionPt?.Y ?? null,
-            rotation: pn.Rotation ?? 0,
-            mirror: pn.Mirror ?? false,
+            x: ins.X ?? null,
+            y: ins.Y ?? null,
+            rotation: tf.Rotation ?? 0,
+            mirror: tf.Mirror ?? false,
+            partW, partH,
           });
           return acc;
         },[]);
@@ -5750,7 +5787,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:+(result?.Result?.NP??0).toFixed(1),scrapPct:+(result?.Result?.Scrap??0).toFixed(1),status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
-      // Build per-dimension weight breakdown for purchased sheets
+      // Per-dimension weight breakdown for purchased sheets only
       const dimWtMap = {};
       newSheets.forEach(sh=>{
         const k = sh.sheetDim||"?";
@@ -5760,19 +5797,8 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       });
       const dimWtBreakdown = Object.values(dimWtMap);
       const totalRmWt = Math.round(dimWtBreakdown.reduce((s,d)=>s+d.totalWt,0)*100)/100;
-      // Net parts weight
-      const segs2 = (row.matCode||"").split("/");
-      const secType2 = (segs2[0]||"").toUpperCase();
-      const size2 = segs2[3]||"";
-      let netPartsWt = 0;
-      if (secType2==="PLATE") {
-        const t2 = parseFloat(size2.replace(/mm$/i,""))||0;
-        netPartsWt = t2 && row.totalAreaMm2 ? Math.round(row.totalAreaMm2 * t2 * 7.85 / 1e9 * 100)/100 : 0;
-      } else {
-        const matEntry2 = MATERIALS_LIBRARY.find(m=>(m.sectionType||"").toUpperCase()===secType2&&(m.size||"").toUpperCase()===(size2||"").toUpperCase());
-        const wpm2 = matEntry2?.wtPerMetre||0;
-        netPartsWt = wpm2 && row.totalLengthMm ? Math.round(row.totalLengthMm/1000*wpm2*100)/100 : 0;
-      }
+      // Net parts weight — from MRP tab wtRequired (calcTotalWt × drg.qty, same as what MRP shows)
+      const netPartsWt = row.wtRequired || 0;
       const extraWt = Math.round((totalRmWt - netPartsWt)*100)/100;
       setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:sheets.length?+(sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/sheets.length).toFixed(1):0,sheets,parts:allParts,dimWtBreakdown,totalRmWt,netPartsWt,extraWt});
       setApiProgress("Done!");
@@ -5807,25 +5833,6 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       <div style={{display:"flex",flexDirection:"column",gap:14}}>
 
         {/* Parts summary */}
-        {(()=>{
-          // Compute total net weight of parts to be nested
-          const segs = (row.matCode||"").split("/");
-          const secType = (segs[0]||"").toUpperCase();
-          const size = segs[3]||"";
-          let totalPartsWtKg = 0;
-          if (secType === "PLATE") {
-            const t = parseFloat(size.replace(/mm$/i,""))||0;
-            // row.totalAreaMm2 = sum of L*W*qty for all parts (mm²)
-            totalPartsWtKg = t && row.totalAreaMm2 ? Math.round(row.totalAreaMm2 * t * 7.85 / 1e9 * 100) / 100 : 0;
-          } else {
-            const matEntry = MATERIALS_LIBRARY.find(m =>
-              (m.sectionType||"").toUpperCase()===secType &&
-              (m.size||"").toUpperCase()===(size||"").toUpperCase()
-            );
-            const wtPerMetre = matEntry?.wtPerMetre || 0;
-            totalPartsWtKg = wtPerMetre && row.totalLengthMm ? Math.round(row.totalLengthMm / 1000 * wtPerMetre * 100) / 100 : 0;
-          }
-          return (
         <div style={{...css.card,background:T.bgInput,padding:"10px 14px"}}>
           <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:4}}>PARTS TO NEST</div>
           <div style={{fontSize:13,color:T.textMid}}>
@@ -5833,16 +5840,17 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           </div>
           {row.totalAreaMm2>0&&<div style={{fontSize:12,color:T.textMid}}>
             Total area: {(row.totalAreaMm2/1e6).toFixed(2)} m²
-            {totalPartsWtKg>0 && <span style={{marginLeft:10,color:T.green,fontWeight:600}}>· Net wt: {totalPartsWtKg.toFixed(1)} kg</span>}
+            {row.wtRequired>0&&<span style={{marginLeft:10,color:T.green,fontWeight:600}}>· Net wt: {Math.round(row.wtRequired).toLocaleString()} kg</span>}
           </div>}
           {row.totalLengthMm>0&&<div style={{fontSize:12,color:T.textMid}}>
             Total length: {(row.totalLengthMm/1000).toFixed(1)} m
-            {totalPartsWtKg>0 && <span style={{marginLeft:10,color:T.green,fontWeight:600}}>· Net wt: {totalPartsWtKg.toFixed(1)} kg</span>}
+            {row.wtRequired>0&&<span style={{marginLeft:10,color:T.green,fontWeight:600}}>· Net wt: {Math.round(row.wtRequired).toLocaleString()} kg</span>}
+          </div>}
+          {!row.totalAreaMm2&&!row.totalLengthMm&&row.wtRequired>0&&<div style={{fontSize:12,color:T.textMid}}>
+            Net wt: <span style={{color:T.green,fontWeight:600}}>{Math.round(row.wtRequired).toLocaleString()} kg</span>
           </div>}
           {(()=>{ const missing=(allParts||[]).filter(p=>!(p.length>0)||(p.section||"").toUpperCase()==="PLATE"&&!(p.width>0)); return missing.length>0?<div style={{marginTop:6,padding:"4px 8px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber}}>⚠ {missing.length} part(s) missing dimensions — will use 100×100mm fallback: {missing.map(p=>p.markNo).join(", ")}</div>:null; })()}
         </div>
-          );
-        })()}
 
         {/* Stock & Offcuts */}
         <div>
@@ -6023,7 +6031,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                           {nestPrResult.extraWt>0?"+":""}{nestPrResult.extraWt.toFixed(1)} kg
                         </strong>
                       </span>
-                      {nestPrResult.totalRmWt > 0 && nestPrResult.netPartsWt > 0 && (
+                      {nestPrResult.totalRmWt>0&&nestPrResult.netPartsWt>0&&(
                         <span style={{fontSize:11,color:T.textMid}}>
                           Yield: <strong style={{color:T.green}}>
                             {(nestPrResult.netPartsWt/nestPrResult.totalRmWt*100).toFixed(1)}%
