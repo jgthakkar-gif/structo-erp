@@ -1146,8 +1146,8 @@ const MATERIALS_LIBRARY = [
   { id:"ML-527", sectionType:"CHS", matType:"MS", grade:"IS1239", size:"300NB/M/323.9OD×7.14", isPlate:false, wtPerMetre:55.9, wtPerM2:null, standardLengths:[6000], active:true, matCode:"CHS/MS/IS1239/300NB/M", nominalBore:"300NB", pipeSeries:"M", outsideDiameter:323.9, wallThickness:7.14 },
   { id:"ML-528", sectionType:"CHS", matType:"MS", grade:"IS1239", size:"300NB/H/323.9OD×8.74", isPlate:false, wtPerMetre:68.0, wtPerM2:null, standardLengths:[6000], active:true, matCode:"CHS/MS/IS1239/300NB/H", nominalBore:"300NB", pipeSeries:"H", outsideDiameter:323.9, wallThickness:8.74 },
   // ── UB — Universal Beams (Jindal, BS4-1:1993) ────────────────────────────────
-  { id:"ML-529", sectionType:"UB", matType:"MS", grade:"E250", size:"203x133x25.1", isPlate:false, wtPerMetre:25.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/203x133x25.1" },
-  { id:"ML-530", sectionType:"UB", matType:"MS", grade:"E350", size:"203x133x25.1", isPlate:false, wtPerMetre:25.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/203x133x25.1" },
+  { id:"ML-763", sectionType:"UB", matType:"MS", grade:"E250", size:"203x133x25.1", isPlate:false, wtPerMetre:25.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/203x133x25.1" },
+  { id:"ML-764", sectionType:"UB", matType:"MS", grade:"E350", size:"203x133x25.1", isPlate:false, wtPerMetre:25.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/203x133x25.1" },
   { id:"ML-531", sectionType:"UB", matType:"MS", grade:"E250", size:"203x133x30.0", isPlate:false, wtPerMetre:30.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/203x133x30.0" },
   { id:"ML-532", sectionType:"UB", matType:"MS", grade:"E350", size:"203x133x30.0", isPlate:false, wtPerMetre:30.0, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E350/203x133x30.0" },
   { id:"ML-533", sectionType:"UB", matType:"MS", grade:"E250", size:"254x146x31.1", isPlate:false, wtPerMetre:31.1, wtPerM2:null, standardLengths:[10000,12000,13000], active:true, matCode:"UB/MS/E250/254x146x31.1" },
@@ -11085,21 +11085,21 @@ const RMQCModule = ({ user, stock, setStock }) => {
                   <div>
                     <label style={css.label}>MTC No</label>
                     <input value={form.mtcNo||""} onChange={e=>setForm(f=>({...f,mtcNo:e.target.value}))}
-                      readOnly={!form.mtcOverride && !!(form.mtcNo)}
+                      readOnly={!form.mtcOverride && !!(form.lot?.mtcNo)}
                       placeholder="MTC document number"
                       style={{ ...css.input, marginTop:4, opacity:(!form.mtcOverride&&form.mtcNo)?0.7:1 }} />
                   </div>
                   <div>
                     <label style={css.label}>Heat Number</label>
                     <input value={form.heatNo||""} onChange={e=>setForm(f=>({...f,heatNo:e.target.value}))}
-                      readOnly={!form.mtcOverride && !!(form.heatNo)}
+                      readOnly={!form.mtcOverride && !!(form.lot?.heatNo)}
                       placeholder="e.g. JSW-HEAT-2026-001"
                       style={{ ...css.input, marginTop:4, opacity:(!form.mtcOverride&&form.heatNo)?0.7:1 }} />
                   </div>
                   <div style={{ gridColumn:"span 2" }}>
                     <label style={css.label}>Drive Link</label>
                     <input value={form.mtcLink||""} onChange={e=>setForm(f=>({...f,mtcLink:e.target.value}))}
-                      readOnly={!form.mtcOverride && !!(form.mtcLink)}
+                      readOnly={!form.mtcOverride && !!(form.lot?.mtcLink)}
                       placeholder="https://drive.google.com/..."
                       style={{ ...css.input, marginTop:4, width:"100%", opacity:(!form.mtcOverride&&form.mtcLink)?0.7:1 }} />
                   </div>
