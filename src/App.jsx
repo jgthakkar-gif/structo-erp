@@ -3544,7 +3544,13 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
   const canEdit  = ["super_admin","planning_admin"].includes(user.role);
   const [tiers,  setTiers]  = useState(productionStandards.tiers.map(t=>({...t})));
   const [stamps, setStamps] = useState(productionStandards.stampLocations.map(s=>({...s})));
+  const [cutCap, setCutCap] = useState({ plateTPD:0, sectionTPD:0, lastUpdated:"", ...(productionStandards.cuttingCapacity||{}) });
   const [dirty,  setDirty]  = useState(false);
+
+  const updateCutCap = (field, val) => {
+    setCutCap(prev => ({ ...prev, [field]: Number(val)||0, lastUpdated: today() }));
+    setDirty(true);
+  };
 
   const updateTier = (idx, field, val) => {
     setTiers(prev => prev.map((t,i)=> i===idx ? {...t, [field]: field==="id"||field==="label" ? val : Number(val)||0} : t));
@@ -3558,12 +3564,13 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
   const removeStamp = idx => { setStamps(prev=>prev.filter((_,i)=>i!==idx)); setDirty(true); };
 
   const save = () => {
-    setProductionStandards({ tiers, stampLocations: stamps });
+    setProductionStandards({ tiers, stampLocations: stamps, cuttingCapacity: cutCap, blastThresholds: productionStandards.blastThresholds });
     setDirty(false);
   };
   const discard = () => {
     setTiers(productionStandards.tiers.map(t=>({...t})));
     setStamps(productionStandards.stampLocations.map(s=>({...s})));
+    setCutCap({ plateTPD:0, sectionTPD:0, lastUpdated:"", ...(productionStandards.cuttingCapacity||{}) });
     setDirty(false);
   };
 
@@ -3662,6 +3669,34 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
           </tbody>
         </table>
         {canEdit && <button onClick={addStamp} style={{ ...css.btn.ghost, marginTop:8, fontSize:12 }}>+ Add Row</button>}
+      </div>
+
+      {/* Section D — Cutting Capacity (feeds Pre-Nesting Feasibility estimate) */}
+      <div style={{ marginTop:24 }}>
+        <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:4 }}>D — Cutting Capacity (tonnes/day)</div>
+        <div style={{ fontSize:11, color:T.textMid, marginBottom:8 }}>
+          Floor-average throughput used for the approximate cutting-time estimate in Plan Production feasibility. Update when actual capacity changes (new machine, booth, etc).
+          {cutCap.lastUpdated && <span> &nbsp;·&nbsp; Last updated: {cutCap.lastUpdated}</span>}
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", background:T.bgCard, borderRadius:8, overflow:"hidden" }}>
+            <thead>
+              <tr>
+                {["Category","T/day"].map(h=><th key={h} style={thStyle}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={tdStyle}><span style={{ fontWeight:600, color:T.accent }}>Plate</span></td>
+                <td style={tdStyle}>{numInput(cutCap.plateTPD, v=>updateCutCap("plateTPD",v))}</td>
+              </tr>
+              <tr>
+                <td style={tdStyle}><span style={{ fontWeight:600, color:T.accent }}>Section</span> (angle / channel / beam / etc)</td>
+                <td style={tdStyle}>{numInput(cutCap.sectionTPD, v=>updateCutCap("sectionTPD",v))}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -17669,6 +17704,7 @@ export default function App() {
   });
   const [productionStandards, setProductionStandards] = useState({
     blastThresholds: { amberHours: 3, redHours: 4 },
+    cuttingCapacity: { plateTPD: 0, sectionTPD: 0, lastUpdated: "" },
     tiers: [
       { id:'simple',  label:'Simple',  maxParts:5,   maxKg:200,   cutting:4,  fitup:4,  welding:8,  blasting:2, paintPerCoat:1 },
       { id:'medium',  label:'Medium',  maxParts:10,  maxKg:800,   cutting:8,  fitup:8,  welding:16, blasting:3, paintPerCoat:2 },
