@@ -8744,6 +8744,17 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [showCancelled, setShowCancelled] = useState(false);
   const [selectedPrs, setSelectedPrs] = useState([]);   // Part 3: multi-PR combine
   const [prOrderFilter, setPrOrderFilter] = useState("");
+  const [prTypeFilter, setPrTypeFilter] = useState("");
+  // Rolled structural sections typically share vendors, distinct from plate mills
+  const ROLLED_TYPES = ["ISA","ISMC","ISMB","ISLB","ISHB","ISJB","ISJC","UB","UC","NPB","WPB","UBP","BEAM","CHANNEL","ANGLE","ISNT","RSJ"];
+  const prSectionTypes = (pr) => [...new Set((pr.lots||[]).map(l=>((l.matCode||"").split("/")[0]||"").toUpperCase()).filter(Boolean))];
+  const prMatchesType = (pr) => {
+    if (!prTypeFilter) return true;
+    const types = prSectionTypes(pr);
+    if (prTypeFilter==="PLATE")  return types.includes("PLATE");
+    if (prTypeFilter==="ROLLED") return types.some(t=>ROLLED_TYPES.includes(t));
+    return types.includes(prTypeFilter);
+  };
   const [combineModal, setCombineModal] = useState(false);
   const [combineForm, setCombineForm] = useState({});
   const [convertSingleModal, setConvertSingleModal] = useState(null); // PR object
@@ -9160,7 +9171,11 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {purTab === "requisitions" && (()=>{
         const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting")
           .filter(r=>!prOrderFilter || prOrderNos(r).includes(prOrderFilter))
+          .filter(prMatchesType)
           .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+        const otherTypes = [...new Set((purchaseReqs||[]).filter(r=>r.type==="nesting").flatMap(prSectionTypes))]
+          .filter(t=>t!=="PLATE" && !ROLLED_TYPES.includes(t)).sort();
+        const selectableIds = nestingPrs.filter(pr=>["pending","partially_converted"].includes(pr.status)).map(pr=>pr.id);
         const prStatusBadge = { pending:"amber", converted:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
         return (
           <div>
@@ -9208,12 +9223,25 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             })()}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, gap:12 }}>
               <div style={{ fontSize:13, color:T.textMid }}>{nestingPrs.length} requisition{nestingPrs.length!==1?"s":""} from nesting batches</div>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <span style={{ fontSize:11, color:T.textMid, fontWeight:700 }}>Filter by Order:</span>
-                <Sel value={prOrderFilter} onChange={e=>setPrOrderFilter(e.target.value)} style={{ width:260 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                <span style={{ fontSize:11, color:T.textMid, fontWeight:700 }}>Order:</span>
+                <Sel value={prOrderFilter} onChange={e=>setPrOrderFilter(e.target.value)} style={{ width:220 }}>
                   <option value="">All orders</option>
                   {(orders||[]).map(o=><option key={o.id} value={o.orderNo||o.id}>{o.orderNo||o.id}{o.clientName?` — ${o.clientName}`:""}</option>)}
                 </Sel>
+                <span style={{ fontSize:11, color:T.textMid, fontWeight:700 }}>Type:</span>
+                <Sel value={prTypeFilter} onChange={e=>setPrTypeFilter(e.target.value)} style={{ width:190 }}>
+                  <option value="">All types</option>
+                  <option value="PLATE">Plates</option>
+                  <option value="ROLLED">Rolled sections (ISA/ISMC/ISMB/UB/UC…)</option>
+                  {otherTypes.map(t=><option key={t} value={t}>{t}</option>)}
+                </Sel>
+                {selectableIds.length>0 && canEdit && (
+                  <button onClick={()=>setSelectedPrs(prev=>[...new Set([...prev, ...selectableIds])])}
+                    style={{ ...css.btn.secondary, fontSize:11, padding:"5px 10px" }}>
+                    Select all {selectableIds.length}
+                  </button>
+                )}
               </div>
             </div>
             {nestingPrs.length===0 && (
