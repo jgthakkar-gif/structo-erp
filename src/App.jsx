@@ -6735,10 +6735,37 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       if (!fabAgg[key].orders.includes(o.id)) fabAgg[key].orders.push(o.id);
     });
   });
+  const filtDrgNos = new Set();
+  filtOrders.forEach(o=>(o.drawings||[]).forEach(d=>{ if(d.drawingNo) filtDrgNos.add(String(d.drawingNo).trim().toUpperCase()); }));
+  const filtOrderIds = new Set(filtOrders.map(o=>o.id));
   const fabList = Object.values(fabAgg).map(row => {
     const stockAvail = stock.filter(s=>!['rejected','returned','written_off'].includes(s.status)&&((s.matCode&&s.matCode===row.matCode)||((s.sectionType||s.section)===row.section&&s.size===row.size&&s.grade===row.grade))).reduce((a,s)=>a+(s.wtAvailable||0),0);
     const netToProcure = Math.max(0, row.wtRequired - stockAvail);
-    return { ...row, stockAvail, netToProcure };
+    // Robust PR match: normalised matCode first, section/size/grade triple as fallback;
+    // stale/cancelled excluded; most recent wins (the old lookup took the first PR of
+    // any status, so a stale PR could mask a live one).
+    const rowKey = normMatCode(row.matCode);
+    const prs = (purchaseReqs||[]).filter(r =>
+      !["stale","cancelled"].includes(r.status) &&
+      (normMatCode(r.matCode)===rowKey || (r.section===row.section && r.size===row.size && r.grade===row.grade)));
+    const pr = prs[prs.length-1];
+    // Nesting state: non-discarded batches containing a lot for this matCode,
+    // scoped to the filtered orders via captured drawingNos when available
+    // (legacy batches without drawingNos still match on matCode alone).
+    const nestBatches = (nestingBatches||[]).filter(b => {
+      if (b.status==="discarded") return false;
+      const lots = (b.lots||[]).filter(l => normMatCode(l.matCode)===rowKey);
+      if (lots.length===0) return false;
+      // Scope to filtered orders: API batches carry orderIds; import batches carry
+      // per-lot drawingNos; legacy batches with neither match on matCode alone.
+      if ((b.orderIds||[]).length>0) return b.orderIds.some(oid=>filtOrderIds.has(oid));
+      const batchDrgNos = lots.flatMap(l=>l.drawingNos||[]).map(d=>String(d).trim().toUpperCase());
+      return batchDrgNos.length===0 || batchDrgNos.some(d=>filtDrgNos.has(d));
+    });
+    const latestNest = nestBatches[nestBatches.length-1];
+    const nestSheets = latestNest ? (latestNest.lots||[]).filter(l=>normMatCode(l.matCode)===rowKey).reduce((s,l)=>s+(l.sheets||[]).length,0) : 0;
+    return { ...row, stockAvail, netToProcure, prStatus: pr?.status||"none",
+             nested: !!latestNest, nestBatchId: latestNest?.id||"", nestSheets };
   });
   const boAgg = {};
   filtOrders.forEach(o => {
@@ -7232,7 +7259,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                               : "—";
                         const covPct = row.wtRequired > 0 ? Math.min(100, (row.stockAvail/row.wtRequired)*100) : 100;
                         const netColor = row.netToProcure===0 ? T.green : (row.prStatus==="approved"||row.prStatus==="po_raised") ? T.amber : T.red;
-                        const prBadge = row.prStatus==="approved"?"green":row.prStatus==="po_raised"?"blue":row.prStatus==="none"?"gray":"amber";
+                        const prBadge = row.prStatus==="approved"?"green":(row.prStatus==="po_raised"||row.prStatus==="converted")?"blue":row.prStatus==="none"?"gray":"amber";
                         return (
                           <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
                             <TD mono>{row.matCode||"—"}</TD>
@@ -7252,10 +7279,19 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                             </TD>
                             <TD><Badge color={prBadge}>{row.prStatus==="none"?"no PR":row.prStatus}</Badge></TD>
                             <TD>
-                              <button onClick={()=>setNestExportMatCode(row)} 
-                                style={{...css.btn.ghost,fontSize:11,padding:"2px 8px",whiteSpace:"nowrap",color:T.accent,border:`1px solid ${T.accent}`}}>
-                                ⬡ Export for Nesting
-                              </button>
+                              {row.nested ? (
+                                <div>
+                                  <Badge color="green">✓ Nested · {row.nestSheets} sheet{row.nestSheets!==1?"s":""}</Badge>
+                                  <div style={{ fontSize:9, color:T.textLow, fontFamily:T.fontMono, marginTop:2 }}>{row.nestBatchId}</div>
+                                  <button onClick={()=>setNestExportMatCode(row)}
+                                    style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",marginTop:2}}>↻ Re-nest</button>
+                                </div>
+                              ) : (
+                                <button onClick={()=>setNestExportMatCode(row)} 
+                                  style={{...css.btn.ghost,fontSize:11,padding:"2px 8px",whiteSpace:"nowrap",color:T.accent,border:`1px solid ${T.accent}`}}>
+                                  ⬡ Export for Nesting
+                                </button>
+                              )}
                             </TD>
                           </tr>
                         );
