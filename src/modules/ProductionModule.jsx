@@ -11761,6 +11761,299 @@ const BlastPaintContractorQueue = ({ user, dprs, setDprs, orders, instances, set
 // ═══════════════════════════════════════════════════════════════════════════════
 // PRODUCTION MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
+// ─── PLAN PRODUCTION — PRE-NESTING MATERIAL FEASIBILITY ─────────────────────
+// Read-only analysis layer: checks which drawings/instances can be produced with
+// currently approved stock. Estimate only — real nesting confirms. Touches nothing
+// in MRP/PR/PO/GRN. Next build steps: nesting handoff + confirm/supersede chain.
+const PLAN_PLATE_SET = new Set(["PLATE","PLATES","PL","FLAT PLATE","CHECKER PLATE"]);
+const planIsPlate = (section) => PLAN_PLATE_SET.has((section||"").toUpperCase().trim());
+
+const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBatches, purchaseReqs, productionStandards, onBack }) => {
+  const [selOrderIds, setSelOrderIds] = useState([]);
+  const [selInstIds, setSelInstIds]   = useState({});   // {diId:true}
+  const [expanded, setExpanded]       = useState({});   // {drawingId:true}
+  const [showBlocked, setShowBlocked] = useState(true);
+
+  const cutCap = productionStandards?.cuttingCapacity || { plateTPD:0, sectionTPD:0 };
+
+  const toggleOrder = (oid) => setSelOrderIds(prev => prev.includes(oid) ? prev.filter(x=>x!==oid) : [...prev, oid]);
+
+  // ── Build per-order approved stock pool ──
+  // Approved-makes filter: order.quality.approvedMakes[].makes (comma-sep string)
+  // matched against lot.vendorName / vendorCode. No approvedMakes defined → all pass.
+  const buildPool = (order) => {
+    const makeTokens = (order.quality?.approvedMakes||[])
+      .flatMap(m => (m.makes||"").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean));
+    const pool = {};   // normMatCode → {approvedWt, totalWt, lots:[]}
+    (stock||[]).forEach(lot => {
+      if (!["available","partially_reserved"].includes(lot.status)) return;
+      if (lot.rmQcStatus !== "approved") return;
+      const key = normMatCode(lot.matCode);
+      if (!key) return;
+      if (!pool[key]) pool[key] = { approvedWt:0, totalWt:0, lots:[] };
+      const avail = Math.max(0, lot.wtAvailable||0);
+      pool[key].totalWt += avail;
+      const vn = (lot.vendorName||"").toLowerCase(), vc = (lot.vendorCode||"").toLowerCase();
+      const makeOk = makeTokens.length===0 || makeTokens.some(t => (vn&&(vn.includes(t)||t.includes(vn))) || (vc&&(vc.includes(t)||t.includes(vc))));
+      if (makeOk) { pool[key].approvedWt += avail; pool[key].lots.push(lot.id); }
+    });
+    return pool;
+  };
+
+  // ── Per-drawing analysis for one order ──
+  const analyseOrder = (order) => {
+    const pool = buildPool(order);
+    const unreleasedByDrawing = {};
+    (drawingInstances||[]).forEach(di => {
+      if (di.status !== "unreleased") return;
+      const d = (order.drawings||[]).find(x=>x.id===di.drawingId);
+      if (!d) return;
+      (unreleasedByDrawing[di.drawingId] = unreleasedByDrawing[di.drawingId]||[]).push(di);
+    });
+
+    const rows = Object.entries(unreleasedByDrawing).map(([drawingId, dis]) => {
+      const drawing = order.drawings.find(d=>d.id===drawingId);
+      const parts = (order.parts||[]).filter(p => p.drawingId===drawingId && (p.fabType||"Fabricate")==="Fabricate");
+      // Per-instance requirement per matCode
+      const reqByMat = {};   // normMatCode → {wtPerInst, marks:[], section, display}
+      parts.forEach(p => {
+        const key = normMatCode(p.matCode) || `${p.section}|${p.grade}|${p.size}`.toUpperCase();
+        if (!reqByMat[key]) reqByMat[key] = { wtPerInst:0, marks:[], section:p.section||"", display:p.matCode||key };
+        reqByMat[key].wtPerInst += (p.calcTotalWt||0);
+        if (p.markNo && !reqByMat[key].marks.includes(p.markNo)) reqByMat[key].marks.push(p.markNo);
+      });
+      const selCount = dis.filter(di=>selInstIds[di.id]).length;
+      const nForCheck = selCount || dis.length;   // unselected drawings evaluated at full unreleased count
+
+      // Tier detection (confidence badge, not different math):
+      // Tier 1 — all marks appear in some non-discarded nesting batch's lot parts
+      // Tier 2 — a purchaseReq exists matching any required matCode
+      // Tier 3 — fresh calc
+      const allMarks = parts.map(p=>p.markNo).filter(Boolean);
+      const batchMarks = new Set();
+      (nestingBatches||[]).forEach(b => { if (b.status==="discarded") return;
+        (b.lots||[]).forEach(l => (l.parts||[]).forEach(mk => batchMarks.add(mk))); });
+      const marksNested = allMarks.filter(mk=>batchMarks.has(mk)).length;
+      const tier = (allMarks.length>0 && marksNested===allMarks.length) ? 1
+        : (purchaseReqs||[]).some(pr => Object.keys(reqByMat).some(k => normMatCode(pr.matCode)===k)) ? 2 : 3;
+
+      // Coverage per matCode (drawing evaluated alone against pool)
+      const matRows = Object.entries(reqByMat).map(([key, r]) => {
+        const p = pool[key] || { approvedWt:0, totalWt:0 };
+        const reqWt = r.wtPerInst * nForCheck;
+        return { key, display:r.display, section:r.section, marks:r.marks, reqWt,
+                 approvedWt:p.approvedWt, totalWt:p.totalWt, covered: p.approvedWt >= reqWt && reqWt>0 };
+      });
+      const totalMarks   = allMarks.length || parts.length;
+      const coveredMarks = matRows.filter(m=>m.covered).reduce((s,m)=>s+m.marks.length,0);
+      const wtPerInst    = Object.values(reqByMat).reduce((s,r)=>s+r.wtPerInst,0) || (drawing.unitWt||0);
+      const coveredWtPI  = matRows.filter(m=>m.covered).reduce((s,m)=>s+(m.reqWt/Math.max(nForCheck,1)),0);
+
+      // Feasibility status per locked thresholds:
+      // all covered → feasible
+      // >10 marks: ≥80% count AND ≥60% weight → warn ; else blocked
+      // ≤10 marks: missing ≤2 marks → warn ; else blocked
+      let status;
+      if (matRows.length>0 && matRows.every(m=>m.covered)) status = "feasible";
+      else if (matRows.length===0) status = "nodata";
+      else {
+        const cntPct = totalMarks>0 ? coveredMarks/totalMarks : 0;
+        const wtPct  = wtPerInst>0 ? coveredWtPI/wtPerInst : 0;
+        const missing = totalMarks - coveredMarks;
+        status = (totalMarks>10 ? (cntPct>=0.8 && wtPct>=0.6) : (missing<=2 && missing>0)) ? "warn" : "blocked";
+      }
+      const plateWtPI   = Object.values(reqByMat).filter(r=>planIsPlate(r.section)).reduce((s,r)=>s+r.wtPerInst,0);
+      const sectionWtPI = wtPerInst - plateWtPI;
+      return { order, drawing, dis, parts, matRows, tier, status, wtPerInst, plateWtPI, sectionWtPI,
+               totalMarks, coveredMarks, matCount:matRows.length, selCount };
+    });
+    return { pool, rows };
+  };
+
+  const analyses = selOrderIds.map(oid => {
+    const order = (orders||[]).find(o=>o.id===oid);
+    return order ? analyseOrder(order) : null;
+  }).filter(Boolean);
+  const allRows = analyses.flatMap(a=>a.rows);
+
+  // ── Selection totals ──
+  const selRows = allRows.map(r => ({...r, n:r.dis.filter(di=>selInstIds[di.id]).length})).filter(r=>r.n>0);
+  const selInstCount = selRows.reduce((s,r)=>s+r.n,0);
+  const selWt        = selRows.reduce((s,r)=>s+r.wtPerInst*r.n,0);
+  const selPlateWt   = selRows.reduce((s,r)=>s+r.plateWtPI*r.n,0);
+  const selSectionWt = selRows.reduce((s,r)=>s+r.sectionWtPI*r.n,0);
+  const plateDays    = cutCap.plateTPD>0   ? (selPlateWt/1000)/cutCap.plateTPD     : null;
+  const sectionDays  = cutCap.sectionTPD>0 ? (selSectionWt/1000)/cutCap.sectionTPD : null;
+
+  // ── Cumulative over-allocation check: selected reqs vs each order's pool ──
+  const shortfalls = [];
+  analyses.forEach(a => {
+    const need = {};
+    a.rows.forEach(r => {
+      const n = r.dis.filter(di=>selInstIds[di.id]).length;
+      if (!n) return;
+      r.matRows.forEach(m => { need[m.key] = (need[m.key]||0) + (m.reqWt/Math.max(r.selCount||r.dis.length,1))*n; });
+    });
+    Object.entries(need).forEach(([key, wt]) => {
+      const p = a.pool[key] || {approvedWt:0, totalWt:0};
+      if (wt > p.approvedWt) shortfalls.push({ order:a.rows[0]?.order, key, needWt:wt, approvedWt:p.approvedWt, totalWt:p.totalWt });
+    });
+  });
+
+  const toggleDrawing = (r, on) => setSelInstIds(prev => {
+    const next = {...prev};
+    r.dis.forEach(di => { if (on) next[di.id]=true; else delete next[di.id]; });
+    return next;
+  });
+  const selectAllFeasible = () => setSelInstIds(prev => {
+    const next = {...prev};
+    allRows.filter(r=>r.status==="feasible").forEach(r=>r.dis.forEach(di=>next[di.id]=true));
+    return next;
+  });
+
+  const stBadge = (s) => s==="feasible" ? <Badge color="green">Feasible</Badge>
+    : s==="warn" ? <Badge color="amber">Partial — review</Badge>
+    : s==="nodata" ? <Badge color="gray">No part data</Badge>
+    : <Badge color="red">Blocked</Badge>;
+  const tierBadge = (t) => t===1 ? <Badge color="teal">Tier 1 · nested</Badge> : t===2 ? <Badge color="purple">Tier 2 · MRP</Badge> : <Badge color="gray">Tier 3 · calc</Badge>;
+  const tonnes = (kg) => (kg/1000).toFixed(2)+" T";
+
+  const visibleRows = allRows.filter(r => showBlocked || r.status!=="blocked");
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Production</button>
+        <div>
+          <div style={{ fontSize:16, fontWeight:700, color:T.text }}>Plan Production — Material Feasibility</div>
+          <div style={{ fontSize:11, color:T.textMid }}>Approximate, based on average floor throughput and approved stock. Real nesting confirms the final cut plan.</div>
+        </div>
+      </div>
+
+      {/* Order selection */}
+      <div style={{ ...css.card, marginBottom:14 }}>
+        <div style={css.label}>Select project(s)</div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:6 }}>
+          {(orders||[]).filter(o=>o.status!=="completed").map(o => (
+            <button key={o.id} onClick={()=>toggleOrder(o.id)}
+              style={{ ...css.btn.secondary, ...(selOrderIds.includes(o.id) ? { background:T.accent, color:"#fff", border:`1px solid ${T.accent}` } : {}) }}>
+              {o.orderNo||o.id} · {o.clientName||""}
+            </button>
+          ))}
+        </div>
+        {selOrderIds.length>1 && (
+          <div style={{ marginTop:10 }}>
+            <InfoBanner color="amber">
+              <b>{selOrderIds.length} projects selected — {selOrderIds.length} separate nesting runs will be needed (one per project).</b> Material pools are evaluated per project against that project's approved makes; stock is never pooled across projects.
+            </InfoBanner>
+          </div>
+        )}
+      </div>
+
+      {selOrderIds.length>0 && (
+        <>
+          {/* Summary stat cards */}
+          <div style={{ display:"flex", gap:12, marginBottom:14, flexWrap:"wrap" }}>
+            <StatCard label="Selected Instances" value={selInstCount} sub={`${selRows.length} drawings`} />
+            <StatCard label="Selected Weight" value={tonnes(selWt)} />
+            <StatCard label="Plate" value={tonnes(selPlateWt)} sub={plateDays!=null ? `≈ ${plateDays.toFixed(1)} cutting days` : "set Plate T/day in Production Standards"} />
+            <StatCard label="Section" value={tonnes(selSectionWt)} sub={sectionDays!=null ? `≈ ${sectionDays.toFixed(1)} cutting days` : "set Section T/day in Production Standards"} color={T.gold} />
+          </div>
+          {(plateDays!=null||sectionDays!=null) && (
+            <div style={{ fontSize:11, color:T.textMid, marginBottom:12 }}>
+              Plate and section cutting run in parallel — the bottleneck is the larger of the two, not the sum. Estimate only: thickness mix changes real cutting time.
+            </div>
+          )}
+
+          {/* Over-allocation warnings for current selection */}
+          {shortfalls.length>0 && (
+            <InfoBanner color="red">
+              <b>Selection exceeds approved stock for {shortfalls.length} material(s):</b>
+              {shortfalls.map((s,i)=>(
+                <div key={i} style={{ marginTop:4, fontFamily:T.fontMono, fontSize:11 }}>
+                  {s.key} — need {tonnes(s.needWt)}, approved {tonnes(s.approvedWt)}{s.totalWt>s.approvedWt && <> (total in stock {tonnes(s.totalWt)} — gap is vendor-approval, may be worth chasing)</>}
+                </div>
+              ))}
+            </InfoBanner>
+          )}
+
+          {/* Drawing list */}
+          <div style={{ ...css.card }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Drawings with unreleased instances ({allRows.length})</div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={selectAllFeasible} style={css.btn.sm}>Select all feasible</button>
+                <button onClick={()=>setShowBlocked(v=>!v)} style={css.btn.ghost}>{showBlocked?"Hide":"Show"} blocked</button>
+              </div>
+            </div>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead><tr>
+                  <TH> </TH><TH>Drawing</TH><TH>Order</TH><TH>Source</TH><TH right>Unreleased</TH><TH right>Wt / inst</TH><TH>Parts · Materials</TH><TH>Feasibility</TH>
+                </tr></thead>
+                <tbody>
+                  {visibleRows.map(r => {
+                    const allSel = r.dis.every(di=>selInstIds[di.id]);
+                    return (
+                    <React.Fragment key={r.drawing.id}>
+                      <tr style={{ cursor:"pointer" }} onClick={()=>setExpanded(p=>({...p,[r.drawing.id]:!p[r.drawing.id]}))}>
+                        <TD><input type="checkbox" checked={allSel} onClick={e=>e.stopPropagation()} onChange={e=>toggleDrawing(r, e.target.checked)} disabled={r.status==="blocked"} /></TD>
+                        <TD bold>{r.drawing.drawingNo}<div style={{fontSize:10,color:T.textLow,fontWeight:400}}>{r.drawing.title||""}</div></TD>
+                        <TD mono>{r.order.orderNo||r.order.id}</TD>
+                        <TD>{tierBadge(r.tier)}</TD>
+                        <TD right mono>{r.selCount>0 ? `${r.selCount} / ${r.dis.length}` : r.dis.length}</TD>
+                        <TD right mono>{(r.wtPerInst||0).toFixed(0)} kg</TD>
+                        <TD><span style={{fontSize:11,color:T.textMid}}>{r.totalMarks} parts · {r.matCount} materials{r.status!=="feasible"&&r.status!=="nodata"&&<> · <b>{r.coveredMarks}/{r.totalMarks} covered</b></>}</span></TD>
+                        <TD>{stBadge(r.status)}</TD>
+                      </tr>
+                      {expanded[r.drawing.id] && (
+                        <tr><td colSpan={8} style={{ padding:"6px 10px 12px 34px", borderBottom:`1px solid ${T.border}`, background:T.bgInput }}>
+                          {/* Instance checkboxes */}
+                          <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:8 }}>
+                            {r.dis.map(di => (
+                              <label key={di.id} style={{ fontSize:11, fontFamily:T.fontMono, display:"flex", gap:4, alignItems:"center", cursor: r.status==="blocked"?"not-allowed":"pointer", color:T.textMid }}>
+                                <input type="checkbox" checked={!!selInstIds[di.id]} disabled={r.status==="blocked"}
+                                  onChange={e=>setSelInstIds(p=>{ const n={...p}; if(e.target.checked) n[di.id]=true; else delete n[di.id]; return n; })} />
+                                {di.id}
+                              </label>
+                            ))}
+                          </div>
+                          {/* Per-material coverage */}
+                          <table style={{ borderCollapse:"collapse", fontSize:11 }}>
+                            <thead><tr><TH>Material</TH><TH right>Required</TH><TH right>Approved avail</TH><TH right>Total in stock</TH><TH> </TH></tr></thead>
+                            <tbody>
+                              {r.matRows.map(m => (
+                                <tr key={m.key}>
+                                  <TD mono>{m.display}</TD>
+                                  <TD right mono>{tonnes(m.reqWt)}</TD>
+                                  <TD right mono color={m.covered?T.green:T.red}>{tonnes(m.approvedWt)}</TD>
+                                  <TD right mono>{tonnes(m.totalWt)}{m.totalWt>m.approvedWt && !m.covered && <span style={{color:T.amber}}> ← approval gap</span>}</TD>
+                                  <TD>{m.covered ? <Badge color="green">OK</Badge> : <Badge color="red">Short</Badge>}</TD>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td></tr>
+                      )}
+                    </React.Fragment>
+                  );})}
+                </tbody>
+              </table>
+            </div>
+            {allRows.length===0 && <div style={{ padding:20, textAlign:"center", color:T.textLow, fontSize:12 }}>No unreleased instances in the selected project(s).</div>}
+          </div>
+
+          {/* Handoff placeholder — next build step wires this to floor nesting */}
+          <div style={{ display:"flex", justifyContent:"flex-end", marginTop:14, gap:10, alignItems:"center" }}>
+            <span style={{ fontSize:11, color:T.textLow }}>Next step (upcoming build): send selection to floor nesting with RM unit selection</span>
+            <button disabled style={{ ...css.btn.primary, opacity:0.45, cursor:"not-allowed" }}>Send to Nesting →</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders, pos, purchaseReqs,
@@ -11803,6 +12096,11 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const qualityConcerns   = instances.filter(i=>i.qualityConcernFlag).length;
 
   // ── Production Engineer DPR view ──
+  if (view==="plan_production") return (
+    <PlanProductionScreen user={user} orders={orders||[]} drawingInstances={drawingInstances||[]}
+      stock={stock||[]} nestingBatches={nestingBatches||[]} purchaseReqs={purchaseReqs||[]}
+      productionStandards={productionStandards} onBack={()=>setView("dashboard")} />
+  );
   if (view==="eng_dpr") return (
     <ProductionEngineerScreen user={user} dprs={dprs||[]} orders={orders||[]} instances={instances||[]} contractors={contractors||[]} onBack={()=>setView("dashboard")} />
   );
@@ -12335,6 +12633,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
 
       <div style={{ display:"flex",gap:12,marginBottom:24,flexWrap:"wrap" }}>
         {canAssign&&<button onClick={()=>setView("release_new")} style={css.btn.green}>+ New Release</button>}
+        {canAssign&&<button onClick={()=>setView("plan_production")} style={css.btn.primary}>🧮 Plan Production</button>}
         {["super_admin","planning_admin","floor_planner","production_engineer"].includes(user.role)&&(
           <button onClick={()=>setView("eng_dpr")} style={css.btn.primary}>📐 DPR View</button>
         )}
