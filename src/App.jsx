@@ -6342,6 +6342,42 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
   // Procurement helpers for planning batches
   const prForBatch = (batchId) => (purchaseReqs||[]).find(r=>r.nestingBatchId===batchId&&r.type==="nesting"&&r.status!=='stale'&&r.status!=='cancelled');
   const poForPr    = (pr) => pr?.poId ? (pos||[]).find(p=>p.id===pr.poId) : null;
+  // Orders a nesting batch relates to: via captured Drawing No (new imports),
+  // falling back to part-mark matching for batches imported before capture existed.
+  const batchOrderNos = (batchLots) => {
+    const drgNos = new Set();
+    batchLots.forEach(l=>(l.drawingNos||[]).forEach(d=>drgNos.add(String(d).trim().toUpperCase())));
+    const found = new Set();
+    if (drgNos.size>0) (orders||[]).forEach(o=>{
+      if ((o.drawings||[]).some(d=>drgNos.has((d.drawingNo||"").trim().toUpperCase()))) found.add(o.orderNo||o.id);
+    });
+    if (found.size===0) {
+      const marks = new Set();
+      batchLots.forEach(l=>(l.parts||[]).forEach(mk=>marks.add(mk)));
+      if (marks.size>0) (orders||[]).forEach(o=>{
+        if ((o.parts||[]).some(p=>marks.has(p.markNo))) found.add(o.orderNo||o.id);
+      });
+    }
+    return [...found];
+  };
+  // Total RM weight of a batch: plates via calcSheetWt (dims+thickness in rmUnitId),
+  // sections via bar length (larger sheetDim number) × wtPerMetre from materials library.
+  const batchRmWeight = (batchLots) => {
+    let kg = 0, missing = 0;
+    batchLots.forEach(l=>{
+      const lib = (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(l.matCode));
+      (l.sheets||[]).forEach(sh=>{
+        let w = calcSheetWt(sh.rmUnitId);
+        if (!w) {
+          const nums = (sh.sheetDim||"").toUpperCase().split("X").map(n=>parseFloat(n)).filter(n=>!isNaN(n));
+          const lenMm = nums.length ? Math.max(...nums) : 0;
+          if (lenMm && lib?.wtPerMetre) w = Math.round(lenMm/1000*lib.wtPerMetre*100)/100;
+        }
+        if (w) kg += w; else missing++;
+      });
+    });
+    return { kg, missing };
+  };
 
   const createBatchPr = (batch) => {
     const yr = new Date().getFullYear();
@@ -6585,10 +6621,12 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       const sheetNo = (col(row,"sheet no","sheet_no","sheetno","sheet number")||'0').toString().trim();
       const sheetDim = (col(row,"sheet dim lxw","sheet dim","sheetdim","sheet_dim","dims","dimensions","lxw")||'').trim().toUpperCase();
       const markNo   = col(row,"mark no","mark_no","markno","mark number","part");
+      const drgNo    = (col(row,"drawing no","drawing_no","drawingno","drawing number","drawing","drg no")||"").toString().trim();
       const utilisPctStr = col(row,"utilisation %","utilisation%","utilization %","utilization%","utilisation","utilization","util %","util%","util","usage %","usage");
       const utilisPct = parseFloat(utilisPctStr)||0;
       if (!matCode) return;
-      if (!lotsMap[matCode]) lotsMap[matCode] = { matCode, sheets:{}, allParts:[] };
+      if (!lotsMap[matCode]) lotsMap[matCode] = { matCode, sheets:{}, allParts:[], drawingNos:[] };
+      if (drgNo && !lotsMap[matCode].drawingNos.includes(drgNo)) lotsMap[matCode].drawingNos.push(drgNo);
       const sheetKey = `${sheetNo}||${sheetDim}`;
       if (!lotsMap[matCode].sheets[sheetKey]) {
         lotsMap[matCode].sheets[sheetKey] = { sheetNo, sheetDim, parts:[], utilisPct };
@@ -6626,7 +6664,8 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
         lotId: `${batchId}-${safeId}`,
         matCode: lot.matCode,
         sheets: sheetsWithIds,
-        parts: lot.allParts
+        parts: lot.allParts,
+        drawingNos: lot.drawingNos||[]
       };
     });
 
@@ -7306,6 +7345,10 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                 const batchLots = batch.lots?.length > 0 ? batch.lots : (batch.sheets?.length > 0 ? [{ lotId:batch.id, matCode:batch.matCode||"", sheets:batch.sheets, parts:batch.parts||[] }] : []);
                 const totalSheets = batchLots.reduce((s,l)=>s+(l.sheets||[]).length,0);
                 const totalParts  = batchLots.reduce((s,l)=>s+(l.parts||[]).length,0);
+                const ordNos = batchOrderNos(batchLots);
+                const rmWt   = batchRmWeight(batchLots);
+                const utilVals = batchLots.flatMap(l=>(l.sheets||[]).map(sh=>sh.utilisPct).filter(u=>u>0));
+                const avgUtil = utilVals.length ? (utilVals.reduce((a,b)=>a+b,0)/utilVals.length) : 0;
                 const pr = prForBatch(batch.id);
                 const po = poForPr(pr);
                 const isDiscarded = batch.status === "discarded";
@@ -7323,8 +7366,11 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                       {!isDiscarded && !po && !pr && <Badge color="amber">No PR raised</Badge>}
                       {!isDiscarded && pr && !po && <Badge color="blue">{pr.id} raised</Badge>}
                       {!isDiscarded && po && <Badge color="green">{po.id} raised</Badge>}
+                      {ordNos.length>0 && <Badge color="teal">{ordNos.length>1?`${ordNos.length} orders: `:""}{ordNos.join(", ")}</Badge>}
                       <span style={{ fontSize:12, color:T.textLow, marginLeft:"auto" }}>
                         {(batch.lots||[]).length} lots · {totalSheets} sheets · {totalParts} parts
+                        {rmWt.kg>0 && <> · <b style={{color:T.textMid}}>≈ {(rmWt.kg/1000).toFixed(2)} T RM</b>{rmWt.missing>0 && <span title={`${rmWt.missing} sheet(s) could not be weighed — material not found in library or dims unreadable`}> ⚠</span>}</>}
+                        {avgUtil>0 && <> · avg util {avgUtil.toFixed(1)}%</>}
                       </span>
                     </div>
                     {/* Procurement action bar */}
