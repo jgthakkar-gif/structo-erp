@@ -8804,20 +8804,33 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     setModal(null);
   };
 
+  // Partial-conversion tracking: pr.convertedLines maps a stable line key to the
+  // qty already carried onto POs; remaining = line qty − converted. A PR is
+  // "converted" when nothing remains, "partially_converted" while some does.
+  const prLineKey = (prId, matCode, dim) => `${prId}|${matCode}|${dim||""}`;
+  const prLineRemaining = (pr, l, ln) => Math.max(0, (ln.qty||0) - ((pr.convertedLines||{})[prLineKey(pr.id, l.matCode, ln.sheetDim||ln.dims)]||0));
+  const prRemainingTotal = (pr) => (pr.lots||[]).reduce((s,l)=>s+(l.lines||[]).reduce((ss,ln)=>ss+prLineRemaining(pr,l,ln),0),0);
   const createCombinedPO = () => {
     const yr = new Date().getFullYear();
     const maxSeq = pos.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
     const newPoId = `PO-${yr}-${String(maxSeq+1).padStart(3,"0")}`;
     const v = vendors.find(x=>x.id===combineForm.vendorId);
     const ts = Date.now();
+    const inclQty = (pr,l,ln) => {
+      const rem = prLineRemaining(pr,l,ln);
+      const k = prLineKey(pr.id, l.matCode, ln.sheetDim||ln.dims);
+      const v = combineForm.lineQtys?.[k];
+      return Math.max(0, Math.min(rem, v===undefined||v==="" ? rem : (parseInt(v)||0)));
+    };
     const allLines = (purchaseReqs||[])
       .filter(r=>selectedPrs.includes(r.id))
       .flatMap((pr,prIdx)=>
         (pr.lots||[]).flatMap((l,lotIdx)=>
           (l.lines||[]).map((ln,lineIdx)=>{
+            const qty = inclQty(pr,l,ln);
+            if (qty<=0) return null;
             const p = parseNestingMatCode(l.matCode);
             const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
-            const qty = ln.qty||0;
             const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
             return {
               id:`POL-${ts}-${prIdx}-${lotIdx}-${lineIdx}`,
@@ -8833,9 +8846,10 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               sourceType:"nesting", sourcePrId:pr.id,
               itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
             };
-          })
+          }).filter(Boolean)
         )
       );
+    if (allLines.length===0) { showToast("Nothing to convert — all quantities are 0"); return; }
     const newPO = {
       id:newPoId, vendorId:combineForm.vendorId, vendorCode:v?.vendorCode||"",
       vendorName:v?.name||combineForm.vendorName||"", poDate:combineForm.poDate||today(),
@@ -8850,8 +8864,20 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       lines:allLines, grns:[], createdBy:user.name, createdDate:today(),
     };
     setPos(prev=>[...prev, newPO]);
-    setPurchaseReqs(prev=>prev.map(r=>selectedPrs.includes(r.id)?{...r,status:"converted",poId:newPoId}:r));
-    showToast(`${newPoId} created from ${selectedPrs.length} requisitions`);
+    setPurchaseReqs(prev=>prev.map(r=>{
+      if (!selectedPrs.includes(r.id)) return r;
+      const newConverted = {...(r.convertedLines||{})};
+      (r.lots||[]).forEach(l=>(l.lines||[]).forEach(ln=>{
+        const q = inclQty(r,l,ln);
+        if (q>0) { const k = prLineKey(r.id, l.matCode, ln.sheetDim||ln.dims); newConverted[k] = (newConverted[k]||0)+q; }
+      }));
+      const remaining = (r.lots||[]).reduce((s,l)=>s+(l.lines||[]).reduce((ss,ln)=>ss+Math.max(0,(ln.qty||0)-(newConverted[prLineKey(r.id,l.matCode,ln.sheetDim||ln.dims)]||0)),0),0);
+      const anyConverted = Object.values(newConverted).some(v=>v>0);
+      return {...r, convertedLines:newConverted,
+        poIds:[...(r.poIds||[]), newPoId], poId:newPoId,
+        status: remaining<=0 ? "converted" : (anyConverted ? "partially_converted" : r.status)};
+    }));
+    showToast(`${newPoId} created from ${selectedPrs.length} requisition(s)`);
     setCombineModal(false); setCombineForm({}); setSelectedPrs([]);
     // Stay on Requisitions tab — user can click "View PO" on the PR cards
   };
@@ -9060,7 +9086,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {/* Requisitions Tab */}
       {purTab === "requisitions" && (()=>{
         const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting").sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
-        const prStatusBadge = { pending:"amber", converted:"green", cancelled:"gray", stale:"red" };
+        const prStatusBadge = { pending:"amber", converted:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
         return (
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
@@ -9077,7 +9103,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                 <div key={pr.id} style={{ ...css.card, marginBottom:10 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 }}>
                     <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
-                      {pr.status==="pending" && canEdit && (
+                      {(pr.status==="pending"||pr.status==="partially_converted") && canEdit && (
                         <input type="checkbox" checked={selectedPrs.includes(pr.id)}
                           onChange={e=>setSelectedPrs(prev=>e.target.checked?[...prev,pr.id]:prev.filter(x=>x!==pr.id))}
                           style={{ marginTop:3, accentColor:T.accent, width:15, height:15, cursor:"pointer" }} />
@@ -9096,19 +9122,25 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                       {pr.cancelReason && (
                         <div style={{ fontSize:11, color:T.textLow, marginTop:4 }}>Cancel reason: {pr.cancelReason}</div>
                       )}
+                      {pr.status==="partially_converted" && (
+                        <div style={{ fontSize:11, color:T.amber, marginTop:4 }}>
+                          {prRemainingTotal(pr)} sheet(s) remaining · POs: {(pr.poIds||[pr.poId]).filter(Boolean).join(", ")}
+                        </div>
+                      )}
                     </div>{/* end pr info */}
                     </div>{/* end left col (checkbox + info) */}
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                      {pr.status==="pending" && canEdit && (
+                      {(pr.status==="pending"||pr.status==="partially_converted") && canEdit && (
                         <>
                           <button onClick={()=>{
-                            setConvertSingleModal(pr);
-                            setConvertSingleForm({vendorId:'',poDate:today(),expectedDelivery:'',notes:'',rates:{}});
-                          }} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO</button>
-                          <button onClick={()=>{
+                            setSelectedPrs([pr.id]);
+                            setCombineForm({vendorId:"",poDate:today(),expectedDelivery:"",notes:"",rates:{},lineQtys:{}});
+                            setCombineModal(true);
+                          }} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>{pr.status==="partially_converted"?"Convert Remaining":"Convert to PO"}</button>
+                          {pr.status==="pending" && <button onClick={()=>{
                             if (!window.confirm("Cancel this purchase requisition?")) return;
                             setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r,status:"cancelled",cancelledAt:today(),cancelReason:"Manually cancelled"}));
-                          }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Discard PR</button>
+                          }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Discard PR</button>}
                         </>
                       )}
                       {pr.status==="converted" && po && (
@@ -9156,19 +9188,19 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             })}
 
             {/* Sticky combine bar */}
-            {selectedPrs.length >= 2 && canEdit && (
+            {selectedPrs.length >= 1 && canEdit && (
               <div style={{ position:"sticky", bottom:16, background:T.bgCard, border:`2px solid ${T.accent}`, borderRadius:10, padding:"12px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"0 4px 24px #0008", zIndex:200, marginTop:12 }}>
                 <span style={{ color:T.accent, fontWeight:700, fontSize:13 }}>
-                  {selectedPrs.length} requisitions selected
+                  {selectedPrs.length} requisition{selectedPrs.length>1?"s":""} selected
                   {" · "}<span style={{ color:T.textMid, fontWeight:400 }}>
                     {fmt.num((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>{
-                      return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(nestingSheetWt(l.matCode,ln.sheetDim||ln.dims)*(ln.qty||0)),ss),0);
-                    },0))} kg total
+                      return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(nestingSheetWt(l.matCode,ln.sheetDim||ln.dims)*prLineRemaining(pr,l,ln)),ss),0);
+                    },0))} kg remaining
                   </span>
                 </span>
                 <div style={{ display:"flex", gap:8 }}>
                   <button onClick={()=>setSelectedPrs([])} style={css.btn.secondary}>Clear</button>
-                  <button onClick={()=>{ setCombineForm({vendorId:"",poDate:today(),expectedDelivery:"",notes:""}); setCombineModal(true); }} style={css.btn.primary}>Combine into PO →</button>
+                  <button onClick={()=>{ setCombineForm({vendorId:"",poDate:today(),expectedDelivery:"",notes:"",rates:{},lineQtys:{}}); setCombineModal(true); }} style={css.btn.primary}>{selectedPrs.length>1?"Combine into PO →":"Convert to PO →"}</button>
                 </div>
               </div>
             )}
@@ -9180,17 +9212,38 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {combineModal && (
         <Modal title="Create Combined Purchase Order" onClose={()=>setCombineModal(false)} width={520}>
           <div style={{ marginBottom:14, padding:"10px 14px", background:T.bgInput, borderRadius:6, fontSize:12 }}>
-            <div style={{ fontWeight:700, color:T.textMid, marginBottom:6 }}>Combining {selectedPrs.length} requisitions:</div>
-            {(purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).map(pr=>{
-              const totalWt = (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(nestingSheetWt(l.matCode,ln.sheetDim||ln.dims)*(ln.qty||0)),ss),0);
-              return (
-                <div key={pr.id} style={{ display:"flex", justifyContent:"space-between", padding:"3px 0", borderBottom:`1px solid ${T.border}` }}>
-                  <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:11 }}>{pr.id}</span>
-                  <span style={{ fontSize:11, color:T.textMid }}>{(pr.lots||[])[0]?.matCode||"—"}</span>
-                  <span style={{ fontFamily:T.fontMono, fontSize:11, fontWeight:700 }}>{fmt.num(totalWt)} kg</span>
-                </div>
-              );
-            })}
+            <div style={{ fontWeight:700, color:T.textMid, marginBottom:6 }}>{selectedPrs.length>1?`Combining ${selectedPrs.length} requisitions`:"Converting 1 requisition"} — adjust quantities to split across POs; the remainder stays open on the PR:</div>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+              <thead><tr>
+                {["PR","Material","Dim","Remaining","Qty to this PO","Wt (kg)"].map(h=><th key={h} style={{ textAlign:"left", padding:"3px 6px", color:T.textMid, fontWeight:600, borderBottom:`1px solid ${T.border}` }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {(purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>
+                  (pr.lots||[]).flatMap(l=>(l.lines||[]).map((ln,i)=>{
+                    const dim = ln.sheetDim||ln.dims||"";
+                    const k = prLineKey(pr.id, l.matCode, dim);
+                    const rem = prLineRemaining(pr,l,ln);
+                    if (rem<=0) return null;
+                    const val = combineForm.lineQtys?.[k]===undefined ? rem : combineForm.lineQtys[k];
+                    const q = Math.max(0, Math.min(rem, parseInt(val)||0));
+                    return (
+                      <tr key={k+i}>
+                        <td style={{ padding:"3px 6px", fontFamily:T.fontMono, fontSize:10, color:T.accentHi }}>{pr.id.slice(-6)}</td>
+                        <td style={{ padding:"3px 6px", fontFamily:T.fontMono }}>{l.matCode}</td>
+                        <td style={{ padding:"3px 6px", fontFamily:T.fontMono }}>{dim}</td>
+                        <td style={{ padding:"3px 6px", fontFamily:T.fontMono, textAlign:"right" }}>{rem}</td>
+                        <td style={{ padding:"3px 6px" }}>
+                          <input type="number" min={0} max={rem} value={val}
+                            onChange={e=>setCombineForm(f=>({...f, lineQtys:{...(f.lineQtys||{}), [k]:e.target.value}}))}
+                            style={{ ...css.input, width:70, padding:"3px 6px", fontSize:11 }} />
+                        </td>
+                        <td style={{ padding:"3px 6px", fontFamily:T.fontMono, textAlign:"right" }}>{fmt.num(Math.round(nestingSheetWt(l.matCode,dim)*q))}</td>
+                      </tr>
+                    );
+                  })).filter(Boolean)
+                )}
+              </tbody>
+            </table>
           </div>
           <G2>
             <Field label="Vendor" required>
@@ -9267,7 +9320,19 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           })()}
           <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:16 }}>
             <button onClick={()=>setCombineModal(false)} style={css.btn.secondary}>Cancel</button>
-            <button onClick={createCombinedPO} disabled={!combineForm.vendorId||[...new Set((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>(pr.lots||[]).map(l=>l.matCode)))].some(mc=>!(parseFloat(combineForm.rates?.[mc])||0))} style={{ ...css.btn.primary, opacity:(!combineForm.vendorId||[...new Set((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>(pr.lots||[]).map(l=>l.matCode)))].some(mc=>!(parseFloat(combineForm.rates?.[mc])||0)))?0.4:1 }}>Create PO</button>
+            <button onClick={createCombinedPO} disabled={(()=>{
+              if (!combineForm.vendorId) return true;
+              const inclMats = new Set();
+              (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).forEach(pr=>(pr.lots||[]).forEach(l=>(l.lines||[]).forEach(ln=>{
+                const k = prLineKey(pr.id, l.matCode, ln.sheetDim||ln.dims);
+                const rem = prLineRemaining(pr,l,ln);
+                const v = combineForm.lineQtys?.[k];
+                const q = Math.max(0, Math.min(rem, v===undefined||v==="" ? rem : (parseInt(v)||0)));
+                if (q>0) inclMats.add(l.matCode);
+              })));
+              if (inclMats.size===0) return true;
+              return [...inclMats].some(mc=>!(parseFloat(combineForm.rates?.[mc])||0));
+            })()} style={{ ...css.btn.primary }}>Create PO</button>
           </div>
         </Modal>
       )}
