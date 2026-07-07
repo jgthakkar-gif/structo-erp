@@ -8714,7 +8714,7 @@ const nestingSheetWt = (matCode, sheetDim) => {
   }
 };
 
-const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, setVendors, materials, setMaterials, paint, consumables, setMod }) => {
+const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, setVendors, materials, setMaterials, paint, consumables, setMod, nestingBatches }) => {
   const [purTab, setPurTab] = useState("pos"); // "pos" | "requisitions"
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
@@ -8732,6 +8732,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const poImpRef = useRef(null);
   const [showCancelled, setShowCancelled] = useState(false);
   const [selectedPrs, setSelectedPrs] = useState([]);   // Part 3: multi-PR combine
+  const [prOrderFilter, setPrOrderFilter] = useState("");
   const [combineModal, setCombineModal] = useState(false);
   const [combineForm, setCombineForm] = useState({});
   const [convertSingleModal, setConvertSingleModal] = useState(null); // PR object
@@ -8810,6 +8811,37 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const prLineKey = (prId, matCode, dim) => `${prId}|${matCode}|${dim||""}`;
   const prLineRemaining = (pr, l, ln) => Math.max(0, (ln.qty||0) - ((pr.convertedLines||{})[prLineKey(pr.id, l.matCode, ln.sheetDim||ln.dims)]||0));
   const prRemainingTotal = (pr) => (pr.lots||[]).reduce((s,l)=>s+(l.lines||[]).reduce((ss,ln)=>ss+prLineRemaining(pr,l,ln),0),0);
+  // Sheet/bar weight with DB-materials fallback: the module-level nestingSheetWt
+  // only knows the hardcoded library constant, which lacks later additions
+  // (UC/UB etc. added directly to the materials master) — hence Wt Req showing 0.
+  const sheetWt = (mc, dim) => {
+    const w = nestingSheetWt(mc, dim);
+    if (w) return w;
+    const lib = (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(mc));
+    if (!lib) return 0;
+    if (lib.isPlate) {
+      const t = parseFloat((mc||"").split("/")[3]||"")||0;
+      const p = (dim||"").toUpperCase().split("X").map(Number);
+      return (p[0]&&p[1]&&t) ? Math.round(p[0]*p[1]*t*7.85/1e6*100)/100 : 0;
+    }
+    const lenM = (parseFloat(dim)||0)/1000;
+    return (lenM>0 && lib.wtPerMetre>0) ? Math.round(lenM*lib.wtPerMetre*100)/100 : 0;
+  };
+  // Orders a PR belongs to, via its source nesting batch (orderIds → drawingNos → part marks)
+  const prOrderNos = (pr) => {
+    const b = (nestingBatches||[]).find(x=>x.id===pr.nestingBatchId);
+    const found = new Set();
+    if (b?.orderIds?.length) b.orderIds.forEach(oid=>{ const o=(orders||[]).find(x=>x.id===oid); if(o) found.add(o.orderNo||o.id); });
+    if (!found.size && b) {
+      const drg = new Set((b.lots||[]).flatMap(l=>l.drawingNos||[]).map(d=>String(d).trim().toUpperCase()));
+      if (drg.size) (orders||[]).forEach(o=>{ if((o.drawings||[]).some(d=>drg.has((d.drawingNo||"").trim().toUpperCase()))) found.add(o.orderNo||o.id); });
+      if (!found.size) {
+        const marks = new Set((b.lots||[]).flatMap(l=>l.parts||[]));
+        if (marks.size) (orders||[]).forEach(o=>{ if((o.parts||[]).some(p=>marks.has(p.markNo))) found.add(o.orderNo||o.id); });
+      }
+    }
+    return [...found];
+  };
   const createCombinedPO = () => {
     const yr = new Date().getFullYear();
     const maxSeq = pos.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
@@ -8830,7 +8862,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             const qty = inclQty(pr,l,ln);
             if (qty<=0) return null;
             const p = parseNestingMatCode(l.matCode);
-            const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
+            const wtPerSheet = sheetWt(l.matCode, ln.sheetDim||ln.dims);
             const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
             return {
               id:`POL-${ts}-${prIdx}-${lotIdx}-${lineIdx}`,
@@ -8894,7 +8926,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     const lines = (pr.lots||[]).flatMap((l,li)=>
       (l.lines||[]).map((ln,di)=>{
         const p = parseNestingMatCode(l.matCode);
-        const wtPerSheet = nestingSheetWt(l.matCode, ln.sheetDim||ln.dims);
+        const wtPerSheet = sheetWt(l.matCode, ln.sheetDim||ln.dims);
         const qty = ln.qty||0;
         const rate = parseFloat(csf.lineRates?.[`${li}-${di}`]??csf.rates?.[l.matCode])||0;
         const totalWt = Math.round(wtPerSheet*qty*100)/100;
@@ -9085,12 +9117,21 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
 
       {/* Requisitions Tab */}
       {purTab === "requisitions" && (()=>{
-        const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting").sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+        const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting")
+          .filter(r=>!prOrderFilter || prOrderNos(r).includes(prOrderFilter))
+          .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
         const prStatusBadge = { pending:"amber", converted:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
         return (
           <div>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, gap:12 }}>
               <div style={{ fontSize:13, color:T.textMid }}>{nestingPrs.length} requisition{nestingPrs.length!==1?"s":""} from nesting batches</div>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:11, color:T.textMid, fontWeight:700 }}>Filter by Order:</span>
+                <Sel value={prOrderFilter} onChange={e=>setPrOrderFilter(e.target.value)} style={{ width:260 }}>
+                  <option value="">All orders</option>
+                  {(orders||[]).map(o=><option key={o.id} value={o.orderNo||o.id}>{o.orderNo||o.id}{o.clientName?` — ${o.clientName}`:""}</option>)}
+                </Sel>
+              </div>
             </div>
             {nestingPrs.length===0 && (
               <div style={{ ...css.card, textAlign:"center", padding:40, color:T.textLow, fontSize:13 }}>
@@ -9112,6 +9153,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                       <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
                         <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{pr.id}</span>
                         <Badge color={prStatusBadge[pr.status]||"gray"}>{pr.status}</Badge>
+                        {prOrderNos(pr).map(on=><Badge key={on} color="teal">{on}</Badge>)}
                       </div>
                       <div style={{ fontSize:12, color:T.textMid }}>
                         {fmt.date(pr.createdAt)} · by {pr.createdBy}
@@ -9174,7 +9216,17 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                                   : <span style={{ color:T.textLow }}>—</span>}
                               </td>
                               <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent, fontSize:11 }}>
-                                {fmt.num(Math.round((l.lines||[]).reduce((s,ln)=>s+nestingSheetWt(l.matCode,ln.sheetDim||ln.dims)*(ln.qty||0),0)))}
+                                {(()=>{
+                                  const rmWt = (l.lines||[]).reduce((s,ln)=>s+sheetWt(l.matCode,ln.sheetDim||ln.dims)*(ln.qty||0),0);
+                                  const b = (nestingBatches||[]).find(x=>x.id===pr.nestingBatchId);
+                                  const bl = b ? (b.lots||[]).find(x=>normMatCode(x.matCode)===normMatCode(l.matCode)) : null;
+                                  const utils = bl ? (bl.sheets||[]).map(sh=>sh.utilisPct).filter(u=>u>0) : [];
+                                  const util = utils.length ? utils.reduce((a,c)=>a+c,0)/utils.length : (bl&&bl.npPct>0 ? bl.npPct : 0);
+                                  return (<>
+                                    {fmt.num(Math.round(rmWt))}
+                                    {util>0 && <div style={{ fontSize:9, color:T.textLow }}>≈ {fmt.num(Math.round(rmWt*util/100))} kg net parts · {util.toFixed(0)}%</div>}
+                                  </>);
+                                })()}
                               </td>
                               <td style={{ padding:"4px 8px", color:T.textMid }}>{(l.parts||[]).length}</td>
                             </tr>
@@ -9194,7 +9246,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   {selectedPrs.length} requisition{selectedPrs.length>1?"s":""} selected
                   {" · "}<span style={{ color:T.textMid, fontWeight:400 }}>
                     {fmt.num((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>{
-                      return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(nestingSheetWt(l.matCode,ln.sheetDim||ln.dims)*prLineRemaining(pr,l,ln)),ss),0);
+                      return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(sheetWt(l.matCode,ln.sheetDim||ln.dims)*prLineRemaining(pr,l,ln)),ss),0);
                     },0))} kg remaining
                   </span>
                 </span>
@@ -9237,7 +9289,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                             onChange={e=>setCombineForm(f=>({...f, lineQtys:{...(f.lineQtys||{}), [k]:e.target.value}}))}
                             style={{ ...css.input, width:70, padding:"3px 6px", fontSize:11 }} />
                         </td>
-                        <td style={{ padding:"3px 6px", fontFamily:T.fontMono, textAlign:"right" }}>{fmt.num(Math.round(nestingSheetWt(l.matCode,dim)*q))}</td>
+                        <td style={{ padding:"3px 6px", fontFamily:T.fontMono, textAlign:"right" }}>{fmt.num(Math.round(sheetWt(l.matCode,dim)*q))}</td>
                       </tr>
                     );
                   })).filter(Boolean)
@@ -9302,7 +9354,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               <div style={{ marginTop:12 }}>
                 <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8, letterSpacing:"0.05em" }}>RATES (₹/kg) — mandatory</div>
                 {matCodes.map(mc=>{
-                  const mcWt = (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>(pr.lots||[]).filter(l=>l.matCode===mc).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+nestingSheetWt(mc,ln.sheetDim||ln.dims)*(ln.qty||0),ss),s),0);
+                  const mcWt = (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>(pr.lots||[]).filter(l=>l.matCode===mc).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+sheetWt(mc,ln.sheetDim||ln.dims)*(ln.qty||0),ss),s),0);
                   return (
                     <div key={mc} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:`1px solid ${T.border}` }}>
                       <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.accentHi, minWidth:160 }}>{mc}</span>
@@ -9343,7 +9395,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         const csf = convertSingleForm;
         const lineGroups = (pr.lots||[]).map((l,li)=>{
           const dimLines = (l.lines||[]).map((d,di)=>{
-            const wt = nestingSheetWt(l.matCode, d.sheetDim);
+            const wt = sheetWt(l.matCode, d.sheetDim);
             const lineRate = parseFloat(csf.lineRates?.[`${li}-${di}`]??csf.rates?.[l.matCode])||0;
             const totalWt = Math.round(wt*(d.qty||0)*100)/100;
             return { ...d, di, wt, totalWt, lineRate, lineValue:Math.round(totalWt*lineRate*100)/100 };
@@ -10068,11 +10120,11 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
 // Resolve wtOrdered for legacy PO lines where wtPerSheet was 0 (sections created before fix)
 const resolvePoLineWt = (pl) => {
   if (pl.wtOrdered > 0) return pl.wtOrdered;
-  const wps = nestingSheetWt(pl.matCode, pl.sheetDim||pl.description||"");
+  const wps = sheetWt(pl.matCode, pl.sheetDim||pl.description||"");
   return wps > 0 ? Math.round(wps * (pl.qty||0) * 100) / 100 : 0;
 };
 const resolvePoLineWtPS = (pl) =>
-  pl.wtPerSheet || nestingSheetWt(pl.matCode, pl.sheetDim||pl.description||"");
+  pl.wtPerSheet || sheetWt(pl.matCode, pl.sheetDim||pl.description||"");
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
 const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog }) => {
@@ -19714,7 +19766,7 @@ export default function App() {
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} />;
-      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} />;
+      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} />;
