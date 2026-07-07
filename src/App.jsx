@@ -2563,7 +2563,7 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, stock }) => {
   const [search, setSearch] = useState(""); const [sectionFilter, setSectionFilter] = useState("all");
   const [gradeFilter, setGradeFilter] = useState("all"); const [page, setPage] = useState(0);
   const [modal, setModal] = useState(null); const [form, setForm] = useState({}); const [lenInput, setLenInput] = useState("");
-  const canEdit = user.role==="super_admin"||user.role==="qc_admin";
+  const canEdit = ["super_admin","qc_admin","purchase_admin","planning_admin"].includes(user.role);
   const sections = ["all",...Array.from(new Set(materials.map(m=>m.sectionType))).sort()];
   const grades   = ["all",...Array.from(new Set(materials.map(m=>m.grade))).sort()];
   const isPlateForm = form.sectionType==="PLATE";
@@ -8714,6 +8714,17 @@ const nestingSheetWt = (matCode, sheetDim) => {
   }
 };
 
+// Pure-geometry kg/m for sections whose weight derives from the size itself.
+// ROD d²×0.006165; BAR/FLAT w×t×0.00785; SQ a²×0.00785. (mm inputs, kg/m out)
+const geometricKgPerM = (sectionType, size) => {
+  const st = (sectionType||"").toUpperCase().trim();
+  const nums = (size||"").toUpperCase().replace(/MM/g,"").split(/[X×]/).map(n=>parseFloat(n)).filter(n=>!isNaN(n));
+  if (["ROD","ROUND","ROUND BAR"].includes(st) && nums.length>=1) return Math.round(nums[0]*nums[0]*0.006165*1000)/1000;
+  if (["BAR","FLAT","FLT","FLAT BAR"].includes(st) && nums.length>=2) return Math.round(nums[0]*nums[1]*0.00785*1000)/1000;
+  if (["SQ","SQUARE","SQUARE BAR"].includes(st) && nums.length>=1) return Math.round(nums[0]*nums[0]*0.00785*1000)/1000;
+  return 0;
+};
+
 const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, setVendors, materials, setMaterials, paint, consumables, setMod, nestingBatches }) => {
   const [purTab, setPurTab] = useState("pos"); // "pos" | "requisitions"
   const [view, setView] = useState("list");
@@ -8818,15 +8829,43 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     const w = nestingSheetWt(mc, dim);
     if (w) return w;
     const lib = (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(mc));
-    if (!lib) return 0;
+    if (lib?.nosOnly) return 0;
+    if (!lib) {
+      const segs = (mc||"").split("/");
+      const g = geometricKgPerM(segs[0], segs[3]);
+      const lenM = (parseFloat(dim)||0)/1000;
+      return (lenM>0 && g>0) ? Math.round(lenM*g*100)/100 : 0;
+    }
     if (lib.isPlate) {
       const t = parseFloat((mc||"").split("/")[3]||"")||0;
       const p = (dim||"").toUpperCase().split("X").map(Number);
       return (p[0]&&p[1]&&t) ? Math.round(p[0]*p[1]*t*7.85/1e6*100)/100 : 0;
     }
     const lenM = (parseFloat(dim)||0)/1000;
-    return (lenM>0 && lib.wtPerMetre>0) ? Math.round(lenM*lib.wtPerMetre*100)/100 : 0;
+    if (lenM>0 && lib.wtPerMetre>0) return Math.round(lenM*lib.wtPerMetre*100)/100;
+    const segs = (mc||"").split("/");
+    const g = geometricKgPerM(segs[0], segs[3]);
+    return (lenM>0 && g>0) ? Math.round(lenM*g*100)/100 : 0;
   };
+  const matLib = (mc) => (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(mc));
+  const isNosOnly = (mc) => matLib(mc)?.nosOnly===true;
+  // "sheet" (plates), "bar" (length-stock sections), "nos" (count-only items)
+  const matClass = (mc) => isNosOnly(mc) ? "nos" : ((mc||"").split("/")[0].toUpperCase()==="PLATE" ? "sheet" : "bar");
+  // Quick-add: writes kg/m or the nos-only flag into the materials master so the
+  // fix is permanent everywhere, not patched on one PR.
+  const applyQuickWt = (mc, kgpm, nosOnly) => {
+    setMaterials(prev=>{
+      const list = prev||[];
+      const idx = list.findIndex(m=>normMatCode(m.matCode)===normMatCode(mc));
+      if (idx>=0) return list.map((m,i)=>i===idx?{...m, wtPerMetre: nosOnly?(m.wtPerMetre||0):kgpm, nosOnly:!!nosOnly}:m);
+      const segs = (mc||"").split("/");
+      return [...list, { id:"ML-Q"+Date.now(), matCode:mc, sectionType:segs[0]||"", matType:segs[1]||"MS",
+        grade:segs[2]||"", size:segs[3]||"", isPlate:false, wtPerMetre:nosOnly?0:kgpm, nosOnly:!!nosOnly,
+        standardLengths:[6000,12000], active:true, addedVia:"quick-add" }];
+    });
+  };
+  const [quickWtModal, setQuickWtModal] = useState(null);
+  const [quickWtVals, setQuickWtVals] = useState({});
   // Orders a PR belongs to, via its source nesting batch (orderIds → drawingNos → part marks)
   const prOrderNos = (pr) => {
     const b = (nestingBatches||[]).find(x=>x.id===pr.nestingBatchId);
@@ -8869,11 +8908,13 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
               sheetDim:ln.sheetDim||ln.dims, isPlate:p.sectionType?.toUpperCase()==='PLATE',
               sheetLength:dimParts[0]||0, sheetWidth:dimParts[1]||0,
-              orderMode:"ByUnits", qty, qtyOrdered:qty, unit:"Sheets",
-              pricingMethod:"PerKg", unitPrice:parseFloat(combineForm.rates?.[l.matCode])||0,
+              orderMode:"ByUnits", qty, qtyOrdered:qty, unit: isNosOnly(l.matCode)?"Nos":"Sheets",
+              pricingMethod: isNosOnly(l.matCode)?"PerUnit":"PerKg", unitPrice:parseFloat(combineForm.rates?.[l.matCode])||0,
               wtPerSheet, wtOrdered:Math.round(wtPerSheet*qty*100)/100,
               wtRequired:Math.round(wtPerSheet*qty*100)/100,
-              totalPrice:Math.round(Math.round(wtPerSheet*qty*100)/100*(parseFloat(combineForm.rates?.[l.matCode])||0)*100)/100,
+              totalPrice: isNosOnly(l.matCode)
+                ? Math.round(qty*(parseFloat(combineForm.rates?.[l.matCode])||0)*100)/100
+                : Math.round(Math.round(wtPerSheet*qty*100)/100*(parseFloat(combineForm.rates?.[l.matCode])||0)*100)/100,
               wtReceived:0, qtyReceived:0, status:"pending",
               sourceType:"nesting", sourcePrId:pr.id,
               itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
@@ -9123,6 +9164,48 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         const prStatusBadge = { pending:"amber", converted:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
         return (
           <div>
+            {(()=>{
+              const s = { openWt:0, convWt:0, openSheets:0, openBars:0, openNos:0, convSheets:0, convBars:0, convNos:0, unweighed:new Set() };
+              nestingPrs.forEach(pr=>{
+                if (["cancelled","stale"].includes(pr.status)) return;
+                (pr.lots||[]).forEach(l=>(l.lines||[]).forEach(ln=>{
+                  const dim = ln.sheetDim||ln.dims;
+                  const rem = prLineRemaining(pr,l,ln);
+                  const conv = Math.max(0,(ln.qty||0)-rem);
+                  const cls = matClass(l.matCode);
+                  if (cls==="nos") { s.openNos+=rem; s.convNos+=conv; return; }
+                  const w = sheetWt(l.matCode, dim);
+                  if (w>0) { s.openWt+=w*rem; s.convWt+=w*conv; }
+                  else if (rem+conv>0) s.unweighed.add(l.matCode);
+                  if (cls==="sheet") { s.openSheets+=rem; s.convSheets+=conv; }
+                  else { s.openBars+=rem; s.convBars+=conv; }
+                }));
+              });
+              const qtyStr = (sh,br,ns) => [sh>0?sh+" sheet"+(sh!==1?"s":""):null, br>0?br+" bar"+(br!==1?"s":"")+"/lengths":null, ns>0?ns+" nos":null].filter(Boolean).join(" + ")||"0";
+              return (
+                <div style={{ ...css.card, padding:"10px 16px", marginBottom:12 }}>
+                  <div style={{ fontSize:13, marginBottom:4 }}>
+                    <span style={{ fontWeight:700, color:T.textMid }}>Weight&nbsp;&nbsp;</span>
+                    Open: <b style={{ fontFamily:T.fontMono }}>{(s.openWt/1000).toFixed(2)} T</b>
+                    {s.unweighed.size>0 && (
+                      <button onClick={()=>{ setQuickWtVals({}); setQuickWtModal([...s.unweighed]); }}
+                        style={{ ...css.btn.ghost, color:T.amber, fontWeight:700, fontSize:11, padding:"1px 6px" }}
+                        title="Click to add weights for these materials">
+                        &#9888; excl. {s.unweighed.size} unweighed material{s.unweighed.size!==1?"s":""}
+                      </button>
+                    )}
+                    <span style={{ color:T.textLow }}> &nbsp;&middot;&nbsp; </span>
+                    Converted: <b style={{ fontFamily:T.fontMono }}>{(s.convWt/1000).toFixed(2)} T</b>
+                  </div>
+                  <div style={{ fontSize:12, color:T.textMid }}>
+                    <span style={{ fontWeight:700 }}>Quantity&nbsp;&nbsp;</span>
+                    Open: {qtyStr(s.openSheets,s.openBars,s.openNos)}
+                    <span style={{ color:T.textLow }}> &nbsp;&middot;&nbsp; </span>
+                    Converted: {qtyStr(s.convSheets,s.convBars,s.convNos)}
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, gap:12 }}>
               <div style={{ fontSize:13, color:T.textMid }}>{nestingPrs.length} requisition{nestingPrs.length!==1?"s":""} from nesting batches</div>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -9247,7 +9330,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   {" · "}<span style={{ color:T.textMid, fontWeight:400 }}>
                     {fmt.num((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>{
                       return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(sheetWt(l.matCode,ln.sheetDim||ln.dims)*prLineRemaining(pr,l,ln)),ss),0);
-                    },0))} kg remaining
+                    },0))} kg to convert
                   </span>
                 </span>
                 <div style={{ display:"flex", gap:8 }}>
@@ -9261,6 +9344,38 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       })()}
 
       {/* Combined PO Modal */}
+      {quickWtModal && quickWtModal.length>0 && (
+        <Modal title="Add missing weights" onClose={()=>setQuickWtModal(null)} width={560}>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
+            These materials have no weight data. Enter kg/m to weigh them everywhere permanently, or mark
+            count-only items (covers, fittings) as <b>Nos only</b> — they will then be priced per piece and
+            excluded from tonnage totals without warnings.
+          </div>
+          {quickWtModal.map(mc=>{
+            const segs = (mc||"").split("/");
+            const suggested = geometricKgPerM(segs[0], segs[3]);
+            return (
+              <div key={mc} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:`1px solid ${T.border}` }}>
+                <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.accentHi, flex:1 }}>{mc}</span>
+                <input type="number" min={0} step="0.001" placeholder={suggested>0?`≈ ${suggested}`:"kg/m"}
+                  value={quickWtVals[mc]||""}
+                  onChange={e=>setQuickWtVals(v=>({...v,[mc]:e.target.value}))}
+                  style={{ ...css.input, width:100, fontSize:11 }} />
+                <button onClick={()=>{
+                  const v = parseFloat(quickWtVals[mc]) || suggested;
+                  if (!(v>0)) return;
+                  applyQuickWt(mc, v, false);
+                  setQuickWtModal(list=>{ const next=list.filter(x=>x!==mc); return next.length?next:null; });
+                }} style={{ ...css.btn.sm }}>Save kg/m</button>
+                <button onClick={()=>{
+                  applyQuickWt(mc, 0, true);
+                  setQuickWtModal(list=>{ const next=list.filter(x=>x!==mc); return next.length?next:null; });
+                }} style={{ ...css.btn.secondary, fontSize:11, padding:"4px 10px" }}>Nos only</button>
+              </div>
+            );
+          })}
+        </Modal>
+      )}
       {combineModal && (
         <Modal title="Create Combined Purchase Order" onClose={()=>setCombineModal(false)} width={520}>
           <div style={{ marginBottom:14, padding:"10px 14px", background:T.bgInput, borderRadius:6, fontSize:12 }}>
@@ -9352,14 +9467,14 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             if (!matCodes.length) return null;
             return (
               <div style={{ marginTop:12 }}>
-                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8, letterSpacing:"0.05em" }}>RATES (₹/kg) — mandatory</div>
+                <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:8, letterSpacing:"0.05em" }}>RATES — mandatory (₹/kg, or ₹/pc for nos-only items)</div>
                 {matCodes.map(mc=>{
                   const mcWt = (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>(pr.lots||[]).filter(l=>l.matCode===mc).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+sheetWt(mc,ln.sheetDim||ln.dims)*(ln.qty||0),ss),s),0);
                   return (
                     <div key={mc} style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 0", borderBottom:`1px solid ${T.border}` }}>
                       <span style={{ fontFamily:T.fontMono, fontSize:11, color:T.accentHi, minWidth:160 }}>{mc}</span>
-                      <span style={{ fontSize:11, color:T.textMid }}>{fmt.num(Math.round(mcWt))} kg</span>
-                      <input type="number" min={0} value={combineForm.rates?.[mc]||""} placeholder="Rate ₹/kg"
+                      <span style={{ fontSize:11, color:T.textMid }}>{isNosOnly(mc) ? "nos-only item" : fmt.num(Math.round(mcWt))+" kg"}</span>
+                      <input type="number" min={0} value={combineForm.rates?.[mc]||""} placeholder={isNosOnly(mc)?"Rate ₹/pc":"Rate ₹/kg"}
                         onChange={e=>setCombineForm(f=>({...f,rates:{...(f.rates||{}),[mc]:e.target.value}}))}
                         style={{ width:90, background:T.bgInput, border:`1px solid ${!(parseFloat(combineForm.rates?.[mc])||0)?T.red:T.border}`, borderRadius:4, padding:"3px 7px", color:T.text, fontFamily:T.fontMono, fontSize:11 }} />
                       <span style={{ fontSize:11, color:T.green }}>{(parseFloat(combineForm.rates?.[mc])||0)>0?fmt.currency(Math.round(mcWt*(parseFloat(combineForm.rates?.[mc])||0))):"—"}</span>
