@@ -8745,6 +8745,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [selectedPrs, setSelectedPrs] = useState([]);   // Part 3: multi-PR combine
   const [prOrderFilter, setPrOrderFilter] = useState("");
   const [prTypeFilter, setPrTypeFilter] = useState("");
+  const [showCancelledPrs, setShowCancelledPrs] = useState(false);
   // Rolled structural sections typically share vendors, distinct from plate mills
   const ROLLED_TYPES = ["ISA","ISMC","ISMB","ISLB","ISHB","ISJB","ISJC","UB","UC","NPB","WPB","UBP","BEAM","CHANNEL","ANGLE","ISNT","RSJ"];
   const prSectionTypes = (pr) => [...new Set((pr.lots||[]).map(l=>((l.matCode||"").split("/")[0]||"").toUpperCase()).filter(Boolean))];
@@ -9083,7 +9084,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     setGrnForm({lines:[]});
   };
 
-  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} />;
+  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} />;
 
   return (
     <div>
@@ -9170,6 +9171,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       {/* Requisitions Tab */}
       {purTab === "requisitions" && (()=>{
         const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting")
+          .filter(r=>showCancelledPrs || !["cancelled","stale"].includes(r.status))
           .filter(r=>!prOrderFilter || prOrderNos(r).includes(prOrderFilter))
           .filter(prMatchesType)
           .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
@@ -9236,6 +9238,10 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   <option value="ROLLED">Rolled sections (ISA/ISMC/ISMB/UB/UC…)</option>
                   {otherTypes.map(t=><option key={t} value={t}>{t}</option>)}
                 </Sel>
+                <label style={{ fontSize:11, color:T.textMid, display:"flex", alignItems:"center", gap:4, cursor:"pointer" }}>
+                  <input type="checkbox" checked={showCancelledPrs} onChange={e=>setShowCancelledPrs(e.target.checked)} />
+                  Show cancelled
+                </label>
                 {selectableIds.length>0 && canEdit && (
                   <button onClick={()=>setSelectedPrs(prev=>[...new Set([...prev, ...selectableIds])])}
                     style={{ ...css.btn.secondary, fontSize:11, padding:"5px 10px" }}>
@@ -10270,7 +10276,7 @@ const resolvePoLineWtPS = (pl) =>
   pl.wtPerSheet || sheetWt(pl.matCode, pl.sheetDim||pl.description||"");
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
-const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog }) => {
+const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
   const [tab, setTab] = useState("lines");
   const [grnModal, setGrnModal] = useState(false);
   const [grnForm, setGrnForm] = useState({ lines:[] });
@@ -10375,7 +10381,25 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       cancelledBy: user.name,
       cancelledDate: today()
     }));
-    showToast("PO cancelled");
+    // Revert source PRs so their quantities become convertible again.
+    // Partial-era POs: decrement convertedLines per line (sourcePrId + matCode + dim + qty).
+    // Legacy POs (pre-partial): matched via po.prId, reverted to pending outright.
+    if (setPurchaseReqs) setPurchaseReqs(prev => (prev||[]).map(r => {
+      const lines = (po.lines||[]).filter(pl => pl.sourcePrId === r.id);
+      const legacy = !lines.length && po.prId === r.id;
+      if (!lines.length && !legacy) return r;
+      const conv = {...(r.convertedLines||{})};
+      lines.forEach(pl => {
+        const k = r.id+"|"+pl.matCode+"|"+(pl.sheetDim||"");
+        if (conv[k] !== undefined) conv[k] = Math.max(0, conv[k]-(pl.qty||0));
+      });
+      const anyConv = Object.values(conv).some(v => v>0);
+      const poIds = (r.poIds||[]).filter(id => id !== po.id);
+      return {...r, convertedLines: conv, poIds, poId: poIds[poIds.length-1]||null,
+        status: (legacy || !anyConv) ? "pending" : "partially_converted",
+        remarks: ((r.remarks||"")+" \u00b7 "+po.id+" cancelled "+today()+" \u2014 quantities reverted").trim()};
+    }));
+    showToast("PO cancelled \u2014 source requisition(s) reverted");
     setCancelModal(false);
     onBack();
   };
