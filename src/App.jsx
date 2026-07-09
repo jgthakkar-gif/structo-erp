@@ -264,25 +264,45 @@ async function runNestingJob(inputJson, onProgress, getToken) {
 // ─── NESTING CENTER — DXF FETCH HELPER ────────────────────────────────────────
 // Tries to fetch a DXF file URL and return base64 string, or null on failure.
 // Handles Google Drive share links by converting to direct download URL.
+// Transform a share link into a direct-download URL where a known pattern exists.
+// OneDrive personal: shares-API form (CORS-enabled endpoint). SharePoint/OneDrive
+// for Business: ?download=1 (usually still CORS-blocked in browser — proxy handles it).
+function directDownloadUrl(url) {
+  const driveMatch = url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
+  if (driveMatch) return `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
+  if (/1drv\.ms|onedrive\.live\.com/i.test(url)) {
+    const enc = btoa(url).replace(/=+$/,"").replace(/\//g,"_").replace(/\+/g,"-");
+    return `https://api.onedrive.com/v1.0/shares/u!${enc}/root/content`;
+  }
+  if (/sharepoint\.com/i.test(url)) {
+    return url + (url.includes("?") ? "&" : "?") + "download=1";
+  }
+  return url;
+}
+function looksLikeDxf(bytes) {
+  // DXF files are text starting with group codes ("0\r\nSECTION" typically).
+  // An HTML error/viewer page starts with "<" — reject those instead of
+  // silently feeding HTML to the nesting engine.
+  const head = String.fromCharCode(...bytes.slice(0, 200)).trim().toUpperCase();
+  return !head.startsWith("<") && (head.includes("SECTION") || head.includes("HEADER") || /^\d/.test(head));
+}
 async function fetchDxfBase64(url) {
   if (!url) return null;
-  try {
-    let fetchUrl = url;
-    // Convert Google Drive view links to direct download
-    const driveMatch = url.match(/\/d\/([a-zA-Z0-9_-]+)\//);
-    if (driveMatch) {
-      fetchUrl = `https://drive.google.com/uc?export=download&id=${driveMatch[1]}`;
-    }
-    const res = await fetch(fetchUrl, { mode: "cors" });
-    if (!res.ok) return null;
-    const buf = await res.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    return btoa(binary);
-  } catch (_) {
-    return null;
+  const target = directDownloadUrl(url);
+  const attempts = [target, `/dxf-proxy?url=${encodeURIComponent(target)}`];
+  for (const fetchUrl of attempts) {
+    try {
+      const res = await fetch(fetchUrl, { mode: "cors" });
+      if (!res.ok) continue;
+      const buf = await res.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      if (!bytes.length || !looksLikeDxf(bytes)) continue;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    } catch (_) { /* try next */ }
   }
+  return null;
 }
 
 // ─── NESTING CENTER — BUILD INPUT ─────────────────────────────────────────────
@@ -5999,6 +6019,20 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const { parts, rawMaterials } = await buildInputData();
       if(!parts.length||!rawMaterials.length){ alert("Need at least 1 part and 1 raw material."); setExporting(false); return; }
       if (blockedNoJoints.length>0) { alert("Over-length parts without joint permission — resolve before running."); setExporting(false); return; }
+      // Fetch CAD profiles for parts with links (true-shape nesting). Failures are
+      // surfaced, never silent — a part whose link fails nests as a rectangle and says so.
+      const dxfMap = {};
+      const dxfStatus = {};
+      const linked = parts.filter(p=>p.partLink);
+      for (let i=0; i<linked.length; i++) {
+        const p = linked[i];
+        setApiProgress(`Fetching CAD profile ${i+1}/${linked.length} (${p.markNo})…`);
+        const b64 = await fetchDxfBase64(p.partLink);
+        if (b64) { dxfMap[p.markNo] = b64; dxfStatus[p.markNo] = "ok"; }
+        else dxfStatus[p.markNo] = "failed";
+      }
+      const dxfFailed = Object.entries(dxfStatus).filter(([k,v])=>v==="failed").map(([k])=>k);
+      if (dxfFailed.length>0 && !window.confirm(`CAD profile could not be fetched for: ${dxfFailed.join(", ")}. These will nest as rectangles (bounding box). Continue?`)) { setExporting(false); return; }
       // Split-before-nest: over-length joints-allowed parts become segments (2A -> 2A/S1 + 2A/S2)
       const splitMap = {};
       const partsFinal = [];
@@ -6014,7 +6048,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         } else partsFinal.push(p);
       });
       const batchId = `NEST-${row.matCode.replace(/\//g,"-")}-${today()}-${Date.now().toString().slice(-4)}`;
-      const nestInput = await buildNestingInput(partsFinal, rawMaterials, "PLASMA-1", batchId, {}, kerfPartPart, kerfPartEdge);
+      const nestInput = await buildNestingInput(partsFinal, rawMaterials, "PLASMA-1", batchId, dxfMap, kerfPartPart, kerfPartEdge);
       setApiProgress("Authenticating with NestingCenter...");
       const getToken = async () => {
         if(manualToken.trim()) return manualToken.trim();
@@ -6047,6 +6081,20 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           });
           return acc;
         },[]);
+        // Every placed instance, not just first-per-mark — this is the operator
+        // layout data (Cutting Plan). Real dims come from the input part record.
+        const placements = (rp.PartsNested||[]).map(pn=>{
+          const p=nestParts[pn.PartIndex]; if(!p) return null;
+          const src = markAgg.find(m=>m.markNo===(splitMap[p.Name]?.parent||p.Name));
+          return {
+            markNo:p.Name,
+            x: pn.InsertionPt?.X ?? null, y: pn.InsertionPt?.Y ?? null,
+            rotation: pn.Rotation ?? 0, mirror: pn.Mirror ?? false,
+            partLen: splitMap[p.Name]?.segLen ?? (src?.length||0),
+            partWid: src?.width || 0,
+            hasDxf: !!(dxfMap[p.Name]),
+          };
+        }).filter(Boolean);
         // Offcut calculation from LengthUsed
         const rmDims = rm.RectangularShape||{};
         const sheetLen = rmDims.Length||0;
@@ -6064,7 +6112,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         // Track whether this sheet came from existing stock (lot or offcut) — exclude from PR
         const srcRm = rawMaterials[rp.RawPlateIndex];
         const isFromStock = srcRm?.isStock === true;
-        return {sheetNo:idx+1,sheetDim,groupNo,sheetInGroup,utilisPct,parts:partsOnSheet,rmUnitId,isFromStock,lotId:srcRm?.lotId||null,
+        return {sheetNo:idx+1,sheetDim,groupNo,sheetInGroup,utilisPct,parts:partsOnSheet,placements,rmUnitId,isFromStock,lotId:srcRm?.lotId||null,
           lengthUsed: lengthUsed !== null ? Math.round(lengthUsed) : null,
           offcutDim, sheetLen, sheetWid,
         };
@@ -6093,7 +6141,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
-      setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:avgUtilSheets,sheets,parts:allParts,unplaced,inputPieces,placedPieces,splitMap});
+      setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:avgUtilSheets,sheets,parts:allParts,unplaced,inputPieces,placedPieces,splitMap,dxfUsed:Object.keys(dxfMap).length,dxfFailed});
       setApiProgress("Done!");
       setExported(true);
     } catch(e) {
