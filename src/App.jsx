@@ -3544,7 +3544,7 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
   const canEdit  = ["super_admin","planning_admin"].includes(user.role);
   const [tiers,  setTiers]  = useState(productionStandards.tiers.map(t=>({...t})));
   const [stamps, setStamps] = useState(productionStandards.stampLocations.map(s=>({...s})));
-  const [cutCap, setCutCap] = useState({ plateTPD:0, sectionTPD:0, lastUpdated:"", ...(productionStandards.cuttingCapacity||{}) });
+  const [cutCap, setCutCap] = useState({ plateTPD:0, sectionTPD:0, minSegmentMm:1500, jointAllowanceMm:3, lastUpdated:"", ...(productionStandards.cuttingCapacity||{}) });
   const [dirty,  setDirty]  = useState(false);
 
   const updateCutCap = (field, val) => {
@@ -3570,7 +3570,7 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
   const discard = () => {
     setTiers(productionStandards.tiers.map(t=>({...t})));
     setStamps(productionStandards.stampLocations.map(s=>({...s})));
-    setCutCap({ plateTPD:0, sectionTPD:0, lastUpdated:"", ...(productionStandards.cuttingCapacity||{}) });
+    setCutCap({ plateTPD:0, sectionTPD:0, minSegmentMm:1500, jointAllowanceMm:3, lastUpdated:"", ...(productionStandards.cuttingCapacity||{}) });
     setDirty(false);
   };
 
@@ -3693,6 +3693,14 @@ const ProductionStandardsMaster = ({ user, productionStandards, setProductionSta
               <tr>
                 <td style={tdStyle}><span style={{ fontWeight:600, color:T.accent }}>Section</span> (angle / channel / beam / etc)</td>
                 <td style={tdStyle}>{numInput(cutCap.sectionTPD, v=>updateCutCap("sectionTPD",v))}</td>
+              </tr>
+              <tr>
+                <td style={tdStyle}><span style={{ fontWeight:600, color:T.accent }}>Min splice segment</span> (mm) — shortest piece allowed when splitting an over-length member</td>
+                <td style={tdStyle}>{numInput(cutCap.minSegmentMm, v=>updateCutCap("minSegmentMm",v))}</td>
+              </tr>
+              <tr>
+                <td style={tdStyle}><span style={{ fontWeight:600, color:T.accent }}>Joint allowance</span> (mm per splice joint) — added to total cut length per joint</td>
+                <td style={tdStyle}>{numInput(cutCap.jointAllowanceMm, v=>updateCutCap("jointAllowanceMm",v))}</td>
               </tr>
             </tbody>
           </table>
@@ -5871,7 +5879,7 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
   );
 };
 
-const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nestingBatches, setNestingBatches, user, purchaseReqs, setPurchaseReqs }) => {
+const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nestingBatches, setNestingBatches, user, purchaseReqs, setPurchaseReqs, productionStandards }) => {
   const isPlate = (row.section||"").toUpperCase()==="PLATE"||(row.section||"").toUpperCase().includes("PLATE");
 
   // Parts for this matCode across all filtered orders
@@ -5914,6 +5922,35 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   const [showToken, setShowToken] = useState(false);
   const [apiProgress, setApiProgress] = useState("");
   const [nestPrResult, setNestPrResult] = useState(null);
+  // ── Split-before-nest: over-length sections vs longest trial bar ──
+  const spliceCfg = { minSegmentMm:1500, jointAllowanceMm:3, ...(productionStandards?.cuttingCapacity||{}) };
+  const [splitPlan, setSplitPlan] = useState({});
+  const maxTrialLen = Math.max(0, ...trialSizes.filter(t=>t.length>0&&t.qty>0).map(t=>t.length));
+  const markAgg = (()=>{ const m={}; allParts.forEach(p=>{ const q=(p.qtyPerDrg||0)*(p.drgQty||1); if(!m[p.markNo]) m[p.markNo]={...p,totalQty:0}; m[p.markNo].totalQty+=q; }); return Object.values(m); })();
+  const overParts = !isPlate ? markAgg.filter(p=>(p.length||0) > maxTrialLen && maxTrialLen>0) : [];
+  const proposeSplit = (len, maxLen) => {
+    const floor=spliceCfg.minSegmentMm||1500, allow=spliceCfg.jointAllowanceMm||3;
+    let n=2; while(len + allow*(n-1) > maxLen*n) n++;
+    const total = len + allow*(n-1);
+    const segs=[]; let rem=total;
+    for(let i=0;i<n-1;i++){ segs.push(maxLen); rem-=maxLen; }
+    segs.push(Math.round(rem*100)/100);
+    if(segs.length>1 && segs[segs.length-1]<floor){ const d=floor-segs[segs.length-1]; segs[segs.length-2]=Math.round((segs[segs.length-2]-d)*100)/100; segs[segs.length-1]=floor; }
+    return segs;
+  };
+  const splitFor = (p) => splitPlan[p.markNo] || proposeSplit(p.length, maxTrialLen);
+  const splitIssues = (p) => {
+    const floor=spliceCfg.minSegmentMm||1500, allow=spliceCfg.jointAllowanceMm||3;
+    const segs=splitFor(p); const req=(p.length||0)+allow*(segs.length-1);
+    const sum=segs.reduce((a,b)=>a+(parseFloat(b)||0),0);
+    const errs=[];
+    if(Math.abs(sum-req)>0.5) errs.push(`segments total ${sum}mm \u2260 required ${req}mm (${p.length} + ${allow}\u00d7${segs.length-1} joint allowance)`);
+    segs.forEach((s,i)=>{ if(s<floor) errs.push(`S${i+1} below ${floor}mm minimum`); if(s>maxTrialLen) errs.push(`S${i+1} exceeds ${maxTrialLen}mm bar`); });
+    return errs;
+  };
+  const blockedNoJoints = overParts.filter(p=>!p.jointsAllowed);
+  const splitInvalid = overParts.filter(p=>p.jointsAllowed && splitIssues(p).length>0);
+  const runBlocked = blockedNoJoints.length>0 || splitInvalid.length>0;
 
   const addTrialSize = () => {
     const id = Date.now();
@@ -5961,8 +5998,23 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
     try {
       const { parts, rawMaterials } = await buildInputData();
       if(!parts.length||!rawMaterials.length){ alert("Need at least 1 part and 1 raw material."); setExporting(false); return; }
+      if (blockedNoJoints.length>0) { alert("Over-length parts without joint permission — resolve before running."); setExporting(false); return; }
+      // Split-before-nest: over-length joints-allowed parts become segments (2A -> 2A/S1 + 2A/S2)
+      const splitMap = {};
+      const partsFinal = [];
+      parts.forEach(p=>{
+        const over = overParts.find(o=>o.markNo===p.markNo && o.jointsAllowed);
+        if (over) {
+          const segs = splitFor(over);
+          segs.forEach((len,i)=>{
+            const segName = `${p.markNo}/S${i+1}`;
+            splitMap[segName] = { parent:p.markNo, segLen:len, segIndex:i+1, segCount:segs.length, jointAllowanceMm:spliceCfg.jointAllowanceMm||3 };
+            partsFinal.push({ ...p, markNo:segName, length:len });
+          });
+        } else partsFinal.push(p);
+      });
       const batchId = `NEST-${row.matCode.replace(/\//g,"-")}-${today()}-${Date.now().toString().slice(-4)}`;
-      const nestInput = await buildNestingInput(parts, rawMaterials, "PLASMA-1", batchId, {}, kerfPartPart, kerfPartEdge);
+      const nestInput = await buildNestingInput(partsFinal, rawMaterials, "PLASMA-1", batchId, {}, kerfPartPart, kerfPartEdge);
       setApiProgress("Authenticating with NestingCenter...");
       const getToken = async () => {
         if(manualToken.trim()) return manualToken.trim();
@@ -5981,7 +6033,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const sheets = rawPlatesNested.map((rp,idx)=>{
         const rm = nestRawPlates[rp.RawPlateIndex]||nestRawPlates[0]||{};
         const sheetDim = rm.RectangularShape ? `${rm.RectangularShape.Length}X${rm.RectangularShape.Width}` : rm.Name||`Sheet${idx+1}`;
-        const utilisPct = rp.LengthUsed!=null ? +((1-(rp.Scrap||0))*100).toFixed(1) : (result?.Result?.NP??0);
+        const utilisPct = rp.LengthUsed!=null ? +((1-(rp.Scrap||0))*100).toFixed(1) : 0;
         const partsOnSheet = (rp.PartsNested||[]).reduce((acc,pn)=>{
           const p=nestParts[pn.PartIndex]; if(!p) return acc;
           const qty=pn.Quantity??1; const ex=acc.find(a=>a.markNo===p.Name);
@@ -6018,13 +6070,30 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         };
       });
       const allParts = sheets.flatMap(s=>s.parts.map(p=>p.markNo)).filter((v,i,a)=>a.indexOf(v)===i);
+      // Reconcile placed vs input: engine can leave parts unnested and still return a
+      // result. Split segments roll up to parent: parent placed = min across segments.
+      const placedCount = {};
+      sheets.forEach(sh=>(sh.parts||[]).forEach(pp=>{ placedCount[pp.markNo]=(placedCount[pp.markNo]||0)+(pp.qty||0); }));
+      const parentAgg = {};
+      (nestInput.Context.Problem.Parts||[]).forEach(p=>{
+        const sm = splitMap[p.Name];
+        const key = sm ? sm.parent : p.Name;
+        const placed = placedCount[p.Name]||0;
+        if(!parentAgg[key]) parentAgg[key] = { expected:p.Quantity||0, placed:placed };
+        else parentAgg[key].placed = Math.min(parentAgg[key].placed, placed);
+      });
+      const unplaced = Object.entries(parentAgg).filter(([k,v])=>v.placed<v.expected)
+        .map(([k,v])=>({ mark:k, expected:v.expected, placed:v.placed }));
+      const inputPieces  = Object.values(parentAgg).reduce((s,v)=>s+v.expected,0);
+      const placedPieces = Object.values(parentAgg).reduce((s,v)=>s+Math.min(v.placed,v.expected),0);
+      const avgUtilSheets = sheets.length ? +(sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/sheets.length).toFixed(1) : 0;
       // PR dimMap only counts sheets that need to be PURCHASED (not from existing stock/offcuts)
       const dimMap = {}; sheets.filter(sh=>!sh.isFromStock).forEach(sh=>{ const k=sh.sheetDim||"?"; if(!dimMap[k]) dimMap[k]={sheetDim:k,qty:0}; dimMap[k].qty++; });
-      const nestLots = [{ lotId:`${batchId}-${row.matCode.replace(/[^a-zA-Z0-9]/g,"-")}`, matCode:row.matCode, sheets, parts:allParts, npPct:+(result?.Result?.NP??0).toFixed(1), scrapPct:+(result?.Result?.Scrap??0).toFixed(1) }];
-      const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:+(result?.Result?.NP??0).toFixed(1),scrapPct:+(result?.Result?.Scrap??0).toFixed(1),status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
+      const nestLots = [{ lotId:`${batchId}-${row.matCode.replace(/[^a-zA-Z0-9]/g,"-")}`, matCode:row.matCode, sheets, parts:allParts, npPct:avgUtilSheets, scrapPct:+(result?.Result?.Scrap??0).toFixed(1) }];
+      const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
-      setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:sheets.length?+(sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/sheets.length).toFixed(1):0,sheets,parts:allParts});
+      setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:avgUtilSheets,sheets,parts:allParts,unplaced,inputPieces,placedPieces,splitMap});
       setApiProgress("Done!");
       setExported(true);
     } catch(e) {
@@ -6071,6 +6140,42 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           {(()=>{ const missing=(allParts||[]).filter(p=>!(p.length>0)||(p.section||"").toUpperCase()==="PLATE"&&!(p.width>0)); return missing.length>0?<div style={{marginTop:6,padding:"4px 8px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber}}>⚠ {missing.length} part(s) missing dimensions — will use 100×100mm fallback: {missing.map(p=>p.markNo).join(", ")}</div>:null; })()}
         </div>
 
+        {overParts.length>0 && (
+          <div style={{ marginBottom:14 }}>
+            <div style={{fontSize:12,fontWeight:700,color:T.amber,marginBottom:6}}>{"⚠"} OVER-LENGTH PARTS — exceed longest trial bar ({maxTrialLen}mm)</div>
+            {overParts.map(p=>{
+              const segs=splitFor(p); const errs=p.jointsAllowed?splitIssues(p):[];
+              return (
+                <div key={p.markNo} style={{border:`1px solid ${p.jointsAllowed?T.amber:T.redLo}`,borderRadius:6,padding:"8px 12px",marginBottom:8,background:p.jointsAllowed?T.amberBg:T.redBg}}>
+                  <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                    <b style={{fontFamily:T.fontMono,fontSize:12}}>{p.markNo}</b>
+                    <span style={{fontSize:11}}>{p.length}mm × {p.totalQty} pcs</span>
+                    <Badge color={p.jointsAllowed?"green":"red"}>{p.jointsAllowed?"Joints allowed":"Joints NOT allowed"}</Badge>
+                  </div>
+                  {p.jointsAllowed ? (
+                    <div style={{marginTop:6}}>
+                      <div style={{fontSize:11,color:"#92400E",marginBottom:4}}>Will be cut as {segs.length} segments ({segs.length-1} splice joint{segs.length>2?"s":""}, +{spliceCfg.jointAllowanceMm||3}mm each). Edit split before running:</div>
+                      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                        {segs.map((s,i)=>(
+                          <span key={i} style={{display:"flex",alignItems:"center",gap:3}}>
+                            <span style={{fontSize:10,color:T.textLow,fontFamily:T.fontMono}}>S{i+1}</span>
+                            <input type="number" value={s} onChange={e=>{ const v=[...segs]; v[i]=parseFloat(e.target.value)||0; setSplitPlan(sp=>({...sp,[p.markNo]:v})); }} style={{...css.input,width:88,padding:"3px 6px",fontSize:11}} />
+                          </span>
+                        ))}
+                        <button onClick={()=>setSplitPlan(sp=>({...sp,[p.markNo]:[...segs, spliceCfg.minSegmentMm||1500]}))} style={{...css.btn.ghost,fontSize:10}}>+ segment</button>
+                        {segs.length>2 && <button onClick={()=>setSplitPlan(sp=>({...sp,[p.markNo]:segs.slice(0,-1)}))} style={{...css.btn.ghost,fontSize:10}}>{"−"} segment</button>}
+                        <button onClick={()=>setSplitPlan(sp=>{ const n={...sp}; delete n[p.markNo]; return n; })} style={{...css.btn.ghost,fontSize:10}}>reset</button>
+                      </div>
+                      {errs.length>0 && <div style={{fontSize:10,color:T.red,marginTop:4,fontWeight:700}}>{errs.join(" · ")}</div>}
+                    </div>
+                  ) : (
+                    <div style={{fontSize:11,color:T.red,marginTop:4,fontWeight:600}}>Cannot nest — part is longer than any trial bar and splicing is not permitted for this mark. Add a longer trial size above, or refer to engineering.</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
         {/* Stock & Offcuts */}
         <div>
           <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>
@@ -6193,9 +6298,29 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
             </div>
           ) : (
             <div>
-              <div style={{fontSize:13,fontWeight:700,color:T.green,marginBottom:8}}>
-                ✓ Nesting Complete — {nestPrResult.totalSheetsIncStock} sheet{nestPrResult.totalSheetsIncStock!==1?"s":""} total · {nestPrResult.avgUtil}% avg utilisation
-              </div>
+              {(nestPrResult.unplaced||[]).length>0 ? (
+                <div style={{border:`2px solid ${T.red}`,background:T.redBg,borderRadius:8,padding:"10px 14px",marginBottom:10}}>
+                  <div style={{fontSize:13,fontWeight:800,color:T.red,marginBottom:4}}>
+                    {"⚠"} NESTING INCOMPLETE {"—"} placed {nestPrResult.placedPieces} of {nestPrResult.inputPieces} pieces
+                  </div>
+                  <div style={{fontSize:11,color:"#991B1B"}}>
+                    Not placed: {nestPrResult.unplaced.map(u=>`${u.mark} ×${u.expected-u.placed}`).join(", ")}.
+                    Likely causes: part longer than available bars, or trial quantity insufficient. The sheets below cover only the placed pieces {"—"} a PR raised now will NOT procure material for the unplaced parts.
+                  </div>
+                </div>
+              ) : (
+                <div style={{fontSize:13,fontWeight:700,color:T.green,marginBottom:8}}>
+                  {"✓"} Nesting Complete {"—"} all {nestPrResult.inputPieces} pieces placed {"·"} {nestPrResult.totalSheetsIncStock} sheet{nestPrResult.totalSheetsIncStock!==1?"s":""} {"·"} {nestPrResult.avgUtil}% avg utilisation
+                </div>
+              )}
+              {Object.keys(nestPrResult.splitMap||{}).length>0 && (
+                <div style={{fontSize:11,color:T.textMid,marginBottom:8,background:T.bgInput,borderRadius:6,padding:"6px 10px"}}>
+                  {"✂"} Splice splits: {[...new Set(Object.values(nestPrResult.splitMap).map(s=>s.parent))].map(par=>{
+                    const segs = Object.entries(nestPrResult.splitMap).filter(([n,s])=>s.parent===par).sort((a,b)=>a[1].segIndex-b[1].segIndex);
+                    return `${par} → ${segs.map(([n,s])=>s.segLen+"mm").join(" + ")} (${segs.length-1} joint${segs.length>2?"s":""})`;
+                  }).join(" · ")}
+                </div>
+              )}
               {nestPrResult.stockSheetsUsed > 0 && (
                 <div style={{fontSize:11,color:T.amber,marginBottom:8}}>
                   ✂ {nestPrResult.stockSheetsUsed} sheet{nestPrResult.stockSheetsUsed>1?"s":""} from existing stock/offcuts — excluded from PR.
@@ -6248,6 +6373,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                   if (!dimMap[k]) dimMap[k] = { sheetDim:k, qty:0 };
                   dimMap[k].qty++;
                 });
+                if ((nestPrResult.unplaced||[]).length>0 && !window.confirm("Nesting is INCOMPLETE — "+nestPrResult.unplaced.map(u=>u.mark+" ×"+(u.expected-u.placed)).join(", ")+" not placed. Raise PR for the PLACED pieces only?")) return;
                 const lots = [{ matCode:row.matCode, sheetCount:nestPrResult.totalSheets, parts:(nestPrResult.parts||[]), lines:Object.values(dimMap) }];
                 setPurchaseReqs(prev=>[...(prev||[]),{id:`PR-NEST-${Date.now()}`,type:"nesting",nestingBatchId:nestPrResult.batchId,matCode:row.matCode,section:row.section,matType:row.matType||"MS",grade:row.grade,size:row.size,sheetsRequired:nestPrResult.totalSheets,wtRequired:0,status:"pending",createdAt:today(),createdBy:user.username,remarks:`From nesting ${nestPrResult.batchId} · ${nestPrResult.stockSheetsUsed||0} sheet(s) from stock reserved`,approvedMakes:"",lots}]);
                 onClose();
@@ -6294,8 +6420,8 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           <button onClick={onClose} style={css.btn.ghost}>Cancel</button>
           <button onClick={()=>initiateNestingRedirect()} style={{...css.btn.ghost,color:T.accent,border:`1px solid ${T.accent}`}}>🔑 Login with NestingCenter</button>
           <button onClick={doDownloadJson} disabled={exporting} style={{...css.btn.ghost,opacity:exporting?0.6:1}}>⬇ Download JSON</button>
-          <button onClick={doRunApi} disabled={exporting} style={{...css.btn.primary,background:T.green,borderColor:T.green,opacity:exporting?0.6:1}}>
-            {exporting?apiProgress||"Running…":"▶ Run Nesting via API"}
+          <button onClick={doRunApi} disabled={exporting||runBlocked} title={runBlocked?"Resolve over-length parts first":""} style={{...css.btn.primary,background:T.green,borderColor:T.green,opacity:(exporting||runBlocked)?0.6:1}}>
+            {exporting?apiProgress||"Running…":runBlocked?"⚠ Resolve over-length parts":"▶ Run Nesting via API"}
           </button>
         </div>}
       </div>
@@ -6303,7 +6429,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   );
 };
 
-const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod }) => {
+const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards }) => {
   const [view, setView] = useState("overview");
   const [expand, setExpand] = useState({});
   const [nestModal, setNestModal] = useState(null);
@@ -6704,6 +6830,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       stock={stock} setStock={setStock} orders={filtOrders} materials={materials}
       nestingBatches={nestingBatches} setNestingBatches={setNestingBatches}
       user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs}
+      productionStandards={productionStandards}
     />
   );
   const fabAgg = {};
@@ -18070,7 +18197,7 @@ export default function App() {
   });
   const [productionStandards, setProductionStandards] = useState({
     blastThresholds: { amberHours: 3, redHours: 4 },
-    cuttingCapacity: { plateTPD: 0, sectionTPD: 0, lastUpdated: "" },
+    cuttingCapacity: { plateTPD: 0, sectionTPD: 0, minSegmentMm: 1500, jointAllowanceMm: 3, lastUpdated: "" },
     tiers: [
       { id:'simple',  label:'Simple',  maxParts:5,   maxKg:200,   cutting:4,  fitup:4,  welding:8,  blasting:2, paintPerCoat:1 },
       { id:'medium',  label:'Medium',  maxParts:10,  maxKg:800,   cutting:8,  fitup:8,  welding:16, blasting:3, paintPerCoat:2 },
@@ -19932,7 +20059,7 @@ export default function App() {
     if (user.role==="planning_admin")      return mod==="dashboard" ? <PlanningAdminDashboard /> : null;
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
-      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} />;
+      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
