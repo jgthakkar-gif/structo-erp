@@ -5892,9 +5892,13 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [showSvg, setShowSvg] = React.useState(false);
 
-  const hasPositions = (sheet.parts||[]).some(p=>p.x !== null && p.x !== undefined);
+  const placements = sheet.placements || [];
+  const hasPositions = placements.some(p=>p.x !== null && p.x !== undefined)
+    || (sheet.parts||[]).some(p=>p.x !== null && p.x !== undefined);
 
-  // SVG layout generator
+  // SVG layout generator — draws EVERY placed instance at its real dimensions,
+  // CAD orientation (y-up), rotation in radians CCW and mirror per the API's
+  // documented transform order (mirror -> rotate -> translate).
   const renderSvg = () => {
     const svgW = 540; const svgH = 160;
     const pad = 10;
@@ -5904,36 +5908,58 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
     const scaleY = (svgH - pad*2) / shW;
     const scale = Math.min(scaleX, scaleY);
     const colors = ["#DBEAFE","#DCFCE7","#FEF3C7","#EDE9FE","#CFFAFE","#FFE4E6","#F0FDF4","#FFF7ED"];
+    const markColor = {};
+    let ci = 0;
+    const colorFor = (mk) => { if(!(mk in markColor)) markColor[mk] = colors[(ci++)%colors.length]; return markColor[mk]; };
+    const drawH = shW*scale;
 
     return (
       <svg width={svgW} height={svgH+30} style={{display:"block",margin:"8px auto",border:"1px solid #CBD5E1",borderRadius:4,background:"#F8FAFC"}}>
         {/* Sheet outline */}
-        <rect x={pad} y={pad} width={shL*scale} height={shW*scale}
+        <rect x={pad} y={pad} width={shL*scale} height={drawH}
           fill="#F1F5F9" stroke="#94A3B8" strokeWidth={1} />
         {/* Offcut zone */}
         {sheet.lengthUsed && sheet.lengthUsed < shL && (
           <rect x={pad + sheet.lengthUsed*scale} y={pad}
-            width={(shL - sheet.lengthUsed)*scale} height={shW*scale}
+            width={(shL - sheet.lengthUsed)*scale} height={drawH}
             fill="#FEF9C3" stroke="#D97706" strokeWidth={1} strokeDasharray="4,2" opacity={0.6} />
         )}
-        {/* Parts */}
-        {hasPositions && (sheet.parts||[]).map((p,pi)=>{
+        {/* All placed instances, in CAD y-up coords via a flipped group */}
+        {placements.length>0 && (
+          <g transform={`translate(${pad},${pad+drawH}) scale(1,-1)`}>
+            {placements.map((p,pi)=>{
+              if (p.x === null || p.x === undefined) return null;
+              const pl = (p.partLen||80)*scale, pw = (p.partWid||50)*scale;
+              const deg = ((p.rotation||0)*180/Math.PI).toFixed(2);
+              return (
+                <g key={pi} transform={`translate(${p.x*scale},${p.y*scale}) rotate(${deg}) ${p.mirror?"scale(-1,1)":""}`}>
+                  <rect x={0} y={0} width={pl} height={pw}
+                    fill={colorFor(p.markNo)} stroke="#1D4ED8" strokeWidth={0.8} opacity={0.85} />
+                </g>
+              );
+            })}
+          </g>
+        )}
+        {/* Instance labels drawn unflipped so text stays readable */}
+        {placements.map((p,pi)=>{
           if (p.x === null || p.x === undefined) return null;
-          // Get part dimensions from markNo — use stored size if available
-          const pw = 80; const ph = 50; // fallback dimensions in mm
-          const isRot = Math.abs((p.rotation||0)) > 0.1;
-          const rx = pad + p.x * scale;
-          const ry = pad + p.y * scale;
-          const pw2 = isRot ? ph*scale : pw*scale;
-          const ph2 = isRot ? pw*scale : ph*scale;
+          return (
+            <text key={"t"+pi} x={pad + p.x*scale + 3} y={pad + drawH - p.y*scale - 3}
+              fontSize={8} fontFamily="monospace" fill="#1D4ED8" fontWeight="600">
+              {p.markNo}
+            </text>
+          );
+        })}
+        {/* Legacy fallback: batches saved before placements existed */}
+        {placements.length===0 && hasPositions && (sheet.parts||[]).map((p,pi)=>{
+          if (p.x === null || p.x === undefined) return null;
+          const pw = 80; const ph = 50;
+          const rx = pad + p.x * scale, ry = pad + p.y * scale;
           return (
             <g key={pi}>
-              <rect x={rx} y={ry} width={pw2} height={ph2}
+              <rect x={rx} y={ry} width={pw*scale} height={ph*scale}
                 fill={colors[pi%colors.length]} stroke="#1D4ED8" strokeWidth={0.8} opacity={0.85} />
-              <text x={rx+pw2/2} y={ry+ph2/2+4} textAnchor="middle"
-                fontSize={9} fontFamily="monospace" fill="#1D4ED8" fontWeight="600">
-                {p.markNo}
-              </text>
+              <text x={rx+3} y={ry+10} fontSize={8} fontFamily="monospace" fill="#1D4ED8" fontWeight="600">{p.markNo}</text>
             </g>
           );
         })}
