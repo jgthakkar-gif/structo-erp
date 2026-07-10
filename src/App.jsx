@@ -305,6 +305,99 @@ async function fetchDxfBase64(url) {
   return null;
 }
 
+// ─── DXF → API CONTOURS ──────────────────────────────────────────────────────
+// The nesting API takes explicit geometry (Contours: vertices + arc bulges — the
+// DXF bulge convention exactly), NOT DXF files. This converts a fetched DXF's
+// closed LWPOLYLINEs and CIRCLEs into that format. Exploded line/arc DXFs are
+// rejected with a reason — re-export the profile as a joined closed polyline.
+function b64ToText(b64) {
+  try { return atob(b64); }
+  catch(_) { return null; }
+}
+function dxfToContours(dxfText) {
+  if (!dxfText) return { error: "empty file" };
+  const lines = dxfText.split(/\r\n|\r|\n/);
+  const pairs = [];
+  for (let i=0; i+1<lines.length; i+=2) pairs.push([lines[i].trim(), lines[i+1]]);
+  let inEntities = false;
+  const contoursRaw = [];
+  let cur = null; const unsupported = new Set();
+  for (let i=0; i<pairs.length; i++) {
+    const code = pairs[i][0]; const val = (pairs[i][1]||"").trim();
+    if (code==="2" && val==="ENTITIES") { inEntities = true; continue; }
+    if (inEntities && code==="0" && val==="ENDSEC") break;
+    if (!inEntities) continue;
+    if (code==="0") {
+      if (cur) { contoursRaw.push(cur); cur = null; }
+      if (val==="LWPOLYLINE") cur = { kind:"pl", verts:[], closed:false };
+      else if (val==="CIRCLE") cur = { kind:"circle", cx:0, cy:0, r:0 };
+      else if (["LINE","ARC","SPLINE","POLYLINE","ELLIPSE"].includes(val)) unsupported.add(val);
+      continue;
+    }
+    if (!cur) continue;
+    if (cur.kind==="pl") {
+      if (code==="70") cur.closed = ((parseInt(val)||0) & 1) === 1;
+      else if (code==="10") cur.verts.push({ X:+val, Y:0, B:0 });
+      else if (code==="20" && cur.verts.length) cur.verts[cur.verts.length-1].Y = +val;
+      else if (code==="42" && cur.verts.length) cur.verts[cur.verts.length-1].B = +val;
+    } else if (cur.kind==="circle") {
+      if (code==="10") cur.cx=+val; else if (code==="20") cur.cy=+val; else if (code==="40") cur.r=+val;
+    }
+  }
+  if (cur) contoursRaw.push(cur);
+  const contours = [];
+  contoursRaw.forEach(c => {
+    if (c.kind==="circle" && c.r>0) {
+      // CW by default (bulge -1) — matches the API docs' hole example; the
+      // orientation pass below flips it if the circle turns out to be the outer.
+      contours.push({ Vertices: [ { X:c.cx-c.r, Y:c.cy, B:-1 }, { X:c.cx+c.r, Y:c.cy, B:-1 } ] });
+    } else if (c.kind==="pl") {
+      let v = c.verts;
+      if (!c.closed && v.length>2) {
+        const f=v[0], l=v[v.length-1];
+        if (Math.abs(f.X-l.X)<0.01 && Math.abs(f.Y-l.Y)<0.01) v = v.slice(0,-1);
+        else return; // open polyline — skip
+      }
+      if (v.length>=3 || (v.length===2 && (v[0].B||v[1].B))) contours.push({ Vertices: v.map(p=>({ X:p.X, Y:p.Y, ...(p.B?{B:p.B}:{}) })) });
+    }
+  });
+  if (!contours.length) {
+    const why = unsupported.size ? `only ${[...unsupported].join("/")} entities found — re-export as a closed polyline profile` : "no closed polylines or circles found";
+    return { error: why };
+  }
+  // Orientation + ordering: largest |area| = outer contour (must be CCW for parts),
+  // remaining = holes (must be CW). Reversing a contour negates and shifts bulges.
+  const signedArea = (vs) => { let a=0; for (let i=0;i<vs.length;i++){ const p=vs[i], q=vs[(i+1)%vs.length]; a += p.X*q.Y - q.X*p.Y; } return a/2; };
+  const reverseContour = (vs) => {
+    const n = vs.length;
+    const out = [];
+    for (let i=0;i<n;i++) out.push({ X: vs[n-1-i].X, Y: vs[n-1-i].Y });
+    for (let i=0;i<n;i++) { const b = vs[(2*n-2-i)%n].B; if (b) out[i].B = -b; }
+    return out;
+  };
+  const withArea = contours.map(c=>{
+    let area = signedArea(c.Vertices);
+    if (area===0 && c.Vertices.length===2 && c.Vertices[0].B) {
+      const dx=c.Vertices[1].X-c.Vertices[0].X, dy=c.Vertices[1].Y-c.Vertices[0].Y;
+      const r=Math.sqrt(dx*dx+dy*dy)/2;
+      area = Math.PI*r*r*((c.Vertices[0].B>0)?1:-1);   // signed by winding
+    }
+    return { c, area };
+  });
+  withArea.sort((a,b)=>Math.abs(b.area)-Math.abs(a.area));
+  const result = withArea.map((w, idx) => {
+    const wantCCW = idx===0;
+    // Two-vertex bulge contours (circles) have zero shoelace area — orientation
+    // comes from the bulge sign instead (positive bulge = CCW).
+    const isCCW = w.area !== 0 ? w.area > 0 : ((w.c.Vertices[0].B||0) > 0);
+    return { Vertices: (isCCW===wantCCW) ? w.c.Vertices : reverseContour(w.c.Vertices) };
+  });
+  let minX=Infinity, minY=Infinity;
+  result.forEach(c=>c.Vertices.forEach(v=>{ if(v.X<minX)minX=v.X; if(v.Y<minY)minY=v.Y; }));
+  result.forEach(c=>c.Vertices.forEach(v=>{ v.X=+(v.X-minX).toFixed(3); v.Y=+(v.Y-minY).toFixed(3); }));
+  return { contours: result };
+}
+
 // ─── NESTING CENTER — BUILD INPUT ─────────────────────────────────────────────
 // sectionType: string from part.section ("PLATE","ISA","ISMB",etc.)
 // plateTypes: set of section strings considered plates
@@ -338,11 +431,11 @@ async function buildNestingInput(parts, rawMaterials, machineName, batchId, dxfM
   const apiParts = uniqueParts.map(p => {
     const b64 = dxfMap[p.markNo];
     if (b64) {
-      return {
-        Name: p.markNo,
-        DxfProfile: b64,
-        Quantity: p.totalQty
-      };
+      const conv = dxfToContours(b64ToText(b64));
+      if (conv && conv.contours) {
+        return { Name: p.markNo, Contours: conv.contours, Quantity: p.totalQty };
+      }
+      // conversion failed — falls through to rectangle; caller pre-validates and warns
     }
     return {
       Name: p.markNo,
@@ -6028,11 +6121,13 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         const p = linked[i];
         setApiProgress(`Fetching CAD profile ${i+1}/${linked.length} (${p.markNo})…`);
         const b64 = await fetchDxfBase64(p.partLink);
-        if (b64) { dxfMap[p.markNo] = b64; dxfStatus[p.markNo] = "ok"; }
-        else dxfStatus[p.markNo] = "failed";
+        if (!b64) { dxfStatus[p.markNo] = "link unreachable"; continue; }
+        const conv = dxfToContours(b64ToText(b64));
+        if (conv && conv.contours) { dxfMap[p.markNo] = b64; dxfStatus[p.markNo] = "ok"; }
+        else dxfStatus[p.markNo] = conv?.error || "unreadable DXF";
       }
-      const dxfFailed = Object.entries(dxfStatus).filter(([k,v])=>v==="failed").map(([k])=>k);
-      if (dxfFailed.length>0 && !window.confirm(`CAD profile could not be fetched for: ${dxfFailed.join(", ")}. These will nest as rectangles (bounding box). Continue?`)) { setExporting(false); return; }
+      const dxfFailed = Object.entries(dxfStatus).filter(([k,v])=>v!=="ok");
+      if (dxfFailed.length>0 && !window.confirm(`CAD profile problem — ${dxfFailed.map(([k,v])=>`${k}: ${v}`).join("; ")}. These will nest as rectangles (bounding box). Continue?`)) { setExporting(false); return; }
       // Split-before-nest: over-length joints-allowed parts become segments (2A -> 2A/S1 + 2A/S2)
       const splitMap = {};
       const partsFinal = [];
