@@ -5888,6 +5888,196 @@ const qcStatusBadge   = { approved:"green", pending:"gray", failed:"red", hold:"
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── Nesting Export Modal ────────────────────────────────────────────────────
 // ─── SHEET DETAIL CARD — shows parts on a sheet with SVG layout ───────────────
+// ─── CUTTING PLAN — PRINTABLE OPERATOR LAYOUT (A3/A4) ────────────────────────
+// Reference document per sheet: true-shape layout (contours where CAD profiles
+// were nested, bounding rectangles otherwise), parts table with dims/weights,
+// RM Unit ID as the document key. One page per sheet; browser print.
+const bulgeSegPath = (p1, p2, b) => {
+  if (!b) return `L ${p2.X} ${p2.Y}`;
+  const dx = p2.X - p1.X, dy = p2.Y - p1.Y;
+  const chord = Math.sqrt(dx*dx + dy*dy);
+  const theta = 4 * Math.atan(b);
+  const r = Math.abs(chord / (2 * Math.sin(theta/2)));
+  const large = Math.abs(theta) > Math.PI ? 1 : 0;
+  const sweep = b > 0 ? 1 : 0;
+  return `A ${r} ${r} 0 ${large} ${sweep} ${p2.X} ${p2.Y}`;
+};
+const contoursToPath = (contours) => contours.map(c => {
+  const vs = c.Vertices; if (!vs || vs.length < 2) return "";
+  let d = `M ${vs[0].X} ${vs[0].Y} `;
+  for (let i = 0; i < vs.length; i++) {
+    const p1 = vs[i], p2 = vs[(i+1) % vs.length];
+    d += bulgeSegPath(p1, p2, p1.B || 0) + " ";
+  }
+  return d + "Z";
+}).join(" ");
+
+const CuttingPlanView = ({ batch, orders, onBack }) => {
+  const [pageSize, setPageSize] = React.useState("A3");
+  const contoursMap = batch.contoursMap || {};
+  const splitMap = batch.splitMap || {};
+  const lots = batch.lots || [];
+
+  // BOM lookup for weights/dims: markNo -> part record across linked orders
+  const bomFor = (mk) => {
+    const parent = splitMap[mk]?.parent || mk;
+    for (const o of (orders||[])) {
+      const p = (o.parts||[]).find(x => x.markNo === parent);
+      if (p) return { p, order: o };
+    }
+    return null;
+  };
+  const unitWt = (mk) => {
+    const hit = bomFor(mk);
+    if (!hit) return null;
+    const w = hit.p.calcUnitWt || 0;
+    const sm = splitMap[mk];
+    if (sm && hit.p.length > 0) return +(w * (sm.segLen / hit.p.length)).toFixed(1);  // prorated segment
+    return w;
+  };
+
+  const colors = ["#DBEAFE","#DCFCE7","#FEF3C7","#EDE9FE","#CFFAFE","#FFE4E6","#E0F2FE","#FDF2F8"];
+  const printCss = `
+    @media print {
+      .no-print { display: none !important; }
+      .plan-page { page-break-after: always; box-shadow: none !important; margin: 0 !important; }
+      body { background: #fff !important; }
+    }
+    @page { size: ${pageSize} landscape; margin: 8mm; }
+  `;
+  const pageW = pageSize === "A3" ? 1360 : 940;
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#E2E8F0", overflowY:"auto", zIndex:900 }}>
+      <style>{printCss}</style>
+      <div className="no-print" style={{ position:"sticky", top:0, zIndex:10, background:T.bgSidebar, padding:"10px 20px", display:"flex", alignItems:"center", gap:14 }}>
+        <button onClick={onBack} style={{ ...css.btn.secondary, color:"#fff", borderColor:"#ffffff55" }}>← Back</button>
+        <div style={{ color:"#fff", fontWeight:700, fontSize:14 }}>Cutting Plan — {batch.id}</div>
+        <div style={{ marginLeft:"auto", display:"flex", gap:10, alignItems:"center" }}>
+          <span style={{ color:"#93C5FD", fontSize:12 }}>Page size:</span>
+          <select value={pageSize} onChange={e=>setPageSize(e.target.value)} style={{ ...css.input, width:90, padding:"4px 8px" }}>
+            <option value="A3">A3</option>
+            <option value="A4">A4</option>
+          </select>
+          <button onClick={()=>window.print()} style={css.btn.primary}>🖨 Print all sheets</button>
+        </div>
+      </div>
+
+      <div style={{ padding:20 }}>
+        {lots.flatMap((lot, li) => (lot.sheets||[]).map((sheet, si) => {
+          const shL = sheet.sheetLen || parseFloat((sheet.sheetDim||"0X0").split("X")[0]) || 1000;
+          const shW = sheet.sheetWid || parseFloat((sheet.sheetDim||"0X0").split("X")[1]) || 500;
+          const placements = sheet.placements || [];
+          const drawW = pageW - 80;
+          const scale = Math.min(drawW / shL, (pageW*0.42) / shW);
+          const dW = shL*scale, dH = shW*scale;
+          const markColor = {}; let ci = 0;
+          const colorFor = mk => { if(!(mk in markColor)) markColor[mk] = colors[(ci++)%colors.length]; return markColor[mk]; };
+          // per-sheet parts summary from placements (fallback: sheet.parts)
+          const summary = {};
+          if (placements.length) placements.forEach(p=>{ summary[p.markNo]=(summary[p.markNo]||0)+1; });
+          else (sheet.parts||[]).forEach(p=>{ summary[p.markNo]=p.qty||1; });
+          const rows = Object.entries(summary).map(([mk, qty]) => {
+            const hit = bomFor(mk); const sm = splitMap[mk];
+            const pl = placements.find(x=>x.markNo===mk);
+            const dims = sm ? `${sm.segLen} (seg)` :
+              (hit ? `${hit.p.length||"—"}${hit.p.width?` × ${hit.p.width}`:""}` :
+               (pl ? `${pl.partLen||"—"}${pl.partWid?` × ${pl.partWid}`:""}` : "—"));
+            const uw = unitWt(mk);
+            return { mk, qty, dims, uw, tw: uw!=null ? +(uw*qty).toFixed(1) : null,
+                     shape: contoursMap[mk] ? "profile" : "rect",
+                     splice: sm ? `segment ${sm.segIndex}/${sm.segCount} of ${sm.parent} · +${sm.jointAllowanceMm}mm joint` : "" };
+          });
+          const sheetWt = rows.reduce((s,r)=>s+(r.tw||0),0);
+          return (
+            <div key={li+"-"+si} className="plan-page" style={{ width:pageW, margin:"0 auto 24px", background:"#fff", boxShadow:"0 2px 12px #0003", padding:28, boxSizing:"border-box", fontFamily:T.font }}>
+              {/* Header */}
+              <div style={{ display:"flex", justifyContent:"space-between", borderBottom:"2px solid #1E3A5F", paddingBottom:8, marginBottom:10 }}>
+                <div>
+                  <div style={{ fontSize:16, fontWeight:800, color:"#1E3A5F" }}>CUTTING PLAN — Sheet {sheet.sheetNo || si+1}</div>
+                  <div style={{ fontSize:11, fontFamily:T.fontMono, color:"#334155", marginTop:2 }}>{sheet.rmUnitId || "—"}</div>
+                </div>
+                <div style={{ textAlign:"right", fontSize:11, color:"#334155" }}>
+                  <div><b>Batch:</b> <span style={{ fontFamily:T.fontMono }}>{batch.id}</span></div>
+                  <div><b>Material:</b> <span style={{ fontFamily:T.fontMono }}>{lot.matCode}</span> · <b>Sheet:</b> {sheet.sheetDim} mm</div>
+                  <div><b>Date:</b> {today()} · <b>Util:</b> {sheet.utilisPct}% {sheet.offcutDim ? `· Offcut: ${sheet.offcutDim}` : ""}</div>
+                </div>
+              </div>
+              {/* Layout drawing */}
+              <svg width={dW+40} height={dH+40} style={{ display:"block", margin:"0 auto" }}>
+                <g transform={`translate(20,20)`}>
+                  <rect x={0} y={0} width={dW} height={dH} fill="#FAFAF9" stroke="#0F172A" strokeWidth={1.2} />
+                  {sheet.lengthUsed && sheet.lengthUsed < shL && (
+                    <rect x={sheet.lengthUsed*scale} y={0} width={(shL-sheet.lengthUsed)*scale} height={dH}
+                      fill="#FEF9C3" stroke="#D97706" strokeWidth={1} strokeDasharray="6,3" opacity={0.55} />
+                  )}
+                  <g transform={`translate(0,${dH}) scale(1,-1)`}>
+                    {placements.map((p,pi)=>{
+                      if (p.x==null) return null;
+                      const cts = contoursMap[p.markNo];
+                      return (
+                        <g key={pi} transform={`translate(${p.x*scale},${p.y*scale}) rotate(${((p.rotation||0)*180/Math.PI).toFixed(2)}) ${p.mirror?"scale(-1,1)":""} scale(${scale})`}>
+                          {cts
+                            ? <path d={contoursToPath(cts)} fill={colorFor(p.markNo)} stroke="#0F172A" strokeWidth={1/scale} fillRule="evenodd" opacity={0.9} />
+                            : <rect x={0} y={0} width={p.partLen||80} height={p.partWid||50} fill={colorFor(p.markNo)} stroke="#0F172A" strokeWidth={1/scale} opacity={0.9} />}
+                        </g>
+                      );
+                    })}
+                  </g>
+                  {placements.map((p,pi)=> p.x==null ? null : (
+                    <text key={"t"+pi} x={p.x*scale+4} y={dH - p.y*scale - 5} fontSize={10} fontFamily="monospace" fill="#0F172A" fontWeight="700">{p.markNo}</text>
+                  ))}
+                  {/* dimensions */}
+                  <text x={dW/2} y={dH+16} textAnchor="middle" fontSize={10} fontFamily="monospace" fill="#475569">{shL} mm</text>
+                  <text x={-14} y={dH/2} fontSize={10} fontFamily="monospace" fill="#475569" transform={`rotate(-90 -14 ${dH/2})`} textAnchor="middle">{shW} mm</text>
+                </g>
+              </svg>
+              {/* Parts table */}
+              <table style={{ width:"100%", borderCollapse:"collapse", marginTop:12, fontSize:11 }}>
+                <thead><tr>
+                  {["Mark","Qty on sheet","Dimensions (mm)","Shape","Unit wt (kg)","Total wt (kg)","Notes"].map(h=>
+                    <th key={h} style={{ border:"1px solid #94A3B8", padding:"4px 8px", background:"#F1F5F9", textAlign:"left", fontWeight:700 }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {rows.map(r=>(
+                    <tr key={r.mk}>
+                      <td style={{ border:"1px solid #CBD5E1", padding:"4px 8px", fontFamily:T.fontMono, fontWeight:700 }}>
+                        <span style={{ display:"inline-block", width:10, height:10, background:colorFor(r.mk), border:"1px solid #64748B", marginRight:6 }} />{r.mk}
+                      </td>
+                      <td style={{ border:"1px solid #CBD5E1", padding:"4px 8px", fontFamily:T.fontMono }}>{r.qty}</td>
+                      <td style={{ border:"1px solid #CBD5E1", padding:"4px 8px", fontFamily:T.fontMono }}>{r.dims}</td>
+                      <td style={{ border:"1px solid #CBD5E1", padding:"4px 8px" }}>{r.shape==="profile" ? "CAD profile" : "rectangle"}</td>
+                      <td style={{ border:"1px solid #CBD5E1", padding:"4px 8px", fontFamily:T.fontMono }}>{r.uw!=null ? r.uw : "—"}</td>
+                      <td style={{ border:"1px solid #CBD5E1", padding:"4px 8px", fontFamily:T.fontMono }}>{r.tw!=null ? r.tw : "—"}</td>
+                      <td style={{ border:"1px solid #CBD5E1", padding:"4px 8px", fontSize:10, color:"#B45309" }}>{r.splice}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td colSpan={5} style={{ border:"1px solid #94A3B8", padding:"4px 8px", fontWeight:700, textAlign:"right", background:"#F8FAFC" }}>Sheet total (net parts)</td>
+                    <td style={{ border:"1px solid #94A3B8", padding:"4px 8px", fontFamily:T.fontMono, fontWeight:700, background:"#F8FAFC" }}>{sheetWt.toFixed(1)}</td>
+                    <td style={{ border:"1px solid #94A3B8", background:"#F8FAFC" }}></td>
+                  </tr>
+                </tbody>
+              </table>
+              {/* Footer */}
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:14, fontSize:10, color:"#475569" }}>
+                <div style={{ maxWidth:"55%" }}>
+                  Reference document only — machine program is prepared in the machine's own software. Verify sheet size, heat/lot and offcut before cutting. Rectangles show bounding size, not final profile.
+                </div>
+                <div style={{ display:"flex", gap:28 }}>
+                  <div>Heat / Lot: ______________</div>
+                  <div>Planner: ______________</div>
+                  <div>Operator: ______________</div>
+                </div>
+              </div>
+            </div>
+          );
+        }))}
+      </div>
+    </div>
+  );
+};
+
 const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [showSvg, setShowSvg] = React.useState(false);
@@ -6155,6 +6345,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       // Fetch CAD profiles for parts with links (true-shape nesting). Failures are
       // surfaced, never silent — a part whose link fails nests as a rectangle and says so.
       const dxfMap = {};
+      const dxfContours = {};
       const dxfStatus = {};
       const linked = parts.filter(p=>p.partLink);
       for (let i=0; i<linked.length; i++) {
@@ -6163,7 +6354,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         const b64 = await fetchDxfBase64(p.partLink);
         if (!b64) { dxfStatus[p.markNo] = "link unreachable"; continue; }
         const conv = dxfToContours(b64ToText(b64));
-        if (conv && conv.contours) { dxfMap[p.markNo] = b64; dxfStatus[p.markNo] = "ok"; }
+        if (conv && conv.contours) { dxfMap[p.markNo] = b64; dxfContours[p.markNo] = conv.contours; dxfStatus[p.markNo] = "ok"; }
         else dxfStatus[p.markNo] = conv?.error || "unreadable DXF";
       }
       const dxfFailed = Object.entries(dxfStatus).filter(([k,v])=>v!=="ok");
@@ -6277,7 +6468,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       // PR dimMap only counts sheets that need to be PURCHASED (not from existing stock/offcuts)
       const dimMap = {}; sheets.filter(sh=>!sh.isFromStock).forEach(sh=>{ const k=sh.sheetDim||"?"; if(!dimMap[k]) dimMap[k]={sheetDim:k,qty:0}; dimMap[k].qty++; });
       const nestLots = [{ lotId:`${batchId}-${row.matCode.replace(/[^a-zA-Z0-9]/g,"-")}`, matCode:row.matCode, sheets, parts:allParts, npPct:avgUtilSheets, scrapPct:+(result?.Result?.Scrap??0).toFixed(1) }];
-      const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
+      const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,contoursMap:dxfContours,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
       setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:avgUtilSheets,sheets,parts:allParts,unplaced,inputPieces,placedPieces,splitMap,dxfUsed:Object.keys(dxfMap).length,dxfFailed});
@@ -6630,6 +6821,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
   const [rejectReason, setRejectReason] = useState("");
   // Import state
   const [nestImportRows, setNestImportRows] = useState([]);
+  const [planBatch, setPlanBatch] = useState(null);   // Cutting Plan print view
   const [nestImportError, setNestImportError] = useState("");
   const [nestImportReady, setNestImportReady] = useState(false);
   const [nestPrPrompt, setNestPrPrompt] = useState(null); // { batchId, lots } after import
@@ -7200,6 +7392,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
     );
   }
 
+  if (planBatch) return <CuttingPlanView batch={planBatch} orders={orders||[]} onBack={()=>setPlanBatch(null)} />;
   return (
     <div>
       {toast && (
@@ -7734,6 +7927,9 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                         )}
                         {po && (
                           <button onClick={e=>{e.stopPropagation();}} style={{ ...css.btn.sm, background:T.greenBg, color:T.green, border:`1px solid ${T.green}` }}>{po.id} — {po.vendorName||"No vendor"}</button>
+                        )}
+                        {(batch.lots||[]).some(l=>(l.sheets||[]).some(sh=>(sh.placements||[]).length>0)) && (
+                          <button onClick={e=>{e.stopPropagation();setPlanBatch(batch);}} style={{ ...css.btn.sm, background:T.bgInput, color:T.accent, border:`1px solid ${T.accent}` }}>🖨 Cutting Plan</button>
                         )}
                         <button onClick={e=>{e.stopPropagation();setDiscardModal({batch,pr,po});setDiscardReason("");}} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Discard Run</button>
                       </div>
