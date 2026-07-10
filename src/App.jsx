@@ -5917,6 +5917,19 @@ const CuttingPlanView = ({ batch, orders, onBack }) => {
   const contoursMap = batch.contoursMap || {};
   const splitMap = batch.splitMap || {};
   const lots = batch.lots || [];
+  // Orders this batch belongs to: orderIds (API batches) -> drawingNos -> part marks
+  const batchOrders = (()=>{
+    const found = [];
+    if ((batch.orderIds||[]).length) (batch.orderIds).forEach(oid=>{
+      const o=(orders||[]).find(x=>x.id===oid); if(o && !found.includes(o)) found.push(o);
+    });
+    if (!found.length) {
+      const marks = new Set(lots.flatMap(l=>l.parts||[]));
+      (orders||[]).forEach(o=>{ if((o.parts||[]).some(p=>marks.has(p.markNo)) && !found.includes(o)) found.push(o); });
+    }
+    return found;
+  })();
+  const orderLine = batchOrders.map(o=>`${o.orderNo||o.id}${o.clientName?` — ${o.clientName}`:""}`).join(" · ") || "—";
 
   // BOM lookup for weights/dims: markNo -> part record across linked orders
   const bomFor = (mk) => {
@@ -5998,6 +6011,7 @@ const CuttingPlanView = ({ batch, orders, onBack }) => {
                   <div style={{ fontSize:11, fontFamily:T.fontMono, color:"#334155", marginTop:2 }}>{sheet.rmUnitId || "—"}</div>
                 </div>
                 <div style={{ textAlign:"right", fontSize:11, color:"#334155" }}>
+                  <div><b>Order:</b> {orderLine}</div>
                   <div><b>Batch:</b> <span style={{ fontFamily:T.fontMono }}>{batch.id}</span></div>
                   <div><b>Material:</b> <span style={{ fontFamily:T.fontMono }}>{lot.matCode}</span> · <b>Sheet:</b> {sheet.sheetDim} mm</div>
                   <div><b>Date:</b> {today()} · <b>Util:</b> {sheet.utilisPct}% {sheet.offcutDim ? `· Offcut: ${sheet.offcutDim}` : ""}</div>
