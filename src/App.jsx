@@ -6074,10 +6074,12 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           if(ex) ex.qty+=qty;
           else acc.push({
             markNo:p.Name, qty,
-            x: pn.InsertionPt?.X ?? null,
-            y: pn.InsertionPt?.Y ?? null,
-            rotation: pn.Rotation ?? 0,
-            mirror: pn.Mirror ?? false,
+            // Per api-layout docs, placement lives under Transformation{}; old flat
+            // path kept as fallback. Rotation is RADIANS, CCW; order mirror->rotate->translate.
+            x: pn.Transformation?.InsertionPt?.X ?? pn.InsertionPt?.X ?? null,
+            y: pn.Transformation?.InsertionPt?.Y ?? pn.InsertionPt?.Y ?? null,
+            rotation: pn.Transformation?.Rotation ?? pn.Rotation ?? 0,
+            mirror: pn.Transformation?.Mirror ?? pn.Mirror ?? false,
           });
           return acc;
         },[]);
@@ -6088,8 +6090,10 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           const src = markAgg.find(m=>m.markNo===(splitMap[p.Name]?.parent||p.Name));
           return {
             markNo:p.Name,
-            x: pn.InsertionPt?.X ?? null, y: pn.InsertionPt?.Y ?? null,
-            rotation: pn.Rotation ?? 0, mirror: pn.Mirror ?? false,
+            x: pn.Transformation?.InsertionPt?.X ?? pn.InsertionPt?.X ?? null,
+            y: pn.Transformation?.InsertionPt?.Y ?? pn.InsertionPt?.Y ?? null,
+            rotation: pn.Transformation?.Rotation ?? pn.Rotation ?? 0,
+            mirror: pn.Transformation?.Mirror ?? pn.Mirror ?? false,
             partLen: splitMap[p.Name]?.segLen ?? (src?.length||0),
             partWid: src?.width || 0,
             hasDxf: !!(dxfMap[p.Name]),
