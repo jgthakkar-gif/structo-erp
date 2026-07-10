@@ -2751,7 +2751,9 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, stock }) => {
         {key:"grade", label:"Grade", render:r=><Badge color="amber">{r.grade}</Badge>},
         {key:"sectionType", label:"Section"},
         {key:"size", label:"Size", render:r=><span style={{fontFamily:T.fontMono,fontWeight:700}}>{r.size}</span>},
-        {key:"weight", label:"Unit Weight", render:r=><span style={{fontFamily:T.fontMono}}>{r.wtPerMetre?`${r.wtPerMetre} kg/m`:`${r.wtPerM2} kg/m²`}</span>},
+        {key:"weight", label:"Unit Weight", render:r=>r.nosOnly
+          ? <Badge color="purple">Nos only</Badge>
+          : <span style={{fontFamily:T.fontMono}}>{r.wtPerMetre?`${r.wtPerMetre} kg/m`:r.wtPerM2?`${r.wtPerM2} kg/m²`:"—"}</span>},
         {key:"stdLen", label:"Std Lengths", render:r=>r.isPlate?<span style={{color:T.textLow,fontSize:11}}>—</span>:<span style={{fontFamily:T.fontMono,fontSize:11}}>{(r.standardLengths||[]).map(l=>`${l/1000}m`).join(", ")||"—"}</span>},
         {key:"active", label:"Status", render:r=><Badge color={r.active?"green":"gray"}>{r.active?"Active":"Inactive"}</Badge>},
         {key:"actions", label:"", render:r=>canEdit?(
@@ -2815,6 +2817,13 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, stock }) => {
                         style={css.input} placeholder="6000,8000,10000,12000" />
                     </MField>
                   )}
+                  <MField label="Tracking" style={{gridColumn:"span 2"}}>
+                    <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:T.textMid, cursor:"pointer" }}>
+                      <input type="checkbox" checked={!!form.nosOnly}
+                        onChange={e=>setForm(f=>({...f, nosOnly:e.target.checked}))} />
+                      Track in <b>nos only</b> — no weight relevance (excluded from tonnage, priced per piece on POs)
+                    </label>
+                  </MField>
                 </div>
               )}
             </>
@@ -2857,6 +2866,13 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, stock }) => {
                     <input value={lenInput} onChange={e=>setLenInput(e.target.value)} style={css.input} />
                   </MField>
                 )}
+                <MField label="Tracking" style={{gridColumn:"span 2"}}>
+                  <label style={{ display:"flex", alignItems:"center", gap:8, fontSize:12, color:T.textMid, cursor:"pointer" }}>
+                    <input type="checkbox" checked={!!form.nosOnly}
+                      onChange={e=>setForm(f=>({...f, nosOnly:e.target.checked}))} />
+                    Track in <b>nos only</b> — no weight relevance (excluded from tonnage, priced per piece on POs)
+                  </label>
+                </MField>
               </div>
             </>
         }
@@ -6860,7 +6876,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
 
   // Procurement helpers for planning batches
   const prForBatch = (batchId) => (purchaseReqs||[]).find(r=>r.nestingBatchId===batchId&&r.type==="nesting"&&r.status!=='stale'&&r.status!=='cancelled');
-  const poForPr    = (pr) => pr?.poId ? (pos||[]).find(p=>p.id===pr.poId) : null;
+  const poForPr    = (pr) => pr?.poId ? (pos||[]).find(p=>p.id===pr.poId && p.status!=="cancelled") : null;
   // Orders a nesting batch relates to: via captured Drawing No (new imports),
   // falling back to part-mark matching for batches imported before capture existed.
   const batchOrderNos = (batchLots) => {
@@ -7937,7 +7953,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                           <button onClick={e=>{e.stopPropagation();setCreatePrModal(batch);}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>+ Create Purchase Requisition</button>
                         )}
                         {pr && !po && (
-                          <button onClick={e=>{e.stopPropagation();setConvertPoModal(pr);setConvertPoVendor("");}} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO</button>
+                          <button onClick={e=>{e.stopPropagation();pendingPrPreselect=pr.id;setMod("purchase");}} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO →</button>
                         )}
                         {po && (
                           <button onClick={e=>{e.stopPropagation();}} style={{ ...css.btn.sm, background:T.greenBg, color:T.green, border:`1px solid ${T.green}` }}>{po.id} — {po.vendorName||"No vendor"}</button>
@@ -9249,8 +9265,18 @@ const geometricKgPerM = (sectionType, size) => {
   return 0;
 };
 
+// Cross-module handoff: Nesting Runs' Convert button deep-links into the unified
+// quantity-split convert flow in Purchase (one code path — see issues log #16).
+let pendingPrPreselect = null;
+
 const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, setVendors, materials, setMaterials, paint, consumables, setMod, nestingBatches }) => {
-  const [purTab, setPurTab] = useState("pos"); // "pos" | "requisitions"
+  const [purTab, setPurTab] = useState(pendingPrPreselect ? "requisitions" : "pos"); // "pos" | "requisitions"
+  useEffect(()=>{
+    if (pendingPrPreselect) {
+      setSelectedPrs([pendingPrPreselect]);
+      pendingPrPreselect = null;
+    }
+  }, []);
   const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
   const [modal, setModal] = useState(null);
@@ -9810,6 +9836,25 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                           {prRemainingTotal(pr)} sheet(s) remaining · POs: {(pr.poIds||[pr.poId]).filter(Boolean).join(", ")}
                         </div>
                       )}
+                      {(()=>{
+                        // Orphaned conversion: converted, but every linked PO is cancelled or
+                        // missing (pre-8-Jul cancellations happened before revert existed).
+                        if (pr.status!=="converted") return null;
+                        const linked = (pr.poIds||[pr.poId]).filter(Boolean);
+                        if (!linked.length) return null;
+                        const live = linked.some(id=>{ const po=(pos||[]).find(p=>p.id===id); return po && po.status!=="cancelled"; });
+                        if (live) return null;
+                        return (
+                          <div style={{ fontSize:11, color:T.red, marginTop:4, display:"flex", alignItems:"center", gap:8 }}>
+                            All linked PO(s) cancelled — quantities are stranded.
+                            {canEdit && <button onClick={()=>{
+                              if(!window.confirm(`Revert ${pr.id} to pending? Its quantities become convertible again.`)) return;
+                              setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r, status:"pending", convertedLines:{}, poId:null, poIds:[],
+                                remarks:((r.remarks||"")+` · Reverted to pending ${today()} — linked PO(s) ${linked.join(", ")} cancelled`).trim()}));
+                            }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Revert to pending</button>}
+                          </div>
+                        );
+                      })()}
                     </div>{/* end pr info */}
                     </div>{/* end left col (checkbox + info) */}
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
