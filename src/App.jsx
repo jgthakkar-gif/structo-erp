@@ -328,10 +328,14 @@ function dxfToContours(dxfText) {
     if (inEntities && code==="0" && val==="ENDSEC") break;
     if (!inEntities) continue;
     if (code==="0") {
+      // R12-style POLYLINE owns its following VERTEX entities until SEQEND
+      if (cur && cur.kind==="plv" && val==="VERTEX") { cur.inVertex = true; cur.verts.push({ X:0, Y:0, B:0 }); continue; }
+      if (cur && cur.kind==="plv" && val==="SEQEND") { contoursRaw.push(cur); cur = null; continue; }
       if (cur) { contoursRaw.push(cur); cur = null; }
       if (val==="LWPOLYLINE") cur = { kind:"pl", verts:[], closed:false };
+      else if (val==="POLYLINE") cur = { kind:"plv", verts:[], closed:false, inVertex:false };
       else if (val==="CIRCLE") cur = { kind:"circle", cx:0, cy:0, r:0 };
-      else if (["LINE","ARC","SPLINE","POLYLINE","ELLIPSE"].includes(val)) unsupported.add(val);
+      else if (["LINE","ARC","SPLINE","ELLIPSE"].includes(val)) unsupported.add(val);
       continue;
     }
     if (!cur) continue;
@@ -340,6 +344,16 @@ function dxfToContours(dxfText) {
       else if (code==="10") cur.verts.push({ X:+val, Y:0, B:0 });
       else if (code==="20" && cur.verts.length) cur.verts[cur.verts.length-1].Y = +val;
       else if (code==="42" && cur.verts.length) cur.verts[cur.verts.length-1].B = +val;
+    } else if (cur.kind==="plv") {
+      if (!cur.inVertex) {
+        // POLYLINE header: closed flag lives here; its 10/20/30 dummy point is ignored
+        if (code==="70") cur.closed = ((parseInt(val)||0) & 1) === 1;
+      } else if (cur.verts.length) {
+        const v = cur.verts[cur.verts.length-1];
+        if (code==="10") v.X = +val;
+        else if (code==="20") v.Y = +val;
+        else if (code==="42") v.B = +val;
+      }
     } else if (cur.kind==="circle") {
       if (code==="10") cur.cx=+val; else if (code==="20") cur.cy=+val; else if (code==="40") cur.r=+val;
     }
@@ -351,7 +365,7 @@ function dxfToContours(dxfText) {
       // CW by default (bulge -1) — matches the API docs' hole example; the
       // orientation pass below flips it if the circle turns out to be the outer.
       contours.push({ Vertices: [ { X:c.cx-c.r, Y:c.cy, B:-1 }, { X:c.cx+c.r, Y:c.cy, B:-1 } ] });
-    } else if (c.kind==="pl") {
+    } else if (c.kind==="pl" || c.kind==="plv") {
       let v = c.verts;
       if (!c.closed && v.length>2) {
         const f=v[0], l=v[v.length-1];
