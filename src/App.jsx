@@ -9432,6 +9432,13 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   // Same purchaseReqs collection so combine/split/partial conversion apply as-is.
   const isStoreRole = ["store_admin","super_admin"].includes(user.role);
   const [sprModal, setSprModal] = useState(false);
+  const [repTab, setRepTab] = useState("pr");
+  const [repItemType, setRepItemType] = useState("all");
+  const [repOrder, setRepOrder] = useState("");
+  const [repFrom, setRepFrom] = useState("");
+  const [repTo, setRepTo] = useState("");
+  const [repPoView, setRepPoView] = useState("outstanding");
+  const [repChart, setRepChart] = useState(false);
   const [sprForm, setSprForm] = useState({ orderId:"", neededBy:"", remarks:"", lines:[] });
   const blankSprLine = () => ({ itemType:"rm", itemKey:"", desc:"", qty:"", unit:"kg", make:"", category:"" });
   const stockOnHand = (ln) => {
@@ -9448,6 +9455,19 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const saveSpr = () => {
     const lines = sprForm.lines.filter(l=>(l.itemKey||l.desc) && parseFloat(l.qty)>0);
     if (!lines.length) { showToast("Add at least one line with a quantity"); return; }
+    // Duplicate guard: warn if an OPEN PR already carries any of these items
+    const openStatuses = ["pending","pending_store","forwarded","partially_converted"];
+    const dupes = [];
+    lines.forEach(l=>{
+      const key = l.itemType==="rm" ? normMatCode(l.itemKey) : (l.desc||l.itemKey||"").trim().toLowerCase();
+      (purchaseReqs||[]).filter(r=>openStatuses.includes(r.status)).forEach(r=>{
+        const hit = (r.lots||[]).some(lot=> l.itemType==="rm"
+          ? normMatCode(lot.matCode)===key
+          : (lot.matCode||"").trim().toLowerCase()===key);
+        if (hit) dupes.push(`${l.itemType==="rm"?l.itemKey:(l.desc||l.itemKey)} → already open on ${r.id} (${r.status})`);
+      });
+    });
+    if (dupes.length && !window.confirm(`Possible duplicate requisition:\n${[...new Set(dupes)].join("\n")}\n\nRaise anyway?`)) return;
     const id = `PR-STORE-${Date.now()}`;
     const lots = lines.map(l=>({
       matCode: l.itemType==="rm" ? l.itemKey : (l.desc||l.itemKey),
@@ -9759,76 +9779,186 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
 
       {/* Requisitions Tab */}
       {purTab === "reports" && (()=>{
-        // ── PR Register ──
-        const allPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting"||r.type==="store")
-          .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
-        const prAge = (pr) => {
-          if (["converted","cancelled","stale"].includes(pr.status)) return "";
-          const d = Math.round((Date.now() - new Date(pr.createdAt).getTime())/86400000);
-          return isNaN(d) ? "" : d;
+        const openPrStatuses = ["pending","pending_store","forwarded","partially_converted"];
+        const inDate = (d) => (!repFrom || (d||"")>=repFrom) && (!repTo || (d||"")<=repTo);
+        const ageDays = (d) => { const n = Math.round((Date.now()-new Date(d).getTime())/86400000); return isNaN(n)?0:n; };
+        const ageColor = (d) => d>30 ? T.red : d>14 ? "#EA580C" : d>7 ? T.amber : T.green;
+        const AgePill = ({days}) => days ? (
+          <span style={{ background:ageColor(days)+"22", color:ageColor(days), fontWeight:700, fontFamily:T.fontMono,
+            borderRadius:10, padding:"1px 8px", fontSize:10 }}>{days}d</span>
+        ) : null;
+        const prIsRm = (pr) => pr.type!=="store" || (pr.lots||[]).some(l=>l.itemType!=="consumable");
+        const prQtyWt = (pr) => {
+          let sheets=0, bars=0, nos=0, wt=0; const other=[];
+          (pr.lots||[]).forEach(l=>(l.lines||[]).forEach(ln=>{
+            if (pr.type==="store") {
+              const u=(ln.unit||"nos").toLowerCase();
+              if (l.itemType!=="consumable" && u==="kg") wt += ln.qty||0;
+              else other.push(`${ln.qty} ${ln.unit||"nos"}`);
+            } else {
+              const cls = matClass(l.matCode);
+              if (cls==="sheet") sheets+=prLineRemaining(pr,l,ln)+((pr.convertedLines||{})[prLineKey(pr.id,l.matCode,ln.sheetDim||ln.dims)]||0);
+              else if (cls==="nos") nos+=ln.qty||0;
+              else bars+=ln.qty||0;
+              wt += sheetWt(l.matCode, ln.sheetDim||ln.dims)*(ln.qty||0);
+            }
+          }));
+          const qty = [sheets?`${sheets} sh`:null, bars?`${bars} bars`:null, nos?`${nos} nos`:null, ...other].filter(Boolean).join(" + ")||"\u2014";
+          return { qty, wt: Math.round(wt) };
         };
-        const prOrderStr = (pr) => pr.type==="store"
-          ? ((orders||[]).find(o=>o.id===pr.orderId)?.orderNo || (pr.orderId ? pr.orderId : "General"))
-          : prOrderNos(pr).join(", ");
-        const prItems = (pr) => (pr.lots||[]).map(l=>l.matCode).join("; ");
-        const prRows = allPrs.map(pr=>({
-          "PR No": pr.id, "Type": pr.type==="store" ? "Store" : "Nesting",
-          "Order": prOrderStr(pr), "Items": prItems(pr),
-          "Status": pr.status, "Raised": pr.createdAt||"", "By": pr.createdBy||"",
-          "Forwarded": pr.forwardedAt||"", "PO(s)": (pr.poIds||[pr.poId]).filter(Boolean).join(", "),
-          "Age (days)": prAge(pr),
-        }));
-        // ── PO Outstanding (GRN pending / partial) ──
-        const poRows = [];
-        (pos||[]).filter(p=>p.status!=="cancelled").forEach(p=>{
+        // ── PR rows ──
+        const prRowsAll = (purchaseReqs||[]).filter(r=>r.type==="nesting"||r.type==="store")
+          .filter(r=> repItemType==="all" || (repItemType==="rm" ? prIsRm(r) : !prIsRm(r)))
+          .filter(r=> !repOrder || (r.type==="store" ? r.orderId===repOrder : prOrderNos(r).includes((orders||[]).find(o=>o.id===repOrder)?.orderNo||repOrder)))
+          .filter(r=> inDate(r.createdAt))
+          .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+        const prRows = prRowsAll.map(pr=>{
+          const qw = prQtyWt(pr);
+          return { _pr:pr, "PR No":pr.id, "Type":pr.type==="store"?"Store":"Nesting",
+            "Order": pr.type==="store" ? ((orders||[]).find(o=>o.id===pr.orderId)?.orderNo||(pr.orderId||"General")) : prOrderNos(pr).join(", "),
+            "Items":(pr.lots||[]).map(l=>l.matCode).join("; "),
+            "Qty":qw.qty, "Wt (kg)":qw.wt||"", "Status":pr.status, "Raised":pr.createdAt||"", "By":pr.createdBy||"",
+            "PO(s)":(pr.poIds||[pr.poId]).filter(Boolean).join(", "),
+            "Age": openPrStatuses.includes(pr.status) ? ageDays(pr.createdAt) : "" };
+        });
+        const prTotWt = prRows.reduce((s,r)=>s+(parseFloat(r["Wt (kg)"])||0),0);
+        const prOpenCnt = prRows.filter(r=>openPrStatuses.includes(r.Status)).length;
+        // ── PO rows ──
+        const poRowsAll = [];
+        (pos||[]).filter(p=>p.status!=="cancelled").filter(p=>inDate(p.poDate)).forEach(p=>{
           (p.lines||[]).forEach(ln=>{
-            const ordered = ln.pricingMethod==="PerUnit" ? (ln.qtyOrdered||ln.qty||0) : (ln.wtOrdered||0);
-            const received = ln.pricingMethod==="PerUnit" ? (ln.qtyReceived||0) : (ln.wtReceived||0);
-            const bal = Math.max(0, ordered - received);
-            if (bal <= 0.01) return;
-            poRows.push({
-              "PO No": p.id, "Vendor": p.vendorName||"", "PO Date": p.poDate||"",
-              "Item": ln.itemCode||ln.matCode||"", "Unit": ln.pricingMethod==="PerUnit" ? (ln.unit||"nos") : "kg",
-              "Ordered": Math.round(ordered*100)/100, "Received": Math.round(received*100)/100,
-              "Balance": Math.round(bal*100)/100,
-              "Received %": ordered>0 ? Math.round(received/ordered*100) : 0,
-            });
+            const perUnit = ln.pricingMethod==="PerUnit";
+            if (repItemType==="rm" && perUnit && (ln.unit||"").toLowerCase()!=="kg" && !ln.matCode?.includes("/")) return;
+            if (repItemType==="consumables" && !perUnit) return;
+            const ordered = perUnit ? (ln.qtyOrdered||ln.qty||0) : (ln.wtOrdered||0);
+            const received = perUnit ? (ln.qtyReceived||0) : (ln.wtReceived||0);
+            const bal = Math.max(0, ordered-received);
+            if (repPoView==="outstanding" && bal<=0.01) return;
+            poRowsAll.push({ _po:p, "PO No":p.id, "Vendor":p.vendorName||"", "PO Date":p.poDate||"",
+              "Item":ln.itemCode||ln.matCode||"", "Unit":perUnit?(ln.unit||"nos"):"kg",
+              "Ordered":Math.round(ordered*100)/100, "Received":Math.round(received*100)/100,
+              "Balance":Math.round(bal*100)/100, "Recd %":ordered>0?Math.round(received/ordered*100):0,
+              "Age": bal>0.01 ? ageDays(p.poDate) : "" });
           });
         });
+        const poRows = repOrder ? poRowsAll : poRowsAll;   // POs are multi-order; order filter applies to PRs
+        const poTotBalKg = poRows.filter(r=>r.Unit==="kg").reduce((s,r)=>s+(r.Balance||0),0);
+        const poTotBalUnits = poRows.filter(r=>r.Unit!=="kg").reduce((s,r)=>s+(r.Balance||0),0);
         const exportXlsx = (rows, name) => {
           if (!rows.length) { showToast("Nothing to export"); return; }
+          const clean = rows.map(({_pr,_po,...r})=>r);
           const wb = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name.slice(0,31));
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clean), name.slice(0,31));
           XLSX.writeFile(wb, `${name.replace(/\s+/g,"_")}_${today()}.xlsx`);
         };
-        const th = { textAlign:"left", padding:"5px 8px", color:T.textMid, fontWeight:700, borderBottom:`1px solid ${T.border}`, fontSize:11, whiteSpace:"nowrap" };
-        const td = { padding:"4px 8px", borderBottom:`1px solid ${T.border}`, fontSize:11 };
-        const renderTable = (rows) => rows.length===0
-          ? <div style={{ ...css.card, textAlign:"center", padding:24, color:T.textLow, fontSize:12 }}>No rows.</div>
+        // ── mini bar chart (pure SVG) ──
+        const BarChart = ({data, unit}) => {
+          const max = Math.max(...data.map(d=>d.v), 1);
+          const w=560, bh=18, gap=6, lw=170;
+          return (
+            <svg width={w} height={data.length*(bh+gap)+6} style={{ display:"block" }}>
+              {data.map((d,i)=>(
+                <g key={i} transform={`translate(0,${i*(bh+gap)})`}>
+                  <text x={lw-6} y={bh-5} textAnchor="end" fontSize={10} fill={T.textMid} fontFamily={T.fontMono}>{d.k.slice(0,26)}</text>
+                  <rect x={lw} y={2} width={Math.max(2,(w-lw-70)*(d.v/max))} height={bh-6} rx={3} fill={T.accent} opacity={0.8} />
+                  <text x={lw+Math.max(2,(w-lw-70)*(d.v/max))+6} y={bh-5} fontSize={10} fill={T.text} fontFamily={T.fontMono}>{fmt.num(Math.round(d.v))}{unit}</text>
+                </g>
+              ))}
+            </svg>
+          );
+        };
+        const prChart = (()=>{ const m={}; prRows.filter(r=>openPrStatuses.includes(r.Status)).forEach(r=>{ const k=r.Order||"\u2014"; m[k]=(m[k]||0)+(parseFloat(r["Wt (kg)"])||0); }); return Object.entries(m).map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v).slice(0,8); })();
+        const poChart = (()=>{ const m={}; poRows.forEach(r=>{ if(r.Unit!=="kg")return; m[r.Vendor]=(m[r.Vendor]||0)+(r.Balance||0); }); return Object.entries(m).map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v).slice(0,8); })();
+        const th = { textAlign:"left", padding:"6px 8px", color:T.text, fontWeight:700, borderBottom:`2px solid ${T.border}`, borderRight:`1px solid ${T.border}`, fontSize:11, whiteSpace:"nowrap", background:T.bgInput, position:"sticky", top:0 };
+        const td = { padding:"4px 8px", borderBottom:`1px solid ${T.border}`, borderRight:`1px solid ${T.border}`, fontSize:11, whiteSpace:"nowrap" };
+        const renderTable = (rows, onRowJump, totals) => rows.length===0
+          ? <div style={{ ...css.card, textAlign:"center", padding:24, color:T.textLow, fontSize:12 }}>No rows match the filters.</div>
           : (
-            <div style={{ ...css.card, overflowX:"auto", padding:0 }}>
-              <table style={{ width:"100%", borderCollapse:"collapse" }}>
-                <thead><tr>{Object.keys(rows[0]).map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
-                <tbody>{rows.map((r,i)=>(
-                  <tr key={i} style={{ background:i%2?T.bg:"transparent" }}>
-                    {Object.entries(r).map(([k,v])=><td key={k} style={{ ...td, fontFamily:["PR No","PO No","PO(s)","Items","Item"].includes(k)?T.fontMono:T.font }}>{String(v)}</td>)}
-                  </tr>
-                ))}</tbody>
+            <div style={{ ...css.card, overflow:"auto", padding:0, maxHeight:560 }}>
+              <table style={{ borderCollapse:"collapse", width:"100%" }}>
+                <thead><tr>
+                  {Object.keys(rows[0]).filter(k=>!k.startsWith("_")).map(h=><th key={h} style={th}>{h}</th>)}
+                  {onRowJump && <th style={th}></th>}
+                </tr></thead>
+                <tbody>
+                  {rows.map((r,i)=>(
+                    <tr key={i} style={{ background:i%2?T.bg:"transparent" }}>
+                      {Object.entries(r).filter(([k])=>!k.startsWith("_")).map(([k,v])=>(
+                        <td key={k} style={{ ...td, fontFamily:["PR No","PO No","PO(s)","Items","Item"].includes(k)?T.fontMono:T.font }}>
+                          {k==="Age" ? <AgePill days={v} /> : String(v)}
+                        </td>
+                      ))}
+                      {onRowJump && <td style={td}><button onClick={()=>onRowJump(r)} style={{ ...css.btn.sm, fontSize:10, padding:"2px 8px" }}>→ GRN</button></td>}
+                    </tr>
+                  ))}
+                  {totals && (
+                    <tr>
+                      {totals.map((t,i)=><td key={i} style={{ ...td, fontWeight:700, background:T.bgInput, fontFamily:T.fontMono }}>{t}</td>)}
+                      {onRowJump && <td style={{ ...td, background:T.bgInput }}></td>}
+                    </tr>
+                  )}
+                </tbody>
               </table>
             </div>
           );
         return (
           <div>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>PR Register <span style={{ color:T.textMid, fontWeight:400, fontSize:12 }}>({prRows.length})</span></div>
-              <button onClick={()=>exportXlsx(prRows,"PR Register")} style={css.btn.secondary}>⬇ Export XLSX</button>
+            <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:12 }}>
+              {[["pr","PR Register"],["po","PO Register"]].map(([t,l])=>(
+                <button key={t} onClick={()=>setRepTab(t)} style={{ ...css.btn.sm,
+                  background:repTab===t?T.accent:T.bgInput, color:repTab===t?T.bg:T.textMid, fontWeight:700 }}>{l}</button>
+              ))}
+              <span style={{ width:1, height:22, background:T.border }} />
+              <Sel value={repItemType} onChange={e=>setRepItemType(e.target.value)} style={{ width:130 }}>
+                <option value="all">RM + Consumables</option><option value="rm">RM only</option><option value="consumables">Consumables only</option>
+              </Sel>
+              <Sel value={repOrder} onChange={e=>setRepOrder(e.target.value)} style={{ width:190 }}>
+                <option value="">All orders</option>
+                {(orders||[]).map(o=><option key={o.id} value={o.id}>{o.orderNo||o.id}</option>)}
+              </Sel>
+              <span style={{ fontSize:11, color:T.textMid }}>From</span>
+              <input type="date" value={repFrom} onChange={e=>setRepFrom(e.target.value)} style={{ ...css.input, width:135 }} />
+              <span style={{ fontSize:11, color:T.textMid }}>To</span>
+              <input type="date" value={repTo} onChange={e=>setRepTo(e.target.value)} style={{ ...css.input, width:135 }} />
+              {repTab==="po" && (
+                <Sel value={repPoView} onChange={e=>setRepPoView(e.target.value)} style={{ width:150 }}>
+                  <option value="outstanding">GRN outstanding</option><option value="all">All PO lines</option>
+                </Sel>
+              )}
+              <label style={{ fontSize:11, color:T.textMid, display:"flex", alignItems:"center", gap:4, cursor:"pointer" }}>
+                <input type="checkbox" checked={repChart} onChange={e=>setRepChart(e.target.checked)} /> Chart
+              </label>
+              <div style={{ marginLeft:"auto" }}>
+                <button onClick={()=>exportXlsx(repTab==="pr"?prRows:poRows, repTab==="pr"?"PR Register":"PO Register")} style={css.btn.secondary}>⬇ Export XLSX</button>
+              </div>
             </div>
-            {renderTable(prRows)}
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", margin:"20px 0 8px" }}>
-              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>PO Outstanding — GRN pending / partial <span style={{ color:T.textMid, fontWeight:400, fontSize:12 }}>({poRows.length} lines)</span></div>
-              <button onClick={()=>exportXlsx(poRows,"PO Outstanding")} style={css.btn.secondary}>⬇ Export XLSX</button>
-            </div>
-            {renderTable(poRows)}
+            {repTab==="pr" ? (
+              <>
+                <div style={{ fontSize:12, color:T.textMid, marginBottom:6 }}>
+                  <b style={{ color:T.text }}>{prRows.length}</b> PRs ({prOpenCnt} open) · total RM weight <b style={{ fontFamily:T.fontMono, color:T.text }}>{fmt.num(Math.round(prTotWt))} kg</b>
+                </div>
+                {repChart && prChart.length>0 && (
+                  <div style={{ ...css.card, marginBottom:10, padding:"10px 14px" }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>OPEN PR WEIGHT BY ORDER (kg)</div>
+                    <BarChart data={prChart} unit="" />
+                  </div>
+                )}
+                {renderTable(prRows, null, ["TOTAL","","","",`${prRows.length} PRs`,fmt.num(Math.round(prTotWt)),"","","","",""])}
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize:12, color:T.textMid, marginBottom:6 }}>
+                  <b style={{ color:T.text }}>{poRows.length}</b> lines · balance <b style={{ fontFamily:T.fontMono, color:T.text }}>{fmt.num(Math.round(poTotBalKg))} kg</b>{poTotBalUnits>0 && <> + <b style={{ fontFamily:T.fontMono, color:T.text }}>{fmt.num(Math.round(poTotBalUnits))} units</b></>}
+                </div>
+                {repChart && poChart.length>0 && (
+                  <div style={{ ...css.card, marginBottom:10, padding:"10px 14px" }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>GRN BALANCE BY VENDOR (kg)</div>
+                    <BarChart data={poChart} unit="" />
+                  </div>
+                )}
+                {renderTable(poRows, (r)=>{ setSelected(r._po.id); setPurTab("pos"); }, ["TOTAL","","","","",`—`,`—`,fmt.num(Math.round(poTotBalKg))+" kg"+(poTotBalUnits>0?` + ${fmt.num(Math.round(poTotBalUnits))} u`:""),"",""])}
+              </>
+            )}
           </div>
         );
       })()}
@@ -10096,17 +10226,44 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   <option value="">Select material…</option>
                   {(materials||[]).filter(m=>m.active!==false).map(m=><option key={m.id} value={m.matCode}>{m.matCode}</option>)}
                 </Sel>
+              ) : ln.itemKey==="__other" ? (
+                <input value={ln.desc} placeholder="Item description (free text)" autoFocus
+                  onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,desc:e.target.value}:x)}))} style={css.input} />
               ) : (
-                <input value={ln.desc} placeholder="Item description (e.g. Asian Paints Apcodur 250 — Grey)"
-                  onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,desc:e.target.value,itemKey:e.target.value}:x)}))} style={css.input} />
+                <Sel value={ln.itemKey} onChange={e=>{
+                  const v = e.target.value;
+                  const c = (consumables||[]).find(x=>x.id===v);
+                  setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi!==i?x:{...x,itemKey:v,
+                    desc:c?c.name:"", category:c?(c.subCategory||c.category||""):"",
+                    unit:c?((c.unit||"nos").toLowerCase()):x.unit, make:""})}));
+                }}>
+                  <option value="">Select consumable…</option>
+                  {[...new Set((consumables||[]).map(c=>c.subCategory||c.category||"other"))].sort().map(cat=>(
+                    <optgroup key={cat} label={cat.toUpperCase()}>
+                      {(consumables||[]).filter(c=>(c.subCategory||c.category||"other")===cat).map(c=>
+                        <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </optgroup>
+                  ))}
+                  <option value="__other">Other (type manually)…</option>
+                </Sel>
               )}
               <input type="number" min={0} value={ln.qty} placeholder="Qty"
                 onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,qty:e.target.value}:x)}))} style={css.input} />
               <Sel value={ln.unit} onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,unit:e.target.value}:x)}))}>
                 {["kg","nos","m","L","set","box"].map(u=><option key={u} value={u}>{u}</option>)}
               </Sel>
-              <input value={ln.make} placeholder="Preferred make"
-                onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,make:e.target.value}:x)}))} style={css.input} />
+              {(()=>{
+                const c = ln.itemType==="consumable" ? (consumables||[]).find(x=>x.id===ln.itemKey) : null;
+                return (c?.approvedMakes||[]).length ? (
+                  <Sel value={ln.make} onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,make:e.target.value}:x)}))}>
+                    <option value="">Any make</option>
+                    {c.approvedMakes.map(m=><option key={m} value={m}>{m}</option>)}
+                  </Sel>
+                ) : (
+                  <input value={ln.make} placeholder="Preferred make"
+                    onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,make:e.target.value}:x)}))} style={css.input} />
+                );
+              })()}
               {ln.itemType==="consumable" ? (
                 <input value={ln.category} placeholder="Category"
                   onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,category:e.target.value}:x)}))} style={css.input} />
