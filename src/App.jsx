@@ -1550,7 +1550,7 @@ const PERMISSIONS = {
   planning_user:   { modules:["dashboard","mrp","consumables"],                             canApprove:false, canOverride:false, canManageUsers:false },
   purchase_admin:  { modules:["dashboard","purchase","stock","vendors","consumables"],       canApprove:true,  canOverride:false, canManageUsers:false },
   purchase_user:   { modules:["dashboard","purchase","consumables"],                        canApprove:false, canOverride:false, canManageUsers:false },
-  store_admin:     { modules:["dashboard","stock","bays","consumables"],                    canApprove:true,  canOverride:false, canManageUsers:false },
+  store_admin:     { modules:["dashboard","stock","bays","consumables","purchase"],         canApprove:true,  canOverride:false, canManageUsers:false },
   store_user:      { modules:["dashboard","stock","consumables"],                           canApprove:false, canOverride:false, canManageUsers:false },
   qc_admin:        { modules:["dashboard","qc","qc_ops","stock","production","consumables"], canApprove:true,  canOverride:true,  canManageUsers:false },
   qc_user:         { modules:["dashboard","production","qc","qc_ops","consumables"],        canApprove:true,  canOverride:false, canManageUsers:false },
@@ -9428,6 +9428,42 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   };
   const [quickWtModal, setQuickWtModal] = useState(null);
   const [quickWtVals, setQuickWtVals] = useState({});
+  // ── Store Requisitions (type:"store") — RM & consumables without nesting.
+  // Same purchaseReqs collection so combine/split/partial conversion apply as-is.
+  const isStoreRole = ["store_admin","super_admin"].includes(user.role);
+  const [sprModal, setSprModal] = useState(false);
+  const [sprForm, setSprForm] = useState({ orderId:"", neededBy:"", remarks:"", lines:[] });
+  const blankSprLine = () => ({ itemType:"rm", itemKey:"", desc:"", qty:"", unit:"kg", make:"", category:"" });
+  const stockOnHand = (ln) => {
+    if (ln.itemType==="consumable") {
+      const c = (consumables||[]).find(x=>x.id===ln.itemKey || x.name===ln.itemKey);
+      return c ? `${c.currentStock??c.stock??0} ${c.unit||""}`.trim() : "—";
+    }
+    const key = normMatCode(ln.itemKey);
+    if (!key) return "—";
+    const kg = (stock||[]).filter(s=>normMatCode(s.matCode)===key && !["rejected","returned","written_off"].includes(s.status))
+      .reduce((a,s)=>a+(s.wtAvailable||0),0);
+    return `${fmt.num(Math.round(kg))} kg`;
+  };
+  const saveSpr = () => {
+    const lines = sprForm.lines.filter(l=>(l.itemKey||l.desc) && parseFloat(l.qty)>0);
+    if (!lines.length) { showToast("Add at least one line with a quantity"); return; }
+    const id = `PR-STORE-${Date.now()}`;
+    const lots = lines.map(l=>({
+      matCode: l.itemType==="rm" ? l.itemKey : (l.desc||l.itemKey),
+      itemType: l.itemType, category: l.category||"", make: l.make||"",
+      lines: [{ qty: parseFloat(l.qty)||0, unit: l.unit||"nos", desc: l.desc||"" }],
+      parts: [], drawingNos: [],
+    }));
+    setPurchaseReqs(prev=>[...(prev||[]), { id, type:"store", status: isStoreRole ? "forwarded" : "pending_store",
+      orderId: sprForm.orderId||"", neededBy: sprForm.neededBy||"", remarks: sprForm.remarks||"",
+      createdAt: today(), createdBy: user.username||user.name, forwardedAt: isStoreRole ? today() : "",
+      forwardedBy: isStoreRole ? (user.username||user.name) : "", lots }]);
+    setSprModal(false); setSprForm({ orderId:"", neededBy:"", remarks:"", lines:[] });
+    showToast(`${id} raised${isStoreRole?" and forwarded to purchase":""}`);
+  };
+  const forwardSpr = (pr) => setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:
+    {...r, status:"forwarded", forwardedAt:today(), forwardedBy:user.username||user.name}));
   // Orders a PR belongs to, via its source nesting batch (orderIds → drawingNos → part marks)
   const prOrderNos = (pr) => {
     const b = (nestingBatches||[]).find(x=>x.id===pr.nestingBatchId);
@@ -9463,18 +9499,21 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             const qty = inclQty(pr,l,ln);
             if (qty<=0) return null;
             const p = parseNestingMatCode(l.matCode);
-            const wtPerSheet = sheetWt(l.matCode, ln.sheetDim||ln.dims);
+            const isStoreLine = pr.type==="store";
+            const lineUnit = isStoreLine ? (ln.unit||"nos") : "Sheets";
+            const perUnit = isNosOnly(l.matCode) || (isStoreLine && lineUnit!=="kg") || l.itemType==="consumable";
+            const wtPerSheet = isStoreLine ? (lineUnit==="kg" ? 1 : 0) : sheetWt(l.matCode, ln.sheetDim||ln.dims);
             const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
             return {
               id:`POL-${ts}-${prIdx}-${lotIdx}-${lineIdx}`,
               matCode:l.matCode, sectionType:p.sectionType, matType:p.matType, grade:p.grade, size:p.size,
               sheetDim:ln.sheetDim||ln.dims, isPlate:p.sectionType?.toUpperCase()==='PLATE',
               sheetLength:dimParts[0]||0, sheetWidth:dimParts[1]||0,
-              orderMode:"ByUnits", qty, qtyOrdered:qty, unit: isNosOnly(l.matCode)?"Nos":"Sheets",
-              pricingMethod: isNosOnly(l.matCode)?"PerUnit":"PerKg", unitPrice:parseFloat(combineForm.rates?.[l.matCode])||0,
+              orderMode:"ByUnits", qty, qtyOrdered:qty, unit: perUnit ? (isStoreLine?lineUnit:"Nos") : (isStoreLine?"kg":"Sheets"),
+              pricingMethod: perUnit?"PerUnit":"PerKg", unitPrice:parseFloat(combineForm.rates?.[l.matCode])||0,
               wtPerSheet, wtOrdered:Math.round(wtPerSheet*qty*100)/100,
               wtRequired:Math.round(wtPerSheet*qty*100)/100,
-              totalPrice: isNosOnly(l.matCode)
+              totalPrice: perUnit
                 ? Math.round(qty*(parseFloat(combineForm.rates?.[l.matCode])||0)*100)/100
                 : Math.round(Math.round(wtPerSheet*qty*100)/100*(parseFloat(combineForm.rates?.[l.matCode])||0)*100)/100,
               wtReceived:0, qtyReceived:0, status:"pending",
@@ -9647,7 +9686,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
 
       {/* Tab navigation */}
       <div style={{ display:"flex", gap:0, marginBottom:20, borderBottom:`2px solid ${T.border}` }}>
-        {[["pos","Purchase Orders"],["requisitions","Requisitions"]].map(([tab,lbl])=>{
+        {[["pos","Purchase Orders"],["requisitions","Requisitions"],["reports","Reports"]].map(([tab,lbl])=>{
           const nestPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting"&&r.status==="pending");
           const badge = tab==="requisitions" && nestPrs.length>0 ? nestPrs.length : null;
           return (
@@ -9719,8 +9758,83 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       </>)}
 
       {/* Requisitions Tab */}
+      {purTab === "reports" && (()=>{
+        // ── PR Register ──
+        const allPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting"||r.type==="store")
+          .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+        const prAge = (pr) => {
+          if (["converted","cancelled","stale"].includes(pr.status)) return "";
+          const d = Math.round((Date.now() - new Date(pr.createdAt).getTime())/86400000);
+          return isNaN(d) ? "" : d;
+        };
+        const prOrderStr = (pr) => pr.type==="store"
+          ? ((orders||[]).find(o=>o.id===pr.orderId)?.orderNo || (pr.orderId ? pr.orderId : "General"))
+          : prOrderNos(pr).join(", ");
+        const prItems = (pr) => (pr.lots||[]).map(l=>l.matCode).join("; ");
+        const prRows = allPrs.map(pr=>({
+          "PR No": pr.id, "Type": pr.type==="store" ? "Store" : "Nesting",
+          "Order": prOrderStr(pr), "Items": prItems(pr),
+          "Status": pr.status, "Raised": pr.createdAt||"", "By": pr.createdBy||"",
+          "Forwarded": pr.forwardedAt||"", "PO(s)": (pr.poIds||[pr.poId]).filter(Boolean).join(", "),
+          "Age (days)": prAge(pr),
+        }));
+        // ── PO Outstanding (GRN pending / partial) ──
+        const poRows = [];
+        (pos||[]).filter(p=>p.status!=="cancelled").forEach(p=>{
+          (p.lines||[]).forEach(ln=>{
+            const ordered = ln.pricingMethod==="PerUnit" ? (ln.qtyOrdered||ln.qty||0) : (ln.wtOrdered||0);
+            const received = ln.pricingMethod==="PerUnit" ? (ln.qtyReceived||0) : (ln.wtReceived||0);
+            const bal = Math.max(0, ordered - received);
+            if (bal <= 0.01) return;
+            poRows.push({
+              "PO No": p.id, "Vendor": p.vendorName||"", "PO Date": p.poDate||"",
+              "Item": ln.itemCode||ln.matCode||"", "Unit": ln.pricingMethod==="PerUnit" ? (ln.unit||"nos") : "kg",
+              "Ordered": Math.round(ordered*100)/100, "Received": Math.round(received*100)/100,
+              "Balance": Math.round(bal*100)/100,
+              "Received %": ordered>0 ? Math.round(received/ordered*100) : 0,
+            });
+          });
+        });
+        const exportXlsx = (rows, name) => {
+          if (!rows.length) { showToast("Nothing to export"); return; }
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name.slice(0,31));
+          XLSX.writeFile(wb, `${name.replace(/\s+/g,"_")}_${today()}.xlsx`);
+        };
+        const th = { textAlign:"left", padding:"5px 8px", color:T.textMid, fontWeight:700, borderBottom:`1px solid ${T.border}`, fontSize:11, whiteSpace:"nowrap" };
+        const td = { padding:"4px 8px", borderBottom:`1px solid ${T.border}`, fontSize:11 };
+        const renderTable = (rows) => rows.length===0
+          ? <div style={{ ...css.card, textAlign:"center", padding:24, color:T.textLow, fontSize:12 }}>No rows.</div>
+          : (
+            <div style={{ ...css.card, overflowX:"auto", padding:0 }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead><tr>{Object.keys(rows[0]).map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                <tbody>{rows.map((r,i)=>(
+                  <tr key={i} style={{ background:i%2?T.bg:"transparent" }}>
+                    {Object.entries(r).map(([k,v])=><td key={k} style={{ ...td, fontFamily:["PR No","PO No","PO(s)","Items","Item"].includes(k)?T.fontMono:T.font }}>{String(v)}</td>)}
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          );
+        return (
+          <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>PR Register <span style={{ color:T.textMid, fontWeight:400, fontSize:12 }}>({prRows.length})</span></div>
+              <button onClick={()=>exportXlsx(prRows,"PR Register")} style={css.btn.secondary}>⬇ Export XLSX</button>
+            </div>
+            {renderTable(prRows)}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", margin:"20px 0 8px" }}>
+              <div style={{ fontSize:14, fontWeight:700, color:T.text }}>PO Outstanding — GRN pending / partial <span style={{ color:T.textMid, fontWeight:400, fontSize:12 }}>({poRows.length} lines)</span></div>
+              <button onClick={()=>exportXlsx(poRows,"PO Outstanding")} style={css.btn.secondary}>⬇ Export XLSX</button>
+            </div>
+            {renderTable(poRows)}
+          </div>
+        );
+      })()}
+
       {purTab === "requisitions" && (()=>{
-        const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting")
+        const nestingPrs = (purchaseReqs||[]).filter(r=>r.type==="nesting"||r.type==="store")
           .filter(r=>showCancelledPrs || !["cancelled","stale"].includes(r.status))
           .filter(r=>!prOrderFilter || prOrderNos(r).includes(prOrderFilter))
           .filter(prMatchesType)
@@ -9728,7 +9842,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         const otherTypes = [...new Set((purchaseReqs||[]).filter(r=>r.type==="nesting").flatMap(prSectionTypes))]
           .filter(t=>t!=="PLATE" && !ROLLED_TYPES.includes(t)).sort();
         const selectableIds = nestingPrs.filter(pr=>["pending","partially_converted"].includes(pr.status)).map(pr=>pr.id);
-        const prStatusBadge = { pending:"amber", converted:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
+        const prStatusBadge = { pending:"amber", pending_store:"amber", forwarded:"blue", converted:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
         return (
           <div>
             {(()=>{
@@ -9739,7 +9853,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   const dim = ln.sheetDim||ln.dims;
                   const rem = prLineRemaining(pr,l,ln);
                   const conv = Math.max(0,(ln.qty||0)-rem);
-                  const cls = matClass(l.matCode);
+                  const cls = l.itemType==="consumable" ? "nos" : matClass(l.matCode);
                   if (cls==="nos") { s.openNos+=rem; s.convNos+=conv; return; }
                   const w = sheetWt(l.matCode, dim);
                   if (w>0) { s.openWt+=w*rem; s.convWt+=w*conv; }
@@ -9774,7 +9888,13 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               );
             })()}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, gap:12 }}>
-              <div style={{ fontSize:13, color:T.textMid }}>{nestingPrs.length} requisition{nestingPrs.length!==1?"s":""} from nesting batches</div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <div style={{ fontSize:13, color:T.textMid }}>{nestingPrs.length} requisition{nestingPrs.length!==1?"s":""}</div>
+                {["store_admin","purchase_admin","super_admin"].includes(user.role) && (
+                  <button onClick={()=>{ setSprForm({ orderId:"", neededBy:"", remarks:"", lines:[blankSprLine()] }); setSprModal(true); }}
+                    style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>+ Store Requisition</button>
+                )}
+              </div>
               <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                 <span style={{ fontSize:11, color:T.textMid, fontWeight:700 }}>Order:</span>
                 <Sel value={prOrderFilter} onChange={e=>setPrOrderFilter(e.target.value)} style={{ width:220 }}>
@@ -9811,7 +9931,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                 <div key={pr.id} style={{ ...css.card, marginBottom:10 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 }}>
                     <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
-                      {(pr.status==="pending"||pr.status==="partially_converted") && canEdit && (
+                      {(pr.status==="pending"||pr.status==="forwarded"||pr.status==="partially_converted") && canEdit && (
                         <input type="checkbox" checked={selectedPrs.includes(pr.id)}
                           onChange={e=>setSelectedPrs(prev=>e.target.checked?[...prev,pr.id]:prev.filter(x=>x!==pr.id))}
                           style={{ marginTop:3, accentColor:T.accent, width:15, height:15, cursor:"pointer" }} />
@@ -9826,7 +9946,9 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                         {fmt.date(pr.createdAt)} · by {pr.createdBy}
                       </div>
                       <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>
-                        Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
+                        {pr.type==="store"
+                          ? <>Store requisition{pr.orderId ? <> · Order: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{(orders||[]).find(o=>o.id===pr.orderId)?.orderNo||pr.orderId}</span></> : " · General stock"}{pr.neededBy?` · Needed by ${fmt.date(pr.neededBy)}`:""}</>
+                          : <>Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span></>}
                       </div>
                       {pr.cancelReason && (
                         <div style={{ fontSize:11, color:T.textLow, marginTop:4 }}>Cancel reason: {pr.cancelReason}</div>
@@ -9858,7 +9980,10 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                     </div>{/* end pr info */}
                     </div>{/* end left col (checkbox + info) */}
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                      {(pr.status==="pending"||pr.status==="partially_converted") && canEdit && (
+                      {pr.type==="store" && pr.status==="pending_store" && isStoreRole && (
+                        <button onClick={()=>forwardSpr(pr)} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Forward to Purchase</button>
+                      )}
+                      {(pr.status==="pending"||pr.status==="forwarded"||pr.status==="partially_converted") && canEdit && (
                         <>
                           <button onClick={()=>{
                             setSelectedPrs([pr.id]);
@@ -9947,6 +10072,60 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       })()}
 
       {/* Combined PO Modal */}
+      {sprModal && (
+        <Modal title="New Store Requisition" onClose={()=>setSprModal(false)} width={760}>
+          <G2>
+            <Field label="Order / Project (optional)">
+              <Sel value={sprForm.orderId} onChange={e=>setSprForm(f=>({...f,orderId:e.target.value}))}>
+                <option value="">General stock (no order)</option>
+                {(orders||[]).map(o=><option key={o.id} value={o.id}>{o.orderNo||o.id}{o.clientName?` — ${o.clientName}`:""}</option>)}
+              </Sel>
+            </Field>
+            <Field label="Needed by">
+              <input type="date" value={sprForm.neededBy} onChange={e=>setSprForm(f=>({...f,neededBy:e.target.value}))} style={css.input} />
+            </Field>
+          </G2>
+          <div style={{ fontSize:11, fontWeight:700, color:T.textMid, margin:"10px 0 6px", letterSpacing:"0.05em" }}>LINES</div>
+          {(sprForm.lines||[]).map((ln,i)=>(
+            <div key={i} style={{ display:"grid", gridTemplateColumns:"110px 1fr 80px 70px 110px 90px auto", gap:6, marginBottom:6, alignItems:"center" }}>
+              <Sel value={ln.itemType} onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,itemType:e.target.value,itemKey:"",unit:e.target.value==="rm"?"kg":"nos"}:x)}))}>
+                <option value="rm">RM</option><option value="consumable">Consumable</option>
+              </Sel>
+              {ln.itemType==="rm" ? (
+                <Sel value={ln.itemKey} onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,itemKey:e.target.value,category:(e.target.value||"").split("/")[0]}:x)}))}>
+                  <option value="">Select material…</option>
+                  {(materials||[]).filter(m=>m.active!==false).map(m=><option key={m.id} value={m.matCode}>{m.matCode}</option>)}
+                </Sel>
+              ) : (
+                <input value={ln.desc} placeholder="Item description (e.g. Asian Paints Apcodur 250 — Grey)"
+                  onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,desc:e.target.value,itemKey:e.target.value}:x)}))} style={css.input} />
+              )}
+              <input type="number" min={0} value={ln.qty} placeholder="Qty"
+                onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,qty:e.target.value}:x)}))} style={css.input} />
+              <Sel value={ln.unit} onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,unit:e.target.value}:x)}))}>
+                {["kg","nos","m","L","set","box"].map(u=><option key={u} value={u}>{u}</option>)}
+              </Sel>
+              <input value={ln.make} placeholder="Preferred make"
+                onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,make:e.target.value}:x)}))} style={css.input} />
+              {ln.itemType==="consumable" ? (
+                <input value={ln.category} placeholder="Category"
+                  onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,category:e.target.value}:x)}))} style={css.input} />
+              ) : (
+                <span style={{ fontSize:10, color:T.textMid, fontFamily:T.fontMono }}>On hand: {stockOnHand(ln)}</span>
+              )}
+              <button onClick={()=>setSprForm(f=>({...f,lines:f.lines.filter((_,xi)=>xi!==i)}))} style={{ ...css.btn.ghost, color:T.red, padding:"3px 8px" }}>✕</button>
+            </div>
+          ))}
+          <button onClick={()=>setSprForm(f=>({...f,lines:[...(f.lines||[]),blankSprLine()]}))} style={{ ...css.btn.ghost, fontSize:11 }}>+ Add line</button>
+          <Field label="Remarks" style={{ marginTop:10 }}>
+            <input value={sprForm.remarks} onChange={e=>setSprForm(f=>({...f,remarks:e.target.value}))} style={css.input} />
+          </Field>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:14 }}>
+            <button onClick={()=>setSprModal(false)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={saveSpr} style={css.btn.primary}>{isStoreRole?"Raise & Forward to Purchase":"Raise Requisition"}</button>
+          </div>
+        </Modal>
+      )}
       {quickWtModal && quickWtModal.length>0 && (
         <Modal title="Add missing weights" onClose={()=>setQuickWtModal(null)} width={560}>
           <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
