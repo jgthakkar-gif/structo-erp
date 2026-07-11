@@ -20676,7 +20676,11 @@ export default function App() {
     if (user.role==="purchase_admin")      return <PurchaseAdminDashboard />;
     if (user.role==="finance_admin")       return <FinanceAdminDashboard />;
     if (user.role==="qc_admin"||user.role==="qc_user") return mod==="qc_ops" ? <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} /> : <QcAdminDashboard />;
-    if (user.role==="store_admin")         return mod==="stock" ? <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} /> : <StoreAdminDashboard />;
+    if (user.role==="store_admin") {
+      if (mod==="stock") return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} />;
+      if (mod==="purchase") return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
+      return <StoreAdminDashboard />;
+    }
     if (user.role==="planning_admin")      return mod==="dashboard" ? <PlanningAdminDashboard /> : null;
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
