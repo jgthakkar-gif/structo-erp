@@ -4810,7 +4810,7 @@ const needsProdReview = (items) =>
   (items||[]).some(i => PROD_CATEGORIES.includes((i.subCategory||i.category||"").toLowerCase()));
 
 // ─── CONSUMABLES MODULE ───────────────────────────────────────────────────────
-const ConsumablesModule = ({ user, consumables, setConsumables,
+const ConsumablesModule = ({ user, consumables, setConsumables, setPurchaseReqs,
   consumableIRs, setConsumableIRs,
   consumablePRs, setConsumablePRs,
   consumablePOs, setConsumablePOs,
@@ -5163,23 +5163,28 @@ const ConsumablesModule = ({ user, consumables, setConsumables,
         // In full implementation would be separate state
       }
 
-      // Create PR for balance items
+      // Create a UNIFIED store PR (type:"store") for balance items — lands in
+      // Purchase -> Requisitions with consolidation, reports, aging. Replaces the
+      // legacy CPR path per the consumables-by-attrition plan.
       const forwardItems = issueItems.filter(i=>i.forwardQty>0);
       if (forwardItems.length>0) {
-        const prNo = genCPRNo(consumablePRs, fy);
+        const prId = `PR-STORE-${Date.now()}`;
         const pr = {
-          id:`CPR-${Date.now()}`, prNo, irId:ir.id, irNo:ir.irNo,
-          status:"pending_purchase",
-          raisedBy:user.username, raisedByName:user.name||user.username,
-          raisedAt:today(), requiredByDate:ir.requiredByDate,
-          purpose:ir.purpose, orderId:ir.orderId,
-          items:forwardItems.map(i=>({consumableId:i.consumableId,name:i.name,
-            unit:i.unit,category:i.subCategory||i.category,
-            qtyRequired:i.forwardQty,qtyOrdered:0,qtyReceived:0})),
-          storeRemarks, vendorName:"", poId:"",
+          id: prId, type:"store", status:"forwarded",
+          irId: ir.id, irNo: ir.irNo,
+          orderId: ir.orderId||"", neededBy: ir.requiredByDate||"",
+          remarks: `From issue request ${ir.irNo} (${ir.raisedByName})${storeRemarks?` · ${storeRemarks}`:""}`,
+          createdAt: today(), createdBy: user.username||user.name,
+          forwardedAt: today(), forwardedBy: user.username||user.name,
+          lots: forwardItems.map(i=>({
+            matCode: i.name, itemType:"consumable",
+            category: i.subCategory||i.category||"", make:"",
+            lines: [{ qty: i.forwardQty, unit: (i.unit||"nos").toLowerCase(), desc: i.name }],
+            parts: [], drawingNos: [],
+          })),
         };
-        setConsumablePRs(prev=>[...(prev||[]),pr]);
-        newPrIds.push(pr.id);
+        setPurchaseReqs(prev=>[...(prev||[]),pr]);
+        newPrIds.push(prId);
       }
 
       const allIssued = issueItems.every(i=>i.forwardQty===0);
@@ -20827,7 +20832,7 @@ export default function App() {
 
   const renderMod = () => {
     // Role-specific routing overrides — consumables always goes to switch
-    if (mod==="consumables") return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
+    if (mod==="consumables") return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
     if (user.role==="production_admin")   return mod==="masters" ? <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} releases={releases||[]} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} setDprs={setDprs} nestingBatches={nestingBatches||[]} setNestingBatches={setNestingBatches} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} outboundJobs={outboundJobs||[]} setOutboundJobs={setOutboundJobs} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} appUsers={appUsers} setAppUsers={setAppUsers} processTypes={processTypes||DEFAULT_PROCESS_TYPES} setProcessTypes={setProcessTypes} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} /> : <ProductionAdminFullDashboard />;
     if (user.role==="production_engineer") return <ProductionEngineerDashboard />;
     if (user.role==="purchase_admin")      return <PurchaseAdminDashboard />;
@@ -20843,7 +20848,7 @@ export default function App() {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
-      case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
+      case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} />;
