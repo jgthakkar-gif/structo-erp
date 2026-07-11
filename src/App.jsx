@@ -5537,8 +5537,8 @@ const ConsumablesModule = ({ user, consumables, setConsumables, setPurchaseReqs,
         {[
           ["stock","📦 Stock"],
           ["ir",`📋 Issue Requests${pendingIRs>0?` (${pendingIRs})`:""}`],
-          ["pr",`🛒 Purchase Reqs${pendingPRs>0?` (${pendingPRs})`:""}`],
-          ["po",`📄 Purchase Orders${pendingPOs>0?` (${pendingPOs})`:""}`],
+          ["pr",`🛒 Purchase Reqs (legacy)${pendingPRs>0?` (${pendingPRs})`:""}`],
+          ["po",`📄 Purchase Orders (legacy)${pendingPOs>0?` (${pendingPOs})`:""}`],
           ["history","📅 History"],
         ].map(([id,lbl])=>(
           <button key={id} onClick={()=>setTab(id)} style={{padding:"10px 16px",fontSize:12,
@@ -7497,7 +7497,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                   setView("nest_export");
                 }}
                 style={{ ...css.btn.primary, opacity:canExport?1:0.4, cursor:canExport?"pointer":"not-allowed" }}>
-                📤 Export Nesting Sheets (Stage 1)
+                ⬇ Offline Nesting Export
               </button>
               <button onClick={()=>setNestModal("import")} style={css.btn.amber}>📥 Import Nesting Results</button>
             </div>
@@ -8344,7 +8344,9 @@ const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, s
     { id:"S2", label:"Sheet 2 — Drawing Part List" },
     { id:"S3", label:"Sheet 3 — Available Stock" },
     { id:"S4", label:"Sheet 4 — Material Summary" },
-    { id:"S5", label:"Sheet 5 — Run API Nesting ★" },
+    // S5 (Run API Nesting) removed — online nesting lives ONLY in the Export-for-Nesting
+    // modal (Material Requirements), which carries reconciliation, splits and CAD safeguards.
+    // This screen is the OFFLINE fallback: export -> nest externally -> Import Nesting Results.
   ];
 
   // ── Sheet 5 state ────────────────────────────────────────────────────────
@@ -8695,7 +8697,10 @@ const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, s
     <div>
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
         <button onClick={onBack} style={{ ...css.btn.ghost, color:T.accent }}>← MRP Planning</button>
-        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Nesting Export — Stage 1 (Preliminary)</div>
+        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Offline Nesting Export</div>
+        <div style={{ fontSize:11, color:T.amber, fontWeight:600, marginTop:2 }}>
+          API fallback: download these sheets, nest manually or in external software, then bring the plan back via "Import Nesting Results" on the Nesting Runs tab. For online nesting use "Export for Nesting" on a Material Requirements row.
+        </div>
       </div>
       <InfoBanner color="blue">
         Export these 4 sheets to your nesting software. Sheet 4 is the purchase input — only fill Qty to Order, Order Unit, Weight to Order, Source, Remarks on Sheet 4 and import back.
