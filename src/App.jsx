@@ -5138,6 +5138,7 @@ const ConsumablesModule = ({ user, consumables, setConsumables, setPurchaseReqs,
       }
 
       const newCisIds = [];
+      const newCisRecords = [];
       const newPrIds = [];
       const updatedItems = issueItems.map(ii=>{
         if (ii.issueQty>0) deductStock(ii.consumableId, ii.issueQty);
@@ -5159,8 +5160,7 @@ const ConsumablesModule = ({ user, consumables, setConsumables, setPurchaseReqs,
           issuedAt:today(), remarks:storeRemarks,
         };
         newCisIds.push(cis.id);
-        // Store CIS in consumablePRs as a sub-record for now
-        // In full implementation would be separate state
+        newCisRecords.push(cis);
       }
 
       // Create a UNIFIED store PR (type:"store") for balance items — lands in
@@ -5193,6 +5193,7 @@ const ConsumablesModule = ({ user, consumables, setConsumables, setPurchaseReqs,
         status:allIssued?"fully_issued":"partially_issued",
         storeActionBy:user.username, storeActionAt:today(), storeRemarks,
         cisIds:[...(r.cisIds||[]),...newCisIds],
+        cisRecords:[...(r.cisRecords||[]),...newCisRecords],
         prIds:[...(r.prIds||[]),...newPrIds],
       }));
 
@@ -5519,6 +5520,30 @@ const ConsumablesModule = ({ user, consumables, setConsumables, setPurchaseReqs,
           border:`1px solid ${T.amber}`,padding:"10px 14px"}}>
           <div style={{fontSize:12,fontWeight:700,color:T.amber,marginBottom:6}}>
             ⚠ Reorder Alerts — {reorderAlerts} item{reorderAlerts!==1?"s":""} at or below reorder level
+            {["store_admin","super_admin","purchase_admin"].includes(user.role) && setPurchaseReqs && (
+              <button onClick={()=>{
+                const below = (consumables||[]).filter(c=>(c.qtyOnHand||0)<=(c.reorderLevel||0)&&(c.reorderLevel||0)>0);
+                if (!below.length) return;
+                if (!window.confirm(`Raise ONE store requisition covering all ${below.length} below-minimum items at their reorder quantities?`)) return;
+                const prId = `PR-STORE-${Date.now()}`;
+                setPurchaseReqs(prev=>[...(prev||[]),{
+                  id: prId, type:"store", status:"forwarded",
+                  orderId:"", neededBy:"", remarks:"Auto-raised from reorder alerts (below minimum stock)",
+                  createdAt: today(), createdBy: user.username||user.name,
+                  forwardedAt: today(), forwardedBy: user.username||user.name,
+                  lots: below.map(c=>({
+                    matCode: c.name, itemType:"consumable",
+                    category: c.subCategory||c.category||"", make:"",
+                    lines: [{ qty: c.reorderQty||c.reorderLevel||1, unit:(c.unit||"nos").toLowerCase(), desc: c.name }],
+                    parts: [], drawingNos: [],
+                  })),
+                }]);
+                alert(`${prId} raised and forwarded to Purchase — ${below.length} items at reorder quantities. Review it under Purchase → Requisitions.`);
+              }} style={{ marginLeft:12, padding:"3px 10px", fontSize:11, fontWeight:700, borderRadius:6,
+                background:"#B45309", color:"#fff", border:"none", cursor:"pointer" }}>
+                Raise PR for all
+              </button>
+            )}
           </div>
           <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
             {(consumables||[]).filter(c=>(c.qtyOnHand||0)<=(c.reorderLevel||0)&&(c.reorderLevel||0)>0)
@@ -8305,7 +8330,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                     }
                     return dimLines.map((d,di)=>{
                       const dimStr = d.sheetDim||'';
-                      const wtPerSheet = nestingSheetWt(l.matCode, dimStr);
+                      const wtPerSheet = resolveMatWt(materials, l.matCode, dimStr);
                       const totalWt = Math.round(wtPerSheet*d.qty*10)/10;
                       return {
                         id:`POL-${Date.now()}-${li}-${di}`, matCode:l.matCode,
@@ -9264,6 +9289,26 @@ const nestingSheetWt = (matCode, sheetDim) => {
   }
 };
 
+// One weight resolver for the whole app: library constant -> materials master ->
+// geometric formulas. Every screen that shows a sheet/bar weight must use this,
+// so MRP Planning and Purchase can never disagree about the same requisition.
+function resolveMatWt(materialsList, mc, dim) {
+  const w = nestingSheetWt(mc, dim);
+  if (w) return w;
+  const lib = (materialsList||[]).find(m=>normMatCode(m.matCode)===normMatCode(mc));
+  if (lib?.nosOnly) return 0;
+  const segs = (mc||"").split("/");
+  if (lib && lib.isPlate) {
+    const t = parseFloat(segs[3]||"")||0;
+    const p = (dim||"").toUpperCase().split("X").map(Number);
+    return (p[0]&&p[1]&&t) ? Math.round(p[0]*p[1]*t*7.85/1e6*100)/100 : 0;
+  }
+  const lenM = (parseFloat(dim)||0)/1000;
+  if (lenM>0 && lib && lib.wtPerMetre>0) return Math.round(lenM*lib.wtPerMetre*100)/100;
+  const g = geometricKgPerM(segs[0], segs[3]);
+  return (lenM>0 && g>0) ? Math.round(lenM*g*100)/100 : 0;
+}
+
 // Pure-geometry kg/m for sections whose weight derives from the size itself.
 // ROD d²×0.006165; BAR/FLAT w×t×0.00785; SQ a²×0.00785. (mm inputs, kg/m out)
 const geometricKgPerM = (sectionType, size) => {
@@ -9306,6 +9351,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [prOrderFilter, setPrOrderFilter] = useState("");
   const [prTypeFilter, setPrTypeFilter] = useState("");
   const [showCancelledPrs, setShowCancelledPrs] = useState(false);
+  const [prCatFilter, setPrCatFilter] = useState("");
+  const [prMakeFilter, setPrMakeFilter] = useState("");
   // Rolled structural sections typically share vendors, distinct from plate mills
   const ROLLED_TYPES = ["ISA","ISMC","ISMB","ISLB","ISHB","ISJB","ISJC","UB","UC","NPB","WPB","UBP","BEAM","CHANNEL","ANGLE","ISNT","RSJ"];
   const prSectionTypes = (pr) => [...new Set((pr.lots||[]).map(l=>((l.matCode||"").split("/")[0]||"").toUpperCase()).filter(Boolean))];
@@ -9397,28 +9444,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   // Sheet/bar weight with DB-materials fallback: the module-level nestingSheetWt
   // only knows the hardcoded library constant, which lacks later additions
   // (UC/UB etc. added directly to the materials master) — hence Wt Req showing 0.
-  const sheetWt = (mc, dim) => {
-    const w = nestingSheetWt(mc, dim);
-    if (w) return w;
-    const lib = (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(mc));
-    if (lib?.nosOnly) return 0;
-    if (!lib) {
-      const segs = (mc||"").split("/");
-      const g = geometricKgPerM(segs[0], segs[3]);
-      const lenM = (parseFloat(dim)||0)/1000;
-      return (lenM>0 && g>0) ? Math.round(lenM*g*100)/100 : 0;
-    }
-    if (lib.isPlate) {
-      const t = parseFloat((mc||"").split("/")[3]||"")||0;
-      const p = (dim||"").toUpperCase().split("X").map(Number);
-      return (p[0]&&p[1]&&t) ? Math.round(p[0]*p[1]*t*7.85/1e6*100)/100 : 0;
-    }
-    const lenM = (parseFloat(dim)||0)/1000;
-    if (lenM>0 && lib.wtPerMetre>0) return Math.round(lenM*lib.wtPerMetre*100)/100;
-    const segs = (mc||"").split("/");
-    const g = geometricKgPerM(segs[0], segs[3]);
-    return (lenM>0 && g>0) ? Math.round(lenM*g*100)/100 : 0;
-  };
+  const sheetWt = (mc, dim) => resolveMatWt(materials, mc, dim);
   const matLib = (mc) => (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(mc));
   const isNosOnly = (mc) => matLib(mc)?.nosOnly===true;
   // "sheet" (plates), "bar" (length-stock sections), "nos" (count-only items)
@@ -9844,7 +9870,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             const received = perUnit ? (ln.qtyReceived||0) : (ln.wtReceived||0);
             const bal = Math.max(0, ordered-received);
             if (repPoView==="outstanding" && bal<=0.01) return;
-            poRowsAll.push({ _po:p, "PO No":p.id, "Vendor":p.vendorName||"", "PO Date":p.poDate||"",
+            if (repPoView==="outstanding" && ln.shortClosed) return;
+            poRowsAll.push({ _po:p, _ln:ln, "PO No":p.id, "Vendor":p.vendorName||"", "PO Date":p.poDate||"",
               "Item":ln.itemCode||ln.matCode||"", "Unit":perUnit?(ln.unit||"nos"):"kg",
               "Ordered":Math.round(ordered*100)/100, "Received":Math.round(received*100)/100,
               "Balance":Math.round(bal*100)/100, "Recd %":ordered>0?Math.round(received/ordered*100):0,
@@ -9898,7 +9925,17 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                           {k==="Age" ? <AgePill days={v} /> : String(v)}
                         </td>
                       ))}
-                      {onRowJump && <td style={td}><button onClick={()=>onRowJump(r)} style={{ ...css.btn.sm, fontSize:10, padding:"2px 8px" }}>→ GRN</button></td>}
+                      {onRowJump && <td style={{ ...td, whiteSpace:"nowrap" }}>
+                        <button onClick={()=>onRowJump(r)} style={{ ...css.btn.sm, fontSize:10, padding:"2px 8px" }}>→ GRN</button>
+                        {r._ln && (r.Balance||0)>0 && !r._ln.shortClosed && canEdit && (
+                          <button onClick={()=>{
+                            const reason = window.prompt(`Short-close ${r["PO No"]} · ${r.Item}? Balance ${r.Balance} ${r.Unit} will no longer be expected. Reason:`);
+                            if (reason===null) return;
+                            setPos(prev=>prev.map(p=>p.id!==r._po.id?p:{...p, lines:(p.lines||[]).map(l=>l!==r._ln && l.id!==r._ln.id ? l : {...l, shortClosed:true, shortCloseReason:reason||"", shortClosedAt:today(), shortClosedBy:user.username||user.name})}));
+                            showToast("Line short-closed");
+                          }} style={{ ...css.btn.sm, fontSize:10, padding:"2px 8px", marginLeft:4, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Short-close</button>
+                        )}
+                      </td>}
                     </tr>
                   ))}
                   {totals && (
@@ -9978,7 +10015,11 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           .filter(r=>showCancelledPrs || !["cancelled","stale"].includes(r.status))
           .filter(r=>!prOrderFilter || prOrderNos(r).includes(prOrderFilter))
           .filter(prMatchesType)
+          .filter(r=>!prCatFilter || (r.lots||[]).some(l=>(l.category||"").toLowerCase()===prCatFilter.toLowerCase()))
+          .filter(r=>!prMakeFilter || (r.lots||[]).some(l=>(l.make||"").toLowerCase()===prMakeFilter.toLowerCase()))
           .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
+        const catOptions = [...new Set((purchaseReqs||[]).flatMap(r=>(r.lots||[]).map(l=>l.category)).filter(Boolean))].sort();
+        const makeOptions = [...new Set((purchaseReqs||[]).flatMap(r=>(r.lots||[]).map(l=>l.make)).filter(Boolean))].sort();
         const otherTypes = [...new Set((purchaseReqs||[]).filter(r=>r.type==="nesting").flatMap(prSectionTypes))]
           .filter(t=>t!=="PLATE" && !ROLLED_TYPES.includes(t)).sort();
         const selectableIds = nestingPrs.filter(pr=>["pending","partially_converted"].includes(pr.status)).map(pr=>pr.id);
@@ -10048,6 +10089,18 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   <option value="ROLLED">Rolled sections (ISA/ISMC/ISMB/UB/UC…)</option>
                   {otherTypes.map(t=><option key={t} value={t}>{t}</option>)}
                 </Sel>
+                {catOptions.length>0 && (
+                  <Sel value={prCatFilter} onChange={e=>setPrCatFilter(e.target.value)} style={{ width:130 }}>
+                    <option value="">All categories</option>
+                    {catOptions.map(c=><option key={c} value={c}>{c}</option>)}
+                  </Sel>
+                )}
+                {makeOptions.length>0 && (
+                  <Sel value={prMakeFilter} onChange={e=>setPrMakeFilter(e.target.value)} style={{ width:130 }}>
+                    <option value="">All makes</option>
+                    {makeOptions.map(m=><option key={m} value={m}>{m}</option>)}
+                  </Sel>
+                )}
                 <label style={{ fontSize:11, color:T.textMid, display:"flex", alignItems:"center", gap:4, cursor:"pointer" }}>
                   <input type="checkbox" checked={showCancelledPrs} onChange={e=>setShowCancelledPrs(e.target.checked)} />
                   Show cancelled
