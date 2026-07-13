@@ -6,7 +6,7 @@ import { fmt, today, getFinancialYear, genOrderId, normMatCode, normSize, buildM
   calcSheetWt, buildDIId, getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
   parseCSVLine, parseCSVText, can, ROLE_DEFAULT_PERMS, USERS,
-  computePaintableArea } from "./helpers.js";
+  computePaintableArea, getPaintCoats } from "./helpers.js";
 import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
 import { migrateDrawingInstances, buildDefaultProcessSteps, getDIPipelineNext, getPipelineLabel,
@@ -1849,11 +1849,6 @@ const INIT_INSTANCES = [];
 // Returns the coat array for a given quality object.
 // Reads paintSpecs[0].coats first (new format), falls back to legacy paintCoats.
 // Production code uses this until per-drawing spec selection is implemented.
-const getPaintCoats = (quality) => {
-  const q = quality || {};
-  if (q.paintSpecs?.length) return q.paintSpecs[0].coats || [];
-  return q.paintCoats || [];
-};
 const calcWtOrdered = (qty, unit) => (unit||"MT")==="MT" ? (qty||0)*1000 : (qty||0);
 // buildMatCode moved below with normSize
 const buildItemCode = (l) => {

@@ -291,3 +291,11 @@ export const computePaintableArea = (part, drawing) => {
   }
   return null;
 };
+
+// Paint coats for an order's quality spec — canonical shared implementation
+// (was duplicated in App.jsx and relied upon, unimported, in ProductionModule).
+export const getPaintCoats = (quality) => {
+  const q = quality || {};
+  if (q.paintSpecs?.length) return q.paintSpecs[0].coats || [];
+  return q.paintCoats || [];
+};

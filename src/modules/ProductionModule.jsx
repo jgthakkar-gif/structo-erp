@@ -3,7 +3,7 @@ import { T, css } from "../theme.js";
 import { fmt, today, normMatCode, buildDIId, getFinancialYear, calcSheetWt,
   getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
-  parseCSVText, can, USERS, computePaintableArea } from "../helpers.js";
+  parseCSVText, can, USERS, computePaintableArea, getPaintCoats } from "../helpers.js";
 import { Badge, Modal, Field, Input, Sel, InfoBanner, SectionHd, Textarea, MField,
   StatCard, TH, TD, G2, G3, TabBar2, Row2 } from "../components/ui.jsx";
 
