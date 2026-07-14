@@ -9542,6 +9542,13 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       const v = combineForm.lineQtys?.[k];
       return Math.max(0, Math.min(rem, v===undefined||v==="" ? rem : (parseInt(v)||0)));
     };
+    // Order linkage for auto-reservation at GRN: each line carries its source
+    // order(s) so receiving can reserve the material for the right project.
+    const prOrderIdsFor = (pr) => {
+      if (pr.type==="store") return pr.orderId ? [pr.orderId] : [];
+      const b = (nestingBatches||[]).find(x=>x.id===pr.nestingBatchId);
+      return (b?.orderIds||[]).filter(Boolean);
+    };
     const allLines = (purchaseReqs||[])
       .filter(r=>selectedPrs.includes(r.id))
       .flatMap((pr,prIdx)=>
@@ -9569,6 +9576,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                 : Math.round(Math.round(wtPerSheet*qty*100)/100*(parseFloat(combineForm.rates?.[l.matCode])||0)*100)/100,
               wtReceived:0, qtyReceived:0, status:"pending",
               sourceType:"nesting", sourcePrId:pr.id,
+              orderAllocations: (()=>{ const oids = prOrderIdsFor(pr); const wt = Math.round(wtPerSheet*qty*100)/100;
+                return (oids.length===1 && wt>0) ? [{ orderId:oids[0], kg:wt }] : []; })(),
               itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
             };
           }).filter(Boolean)
@@ -9588,6 +9597,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       totalValue:allLines.reduce((s,l)=>s+(l.totalPrice||0),0),
       lines:allLines, grns:[], createdBy:user.name, createdDate:today(),
     };
+    newPO.coveredOrders = [...new Set(allLines.flatMap(l=>(l.orderAllocations||[]).map(a=>a.orderId)))];
     setPos(prev=>[...prev, newPO]);
     setPurchaseReqs(prev=>prev.map(r=>{
       if (!selectedPrs.includes(r.id)) return r;
