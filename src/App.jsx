@@ -9545,7 +9545,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     const allLines = (purchaseReqs||[])
       .filter(r=>selectedPrs.includes(r.id))
       .flatMap((pr,prIdx)=>
-        (pr.lots||[]).flatMap((l,lotIdx)=>
+        (pr.lots||[]).filter(l=>!l.fulfilledFromStock).flatMap((l,lotIdx)=>
           (l.lines||[]).map((ln,lineIdx)=>{
             const qty = inclQty(pr,l,ln);
             if (qty<=0) return null;
@@ -10018,14 +10018,14 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         const otherTypes = [...new Set((purchaseReqs||[]).filter(r=>r.type==="nesting").flatMap(prSectionTypes))]
           .filter(t=>t!=="PLATE" && !ROLLED_TYPES.includes(t)).sort();
         const selectableIds = nestingPrs.filter(pr=>["pending","partially_converted"].includes(pr.status)).map(pr=>pr.id);
-        const prStatusBadge = { pending:"amber", pending_store:"amber", forwarded:"blue", converted:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
+        const prStatusBadge = { pending:"amber", pending_store:"amber", forwarded:"blue", converted:"green", fulfilled:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
         return (
           <div>
             {(()=>{
               const s = { openWt:0, convWt:0, openSheets:0, openBars:0, openNos:0, convSheets:0, convBars:0, convNos:0, unweighed:new Set() };
               nestingPrs.forEach(pr=>{
                 if (["cancelled","stale"].includes(pr.status)) return;
-                (pr.lots||[]).forEach(l=>(l.lines||[]).forEach(ln=>{
+                (pr.lots||[]).filter(l=>!l.fulfilledFromStock).forEach(l=>(l.lines||[]).forEach(ln=>{
                   const dim = ln.sheetDim||ln.dims;
                   const rem = prLineRemaining(pr,l,ln);
                   const conv = Math.max(0,(ln.qty||0)-rem);
@@ -10141,6 +10141,11 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                       {pr.cancelReason && (
                         <div style={{ fontSize:11, color:T.textLow, marginTop:4 }}>Cancel reason: {pr.cancelReason}</div>
                       )}
+                      {(pr.lots||[]).some(l=>l.fulfilledFromStock) && (
+                        <div style={{ fontSize:11, color:T.green, marginTop:4 }}>
+                          ✓ {(pr.lots||[]).filter(l=>l.fulfilledFromStock).map(l=>l.matCode).join(", ")} fulfilled from stock
+                        </div>
+                      )}
                       {pr.status==="partially_converted" && (
                         <div style={{ fontSize:11, color:T.amber, marginTop:4 }}>
                           {prRemainingTotal(pr)} sheet(s) remaining · POs: {(pr.poIds||[pr.poId]).filter(Boolean).join(", ")}
@@ -10169,7 +10174,29 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                     </div>{/* end left col (checkbox + info) */}
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                       {pr.type==="store" && pr.status==="pending_store" && isStoreRole && (
-                        <button onClick={()=>forwardSpr(pr)} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Forward to Purchase</button>
+                        <>
+                          {(pr.lots||[]).some(l=>l.itemType==="rm" && !l.fulfilledFromStock) && (
+                            <button onClick={()=>{
+                              const cands = (pr.lots||[]).map((l,li)=>({l,li})).filter(({l})=>{
+                                if (l.itemType!=="rm" || l.fulfilledFromStock) return false;
+                                const ln = (l.lines||[])[0]; if (!ln || (ln.unit||"")!=="kg") return false;
+                                const kg = (stock||[]).filter(s=>normMatCode(s.matCode)===normMatCode(l.matCode) && !["rejected","returned","written_off"].includes(s.status)).reduce((a,s)=>a+(s.wtAvailable||0),0);
+                                return kg >= (ln.qty||0);
+                              });
+                              if (!cands.length) { showToast("No RM line is fully coverable from current stock"); return; }
+                              const names = cands.map(({l})=>`${l.matCode} (${(l.lines[0]||{}).qty} kg)`).join(", ");
+                              if (!window.confirm(`Mark as fulfilled from stock: ${names}? These lines will NOT go to purchase. Issue the material via Stock as usual.`)) return;
+                              setPurchaseReqs(prev=>prev.map(r=>{
+                                if (r.id!==pr.id) return r;
+                                const lots = r.lots.map((l,li)=> cands.some(c=>c.li===li) ? {...l, fulfilledFromStock:true, fulfilledAt:today(), fulfilledBy:user.username||user.name} : l);
+                                const allDone = lots.every(l=>l.fulfilledFromStock);
+                                return {...r, lots, status: allDone ? "fulfilled" : r.status,
+                                  remarks:((r.remarks||"")+` · ${cands.length} line(s) fulfilled from stock ${today()}`).trim()};
+                              }));
+                            }} style={{ ...css.btn.sm, background:T.greenBg, color:T.green, border:`1px solid ${T.green}` }}>Fulfil from stock</button>
+                          )}
+                          <button onClick={()=>forwardSpr(pr)} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Forward to Purchase</button>
+                        </>
                       )}
                       {(pr.status==="pending"||pr.status==="forwarded"||pr.status==="partially_converted") && canEdit && (
                         <>
@@ -10383,7 +10410,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               </tr></thead>
               <tbody>
                 {(purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>
-                  (pr.lots||[]).flatMap(l=>(l.lines||[]).map((ln,i)=>{
+                  (pr.lots||[]).filter(l=>!l.fulfilledFromStock).flatMap(l=>(l.lines||[]).map((ln,i)=>{
                     const dim = ln.sheetDim||ln.dims||"";
                     const k = prLineKey(pr.id, l.matCode, dim);
                     const rem = prLineRemaining(pr,l,ln);
@@ -10487,7 +10514,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             <button onClick={createCombinedPO} disabled={(()=>{
               if (!combineForm.vendorId) return true;
               const inclMats = new Set();
-              (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).forEach(pr=>(pr.lots||[]).forEach(l=>(l.lines||[]).forEach(ln=>{
+              (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).forEach(pr=>(pr.lots||[]).filter(l=>!l.fulfilledFromStock).forEach(l=>(l.lines||[]).forEach(ln=>{
                 const k = prLineKey(pr.id, l.matCode, ln.sheetDim||ln.dims);
                 const rem = prLineRemaining(pr,l,ln);
                 const v = combineForm.lineQtys?.[k];
@@ -12757,7 +12784,7 @@ const MatCodePicker = ({ materials, setMaterials, onChange, label="", showToast 
 };
 
 
-const StockModule = ({ user, stock, setStock, orders, contractors, materials, setMaterials, issueRequests=[], setIssueRequests, correctionsLog, setCorrectionsLog, notifications, setNotifications }) => {
+const StockModule = ({ user, stock, setStock, orders, contractors, materials, setMaterials, issueRequests=[], setIssueRequests, correctionsLog, setCorrectionsLog, notifications, setNotifications, setPurchaseReqs, consumables }) => {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState(null);
@@ -12901,23 +12928,180 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
     showToast("Reservation added"); setResModal(null); setResLot(null); setResForm({});
   };
 
+  // Release now records WHO the material went to and the replenishment decision —
+  // the borrow ledger. A reserved lot used for another project is a debt to the
+  // lender order; the prompt captures it instead of letting it vanish.
+  const [borrowModal, setBorrowModal] = useState(null);   // {lot, idx, entry}
+  const [ovOpen, setOvOpen] = useState(false);
+  const [borForm, setBorForm] = useState({ toOrderId:"", decision:"none" });
   const releaseReservation = (lot, idx) => {
     const entry = (lot.reservations||[])[idx];
     if (!entry) return;
+    setBorForm({ toOrderId:"", decision:"none" });
+    setBorrowModal({ lot, idx, entry });
+  };
+  const raiseReplenishPr = (lot, entry, toOrderId) => {
+    if (!setPurchaseReqs) return null;
+    const prId = `PR-STORE-${Date.now()}`;
+    setPurchaseReqs(prev=>[...(prev||[]),{
+      id: prId, type:"store", status:"forwarded",
+      orderId: entry.orderId||"", neededBy:"",
+      remarks: `Replenishment — ${fmt.num(entry.kg)} kg of ${lot.matCode} reserved for this order was released${toOrderId?` for ${(orders||[]).find(o=>o.id===toOrderId)?.orderNo||toOrderId}`:""} (lot ${lot.lotNo||lot.id})`,
+      createdAt: today(), createdBy: user.username||user.name,
+      forwardedAt: today(), forwardedBy: user.username||user.name,
+      lots: [{ matCode: lot.matCode, itemType:"rm", category:(lot.matCode||"").split("/")[0], make:"",
+        lines: [{ qty: entry.kg, unit:"kg", desc:`Replenish released reservation (lot ${lot.lotNo||lot.id})` }],
+        parts: [], drawingNos: [] }],
+    }]);
+    return prId;
+  };
+  const confirmRelease = () => {
+    const { lot, idx, entry } = borrowModal;
+    let prId = null;
+    if (borForm.decision==="now") prId = raiseReplenishPr(lot, entry, borForm.toOrderId);
     setStock(prev=>prev.map(s=>{
       if (s.id!==lot.id) return s;
-      const newRes = s.reservations.filter((_,i)=>i!==idx);
+      const newRes = (s.reservations||[]).filter((_,i)=>i!==idx);
+      const borrow = { fromOrderId:entry.orderId, toOrderId:borForm.toOrderId||"", kg:entry.kg,
+        date:today(), by:user.name, decision:borForm.decision, prId:prId||"" };
       return { ...s, reservations:newRes,
         status: newRes.length===0 ? "available" : "reserved",
-        auditLog:[...(s.auditLog||[]),{action:"reservation_released",orderId:entry.orderId,wt:entry.kg,by:user.name,date:today(),reason:"Released by user"}]
+        borrows:[...(s.borrows||[]), borrow],
+        auditLog:[...(s.auditLog||[]),{action:"reservation_released",orderId:entry.orderId,wt:entry.kg,by:user.name,date:today(),
+          reason:`Released${borForm.toOrderId?` for ${borForm.toOrderId}`:""} · replenish: ${borForm.decision}${prId?` (${prId})`:""}`}]
       };
     }));
-    showToast("Reservation released");
+    setBorrowModal(null);
+    showToast(prId ? `Released — replenishment ${prId} raised` : "Reservation released");
+  };
+  const markBorrowPr = (lotId, bIdx) => {
+    const lot = (stock||[]).find(s=>s.id===lotId); if(!lot) return;
+    const b = (lot.borrows||[])[bIdx]; if(!b) return;
+    const prId = raiseReplenishPr(lot, { orderId:b.fromOrderId, kg:b.kg }, b.toOrderId);
+    if (!prId) return;
+    setStock(prev=>prev.map(s=>s.id!==lotId?s:{...s, borrows:s.borrows.map((x,i)=>i!==bIdx?x:{...x, decision:"now", prId})}));
+    showToast(`Replenishment ${prId} raised`);
   };
 
   return (
     <div>
       {toast && <div style={{ position:"fixed",top:20,right:20,zIndex:2000,background:toast.color==="green"?T.greenBg:T.amberBg,border:`1px solid ${toast.color==="green"?T.green:T.amber}`,borderRadius:8,padding:"12px 20px",color:toast.color==="green"?T.green:T.amber,fontSize:13,fontWeight:600 }}>{toast.msg}</div>}
+
+      {/* ── Release / Borrow modal ── */}
+      {borrowModal && (
+        <Modal title="Release reservation" onClose={()=>setBorrowModal(null)} width={520}>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>
+            Releasing <b style={{ fontFamily:T.fontMono }}>{fmt.num(borrowModal.entry.kg)} kg</b> of <b style={{ fontFamily:T.fontMono }}>{borrowModal.lot.matCode}</b> reserved
+            for <b>{(orders||[]).find(o=>o.id===borrowModal.entry.orderId)?.orderNo||borrowModal.entry.orderId}</b>.
+          </div>
+          <Field label="Being released to use for (optional)">
+            <Sel value={borForm.toOrderId} onChange={e=>setBorForm(f=>({...f,toOrderId:e.target.value}))}>
+              <option value="">Not for a specific order / just releasing</option>
+              {(orders||[]).filter(o=>o.id!==borrowModal.entry.orderId).map(o=><option key={o.id} value={o.id}>{o.orderNo||o.id}{o.clientName?` — ${o.clientName}`:""}</option>)}
+            </Sel>
+          </Field>
+          <Field label="Replenish the lender order?" style={{ marginTop:10 }}>
+            <div style={{ display:"flex", flexDirection:"column", gap:6, fontSize:12 }}>
+              {[["now","Raise replenishment PR now (pre-filled, forwarded to purchase)"],["later","Later — keep it in the Borrows list to raise any time"],["none","Not needed"]].map(([v,l])=>(
+                <label key={v} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
+                  <input type="radio" name="bordec" checked={borForm.decision===v} onChange={()=>setBorForm(f=>({...f,decision:v}))} /> {l}
+                </label>
+              ))}
+            </div>
+          </Field>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:14 }}>
+            <button onClick={()=>setBorrowModal(null)} style={css.btn.secondary}>Cancel</button>
+            <button onClick={confirmRelease} style={css.btn.primary}>Release</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Borrows pending replenishment ── */}
+      {(()=>{
+        const pend = (stock||[]).flatMap(s=>(s.borrows||[]).map((b,i)=>({lot:s,b,i}))).filter(x=>x.b.decision==="later" && !x.b.prId);
+        if (!pend.length) return null;
+        return (
+          <div style={{ ...css.card, border:`1px solid ${T.amber}`, background:T.amberBg, padding:"10px 16px", marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:6 }}>⇄ Borrows awaiting replenishment ({pend.length})</div>
+            {pend.map(({lot,b,i},k)=>(
+              <div key={k} style={{ display:"flex", alignItems:"center", gap:10, fontSize:11, padding:"3px 0" }}>
+                <span style={{ fontFamily:T.fontMono }}>{lot.matCode}</span>
+                <span>{fmt.num(b.kg)} kg</span>
+                <span style={{ color:T.textMid }}>from {(orders||[]).find(o=>o.id===b.fromOrderId)?.orderNo||b.fromOrderId}{b.toOrderId?` → used for ${(orders||[]).find(o=>o.id===b.toOrderId)?.orderNo||b.toOrderId}`:""} · {b.date} · {b.by}</span>
+                {setPurchaseReqs && (user.role==="store_admin"||user.role==="super_admin"||user.role==="purchase_admin") && (
+                  <button onClick={()=>markBorrowPr(lot.id, i)} style={{ ...css.btn.sm, fontSize:10, marginLeft:"auto" }}>Raise replenishment PR</button>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {/* ── Grouped Stock Overview ── */}
+      {(()=>{
+        const grp = {};
+        (stock||[]).filter(s=>!["rejected","returned","written_off"].includes(s.status)).forEach(s=>{
+          const fam = s.sectionType || (s.matCode||"").split("/")[0] || "OTHER";
+          if(!grp[fam]) grp[fam] = {};
+          const mc = s.matCode || "?";
+          if(!grp[fam][mc]) grp[fam][mc] = { lots:0, avail:0, reserved:0, issued:0 };
+          const g = grp[fam][mc];
+          g.lots += 1; g.avail += s.wtAvailable||0; g.issued += s.wtIssued||0;
+          g.reserved += (s.reservations||[]).reduce((a,r)=>a+(r.kg||0),0);
+        });
+        const conGrp = {};
+        (consumables||[]).forEach(c=>{
+          const cat = c.subCategory||c.category||"other";
+          if(!conGrp[cat]) conGrp[cat] = [];
+          conGrp[cat].push(c);
+        });
+        return (
+          <div style={{ ...css.card, marginBottom:14, padding:0, overflow:"hidden" }}>
+            <div onClick={()=>setOvOpen(o=>!o)} style={{ padding:"10px 16px", cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center", background:T.bgInput }}>
+              <span style={{ fontSize:13, fontWeight:700 }}>Stock Overview — grouped (RM + consumables)</span>
+              <span style={{ fontSize:11, color:T.textMid }}>{ovOpen?"▲ hide":"▼ show"}</span>
+            </div>
+            {ovOpen && (
+              <div style={{ padding:"10px 16px" }}>
+                {Object.entries(grp).sort().map(([fam, codes])=>{
+                  const tot = Object.values(codes).reduce((a,g)=>({avail:a.avail+g.avail,reserved:a.reserved+g.reserved,issued:a.issued+g.issued,lots:a.lots+g.lots}),{avail:0,reserved:0,issued:0,lots:0});
+                  return (
+                    <div key={fam} style={{ marginBottom:10 }}>
+                      <div style={{ fontSize:12, fontWeight:800, color:T.accent, marginBottom:4 }}>
+                        {fam} · {tot.lots} lots · avail {(tot.avail/1000).toFixed(2)} T · reserved {(tot.reserved/1000).toFixed(2)} T · issued {(tot.issued/1000).toFixed(2)} T
+                      </div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                        <tbody>
+                          {Object.entries(codes).sort().map(([mc,g])=>(
+                            <tr key={mc}>
+                              <td style={{ padding:"2px 8px", fontFamily:T.fontMono, width:"40%" }}>{mc}</td>
+                              <td style={{ padding:"2px 8px", fontFamily:T.fontMono }}>{g.lots} lot{g.lots!==1?"s":""}</td>
+                              <td style={{ padding:"2px 8px", fontFamily:T.fontMono, color:T.green }}>avail {fmt.num(Math.round(g.avail))} kg</td>
+                              <td style={{ padding:"2px 8px", fontFamily:T.fontMono, color:T.amber }}>res {fmt.num(Math.round(g.reserved))} kg</td>
+                              <td style={{ padding:"2px 8px", fontFamily:T.fontMono, color:T.textMid }}>issued {fmt.num(Math.round(g.issued))} kg</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+                {Object.keys(conGrp).length>0 && (
+                  <div style={{ marginTop:6, borderTop:`1px solid ${T.border}`, paddingTop:8 }}>
+                    <div style={{ fontSize:12, fontWeight:800, color:T.accent, marginBottom:4 }}>CONSUMABLES</div>
+                    {Object.entries(conGrp).sort().map(([cat, items])=>(
+                      <div key={cat} style={{ fontSize:11, marginBottom:3 }}>
+                        <b style={{ textTransform:"uppercase", color:T.textMid }}>{cat}</b>{" — "}
+                        {items.map(c=>`${c.name}: ${c.qtyOnHand||0} ${c.unit||""}`).join(" · ")}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── ISSUE REQUESTS section (store_admin/super_admin only) ── */}
       {(user.role==="store_admin"||user.role==="super_admin") && (issueRequests||[]).filter(r=>r.status==="pending").length > 0 && (() => {
@@ -20892,7 +21076,7 @@ export default function App() {
     if (user.role==="finance_admin")       return <FinanceAdminDashboard />;
     if (user.role==="qc_admin"||user.role==="qc_user") return mod==="qc_ops" ? <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} /> : <QcAdminDashboard />;
     if (user.role==="store_admin") {
-      if (mod==="stock") return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} />;
+      if (mod==="stock") return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       if (mod==="purchase") return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       return <StoreAdminDashboard />;
     }
@@ -20904,7 +21088,7 @@ export default function App() {
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} />;
-      case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} />;
+      case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} setClients={setClients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} ncrs={ncrs||[]} setNcrs={setNcrs} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} appUsers={appUsers||[]} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
