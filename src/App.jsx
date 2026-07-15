@@ -6807,8 +6807,26 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                   dimMap[k].qty++;
                 });
                 if ((nestPrResult.unplaced||[]).length>0 && !window.confirm("Nesting is INCOMPLETE — "+nestPrResult.unplaced.map(u=>u.mark+" ×"+(u.expected-u.placed)).join(", ")+" not placed. Raise PR for the PLACED pieces only?")) return;
+                // Supersede guard: an open PR for the same material + order means a re-nest.
+                // Latest nest wins — offer to discard the old PR; Cancel keeps both.
+                const myBatch = (nestingBatches||[]).find(b=>b.id===nestPrResult.batchId);
+                const myOrders = new Set(myBatch?.orderIds||[]);
+                const dupes = (purchaseReqs||[]).filter(r=>{
+                  if (r.type!=="nesting" || !["pending","partially_converted"].includes(r.status)) return false;
+                  if (!(r.lots||[]).some(l=>normMatCode(l.matCode)===normMatCode(row.matCode))) return false;
+                  const b = (nestingBatches||[]).find(x=>x.id===r.nestingBatchId);
+                  return (b?.orderIds||[]).some(oid=>myOrders.has(oid));
+                });
+                let supersedeIds = [];
+                if (dupes.length) {
+                  const list = dupes.map(d=>`${d.id} (${d.createdAt})`).join(", ");
+                  if (window.confirm(`Open PR already exists for ${row.matCode} on this order: ${list}.\n\nOK = discard the old PR(s) and raise this new one (latest nest wins).\nCancel = keep BOTH open (not recommended — double procurement risk).`)) {
+                    supersedeIds = dupes.map(d=>d.id);
+                  }
+                }
                 const lots = [{ matCode:row.matCode, sheetCount:nestPrResult.totalSheets, parts:(nestPrResult.parts||[]), lines:Object.values(dimMap) }];
-                setPurchaseReqs(prev=>[...(prev||[]),{id:`PR-NEST-${Date.now()}`,type:"nesting",nestingBatchId:nestPrResult.batchId,matCode:row.matCode,section:row.section,matType:row.matType||"MS",grade:row.grade,size:row.size,sheetsRequired:nestPrResult.totalSheets,wtRequired:0,status:"pending",createdAt:today(),createdBy:user.username,remarks:`From nesting ${nestPrResult.batchId} · ${nestPrResult.stockSheetsUsed||0} sheet(s) from stock reserved`,approvedMakes:"",lots}]);
+                const newPrId = `PR-NEST-${Date.now()}`;
+                setPurchaseReqs(prev=>[...(prev||[]).map(r=>supersedeIds.includes(r.id)?{...r,status:"cancelled",cancelledAt:today(),cancelReason:`Superseded by ${newPrId} (re-nest)`}:r),{id:newPrId,type:"nesting",nestingBatchId:nestPrResult.batchId,matCode:row.matCode,section:row.section,matType:row.matType||"MS",grade:row.grade,size:row.size,sheetsRequired:nestPrResult.totalSheets,wtRequired:0,status:"pending",createdAt:today(),createdBy:user.username,remarks:`From nesting ${nestPrResult.batchId} · ${nestPrResult.stockSheetsUsed||0} sheet(s) from stock reserved`,approvedMakes:"",lots}]);
                 onClose();
               }} style={css.btn.primary}>📋 Raise PR & Close</button>
             ) : (
@@ -10031,6 +10049,43 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
         const prStatusBadge = { pending:"amber", pending_store:"amber", forwarded:"blue", converted:"green", fulfilled:"green", partially_converted:"purple", cancelled:"gray", stale:"red" };
         return (
           <div>
+            {(()=>{
+              // Duplicate open PRs for the same material + order (typically re-nests)
+              const groups = {};
+              nestingPrs.filter(r=>r.type==="nesting" && ["pending","partially_converted"].includes(r.status)).forEach(r=>{
+                (r.lots||[]).forEach(l=>{
+                  const key = normMatCode(l.matCode)+"|"+prOrderNos(r).sort().join(",");
+                  if(!groups[key]) groups[key] = { matCode:l.matCode, orders:prOrderNos(r).join(", "), prs:[] };
+                  if(!groups[key].prs.includes(r)) groups[key].prs.push(r);
+                });
+              });
+              const dupGroups = Object.values(groups).filter(g=>g.prs.length>1);
+              if (!dupGroups.length) return null;
+              return (
+                <div style={{ ...css.card, border:`1px solid ${T.amber}`, background:T.amberBg, padding:"10px 16px", marginBottom:12 }}>
+                  <div style={{ fontSize:12, fontWeight:700, color:"#92400E", marginBottom:6 }}>
+                    ⚠ Possible duplicate requisitions — same material and order ({dupGroups.length} group{dupGroups.length>1?"s":""}). Keep one; the rest are discarded as superseded.
+                  </div>
+                  {dupGroups.map((g,gi)=>(
+                    <div key={gi} style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", fontSize:11, padding:"4px 0", borderTop:gi?`1px solid ${T.amber}44`:"none" }}>
+                      <span style={{ fontFamily:T.fontMono, fontWeight:700 }}>{g.matCode}</span>
+                      <span style={{ color:T.textMid }}>{g.orders}</span>
+                      {g.prs.map(p=>(
+                        <span key={p.id} style={{ display:"flex", alignItems:"center", gap:4, background:"#fff", border:`1px solid ${T.border}`, borderRadius:6, padding:"2px 6px" }}>
+                          <span style={{ fontFamily:T.fontMono, fontSize:10 }}>{p.id.slice(-8)} · {p.createdAt}</span>
+                          {canEdit && <button onClick={()=>{
+                            const others = g.prs.filter(x=>x.id!==p.id);
+                            if (!window.confirm(`Keep ${p.id} and discard ${others.map(o=>o.id).join(", ")} as superseded?`)) return;
+                            setPurchaseReqs(prev=>prev.map(r=>others.some(o=>o.id===r.id)?{...r,status:"cancelled",cancelledAt:today(),cancelReason:`Superseded — kept ${p.id}`}:r));
+                            showToast(`Kept ${p.id}; ${others.length} discarded`);
+                          }} style={{ ...css.btn.sm, fontSize:9, padding:"1px 6px" }}>Keep this</button>}
+                        </span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {(()=>{
               const s = { openWt:0, convWt:0, openSheets:0, openBars:0, openNos:0, convSheets:0, convBars:0, convNos:0, unweighed:new Set() };
               nestingPrs.forEach(pr=>{
