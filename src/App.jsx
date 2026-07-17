@@ -11493,6 +11493,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
     const rejectedAt = new Date().toISOString();
     setStock(prev => prev.map(s => s.grnId !== grnId ? s : {
       ...s, status:'rejected', wtAvailable:0,
+      rmQcStatus:'na', clientInspStatus:'na',
       rejectedAt, rejectedBy:user.name,
       rejectionReason:'GRN reversed', grnReversed:true
     }));
@@ -12387,7 +12388,7 @@ const RMQCModule = ({ user, stock, setStock, orders }) => {
     .filter(s=>!qfGrn || s.grnId===qfGrn)
     .filter(s=>!qfFrom || (s.receivedDate||"")>=qfFrom)
     .filter(s=>!qfTo || (s.receivedDate||"")<=qfTo);
-  const qcPendingAll = stock.filter(s=>s.rmQcStatus==="pending");
+  const qcPendingAll = stock.filter(s=>s.rmQcStatus==="pending" && !["rejected","returned","written_off"].includes(s.status));
   const qcPending = qfApply(qcPendingAll);
   const qfMats = [...new Set(qcPendingAll.map(s=>s.matCode).filter(Boolean))].sort();
   const qfOrders = [...new Set(qcPendingAll.flatMap(s=>(s.reservations||[]).map(r=>r.orderId)).filter(Boolean))];
