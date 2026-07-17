@@ -1936,7 +1936,7 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
       mtcUploaded: !!(mtc?.driveLink),
       wtReceived:l.actualWt||l.wtReceived, wtAvailable:l.actualWt||l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
       unitPrice:l.rate||0, lineValue:l.lineValue||Math.round((l.actualWt||l.wtReceived||0)*(l.rate||0)*100)/100,
-      status:"qc_hold", bayId:grnForm.bayId||"",
+      status:"qc_hold", bayId:l.bayId||grnForm.bayId||"",
       rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:grnForm.date||today(),
       isOffcut:false, parentLotId:"",
       allocations:[], reservations:[], qcHoldReason:"",
@@ -1979,7 +1979,7 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
         wtReceived:hs.wt, wtAvailable:hs.wt, wtAllocated:0, wtIssued:0, wtConsumed:0,
         unitPrice:grnLine.rate||0,
         lineValue:Math.round(hs.wt*(grnLine.rate||0)*100)/100,
-        status:"qc_hold", bayId:grnForm.bayId||"",
+        status:"qc_hold", bayId:grnLine.bayId||grnForm.bayId||"",
         rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:grnForm.date||today(),
         isOffcut:false, parentLotId:"",
         allocations:[], reservations:[], qcHoldReason:"",
@@ -9553,6 +9553,22 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     const maxSeq = pos.reduce((m,p)=>{ const mt=p.id.match(/^PO-(\d{4})-(\d+)$/); return mt&&+mt[1]===yr?Math.max(m,+mt[2]):m; },0);
     const newPoId = `PO-${yr}-${String(maxSeq+1).padStart(3,"0")}`;
     const v = vendors.find(x=>x.id===combineForm.vendorId);
+    // Last-gate duplicate guard: same material + overlapping order across the
+    // SELECTED PRs almost always means an uncaught re-nest — double procurement.
+    {
+      const sel = (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id));
+      const seen = {};
+      const clashes = [];
+      sel.forEach(pr=>{
+        const ordKey = pr.type==="store" ? (pr.orderId||"gen") : prOrderNos(pr).sort().join(",");
+        (pr.lots||[]).forEach(l=>{
+          const k = normMatCode(l.matCode)+"|"+ordKey;
+          if (seen[k] && seen[k]!==pr.id) clashes.push(`${l.matCode} (${seen[k]} + ${pr.id})`);
+          else seen[k] = pr.id;
+        });
+      });
+      if (clashes.length && !window.confirm(`⚠ The selection contains the SAME material for the SAME order more than once — likely duplicate re-nests:\n${[...new Set(clashes)].join("\n")}\n\nThis will order the material twice. Create the PO anyway?`)) return;
+    }
     const ts = Date.now();
     const inclQty = (pr,l,ln) => {
       const rem = prLineRemaining(pr,l,ln);
@@ -11333,6 +11349,7 @@ const resolvePoLineWtPS = (pl) =>
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
 const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
   const [tab, setTab] = useState("lines");
+  const [unloadGrn, setUnloadGrn] = useState(null);   // GRN record for the printable unloading sheet
   const [grnModal, setGrnModal] = useState(false);
   const [grnForm, setGrnForm] = useState({ lines:[] });
   const [grnGroupRates, setGrnGroupRates] = useState({}); // {[matCode]: groupRate} for GRN bulk-fill
@@ -11578,6 +11595,68 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       </div>
 
       <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+        {unloadGrn && (()=>{
+          const grnLots = (stock||[]).filter(s=>s.grnId===unloadGrn.id);
+          const bayName = (bid) => bid ? `Bay ${String((BAYS.find(b=>b.id===bid)||{}).number||"?").padStart(2,"0")}` : "—";
+          const totWt = grnLots.reduce((s,l)=>s+(l.wtReceived||0),0);
+          return (
+            <div style={{ position:"fixed", inset:0, background:"#E2E8F0", overflowY:"auto", zIndex:950 }}>
+              <style>{`@media print { .no-print{display:none!important} body{background:#fff!important} } @page { size: A4 portrait; margin: 10mm; }`}</style>
+              <div className="no-print" style={{ position:"sticky", top:0, zIndex:10, background:T.bgSidebar, padding:"10px 20px", display:"flex", gap:12, alignItems:"center" }}>
+                <button onClick={()=>setUnloadGrn(null)} style={{ ...css.btn.secondary, color:"#fff", borderColor:"#ffffff55" }}>← Back</button>
+                <div style={{ color:"#fff", fontWeight:700, fontSize:14 }}>Unloading Sheet — {unloadGrn.id}</div>
+                <button onClick={()=>window.print()} style={{ ...css.btn.primary, marginLeft:"auto" }}>Print</button>
+              </div>
+              <div style={{ width:820, margin:"20px auto", background:"#fff", boxShadow:"0 2px 12px #0003", padding:28, fontFamily:T.font, color:"#0F172A" }}>
+                <div style={{ borderBottom:"2px solid #1E3A5F", paddingBottom:8, marginBottom:10, display:"flex", justifyContent:"space-between" }}>
+                  <div>
+                    <div style={{ fontSize:17, fontWeight:800, color:"#1E3A5F" }}>RM UNLOADING SHEET</div>
+                    <div style={{ fontSize:11, fontFamily:T.fontMono }}>{unloadGrn.id} · against {po.id}</div>
+                  </div>
+                  <div style={{ textAlign:"right", fontSize:11 }}>
+                    <div><b>Vendor:</b> {po.vendorName||"—"}</div>
+                    <div><b>Date:</b> {unloadGrn.date||""} · <b>Vehicle:</b> {unloadGrn.vehicleNo||"—"} · <b>Challan:</b> {unloadGrn.challanNo||"—"}</div>
+                    <div><b>Received by:</b> {unloadGrn.receivedByName||unloadGrn.receivedBy||user.name}</div>
+                  </div>
+                </div>
+                <div style={{ fontSize:11, color:"#475569", marginBottom:8 }}>
+                  For the unloading team: place each lot in its assigned bay and write the LOT NO clearly on the material with paint marker. Verify heat numbers against MTC stamps on the plates.
+                </div>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                  <thead><tr>
+                    {["Lot No","Material","Size / Dim","Qty","Wt (kg)","Grade","Heat No","MTC No","→ Bay"].map(h=>
+                      <th key={h} style={{ border:"1px solid #94A3B8", padding:"5px 8px", background:"#F1F5F9", textAlign:"left", fontWeight:700 }}>{h}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {grnLots.map(l=>(
+                      <tr key={l.id}>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono, fontWeight:800, fontSize:12 }}>{l.lotNo||l.id}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.matCode}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.dims||l.sheetDim||l.size||"—"}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.qtyReceived||l.qty||"—"}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{fmt.num(Math.round(l.wtReceived||0))}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px" }}>{l.grade||"—"}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.heatNo||"—"}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.mtcNo||"—"}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontWeight:800, fontSize:12 }}>{bayName(l.bayId)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={4} style={{ border:"1px solid #94A3B8", padding:"5px 8px", fontWeight:700, textAlign:"right", background:"#F8FAFC" }}>TOTAL</td>
+                      <td style={{ border:"1px solid #94A3B8", padding:"5px 8px", fontFamily:T.fontMono, fontWeight:700, background:"#F8FAFC" }}>{fmt.num(Math.round(totWt))}</td>
+                      <td colSpan={4} style={{ border:"1px solid #94A3B8", background:"#F8FAFC" }}></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div style={{ display:"flex", justifyContent:"space-between", marginTop:26, fontSize:11, color:"#475569" }}>
+                  <div>Unloaded by: __________________</div>
+                  <div>Lot nos marked: ☐ Yes</div>
+                  <div>Verified by (Store): __________________</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {["lines","grns"].map(t=>(
           <button key={t} onClick={()=>setTab(t)} style={{ padding:"7px 14px", fontSize:12, fontWeight:tab===t?700:400, color:tab===t?T.accent:T.textMid, background:"transparent", border:"none", borderBottom:tab===t?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", fontFamily:T.font }}>
             {t==="lines"?"PO Lines":"GRNs"} {t==="grns"&&po.grns?.length>0?`(${po.grns.length})`:""}
@@ -11777,6 +11856,9 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                   {grn.remarks && <div style={{ fontSize:12, color:T.textMid, marginTop:4 }}>{grn.remarks}</div>}
                   {grn.status==="reversed" && <div style={{ fontSize:11, color:T.red, marginTop:4 }}>Reversed by {grn.reversedBy} on {fmt.date(grn.reversedDate)} — {grn.reversalReason}</div>}
                 </div>
+                {grn.status!=="reversed" && (
+                  <button onClick={()=>setUnloadGrn(grn)} style={{ ...css.btn.sm, background:T.bgInput, color:T.accent, border:`1px solid ${T.accent}`, marginRight:6, alignSelf:"flex-start" }}>Unloading Sheet</button>
+                )}
                 {user.role==="super_admin" && grn.status!=="reversed" && (
                   <>
                   <button onClick={()=>{
@@ -11987,6 +12069,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                     <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Actual Wt</th>
                     <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Variance</th>
                     <th style={{ padding:"4px 8px", textAlign:"center", color:T.textMid, fontWeight:600 }}>MTC</th>
+                    <th style={{ padding:"4px 8px", textAlign:"center", color:T.textMid, fontWeight:600 }}>Bay</th>
                     <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Rate ₹/kg</th>
                     <th style={{ padding:"4px 8px", textAlign:"right", color:T.textMid, fontWeight:600 }}>Value</th>
                   </tr></thead>
@@ -12035,6 +12118,12 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                                 </Sel>
                               : <input value={l.heatNo||""} onChange={e=>updLine(i,{heatNo:e.target.value})} placeholder="Heat…" style={{ width:70, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 4px", color:T.text, fontSize:10 }} />
                             }
+                          </td>
+                          <td style={{ padding:"3px 6px", textAlign:"center" }}>
+                            <Sel value={l.bayId||""} disabled={!isChecked} onChange={e=>updLine(i,{bayId:e.target.value})} style={{ fontSize:10, padding:"2px 4px", width:78 }}>
+                              <option value="">hdr↓</option>
+                              {BAYS.map(b=><option key={b.id} value={b.id}>B{String(b.number).padStart(2,"0")}</option>)}
+                            </Sel>
                           </td>
                           <td style={{ padding:"3px 6px", textAlign:"right" }}>
                             <input type="number" min={0} value={l.rate||""} disabled={!isChecked} placeholder="0.00"
