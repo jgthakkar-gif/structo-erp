@@ -12504,7 +12504,16 @@ const RMQCModule = ({ user, stock, setStock }) => {
 
       {onHold.length>0 && (
         <InfoBanner color="red">
-          ⚠ <strong>{onHold.length} lot(s) on QC Hold:</strong>{" "}{onHold.map(s=>`${s.lotNo} — ${s.qcHoldReason||s.qcRemarks||"Reason not specified"}`).join(" | ")}
+          {(()=>{
+            const reasoned = onHold.filter(s=>s.qcHoldReason||s.qcRemarks);
+            const fresh = onHold.length - reasoned.length;
+            return (
+              <>
+                {reasoned.length>0 && (<>⚠ <strong>{reasoned.length} lot(s) on QC Hold:</strong>{" "}{reasoned.map(s=>`${s.lotNo} — ${s.qcHoldReason||s.qcRemarks}`).join(" | ")}</>)}
+                {fresh>0 && (<div style={{ marginTop:reasoned.length?4:0 }}>{fresh} newly received lot(s) awaiting first inspection (routine — listed in the table below).</div>)}
+              </>
+            );
+          })()}
         </InfoBanner>
       )}
 
