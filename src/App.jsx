@@ -12363,7 +12363,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
 // ═══════════════════════════════════════════════════════════════════════════════
 // RM QC MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
-const RMQCModule = ({ user, stock, setStock }) => {
+const RMQCModule = ({ user, stock, setStock, orders }) => {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [toast, setToast] = useState(null);
@@ -12373,7 +12373,26 @@ const RMQCModule = ({ user, stock, setStock }) => {
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
   const canQC = ["super_admin","qc_admin","qc_user","store_admin"].includes(user.role);
 
-  const qcPending = stock.filter(s=>s.rmQcStatus==="pending");
+  // ── Filters: material / order / PO / GRN / received-date range ──
+  const [qfMat, setQfMat] = useState("");
+  const [qfOrder, setQfOrder] = useState("");
+  const [qfPo, setQfPo] = useState("");
+  const [qfGrn, setQfGrn] = useState("");
+  const [qfFrom, setQfFrom] = useState("");
+  const [qfTo, setQfTo] = useState("");
+  const qfApply = (list) => list
+    .filter(s=>!qfMat || normMatCode(s.matCode)===normMatCode(qfMat))
+    .filter(s=>!qfOrder || (s.reservations||[]).some(r=>r.orderId===qfOrder))
+    .filter(s=>!qfPo || s.poId===qfPo)
+    .filter(s=>!qfGrn || s.grnId===qfGrn)
+    .filter(s=>!qfFrom || (s.receivedDate||"")>=qfFrom)
+    .filter(s=>!qfTo || (s.receivedDate||"")<=qfTo);
+  const qcPendingAll = stock.filter(s=>s.rmQcStatus==="pending");
+  const qcPending = qfApply(qcPendingAll);
+  const qfMats = [...new Set(qcPendingAll.map(s=>s.matCode).filter(Boolean))].sort();
+  const qfOrders = [...new Set(qcPendingAll.flatMap(s=>(s.reservations||[]).map(r=>r.orderId)).filter(Boolean))];
+  const qfPos = [...new Set(qcPendingAll.map(s=>s.poId).filter(Boolean))].sort();
+  const qfGrns = [...new Set(qcPendingAll.filter(s=>!qfPo || s.poId===qfPo).map(s=>s.grnId).filter(Boolean))].sort();
   const clientPending = stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="pending");
   const approved = stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="approved");
   const failed = stock.filter(s=>s.rmQcStatus==="failed");
@@ -12517,6 +12536,32 @@ const RMQCModule = ({ user, stock, setStock }) => {
         </InfoBanner>
       )}
 
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", margin:"4px 0 10px" }}>
+        <span style={{ fontSize:11, fontWeight:700, color:T.textMid }}>FILTER:</span>
+        <Sel value={qfMat} onChange={e=>setQfMat(e.target.value)} style={{ width:190 }}>
+          <option value="">All materials</option>
+          {qfMats.map(m=><option key={m} value={m}>{m}</option>)}
+        </Sel>
+        <Sel value={qfOrder} onChange={e=>setQfOrder(e.target.value)} style={{ width:170 }}>
+          <option value="">All orders</option>
+          {qfOrders.map(oid=><option key={oid} value={oid}>{(orders||[]).find(o=>o.id===oid)?.orderNo||oid}</option>)}
+        </Sel>
+        <Sel value={qfPo} onChange={e=>{setQfPo(e.target.value);setQfGrn("");}} style={{ width:150 }}>
+          <option value="">All POs</option>
+          {qfPos.map(p=><option key={p} value={p}>{p}</option>)}
+        </Sel>
+        <Sel value={qfGrn} onChange={e=>setQfGrn(e.target.value)} style={{ width:150 }}>
+          <option value="">All GRNs</option>
+          {qfGrns.map(g=><option key={g} value={g}>{g}</option>)}
+        </Sel>
+        <span style={{ fontSize:11, color:T.textMid }}>Received</span>
+        <input type="date" value={qfFrom} onChange={e=>setQfFrom(e.target.value)} style={{ ...css.input, width:130 }} />
+        <span style={{ fontSize:11, color:T.textMid }}>to</span>
+        <input type="date" value={qfTo} onChange={e=>setQfTo(e.target.value)} style={{ ...css.input, width:130 }} />
+        {(qfMat||qfOrder||qfPo||qfGrn||qfFrom||qfTo) && (
+          <button onClick={()=>{setQfMat("");setQfOrder("");setQfPo("");setQfGrn("");setQfFrom("");setQfTo("");}} style={{ ...css.btn.ghost, fontSize:11 }}>✕ Clear ({qcPending.length}/{qcPendingAll.length})</button>
+        )}
+      </div>
       <Section title="RM QC Pending — Physical Inspection" lots={qcPending} type="qc" color="amber" />
       <Section title="Client Inspection Pending" lots={clientPending} type="client" color="gold"
         actionsFor={user.role==="super_admin"?lot=>(
@@ -21253,7 +21298,7 @@ export default function App() {
       case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
       case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
-      case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} />;
+      case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} orders={orders} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} setClients={setClients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} />;
