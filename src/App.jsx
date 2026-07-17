@@ -1934,6 +1934,7 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
       mtcNo: mtc?.mtcNo || l.mtcNo || "",
       mtcDoc: mtc?.driveLink || "",
       mtcUploaded: !!(mtc?.driveLink),
+      qtyRcv:l.rcvgQty||0,
       wtReceived:l.actualWt||l.wtReceived, wtAvailable:l.actualWt||l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
       unitPrice:l.rate||0, lineValue:l.lineValue||Math.round((l.actualWt||l.wtReceived||0)*(l.rate||0)*100)/100,
       status:"qc_hold", bayId:l.bayId||grnForm.bayId||"",
@@ -1976,6 +1977,7 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
         heatNo:hs.heatNo||"",
         mtcNo:hs.mtcNo||"",
         mtcDoc:"", mtcUploaded:false,
+        qtyRcv:hs.qty||0,
         wtReceived:hs.wt, wtAvailable:hs.wt, wtAllocated:0, wtIssued:0, wtConsumed:0,
         unitPrice:grnLine.rate||0,
         lineValue:Math.round(hs.wt*(grnLine.rate||0)*100)/100,
@@ -9749,7 +9751,8 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     if (po && setStock) {
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
-        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:genLotNo([...prev,...rawLots.slice(0,idx)])}));
+        const numberedLots = [];
+        rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots])}));
         const coveredOrders = po.coveredOrders||[];
         const finalLots = numberedLots.map(lot => {
           if (!coveredOrders.length) return lot;
@@ -11425,7 +11428,8 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
     if (setStock) {
       const rawLots = buildStockLots(newGrn, po, grnId, ts);
       if (rawLots.length>0) setStock(prev=>{
-        const numberedLots = rawLots.map((lot,idx)=>({...lot,lotNo:genLotNo([...prev,...rawLots.slice(0,idx)])}));
+        const numberedLots = [];
+        rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots])}));
         const coveredOrders = po.coveredOrders||[];
         const finalLots = numberedLots.map(lot => {
           if (!coveredOrders.length) return lot;
@@ -11633,7 +11637,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
                         <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono, fontWeight:800, fontSize:12 }}>{l.lotNo||l.id}</td>
                         <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.matCode}</td>
                         <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.dims||l.sheetDim||l.size||"—"}</td>
-                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.qtyReceived||l.qty||"—"}</td>
+                        <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.qtyRcv||l.qtyReceived||l.qty||"—"}</td>
                         <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{fmt.num(Math.round(l.wtReceived||0))}</td>
                         <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px" }}>{l.grade||"—"}</td>
                         <td style={{ border:"1px solid #CBD5E1", padding:"5px 8px", fontFamily:T.fontMono }}>{l.heatNo||"—"}</td>
