@@ -11948,12 +11948,19 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       <div style={{ ...css.card, marginBottom:14 }}>
         <div style={css.label}>Select project(s)</div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:6 }}>
-          {(orders||[]).filter(o=>o.status!=="completed").map(o => (
+          {(orders||[]).filter(o=>!["completed","cancelled"].includes(o.status)).map(o => (
             <button key={o.id} onClick={()=>toggleOrder(o.id)}
               style={{ ...css.btn.secondary, ...(selOrderIds.includes(o.id) ? { background:T.accent, color:"#fff", border:`1px solid ${T.accent}` } : {}) }}>
               {o.orderNo||o.id} · {o.clientName||""}
             </button>
           ))}
+          {(orders||[]).filter(o=>!["completed","cancelled"].includes(o.status)).length===0 && (
+            <div style={{ fontSize:12, color:T.textMid, padding:"6px 2px" }}>
+              No active projects to plan — {(orders||[]).length===0
+                ? "no orders exist yet."
+                : `all ${(orders||[]).length} order(s) are marked completed or cancelled. Check the order status in the Orders module if this is unexpected.`}
+            </div>
+          )}
         </div>
         {selOrderIds.length>1 && (
           <div style={{ marginTop:10 }}>
