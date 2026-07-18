@@ -11802,7 +11802,13 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       if (avail <= 0) return;
       pool[key].totalWt += avail;
       const vn = (lot.vendorName||"").toLowerCase(), vc = (lot.vendorCode||"").toLowerCase();
-      const makeOk = makeTokens.length===0 || makeTokens.some(t => (vn&&(vn.includes(t)||t.includes(vn))) || (vc&&(vc.includes(t)||t.includes(vc))));
+      // Trader-supplied material: the MILL is what approved-makes means. Match
+      // explicit millMake if captured, else the heat number (mill prefixes like
+      // "JSW25-..." live there), else fall back to vendor name/code.
+      const mm = (lot.millMake||"").toLowerCase(), hn = (lot.heatNo||"").toLowerCase();
+      const makeOk = makeTokens.length===0 || makeTokens.some(t =>
+        (mm&&(mm.includes(t)||t.includes(mm))) || (hn&&hn.includes(t)) ||
+        (vn&&(vn.includes(t)||t.includes(vn))) || (vc&&(vc.includes(t)||t.includes(vc))));
       if (makeOk) { pool[key].approvedWt += avail; pool[key].lots.push(lot.id); }
     });
     return pool;

@@ -9759,7 +9759,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
           const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
           const reservations = allocs.length
-            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
+            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; let left=lot.wtReceived; return allocs.map(a=>{ const k=Math.min(left, Math.round((a.kg/totKg)*lot.wtReceived*10)/10); left=Math.max(0,left-k); return {orderId:a.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}; }); })()
             : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
           return {...lot, reservations};
         });
@@ -11436,7 +11436,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
           const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
           const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
           const reservations = allocs.length
-            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; return allocs.map(a=>({orderId:a.orderId,kg:Math.round((a.kg/totKg)*lot.wtReceived*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id})); })()
+            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; let left=lot.wtReceived; return allocs.map(a=>{ const k=Math.min(left, Math.round((a.kg/totKg)*lot.wtReceived*10)/10); left=Math.max(0,left-k); return {orderId:a.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}; }); })()
             : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
           return {...lot, reservations};
         });
@@ -13129,7 +13129,9 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
   const saveReserve = () => {
     if (!resForm.orderId || !resForm.kg) { showToast("Fill required fields","amber"); return; }
     const kg = +resForm.kg;
-    if (kg<=0 || kg>resLot.wtAvailable) { showToast(`Max available: ${fmt.num(resLot.wtAvailable)} kg`,"amber"); return; }
+    const alreadyRes = (resLot.reservations||[]).reduce((a,r)=>a+(r.kg||0),0);
+    const maxKg = Math.max(0, (resLot.wtAvailable||0) - alreadyRes);
+    if (kg<=0 || kg>maxKg) { showToast(`Max reservable: ${fmt.num(maxKg)} kg (${fmt.num(alreadyRes)} kg already reserved)`,"amber"); return; }
     const ord = orders.find(o=>o.id===resForm.orderId);
     const entry = { orderId:resForm.orderId, orderRef:ord?.id||"", kg, reservedBy:user.name, reservedAt:today() };
     setStock(prev=>prev.map(s=>s.id!==resLot.id?s:{
@@ -13256,7 +13258,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
         (stock||[]).filter(s=>!["rejected","returned","written_off"].includes(s.status)).forEach(s=>{
           const fam = s.sectionType || (s.matCode||"").split("/")[0] || "OTHER";
           if(!grp[fam]) grp[fam] = {};
-          const mc = s.matCode || "?";
+          const mc = s.matCode || [s.sectionType||s.section, s.size].filter(Boolean).join(" ") + " (uncoded)" || "?";
           if(!grp[fam][mc]) grp[fam][mc] = { lots:0, avail:0, reserved:0, issued:0 };
           const g = grp[fam][mc];
           g.lots += 1; g.avail += s.wtAvailable||0; g.issued += s.wtIssued||0;
