@@ -11786,12 +11786,20 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       .flatMap(m => (m.makes||"").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean));
     const pool = {};   // normMatCode → {approvedWt, totalWt, lots:[]}
     (stock||[]).forEach(lot => {
-      if (!["available","partially_reserved"].includes(lot.status)) return;
+      // A lot reserved for THIS order is available to this order's plan; only
+      // weight reserved for OTHER orders is off-limits. (Auto-reservation at GRN
+      // sets fresh lots to "reserved" for their source order — that material
+      // exists precisely for these drawings.)
+      if (!["available","partially_reserved","reserved"].includes(lot.status)) return;
       if (lot.rmQcStatus !== "approved") return;
       const key = normMatCode(lot.matCode);
       if (!key) return;
       if (!pool[key]) pool[key] = { approvedWt:0, totalWt:0, lots:[] };
-      const avail = Math.max(0, lot.wtAvailable||0);
+      const resTotal = (lot.reservations||[]).reduce((a,r)=>a+(r.kg||0),0);
+      const resMine  = (lot.reservations||[]).filter(r=>r.orderId===order.id).reduce((a,r)=>a+(r.kg||0),0);
+      const free = Math.max(0, (lot.wtAvailable||0) - resTotal);
+      const avail = Math.min(lot.wtAvailable||0, free + resMine);
+      if (avail <= 0) return;
       pool[key].totalWt += avail;
       const vn = (lot.vendorName||"").toLowerCase(), vc = (lot.vendorCode||"").toLowerCase();
       const makeOk = makeTokens.length===0 || makeTokens.some(t => (vn&&(vn.includes(t)||t.includes(vn))) || (vc&&(vc.includes(t)||t.includes(vc))));
