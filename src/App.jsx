@@ -1942,7 +1942,7 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
       mtcNo: mtc?.mtcNo || l.mtcNo || "",
       mtcDoc: mtc?.driveLink || "",
       mtcUploaded: !!(mtc?.driveLink),
-      qtyRcv:l.rcvgQty||0,
+      qtyRcv:l.rcvgQty||0, millMake:l.millMake||grnForm.millMake||"",
       wtReceived:l.actualWt||l.wtReceived, wtAvailable:l.actualWt||l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
       unitPrice:l.rate||0, lineValue:l.lineValue||Math.round((l.actualWt||l.wtReceived||0)*(l.rate||0)*100)/100,
       status:"qc_hold", bayId:l.bayId||grnForm.bayId||"",
@@ -1985,7 +1985,7 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
         heatNo:hs.heatNo||"",
         mtcNo:hs.mtcNo||"",
         mtcDoc:"", mtcUploaded:false,
-        qtyRcv:hs.qty||0,
+        qtyRcv:hs.qty||0, millMake:grnLine.millMake||grnForm.millMake||"",
         wtReceived:hs.wt, wtAvailable:hs.wt, wtAllocated:0, wtIssued:0, wtConsumed:0,
         unitPrice:grnLine.rate||0,
         lineValue:Math.round(hs.wt*(grnLine.rate||0)*100)/100,
@@ -12013,6 +12013,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
               <div><div style={css.label}>Received By</div><div style={{ fontSize:12, color:T.text }}>{user.name}</div></div>
               <Field label="Date"><Input type="date" value={grnForm.date||today()} onChange={e=>setGrnForm(f=>({...f,date:e.target.value}))} /></Field>
               <Field label="Vehicle No"><Input value={grnForm.vehicleNo||""} onChange={e=>setGrnForm(f=>({...f,vehicleNo:e.target.value}))} placeholder="MH-31-AB-1234" /></Field>
+              <Field label="Mill / Make"><Input value={grnForm.millMake||""} onChange={e=>setGrnForm(f=>({...f,millMake:e.target.value}))} placeholder="e.g. JSW (if vendor is a trader)" /></Field>
               <Field label="Challan No"><Input value={grnForm.challanNo||""} onChange={e=>setGrnForm(f=>({...f,challanNo:e.target.value}))} /></Field>
               <Field label="Supplier DC No"><Input value={grnForm.dcNo||""} onChange={e=>setGrnForm(f=>({...f,dcNo:e.target.value}))} /></Field>
               <Field label="Storage Bay">
@@ -14799,20 +14800,29 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
                                           ))}
                                         </div>
                                       )}
-                                      {/* MTC upload inline */}
-                                      {!s.mtcUploaded&&(
-                                        <div style={{ marginTop:8 }}>
-                                          {mtcUploadId!==s.id
-                                            ? <button onClick={()=>{setMtcUploadId(s.id);setMtcForm({});}} style={{ ...css.btn.sm,background:T.amberBg,color:T.amber,border:`1px solid ${T.amber}`,fontSize:10 }}>Upload MTC</button>
-                                            : <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                                                <input value={mtcForm.link||""} onChange={e=>setMtcForm(f=>({...f,link:e.target.value}))} placeholder="Drive link..." style={{ ...css.input,fontSize:11,width:220 }} />
-                                                <input value={mtcForm.heatNo||""} onChange={e=>setMtcForm(f=>({...f,heatNo:e.target.value}))} placeholder="Heat number..." style={{ ...css.input,fontSize:11,width:140 }} />
-                                                <button disabled={!(mtcForm.link||"").trim()} onClick={()=>{if(!(mtcForm.link||"").trim())return;setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,mtcDoc:mtcForm.link.trim(),heatNo:mtcForm.heatNo||l.heatNo,mtcUploaded:true}));setMtcUploadId(null);setMtcForm({});showToast("MTC uploaded");}} style={{ ...css.btn.sm,opacity:(mtcForm.link||"").trim()?1:0.4 }}>Save</button>
-                                                <button onClick={()=>setMtcUploadId(null)} style={{ ...css.btn.ghost }}>✕</button>
-                                              </div>
-                                          }
-                                        </div>
-                                      )}
+                                      {/* MTC / Heat / Mill inline editor — always available */}
+                                      <div style={{ marginTop:8 }}>
+                                        {mtcUploadId!==s.id
+                                          ? <button onClick={()=>{setMtcUploadId(s.id);setMtcForm({link:s.mtcDoc||"",heatNo:s.heatNo||"",millMake:s.millMake||""});}} style={{ ...css.btn.sm,background:s.mtcUploaded?T.cardBg:T.amberBg,color:s.mtcUploaded?T.textMid:T.amber,border:`1px solid ${s.mtcUploaded?T.border:T.amber}`,fontSize:10 }}>
+                                              {s.mtcUploaded?"✏ Heat / Mill / MTC":"Upload MTC"}
+                                            </button>
+                                          : <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                                              <input value={mtcForm.link||""} onChange={e=>setMtcForm(f=>({...f,link:e.target.value}))} placeholder="Drive link..." style={{ ...css.input,fontSize:11,width:200 }} />
+                                              <input value={mtcForm.heatNo||""} onChange={e=>setMtcForm(f=>({...f,heatNo:e.target.value}))} placeholder="Heat number..." style={{ ...css.input,fontSize:11,width:130 }} />
+                                              <input value={mtcForm.millMake||""} onChange={e=>setMtcForm(f=>({...f,millMake:e.target.value}))} placeholder="Mill / make (e.g. JSW)" style={{ ...css.input,fontSize:11,width:150 }} />
+                                              <button disabled={!((mtcForm.link||"").trim()||s.mtcUploaded)} onClick={()=>{
+                                                const link=(mtcForm.link||"").trim();
+                                                if(!link&&!s.mtcUploaded)return;
+                                                setStock(prev=>prev.map(l=>l.id!==s.id?l:{...l,
+                                                  mtcDoc:link||l.mtcDoc, heatNo:(mtcForm.heatNo||"").trim()||l.heatNo,
+                                                  millMake:(mtcForm.millMake||"").trim()||l.millMake||"",
+                                                  mtcUploaded:!!(link||l.mtcDoc)||l.mtcUploaded}));
+                                                setMtcUploadId(null);setMtcForm({});showToast("Lot MTC / heat / mill updated");
+                                              }} style={{ ...css.btn.sm,opacity:((mtcForm.link||"").trim()||s.mtcUploaded)?1:0.4 }}>Save</button>
+                                              <button onClick={()=>setMtcUploadId(null)} style={{ ...css.btn.ghost }}>✕</button>
+                                            </div>
+                                        }
+                                      </div>
                                     </td>
                                   </tr>
                                 )}
