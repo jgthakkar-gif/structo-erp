@@ -11806,9 +11806,13 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       // explicit millMake if captured, else the heat number (mill prefixes like
       // "JSW25-..." live there), else fall back to vendor name/code.
       const mm = (lot.millMake||"").toLowerCase(), hn = (lot.heatNo||"").toLowerCase();
-      const makeOk = makeTokens.length===0 || makeTokens.some(t =>
-        (mm&&(mm.includes(t)||t.includes(mm))) || (hn&&hn.includes(t)) ||
-        (vn&&(vn.includes(t)||t.includes(vn))) || (vc&&(vc.includes(t)||t.includes(vc))));
+      const makeOk = makeTokens.length===0 || makeTokens.some(t => {
+        // Heat numbers carry the mill's short prefix ("JSW25-...") — match the
+        // make's first word, not the full registered name.
+        const w = t.split(/[^a-z0-9]+/).filter(Boolean)[0] || "";
+        return (mm&&(mm.includes(t)||t.includes(mm))) || (w.length>=2 && (hn.includes(w) || mm.includes(w))) ||
+          (vn&&(vn.includes(t)||t.includes(vn))) || (vc&&(vc.includes(t)||t.includes(vc)));
+      });
       if (makeOk) { pool[key].approvedWt += avail; pool[key].lots.push(lot.id); }
     });
     return pool;

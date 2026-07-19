@@ -12432,10 +12432,34 @@ const RMQCModule = ({ user, stock, setStock, orders }) => {
   const qfOrders = [...new Set(qcPendingAll.flatMap(s=>(s.reservations||[]).map(r=>r.orderId)).filter(Boolean))];
   const qfPos = [...new Set(qcPendingAll.map(s=>s.poId).filter(Boolean))].sort();
   const qfGrns = [...new Set(qcPendingAll.filter(s=>!qfPo || s.poId===qfPo).map(s=>s.grnId).filter(Boolean))].sort();
-  const clientPending = stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="pending");
+  const clientPending = qfApply(stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="pending"));
   const approved = stock.filter(s=>s.rmQcStatus==="approved"&&s.clientInspStatus==="approved");
   const failed = stock.filter(s=>s.rmQcStatus==="failed");
   const onHold = stock.filter(s=>s.status==="qc_hold");
+
+  // ── Bulk selection & approval ──
+  const [selQc, setSelQc] = useState([]);
+  const [selCi, setSelCi] = useState([]);
+  const toggleSel = (setter) => (id) => setter(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
+  const bulkQcApprove = (ids) => {
+    if (!ids.length) return;
+    if (!window.confirm(`Approve RM QC for ${ids.length} lot(s)? (Physical check verified for all)`)) return;
+    setStock(prev=>prev.map(s=>ids.includes(s.id)?{...s,
+      rmQcStatus:"approved", qcRemarks:"Bulk approved — physical check OK", qcDate:today(), qcBy:user.name
+    }:s));
+    setSelQc([]); showToast(`RM QC approved for ${ids.length} lot(s) — pending client inspection`);
+  };
+  const bulkClientApprove = (ids) => {
+    if (!ids.length) return;
+    if (!window.confirm(`Pass client inspection for ${ids.length} lot(s)? They will be released to available stock.`)) return;
+    setStock(prev=>prev.map(s=>ids.includes(s.id)?{...s,
+      clientInspStatus:"approved", clientInspRemarks:"Bulk cleared", clientInspDate:today(),
+      status:(s.rmQcStatus==="approved")
+        ? ((s.reservations||[]).length>1 ? "partially_reserved" : (s.reservations||[]).length===1 ? "reserved" : "available")
+        : "qc_hold"
+    }:s));
+    setSelCi([]); showToast(`Client inspection passed for ${ids.length} lot(s) — released to stock ✓`);
+  };
 
   const doQC = (lotId, result, remarks) => {
     const mtcDoc  = form.mtcLink?.trim()||"";
@@ -12482,7 +12506,7 @@ const RMQCModule = ({ user, stock, setStock, orders }) => {
     showToast("Lot returned to RM QC Pending for re-inspection","green");
   };
 
-  const QCRow = ({ lot, type, actions }) => {
+  const QCRow = ({ lot, type, actions, selCell }) => {
     // Build dimension display from lot data
     const dimStr = lot.length && lot.width
       ? `${lot.length}×${lot.width}mm`
@@ -12492,6 +12516,7 @@ const RMQCModule = ({ user, stock, setStock, orders }) => {
     const piecesStr = lot.qtyReceived>0 ? `${lot.qtyReceived} pcs` : "—";
     return (
     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
+      {selCell}
       <TD mono>{lot.lotNo}</TD>
       <TD>{lot.matType} {lot.grade}</TD>
       <TD>{lot.sectionType||lot.section}</TD>
@@ -12526,23 +12551,45 @@ const RMQCModule = ({ user, stock, setStock, orders }) => {
     );
   };
 
-  const Section = ({ title, lots, type, color, actionsFor }) => (
+  const Section = ({ title, lots, type, color, actionsFor, sel, onToggle, onBulkApprove, bulkLabel }) => {
+    // MTC-missing lots are excluded from bulk approval — they need individual handling
+    const bulkable = sel ? lots.filter(l=>l.mtcUploaded||l.mtcDoc) : [];
+    const bulkableIds = bulkable.map(l=>l.id);
+    const selHere = sel ? sel.filter(id=>bulkableIds.includes(id)) : [];
+    const allSel = bulkable.length>0 && selHere.length===bulkable.length;
+    return (
     <div style={{ marginBottom:20 }}>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
         <div style={{ fontSize:13, fontWeight:700, color:T.text }}>{title}</div>
         <Badge color={color}>{lots.length}</Badge>
+        {sel && selHere.length>0 && (
+          <button onClick={()=>onBulkApprove(selHere)} style={{ ...css.btn.primary, marginLeft:"auto", fontSize:12, padding:"6px 14px" }}>
+            ✓ {bulkLabel} ({selHere.length})
+          </button>
+        )}
       </div>
       {lots.length===0
         ? <div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:20 }}>No items</div>
         : <div style={{ overflowX:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead><tr><TH>Lot No</TH><TH>Material</TH><TH>Section</TH><TH>Size</TH><TH>Dimensions</TH><TH right>Pieces</TH><TH right>Wt (kg)</TH><TH>Bay</TH><TH>Vendor</TH><TH>Received</TH><TH>MTC</TH><TH>Status</TH><TH>Action</TH></tr></thead>
-              <tbody>{lots.map(l=><QCRow key={l.id} lot={l} type={type} actions={actionsFor?actionsFor(l):null} />)}</tbody>
+              <thead><tr>
+                {sel && <TH><input type="checkbox" checked={allSel} onChange={()=>onToggle(allSel ? {clear:bulkableIds} : {set:bulkableIds})} title="Select all (with MTC)" /></TH>}
+                <TH>Lot No</TH><TH>Material</TH><TH>Section</TH><TH>Size</TH><TH>Dimensions</TH><TH right>Pieces</TH><TH right>Wt (kg)</TH><TH>Bay</TH><TH>Vendor</TH><TH>Received</TH><TH>MTC</TH><TH>Status</TH><TH>Action</TH>
+              </tr></thead>
+              <tbody>{lots.map(l=><QCRow key={l.id} lot={l} type={type} actions={actionsFor?actionsFor(l):null}
+                selCell={sel ? (
+                  <td style={{ borderBottom:`1px solid ${T.border}`, padding:"6px 8px", verticalAlign:"middle" }}>
+                    {(l.mtcUploaded||l.mtcDoc)
+                      ? <input type="checkbox" checked={sel.includes(l.id)} onChange={()=>onToggle(l.id)} />
+                      : <span title="MTC missing — inspect individually" style={{ color:T.textLow, fontSize:10 }}>—</span>}
+                  </td>
+                ) : null} />)}</tbody>
             </table>
           </div>
       }
     </div>
-  );
+    );
+  };
 
   return (
     <div>
@@ -12601,8 +12648,12 @@ const RMQCModule = ({ user, stock, setStock, orders }) => {
           <button onClick={()=>{setQfMat("");setQfOrder("");setQfPo("");setQfGrn("");setQfFrom("");setQfTo("");}} style={{ ...css.btn.ghost, fontSize:11 }}>✕ Clear ({qcPending.length}/{qcPendingAll.length})</button>
         )}
       </div>
-      <Section title="RM QC Pending — Physical Inspection" lots={qcPending} type="qc" color="amber" />
+      <Section title="RM QC Pending — Physical Inspection" lots={qcPending} type="qc" color="amber"
+        sel={selQc} onBulkApprove={bulkQcApprove} bulkLabel="Approve QC for selected"
+        onToggle={(v)=>{ if(v&&v.set) setSelQc(v.set); else if(v&&v.clear) setSelQc([]); else toggleSel(setSelQc)(v); }} />
       <Section title="Client Inspection Pending" lots={clientPending} type="client" color="gold"
+        sel={selCi} onBulkApprove={bulkClientApprove} bulkLabel="Pass client inspection for selected"
+        onToggle={(v)=>{ if(v&&v.set) setSelCi(v.set); else if(v&&v.clear) setSelCi([]); else toggleSel(setSelCi)(v); }}
         actionsFor={user.role==="super_admin"?lot=>(
           <button onClick={()=>{setRevertModal({type:"qc",lot});setRevertReason("");}} style={{ ...css.btn.sm, background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}` }}>
             Revert QC ↩
