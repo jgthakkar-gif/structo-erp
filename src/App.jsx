@@ -84,12 +84,20 @@ async function supaLoadAll(keys) {
       `${SUPABASE_URL}/rest/v1/structo_store?key=in.${encodeURIComponent(keysParam)}&select=key,value`,
       { headers: { ...SUPA_HEADERS, "Prefer": "" } }
     );
-    if (!res.ok) return {};
+    if (!res.ok) throw new Error(`Supabase load failed: HTTP ${res.status}`);
     const rows = await res.json();
+    // A completely empty store on a database that should have data is far more
+    // likely an outage/permissions problem than a genuinely blank system — refuse
+    // to hydrate (and later overwrite) from it if a local cache disagrees.
+    if (rows.length === 0) {
+      const localOrders = JSON.parse(localStorage.getItem("structo_orders")||"[]");
+      if (Array.isArray(localOrders) && localOrders.length > 0)
+        throw new Error("Supabase returned an empty store but local cache has data — refusing to wipe");
+    }
     const out = {};
     rows.forEach(r => { out[r.key] = r.value; });
     return out;
-  } catch(e) { console.warn("supaLoadAll error:", e); return {}; }
+  } catch(e) { console.warn("supaLoadAll error:", e); throw e; }
 }
 
 
@@ -3547,6 +3555,36 @@ const CompanyMaster = ({ user, company, setCompany }) => {
       )}
       {/* Reset to seed data — super_admin only */}
       <div style={{ marginTop:32, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
+        <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>BACKUP</div>
+        <div style={{ display:"flex", alignItems:"center", gap:16, padding:"14px 16px", background:T.cardBg||"#fff", border:`1px solid ${T.border}`, borderRadius:8, marginBottom:14 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Backup &amp; restore all data</div>
+            <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>Download a JSON snapshot of everything (orders, stock, POs, production…). Keep one before risky operations. Restore replaces all current data.</div>
+          </div>
+          <button onClick={()=>{
+            const dump = {}; for (let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith("structo_")){ try{ dump[k]=JSON.parse(localStorage.getItem(k)); }catch(e){ dump[k]=localStorage.getItem(k); } } }
+            const blob = new Blob([JSON.stringify({ exportedAt:new Date().toISOString(), data:dump }, null, 1)], { type:"application/json" });
+            const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+            a.download = `structo-backup-${new Date().toISOString().slice(0,19).replace(/[:T]/g,"-")}.json`; a.click(); URL.revokeObjectURL(a.href);
+          }} style={{ ...css.btn.secondary, whiteSpace:"nowrap", flexShrink:0 }}>⬇ Download Backup</button>
+          <label style={{ ...css.btn.secondary, whiteSpace:"nowrap", flexShrink:0, cursor:"pointer" }}>⬆ Restore
+            <input type="file" accept=".json" style={{ display:"none" }} onChange={e=>{
+              const f = e.target.files?.[0]; if(!f) return;
+              if (!window.confirm("Restore from backup? This REPLACES all current data with the backup contents and reloads the app.")) { e.target.value=""; return; }
+              const rd = new FileReader();
+              rd.onload = async () => { try {
+                const parsed = JSON.parse(rd.result); const dump = parsed.data||parsed;
+                const entries = Object.entries(dump).filter(([k])=>k.startsWith("structo_"));
+                entries.forEach(([k,v])=>{ localStorage.setItem(k, typeof v==="string"?v:JSON.stringify(v)); });
+                // Push to Supabase BEFORE reloading — hydration reads the server,
+                // so a restore that only touches localStorage would be overwritten.
+                await Promise.all(entries.map(([k,v])=>supaSet(k, typeof v==="string"?(()=>{try{return JSON.parse(v);}catch(e){return v;}})():v)));
+                alert("Backup restored (browser + server). The app will now reload."); window.location.reload();
+              } catch(err){ alert("Restore failed: "+err.message); } };
+              rd.readAsText(f);
+            }} />
+          </label>
+        </div>
         <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>DANGER ZONE</div>
         <div style={{ display:"flex", alignItems:"center", gap:16, padding:"14px 16px", background:T.redBg, border:`1px solid ${T.red}44`, borderRadius:8 }}>
           <div style={{ flex:1 }}>
