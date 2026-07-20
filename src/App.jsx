@@ -6422,7 +6422,11 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       if(width===0&&l.width) width=parseFloat(l.width)||0;
       // 4. Default length for sections
       if(length===0&&!isPlate) length=6000;
-      if(length>0) rawMaterials.push({name:`${l.isOffcut?"OFC":"LOT"}-${l.id.slice(-4)}`,length,width:isPlate?(width||1250):100,qty:Math.ceil((l.wtAvailable||0)/(l.unitWt||1)||1),isStock:true,lotId:l.id});
+      if(length>0){
+        const perPc = (l.qtyRcv>0 && l.wtReceived>0) ? l.wtReceived/l.qtyRcv : (l.unitWt||l.wtPerUnit||0);
+        const pcs = perPc>0 ? Math.max(0, Math.round((l.wtAvailable||0)/perPc)) : (l.qtyRcv||1);
+        if(pcs>0) rawMaterials.push({name:`${l.isOffcut?"OFC":"LOT"}-${l.id.slice(-4)}`,length,width:isPlate?(width||1250):100,qty:pcs,isStock:true,lotId:l.id});
+      }
     });
     trialSizes.filter(t=>t.length>0&&t.qty>0).forEach(t=>{
       rawMaterials.push({name:isPlate?`${t.length}x${t.width}mm`:`${t.length}mm`,length:t.length,width:isPlate?(t.width||1250):100,qty:t.qty,isStock:false});
@@ -6469,14 +6473,48 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         } else partsFinal.push(p);
       });
       const batchId = `NEST-${row.matCode.replace(/\//g,"-")}-${today()}-${Date.now().toString().slice(-4)}`;
-      const nestInput = await buildNestingInput(partsFinal, rawMaterials, "PLASMA-1", batchId, dxfMap, kerfPartPart, kerfPartEdge);
-      setApiProgress("Authenticating with NestingCenter...");
       const getToken = async () => {
         if(manualToken.trim()) return manualToken.trim();
         return getNestingToken();
       };
-      setApiProgress("Running nesting job — may take 30-120 seconds...");
-      const result = await runNestingJob(nestInput, (pct,msg)=>setApiProgress(`${pct}% — ${msg}`), getToken);
+      // ── Stock-first two-pass: the engine gets no priority hint, so we impose one.
+      // Pass 1 nests on selected stock/offcuts only; pass 2 nests the remainder on
+      // trial (to-procure) sizes. Merged result keeps downstream processing unchanged.
+      const stockRMs = rawMaterials.filter(r=>r.isStock);
+      const trialRMs = rawMaterials.filter(r=>!r.isStock);
+      let nestInput, result;
+      if (stockRMs.length>0 && trialRMs.length>0) {
+        setApiProgress("Pass 1/2 — nesting on existing stock…");
+        const input1 = await buildNestingInput(partsFinal, stockRMs, "PLASMA-1", batchId+"-S", dxfMap, kerfPartPart, kerfPartEdge);
+        const res1 = await runNestingJob(input1, (pct,msg)=>setApiProgress(`Pass 1/2 · ${pct}% — ${msg}`), getToken);
+        const placed = {};
+        (res1?.Result?.RawPlatesNested||[]).forEach(rp=>(rp.PartsNested||[]).forEach(pn=>{
+          const nm = input1.Context.Problem.Parts[pn.PartIndex]?.Name; if(!nm) return;
+          placed[nm] = (placed[nm]||0) + (pn.Quantity??1);
+        }));
+        const remaining = partsFinal
+          .map(p=>({ ...p, totalQty: (p.totalQty||((p.qtyPerDrg||0)*(p.drgQty||1))) - (placed[p.markNo]||0) }))
+          .filter(p=>p.totalQty>0);
+        if (remaining.length===0) { nestInput = input1; result = res1; }
+        else {
+          setApiProgress(`Pass 2/2 — ${remaining.length} part type(s) need new material…`);
+          const input2 = await buildNestingInput(remaining, trialRMs, "PLASMA-1", batchId, dxfMap, kerfPartPart, kerfPartEdge);
+          const res2 = await runNestingJob(input2, (pct,msg)=>setApiProgress(`Pass 2/2 · ${pct}% — ${msg}`), getToken);
+          const off = { parts: input1.Context.Problem.Parts.length, plates: input1.Context.Problem.RawPlates.length };
+          nestInput = { ...input1, Context:{ ...input1.Context, Problem:{ ...input1.Context.Problem,
+            Parts:[...input1.Context.Problem.Parts, ...input2.Context.Problem.Parts],
+            RawPlates:[...input1.Context.Problem.RawPlates, ...input2.Context.Problem.RawPlates] } } };
+          result = { ...res1, Result:{ ...(res1?.Result||{}), RawPlatesNested:[
+            ...(res1?.Result?.RawPlatesNested||[]),
+            ...((res2?.Result?.RawPlatesNested||[]).map(rp=>({ ...rp,
+              RawPlateIndex:(rp.RawPlateIndex||0)+off.plates,
+              PartsNested:(rp.PartsNested||[]).map(pn=>({ ...pn, PartIndex:(pn.PartIndex||0)+off.parts })) }))) ] } };
+        }
+      } else {
+        nestInput = await buildNestingInput(partsFinal, rawMaterials, "PLASMA-1", batchId, dxfMap, kerfPartPart, kerfPartEdge);
+        setApiProgress("Running nesting job — may take 30-120 seconds...");
+        result = await runNestingJob(nestInput, (pct,msg)=>setApiProgress(`${pct}% — ${msg}`), getToken);
+      }
       setApiProgress("Processing results...");
       const rawPlatesNested = result?.Result?.RawPlatesNested || [];
       const nestParts = nestInput.Context.Problem.Parts || [];
