@@ -11799,7 +11799,13 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       const resMine  = (lot.reservations||[]).filter(r=>r.orderId===order.id).reduce((a,r)=>a+(r.kg||0),0);
       // Weight already ALLOCATED to this order's cutting plans left wtAvailable,
       // but it exists precisely to feed these drawings — count it like reservations.
-      const allocMine = (lot.allocations||[]).filter(a=>a.orderId===order.id && (a.status||"allocated")==="allocated").reduce((a,x)=>a+(x.wt||0),0);
+      let allocMine = (lot.allocations||[]).filter(a=>a.orderId===order.id && (a.status||"allocated")==="allocated").reduce((a,x)=>a+(x.wt||0),0);
+      // Fallback: allocation recorded only as weight (no detail rows). If every
+      // reservation on the lot belongs to this order, the allocation does too.
+      if (allocMine===0 && (lot.wtAllocated||0)>0 && (lot.allocations||[]).length===0) {
+        const res = lot.reservations||[];
+        if (res.length>0 && res.every(r=>r.orderId===order.id)) allocMine = lot.wtAllocated||0;
+      }
       const free = Math.max(0, (lot.wtAvailable||0) - resTotal);
       const avail = Math.min(lot.wtAvailable||0, free + resMine) + allocMine;
       if (avail <= 0) return;
