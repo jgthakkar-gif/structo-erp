@@ -9540,6 +9540,17 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const isNosOnly = (mc) => matLib(mc)?.nosOnly===true;
   // "sheet" (plates), "bar" (length-stock sections), "nos" (count-only items)
   const matClass = (mc) => isNosOnly(mc) ? "nos" : ((mc||"").split("/")[0].toUpperCase()==="PLATE" ? "sheet" : "bar");
+  // Store-PR line weight per unit: kg lines weigh 1/unit; m lines use kg-per-metre;
+  // nos lines resolve per-piece kg from the stored length/plate dim via the SAME
+  // resolver as nesting PRs (resolveMatWt) — fixes the "25x, 0 kg, unweighed" bug.
+  const storeUnitWt = (l, ln) => {
+    const u = (ln.unit||"nos");
+    if (u==="kg") return 1;
+    if (l.itemType!=="rm") return 0;
+    if (u==="m") return sheetWt(l.matCode, "1000");
+    return sheetWt(l.matCode, String(ln.sheetDim||ln.dims||"").replace(/\u00d7/g,"X"));
+  };
+  const prLineWt = (pr, l, ln) => pr.type==="store" ? storeUnitWt(l, ln) : sheetWt(l.matCode, ln.sheetDim||ln.dims);
   // Quick-add: writes kg/m or the nos-only flag into the materials master so the
   // fix is permanent everywhere, not patched on one PR.
   const applyQuickWt = (mc, kgpm, nosOnly) => {
@@ -9567,7 +9578,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const [repPoView, setRepPoView] = useState("outstanding");
   const [repChart, setRepChart] = useState(false);
   const [sprForm, setSprForm] = useState({ orderId:"", neededBy:"", remarks:"", lines:[] });
-  const blankSprLine = () => ({ itemType:"rm", itemKey:"", desc:"", qty:"", unit:"kg", make:"", category:"" });
+  const blankSprLine = () => ({ itemType:"rm", itemKey:"", desc:"", qty:"", unit:"kg", make:"", category:"", dim:"" });
   const stockOnHand = (ln) => {
     if (ln.itemType==="consumable") {
       const c = (consumables||[]).find(x=>x.id===ln.itemKey || x.name===ln.itemKey);
@@ -9582,6 +9593,17 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
   const saveSpr = () => {
     const lines = sprForm.lines.filter(l=>(l.itemKey||l.desc) && parseFloat(l.qty)>0);
     if (!lines.length) { showToast("Add at least one line with a quantity"); return; }
+    const normDim = d => String(d||"").trim().toUpperCase().replace(/\u00d7/g,"X").replace(/\s+/g,"");
+    // Weight-resolution guard: RM lines in nos need a length/dim so kg is known
+    // from birth. Block missing dims; warn if the resolver still returns 0.
+    const noDim = lines.filter(l=>l.itemType==="rm" && (l.unit||"nos")==="nos" && !isNosOnly(l.itemKey) && !normDim(l.dim));
+    if (noDim.length) { showToast(`Enter length/dimension for: ${noDim.map(l=>l.itemKey).join(", ")}`,"red"); return; }
+    const zeroWt = lines.filter(l=>{
+      if (l.itemType!=="rm" || (l.unit||"nos")==="kg" || isNosOnly(l.itemKey)) return false;
+      const each = (l.unit==="m") ? sheetWt(l.itemKey,"1000") : sheetWt(l.itemKey, normDim(l.dim));
+      return !(each>0);
+    });
+    if (zeroWt.length && !window.confirm(`No weight data for: ${zeroWt.map(l=>l.itemKey).join(", ")}.\nThe PR will show these as unweighed (fix via kg/m in Materials master).\n\nRaise anyway?`)) return;
     // Duplicate guard: warn if an OPEN PR already carries any of these items
     const openStatuses = ["pending","pending_store","forwarded","partially_converted"];
     const dupes = [];
@@ -9599,7 +9621,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     const lots = lines.map(l=>({
       matCode: l.itemType==="rm" ? l.itemKey : (l.desc||l.itemKey),
       itemType: l.itemType, category: l.category||"", make: l.make||"",
-      lines: [{ qty: parseFloat(l.qty)||0, unit: l.unit||"nos", desc: l.desc||"" }],
+      lines: [{ qty: parseFloat(l.qty)||0, unit: l.unit||"nos", desc: l.desc||"", sheetDim: l.itemType==="rm" ? normDim(l.dim) : "" }],
       parts: [], drawingNos: [],
     }));
     setPurchaseReqs(prev=>[...(prev||[]), { id, type:"store", status: isStoreRole ? "forwarded" : "pending_store",
@@ -9672,7 +9694,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
             const isStoreLine = pr.type==="store";
             const lineUnit = isStoreLine ? (ln.unit||"nos") : "Sheets";
             const perUnit = isNosOnly(l.matCode) || (isStoreLine && lineUnit!=="kg") || l.itemType==="consumable";
-            const wtPerSheet = isStoreLine ? (lineUnit==="kg" ? 1 : 0) : sheetWt(l.matCode, ln.sheetDim||ln.dims);
+            const wtPerSheet = isStoreLine ? storeUnitWt(l, ln) : sheetWt(l.matCode, ln.sheetDim||ln.dims);
             const dimParts = (ln.sheetDim||ln.dims||"").toUpperCase().split("X").map(Number);
             return {
               id:`POL-${ts}-${prIdx}-${lotIdx}-${lineIdx}`,
@@ -9690,7 +9712,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               sourceType:"nesting", sourcePrId:pr.id,
               orderAllocations: (()=>{ const oids = prOrderIdsFor(pr); const wt = Math.round(wtPerSheet*qty*100)/100;
                 return (oids.length===1 && wt>0) ? [{ orderId:oids[0], kg:wt }] : []; })(),
-              itemCode:`${l.matCode}/${ln.sheetDim||ln.dims}`,
+              itemCode: l.matCode + ((ln.sheetDim||ln.dims) ? "/"+(ln.sheetDim||ln.dims) : ""),
             };
           }).filter(Boolean)
         )
@@ -10186,14 +10208,14 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
               nestingPrs.forEach(pr=>{
                 if (["cancelled","stale"].includes(pr.status)) return;
                 (pr.lots||[]).filter(l=>!l.fulfilledFromStock).forEach(l=>(l.lines||[]).forEach(ln=>{
-                  const dim = ln.sheetDim||ln.dims;
                   const rem = prLineRemaining(pr,l,ln);
                   const conv = Math.max(0,(ln.qty||0)-rem);
                   const cls = l.itemType==="consumable" ? "nos" : matClass(l.matCode);
                   if (cls==="nos") { s.openNos+=rem; s.convNos+=conv; return; }
-                  const w = sheetWt(l.matCode, dim);
+                  const w = prLineWt(pr, l, ln);
                   if (w>0) { s.openWt+=w*rem; s.convWt+=w*conv; }
                   else if (rem+conv>0) s.unweighed.add(l.matCode);
+                  if (pr.type==="store" && (ln.unit||"nos")!=="nos") return; // kg/m lines: weight-only, no piece count
                   if (cls==="sheet") { s.openSheets+=rem; s.convSheets+=conv; }
                   else { s.openBars+=rem; s.convBars+=conv; }
                 }));
@@ -10358,6 +10380,18 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                           <button onClick={()=>forwardSpr(pr)} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Forward to Purchase</button>
                         </>
                       )}
+                      {pr.type==="store" && ["pending_store","forwarded"].includes(pr.status) && (isStoreRole||canEdit) && (
+                        <button onClick={()=>{
+                          // Converted-guard: once any qty is on a PO the PR can no
+                          // longer be withdrawn — cancel/revert the PO first.
+                          const convQty = Object.values(pr.convertedLines||{}).reduce((a,b)=>a+(b||0),0);
+                          if (convQty>0) { showToast("Quantities already carried onto a PO — cancel/revert the PO first","red"); return; }
+                          const reason = window.prompt(`Cancel ${pr.id}? Reason (optional):`, "");
+                          if (reason===null) return;
+                          setPurchaseReqs(prev=>prev.map(r=>r.id!==pr.id?r:{...r, status:"cancelled", cancelledAt:today(), cancelledBy:user.username||user.name, cancelReason:(reason||`Withdrawn by ${user.username||user.name}`)}));
+                          showToast(`${pr.id} cancelled`);
+                        }} style={{ ...css.btn.sm, background:T.redBg, color:T.red, border:`1px solid ${T.redLo}` }}>Cancel Requisition</button>
+                      )}
                       {(pr.status==="pending"||pr.status==="forwarded"||pr.status==="partially_converted") && canEdit && (
                         <>
                           <button onClick={()=>{
@@ -10387,15 +10421,24 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                           {(pr.lots||[]).map((l,i)=>(
                             <tr key={i} style={{ background:i%2===0?"transparent":T.bg }}>
                               <td style={{ padding:"4px 8px", fontFamily:T.fontMono, fontSize:11, color:T.text, fontWeight:700 }}>{l.matCode}</td>
-                              <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent, fontWeight:700 }}>{l.sheetCount}</td>
+                              <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent, fontWeight:700 }}>{pr.type==="store" ? `${(l.lines||[]).reduce((s,ln)=>s+(ln.qty||0),0)} ${(l.lines||[])[0]?.unit||"nos"}` : l.sheetCount}</td>
                               <td style={{ padding:"4px 8px", fontSize:11 }}>
                                 {(l.lines||[]).length>0
                                   ? <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
                                       {(l.lines||[]).map((ln,li)=>(
                                         <span key={li}>
                                           <span style={{ fontFamily:T.fontMono, color:T.amber, fontWeight:700 }}>{ln.qty}</span>
-                                          <span style={{ color:T.textMid }}> × </span>
-                                          <span style={{ fontFamily:T.fontMono, color:T.accentHi }}>{ln.sheetDim}</span>
+                                          {pr.type==="store" ? (
+                                            <>
+                                              <span style={{ color:T.textMid }}> {ln.unit||"nos"}</span>
+                                              {ln.sheetDim ? <span style={{ fontFamily:T.fontMono, color:T.accentHi }}> × {ln.sheetDim}{/^\d+$/.test(String(ln.sheetDim))?" mm":""}</span> : null}
+                                            </>
+                                          ) : (
+                                            <>
+                                              <span style={{ color:T.textMid }}> × </span>
+                                              <span style={{ fontFamily:T.fontMono, color:T.accentHi }}>{ln.sheetDim}</span>
+                                            </>
+                                          )}
                                         </span>
                                       ))}
                                     </div>
@@ -10403,7 +10446,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                               </td>
                               <td style={{ padding:"4px 8px", fontFamily:T.fontMono, color:T.accent, fontSize:11 }}>
                                 {(()=>{
-                                  const rmWt = (l.lines||[]).reduce((s,ln)=>s+sheetWt(l.matCode,ln.sheetDim||ln.dims)*(ln.qty||0),0);
+                                  const rmWt = (l.lines||[]).reduce((s,ln)=>s+prLineWt(pr,l,ln)*(ln.qty||0),0);
                                   const b = (nestingBatches||[]).find(x=>x.id===pr.nestingBatchId);
                                   const bl = b ? (b.lots||[]).find(x=>normMatCode(x.matCode)===normMatCode(l.matCode)) : null;
                                   const utils = bl ? (bl.sheets||[]).map(sh=>sh.utilisPct).filter(u=>u>0) : [];
@@ -10432,7 +10475,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   {selectedPrs.length} requisition{selectedPrs.length>1?"s":""} selected
                   {" · "}<span style={{ color:T.textMid, fontWeight:400 }}>
                     {fmt.num((purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).reduce((s,pr)=>{
-                      return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(sheetWt(l.matCode,ln.sheetDim||ln.dims)*prLineRemaining(pr,l,ln)),ss),0);
+                      return s + (pr.lots||[]).reduce((ss,l)=>(l.lines||[]).reduce((sss,ln)=>sss+(prLineWt(pr,l,ln)*prLineRemaining(pr,l,ln)),ss),0);
                     },0))} kg to convert
                   </span>
                 </span>
@@ -10448,7 +10491,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
 
       {/* Combined PO Modal */}
       {sprModal && (
-        <Modal title="New Store Requisition" onClose={()=>setSprModal(false)} width={760}>
+        <Modal title="New Store Requisition" onClose={()=>setSprModal(false)} width={880}>
           <G2>
             <Field label="Order / Project (optional)">
               <Sel value={sprForm.orderId} onChange={e=>setSprForm(f=>({...f,orderId:e.target.value}))}>
@@ -10462,7 +10505,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
           </G2>
           <div style={{ fontSize:11, fontWeight:700, color:T.textMid, margin:"10px 0 6px", letterSpacing:"0.05em" }}>LINES</div>
           {(sprForm.lines||[]).map((ln,i)=>(
-            <div key={i} style={{ display:"grid", gridTemplateColumns:"110px 1fr 80px 70px 110px 90px auto", gap:6, marginBottom:6, alignItems:"center" }}>
+            <div key={i} style={{ display:"grid", gridTemplateColumns:"100px 1fr 92px 66px 62px 96px 130px auto", gap:6, marginBottom:6, alignItems:"center" }}>
               <Sel value={ln.itemType} onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,itemType:e.target.value,itemKey:"",unit:e.target.value==="rm"?"kg":"nos"}:x)}))}>
                 <option value="rm">RM</option><option value="consumable">Consumable</option>
               </Sel>
@@ -10492,6 +10535,23 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                   <option value="__other">Other (type manually)…</option>
                 </Sel>
               )}
+              {(()=>{
+                // Dim/length cell: what the shared resolver needs to weigh the line.
+                if (ln.itemType!=="rm" || !ln.itemKey || isNosOnly(ln.itemKey))
+                  return <span style={{ fontSize:10, color:T.textLow, textAlign:"center" }}>—</span>;
+                const u = ln.unit||"nos";
+                if (u==="kg") return <span style={{ fontSize:10, color:T.textLow, textAlign:"center" }}>by weight</span>;
+                if (u==="m")  return <span style={{ fontSize:10, color:T.textLow, textAlign:"center" }}>per metre</span>;
+                const isSheet = matClass(ln.itemKey)==="sheet";
+                const stds = matLib(ln.itemKey)?.standardLengths||[];
+                return (
+                  <div>
+                    <input list={isSheet?undefined:`spr-len-${i}`} value={ln.dim||""} placeholder={isSheet?"LxW mm":"Length mm"}
+                      onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,dim:e.target.value}:x)}))} style={css.input} />
+                    {!isSheet && stds.length>0 && <datalist id={`spr-len-${i}`}>{stds.map(sl=><option key={sl} value={sl} />)}</datalist>}
+                  </div>
+                );
+              })()}
               <input type="number" min={0} value={ln.qty} placeholder="Qty"
                 onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,qty:e.target.value}:x)}))} style={css.input} />
               <Sel value={ln.unit} onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,unit:e.target.value}:x)}))}>
@@ -10513,7 +10573,29 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
                 <input value={ln.category} placeholder="Category"
                   onChange={e=>setSprForm(f=>({...f,lines:f.lines.map((x,xi)=>xi===i?{...x,category:e.target.value}:x)}))} style={css.input} />
               ) : (
-                <span style={{ fontSize:10, color:T.textMid, fontFamily:T.fontMono }}>On hand: {stockOnHand(ln)}</span>
+                (()=>{
+                  // Live computed kg via the shared resolver — same math the PR
+                  // card, conversion and PO will use, so no surprises downstream.
+                  const qty = parseFloat(ln.qty)||0;
+                  const u = ln.unit||"nos";
+                  const dimNorm = String(ln.dim||"").trim().toUpperCase().replace(/\u00d7/g,"X").replace(/\s+/g,"");
+                  const each = !ln.itemKey ? 0
+                    : u==="kg" ? 1
+                    : isNosOnly(ln.itemKey) ? 0
+                    : u==="m" ? sheetWt(ln.itemKey,"1000")
+                    : dimNorm ? sheetWt(ln.itemKey, dimNorm) : 0;
+                  const kg = Math.round(each*qty*100)/100;
+                  const needsDim = u==="nos" && ln.itemKey && !isNosOnly(ln.itemKey) && !dimNorm;
+                  const noWt = !needsDim && u!=="kg" && ln.itemKey && !isNosOnly(ln.itemKey) && !(each>0);
+                  return (
+                    <div style={{ fontSize:10, fontFamily:T.fontMono, lineHeight:1.5 }}>
+                      <div style={{ color: kg>0 ? T.green : (needsDim||noWt) ? T.amber : T.textMid, fontWeight:700 }}>
+                        {kg>0 ? `≈ ${fmt.num(kg)} kg` : needsDim ? "needs dim ←" : noWt ? "no wt data" : "—"}
+                      </div>
+                      <div style={{ color:T.textMid }}>On hand: {stockOnHand(ln)}</div>
+                    </div>
+                  );
+                })()
               )}
               <button onClick={()=>setSprForm(f=>({...f,lines:f.lines.filter((_,xi)=>xi!==i)}))} style={{ ...css.btn.ghost, color:T.red, padding:"3px 8px" }}>✕</button>
             </div>
