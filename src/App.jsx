@@ -7153,7 +7153,8 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
 
       // ── NestingCenter JSON output ─────────────────────────────────────────
       if (file.name.toLowerCase().endsWith(".json")) {
-        const text = new TextDecoder().decode(buf);
+        let text = new TextDecoder().decode(buf);
+        if (text.includes("\uFFFD")) text = new TextDecoder("windows-1252").decode(buf);
         const json = JSON.parse(text);
 
         // NestingCenter result format:
@@ -7220,13 +7221,13 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
 
       // ── CSV / XLSX (legacy manual import) ────────────────────────────────
       if (file.name.toLowerCase().endsWith(".csv")) {
-        const text = new TextDecoder().decode(buf);
+        let text = new TextDecoder().decode(buf);
+        if (text.includes("\uFFFD")) text = new TextDecoder("windows-1252").decode(buf);
         const clean = (text.charCodeAt(0)===0xFEFF?text.slice(1):text).replace(/\r\n/g,"\n").replace(/\r/g,"\n");
-        const lines = clean.split("\n").filter(l=>l.trim());
-        if (lines.length < 2) { setNestImportError("File has no data rows"); return; }
-        const hdrs = lines[0].split(",").map(h=>h.trim().toLowerCase().replace(/[^a-z0-9 %]/g,"").trim());
-        rows = lines.slice(1).map(line=>{
-          const vals = line.split(",").map(v=>v.trim().replace(/^"|"$/g,""));
+        const table = parseCsvText(clean).filter(l=>l.some(v=>v!==""));
+        if (table.length < 2) { setNestImportError("File has no data rows"); return; }
+        const hdrs = table[0].map(h=>h.trim().toLowerCase().replace(/[^a-z0-9 %]/g,"").trim());
+        rows = table.slice(1).map(vals=>{
           const obj = {};
           hdrs.forEach((h,i)=>{ obj[h]=vals[i]||""; });
           return obj;
@@ -9359,6 +9360,38 @@ const parseNestingMatCode = (matCode) => {
 };
 // Weight per unit: PLATE = L×W×t×7.85/1e6, sections = barLength(m)×wtPerMetre from library
 // sheetDim: plate = "6000X1250" (LxW in mm), section = "12000" (bar length in mm)
+// ─── RFC-4180 CSV PARSER ─────────────────────────────────────────────────────
+// Full-text CSV -> array of row arrays. Commas and newlines inside "quoted"
+// fields stay in one cell; "" inside quotes is a literal quote. Replaces the
+// old per-line split(",") which sheared any field containing a comma (e.g.
+// pipe sizes exported as "42,9*3,2") and silently shifted later columns right.
+function parseCsvText(txt) {
+  const out=[[]]; let cell="", inQ=false;
+  for (let i=0;i<txt.length;i++){
+    const ch=txt[i];
+    if (inQ) {
+      if (ch==='"') { if (txt[i+1]==='"'){ cell+='"'; i++; } else inQ=false; }
+      else cell+=ch;
+    }
+    else if (ch==='"') inQ=true;
+    else if (ch===',') { out[out.length-1].push(cell.trim()); cell=""; }
+    else if (ch==='\n') { out[out.length-1].push(cell.trim()); cell=""; out.push([]); }
+    else cell+=ch;
+  }
+  out[out.length-1].push(cell.trim());
+  return out;
+}
+
+// Decode a CSV upload: UTF-8 first; if the bytes weren't valid UTF-8 (any
+// \uFFFD replacement char appears), fall back to windows-1252 so Excel's
+// Latin-1 exports (degree signs, multiplication signs, accents) survive.
+async function readCsvText(file) {
+  const buf = await file.arrayBuffer();
+  let txt = new TextDecoder("utf-8").decode(buf);
+  if (txt.includes("\uFFFD")) txt = new TextDecoder("windows-1252").decode(buf);
+  return txt;
+}
+
 const nestingSheetWt = (matCode, sheetDim) => {
   const segs = (matCode||"").split("/");
   const sectionType = (segs[0]||"").toUpperCase();
@@ -17290,11 +17323,15 @@ const TabDrawings = ({ order, onChange, canEdit, user, drawingInstances, setDraw
   const parseDate = (v) => {
     if(!v) return "";
     const s = String(v).trim();
-    // DD-MM-YYYY or DD/MM/YYYY
-    const m1 = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+    // DD-MM-YYYY / DD/MM/YYYY / DD.MM.YYYY
+    const m1 = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
     if(m1) return `${m1[3]}-${m1[2].padStart(2,"0")}-${m1[1].padStart(2,"0")}`;
-    // Excel serial number
-    if(/^\d+$/.test(s)){ const d=new Date(Math.round((+s-25569)*86400*1000)); return d.toISOString().slice(0,10); }
+    // DD-MM-YY (2-digit year -> 20YY)
+    const m2 = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2})$/);
+    if(m2) return `20${m2[3]}-${m2[2].padStart(2,"0")}-${m2[1].padStart(2,"0")}`;
+    // Excel serial — sane window only (~1954..2119), so an 8-digit drawing
+    // number can never masquerade as a date again
+    if(/^\d+$/.test(s)){ const n=+s; if(n<20000||n>80000) return ""; const d=new Date(Math.round((n-25569)*86400*1000)); return d.toISOString().slice(0,10); }
     // ISO
     if(s.match(/^\d{4}-\d{2}-\d{2}/)) return s.slice(0,10);
     return "";
@@ -17306,15 +17343,26 @@ const TabDrawings = ({ order, onChange, canEdit, user, drawingInstances, setDraw
     const ext = file.name.split(".").pop().toLowerCase();
     try {
       if(ext==="csv") {
-        const raw = await file.text();
+        const raw = await readCsvText(file);
         const text = (raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-        const lines = text.split("\n").map(l=>l.split(",").map(v=>v.trim().replace(/^"|"$/g,"").replace(/""/g,'"')));
+        const lines = parseCsvText(text); // RFC-4180: quoted commas stay in one cell
         // find header row
         const hdrIdx = lines.findIndex(l=>l.some(c=>c.toLowerCase().includes("drawing no")||c.toLowerCase().includes("drawing_no")));
         if(hdrIdx<0){ setImportErr("Could not find header row. Make sure one row contains 'Drawing No'."); return; }
         const hdrs = lines[hdrIdx].map(h=>h.toLowerCase().trim());
         const colMap = {};
-        DRG_COLS.forEach(c=>{ const idx=hdrs.findIndex(h=>h.includes(c.hdr.toLowerCase().split(" ")[0].toLowerCase())||h===c.key.toLowerCase()); if(idx>=0) colMap[c.key]=idx; });
+        // Exact header match first, then containment of the FULL column name.
+        // The old first-word match sent "Drawing Date" to the "Drawing No"
+        // column, so drawing numbers became Excel date serials (year 130776).
+        DRG_COLS.forEach(c=>{
+          const hL = c.hdr.toLowerCase();
+          const variants = [hL, c.key.toLowerCase(), hL.replace(/ /g,"_"), hL.replace(/ \(kg\)/,"")];
+          let idx = hdrs.findIndex(h=>variants.includes(h));
+          if(idx<0) idx = hdrs.findIndex(h=>variants.some(v=>v.length>3&&h.includes(v)));
+          if(idx>=0) colMap[c.key]=idx;
+        });
+        const unmappedReq = DRG_COLS.filter(c=>c.required && colMap[c.key]===undefined);
+        if(unmappedReq.length){ setImportErr(`Required column(s) missing from header row: ${unmappedReq.map(c=>c.hdr).join(", ")} — fix the header and re-import.`); return; }
         const rows = lines.slice(hdrIdx+1).filter(l=>l.some(v=>v.trim())).map((l,i)=>{
           const obj={};
           DRG_COLS.forEach(c=>{ if(colMap[c.key]!==undefined) obj[c.key]=l[colMap[c.key]]||""; });
@@ -18061,6 +18109,21 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
         const idx = hdrs.findIndex(h=>variants.some(v=>h===v||h.includes(v)));
         if(idx>=0) colMap[c.key]=idx;
       });
+      // Silent-mapping guard: name any template columns the header row did NOT
+      // provide (a typo'd header like "Cient Unit Wt" previously zeroed the
+      // whole field without a word). Missing required columns block the import;
+      // missing optional ones show an amber warning.
+      const unmapped = PART_COLS.filter(c=>colMap[c.key]===undefined);
+      const unmappedReq = unmapped.filter(c=>c.required);
+      if(unmappedReq.length){ setImportErr(`Required column(s) missing from header row: ${unmappedReq.map(c=>c.hdr).join(", ")} — fix the header and re-import.`); return null; }
+      const warns = [];
+      if(unmapped.length) warns.push(`Column(s) not found in header (values will import blank/default): ${unmapped.map(c=>c.hdr).join(", ")}`);
+      // Width guard: a data row with more cells than the header means a field
+      // split apart (stray/unquoted comma) — name the rows instead of shifting.
+      const wide = [];
+      lines.slice(hdrIdx+1).forEach((l,li)=>{ if(l.some(v=>String(v||"").trim()) && l.length>hdrs.length) wide.push(hdrIdx+2+li); });
+      if(wide.length) warns.push(`Row(s) with more cells than the header (check stray commas): ${wide.slice(0,8).join(", ")}${wide.length>8?" +"+(wide.length-8)+" more":""}`);
+      if(warns.length) setImportErr("\u26a0 "+warns.join(" | "));
       // Skip hint row (row right after header where first non-empty cell contains "Must match" or "e.g.")
       let dataStart = hdrIdx+1;
       if(lines[dataStart]){
@@ -18075,9 +18138,9 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
 
     try {
       if(ext==="csv") {
-        const raw = await file.text();
+        const raw = await readCsvText(file);
         const text = (raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-        const lines = text.split("\n").map(l=>l.split(",").map(v=>v.trim().replace(/^"|"$/g,"").replace(/""/g,'"')));
+        const lines = parseCsvText(text); // RFC-4180: quoted commas stay in one cell
         const rows = parseRows(lines);
         if(!rows) return;
         if(rows.length===0){ setImportErr("No data rows found after header."); return; }
