@@ -6368,8 +6368,12 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   const overParts = !isPlate ? markAgg.filter(p=>(p.length||0) > maxTrialLen && maxTrialLen>0) : [];
   const proposeSplit = (len, maxLen) => {
     const floor=spliceCfg.minSegmentMm||1500, allow=spliceCfg.jointAllowanceMm||3;
-    let n=2; while(len + allow*(n-1) > maxLen*n) n++;
-    const total = len + allow*(n-1);
+    // Root-gap convention: a butt-welded splice leaves a gap at each joint, so
+    // finished length = segments + gap×joints and the segments must total
+    // len − allow×(n−1). The old additive rule (len + allow×joints) demanded
+    // 18006mm from three 6000 bars and forced a pointless 4th segment.
+    let n=1; while(maxLen*n < len - allow*(n-1)) n++;
+    const total = len - allow*(n-1);
     const segs=[]; let rem=total;
     for(let i=0;i<n-1;i++){ segs.push(maxLen); rem-=maxLen; }
     segs.push(Math.round(rem*100)/100);
@@ -6379,10 +6383,10 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   const splitFor = (p) => splitPlan[p.markNo] || proposeSplit(p.length, maxTrialLen);
   const splitIssues = (p) => {
     const floor=spliceCfg.minSegmentMm||1500, allow=spliceCfg.jointAllowanceMm||3;
-    const segs=splitFor(p); const req=(p.length||0)+allow*(segs.length-1);
+    const segs=splitFor(p); const req=(p.length||0)-allow*(segs.length-1);
     const sum=segs.reduce((a,b)=>a+(parseFloat(b)||0),0);
     const errs=[];
-    if(Math.abs(sum-req)>0.5) errs.push(`segments total ${sum}mm \u2260 required ${req}mm (${p.length} + ${allow}\u00d7${segs.length-1} joint allowance)`);
+    if(Math.abs(sum-req)>0.5) errs.push(`segments total ${sum}mm \u2260 required ${req}mm (${p.length} \u2212 ${allow}\u00d7${segs.length-1} root gap)`);
     segs.forEach((s,i)=>{ if(s<floor) errs.push(`S${i+1} below ${floor}mm minimum`); if(s>maxTrialLen) errs.push(`S${i+1} exceeds ${maxTrialLen}mm bar`); });
     return errs;
   };
@@ -6694,7 +6698,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                   </div>
                   {p.jointsAllowed ? (
                     <div style={{marginTop:6}}>
-                      <div style={{fontSize:11,color:"#92400E",marginBottom:4}}>Will be cut as {segs.length} segments ({segs.length-1} splice joint{segs.length>2?"s":""}, +{spliceCfg.jointAllowanceMm||3}mm each). Edit split before running:</div>
+                      <div style={{fontSize:11,color:"#92400E",marginBottom:4}}>Will be cut as {segs.length} segments ({segs.length-1} splice joint{segs.length>2?"s":""}, {spliceCfg.jointAllowanceMm||3}mm root gap each \u2014 segments + gaps = {p.length}mm). Edit split before running:</div>
                       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                         {segs.map((s,i)=>(
                           <span key={i} style={{display:"flex",alignItems:"center",gap:3}}>
@@ -18258,6 +18262,9 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
             requiredOps: r.requiredOps?.trim() ? r.requiredOps.split(",").map(o=>o.trim()).filter(Boolean) : (r.fabType?.includes("Bought")||r.fabType?.toLowerCase()==="bought out" ? [] : ['Cut']),
             partLink: r.partLink?.trim()||"",
             remarks: r.remarks?.trim()||"",
+            clientMarkNo: r.clientMarkNo?.trim()||"",
+            clientTag: r.clientTag?.trim()||"",
+            userField1: r.userField1?.trim()||"",
             _drgMatched: !!drg,
             _libMatched: !!libMatch,
           };
@@ -18272,12 +18279,43 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
           setImportErr(`⚠ Duplicate Mark Nos found: ${dupes.map(([k])=>k.split("__")[1]).join(", ")}. Excel often converts 2.10 → 2.1. Format the Mark No column as Text in Excel before saving as CSV.`);
           return;
         }
+        // ── Cross-drawing mark uniqueness (Option B, 24 Jul 2026) ──────────
+        // Client lists that restart marks per drawing (Takraf) make the same
+        // Mark No mean different parts in different drawings — nesting groups
+        // by mark, so colliding marks were collapsed into one wrong-length
+        // part. The importer now guarantees global uniqueness: any mark that
+        // appears under more than one drawing gets a short drawing-code prefix
+        // (e.g. 0610-1). The client's original mark is preserved in Client
+        // Mark No for packing lists and drawing cross-reference.
+        const byMark = {};
+        parsed.forEach(r=>{ if(!byMark[r.markNo]) byMark[r.markNo]=new Set(); byMark[r.markNo].add(r.drawingNo); });
+        const collidingMarks = new Set(Object.entries(byMark).filter(([,ds])=>ds.size>1).map(([m])=>m));
+        let prefixedCount = 0;
+        if(collidingMarks.size>0){
+          // shortest unique drawing-number tail (min 4 chars) as the prefix
+          const drgNos = [...new Set(parsed.map(r=>String(r.drawingNo)))];
+          const tail = {};
+          for(let tlen=4; tlen<=14; tlen++){
+            const t={}; let clash=false;
+            drgNos.forEach(d=>{ const s=d.slice(-tlen); if(t[s]&&t[s]!==d) clash=true; t[s]=d; });
+            if(!clash){ drgNos.forEach(d=>{ tail[d]=d.slice(-tlen); }); break; }
+          }
+          if(Object.keys(tail).length===0) drgNos.forEach(d=>{ tail[d]=d; });
+          parsed.forEach(r=>{
+            if(collidingMarks.has(r.markNo)){
+              if(!r.clientMarkNo) r.clientMarkNo = r.markNo;
+              r.markNo = `${tail[String(r.drawingNo)]||r.drawingNo}-${r.markNo}`;
+              prefixedCount++;
+            }
+          });
+        }
         const unmatched = parsed.filter(r=>!r._drgMatched).length;
         const unmatchedLib = parsed.filter(r=>r.section&&!r._libMatched).length;
         const warns = [];
+        if(prefixedCount>0) warns.push(`${prefixedCount} part(s) shared a Mark No across drawings — auto-prefixed with drawing code (original kept in Client Mark No).`);
         if(unmatched>0) warns.push(`${unmatched} row(s) have Drawing No not found in Drawing Register — they will still import but won't link to a drawing.`);
         if(unmatchedLib>0) warns.push(`${unmatchedLib} row(s) have material (section/size/grade) not found in Materials Library — library match not found, check spelling.`);
-        setImportErr(warns.length ? "⚠ Warning: "+warns.join(" ") : "");
+        setImportErr(prev=>[prev, warns.length?"⚠ "+warns.join(" | "):""].filter(Boolean).join(" | "));
         setImportRows(parsed);
         // Initialise review items for unmatched materials
         const unmatchedLibMap = {};
