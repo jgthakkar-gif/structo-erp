@@ -7397,6 +7397,10 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       productionStandards={productionStandards}
     />
   );
+  // Material Requirements section filter — drives both the table and the
+  // summary box above it (the box follows the filter, so it always answers
+  // "what am I looking at right now").
+  const [matSecFilter, setMatSecFilter] = useState([]);
   const fabAgg = {};
   filtOrders.forEach(o => {
     const recvDrgMap = {};
@@ -7426,10 +7430,22 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       if (!fabAgg[key].orders.includes(o.id)) fabAgg[key].orders.push(o.id);
     });
   });
+  // Unit-of-measure grouping. AREA = plate family (m2); LINEAR = sections,
+  // pipes, bars (m). Weight is the rate unit so it leads; the dimension is the
+  // ordering figure and follows. Mixed selections show weight only, because
+  // m2 + m has no meaning.
+  const matGroupOf = (section) => {
+    const s = (section||"").toUpperCase();
+    if (s.includes("PLATE") || s==="SHEET") return "Plate & Sheet";
+    if (s==="PIPE" || s==="CHS" || s==="TUBE") return "Pipes & Tubes";
+    if (["ISA","ISMC","ISMB","ISLB","ISHB","SHS","RHS","SQ","FLAT","BAR","ROD","ANGLE","CHANNEL","BEAM"].includes(s)) return "Rolled Sections";
+    return "Other";
+  };
+  const matGroupUnit = (g) => g==="Plate & Sheet" ? "area" : "length";
   const filtDrgNos = new Set();
   filtOrders.forEach(o=>(o.drawings||[]).forEach(d=>{ if(d.drawingNo) filtDrgNos.add(String(d.drawingNo).trim().toUpperCase()); }));
   const filtOrderIds = new Set(filtOrders.map(o=>o.id));
-  const fabList = Object.values(fabAgg).map(row => {
+  const fabListRaw = Object.values(fabAgg).map(row => {
     const stockAvail = stock.filter(s=>!['rejected','returned','written_off'].includes(s.status)&&((s.matCode&&s.matCode===row.matCode)||((s.sectionType||s.section)===row.section&&s.size===row.size&&s.grade===row.grade))).reduce((a,s)=>a+(s.wtAvailable||0),0);
     const netToProcure = Math.max(0, row.wtRequired - stockAvail);
     // Robust PR match: normalised matCode first, section/size/grade triple as fallback;
@@ -7458,6 +7474,39 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
     return { ...row, stockAvail, netToProcure, prStatus: pr?.status||"none",
              nested: !!latestNest, nestBatchId: latestNest?.id||"", nestSheets };
   });
+  // fabListAll = every requirement row for the chosen order(s); fabList (below)
+  // is what the table renders after the section filter is applied.
+  const fabListAll = fabListRaw;
+  const matGroups = (()=>{
+    const g = {};
+    fabListAll.forEach(r=>{
+      const name = matGroupOf(r.section);
+      if(!g[name]) g[name] = { name, unit:matGroupUnit(name), rows:[], wt:0, net:0, len:0, area:0, sections:new Set() };
+      g[name].rows.push(r);
+      g[name].wt   += r.wtRequired||0;
+      g[name].net  += r.netToProcure||0;
+      g[name].len  += r.totalLengthMm||0;
+      g[name].area += r.totalAreaMm2||0;
+      if(r.section) g[name].sections.add(r.section);
+    });
+    const order = ["Plate & Sheet","Rolled Sections","Pipes & Tubes","Other"];
+    return Object.values(g)
+      .map(x=>({ ...x, sections:[...x.sections].sort() }))
+      .sort((a,b)=>order.indexOf(a.name)-order.indexOf(b.name));
+  })();
+  const fabList = matSecFilter.length>0 ? fabListAll.filter(r=>matSecFilter.includes(r.section)) : fabListAll;
+  // A dimension total is only meaningful when every selected row measures the
+  // same way — otherwise weight stands alone.
+  const selTotals = (()=>{
+    const units = new Set(fabList.map(r=>matGroupUnit(matGroupOf(r.section))));
+    const unit = units.size===1 ? [...units][0] : "mixed";
+    return {
+      unit,
+      wt:   fabList.reduce((s,r)=>s+(r.wtRequired||0),0),
+      len:  fabList.reduce((s,r)=>s+(r.totalLengthMm||0),0),
+      area: fabList.reduce((s,r)=>s+(r.totalAreaMm2||0),0),
+    };
+  })();
   const boAgg = {};
   filtOrders.forEach(o => {
     const recvDrgMap2 = {};
@@ -7919,9 +7968,60 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
               {orders.map(o=><option key={o.id} value={o.id}>{o.id} — {o.projectDesc}</option>)}
             </Sel>
             <div style={{ fontSize:12, color:T.textLow }}>
-              {fabList.length} material types · {boList.length} bought-out items · {csParts.length} client supply parts
+              {matSecFilter.length>0 ? `${fabList.length} of ${fabListAll.length}` : fabListAll.length} material types · {boList.length} bought-out items · {csParts.length} client supply parts
             </div>
           </div>
+
+          {/* Group summary — follows the section filter */}
+          {fabListAll.length>0 && (
+            <div style={{ ...css.card, marginBottom:16, padding:"12px 14px" }}>
+              <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Requirement Summary</div>
+                {matSecFilter.length>0 && (
+                  <button onClick={()=>setMatSecFilter([])} style={{ ...css.btn.sm, background:T.bgInput, color:T.textMid }}>Clear filter ({matSecFilter.length})</button>
+                )}
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))", gap:10 }}>
+                {matGroups.map(g=>{
+                  const anySel = g.sections.some(s=>matSecFilter.includes(s));
+                  return (
+                    <div key={g.name} style={{ border:`1px solid ${anySel?T.accent:T.border}`, borderRadius:8, padding:"10px 12px", background:anySel?T.bgInput:"transparent" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", marginBottom:6 }}>
+                        {g.name} <span style={{ color:T.textLow, fontWeight:500 }}>· {g.rows.length} type{g.rows.length===1?"":"s"}</span>
+                      </div>
+                      <div style={{ fontSize:18, fontWeight:700, color:T.accent, fontFamily:T.fontMono, lineHeight:1.1 }}>
+                        {fmt.num(Math.round(g.wt))} <span style={{ fontSize:12, color:T.textMid, fontWeight:500 }}>kg</span>
+                      </div>
+                      <div style={{ fontSize:12, color:T.textMid, fontFamily:T.fontMono, marginTop:2 }}>
+                        {g.unit==="area" ? `${(g.area/1e6).toFixed(2)} m²` : `${(g.len/1000).toFixed(1)} m`}
+                        {g.net>0 && <span style={{ color:T.textLow }}> · {fmt.num(Math.round(g.net))} kg to procure</span>}
+                      </div>
+                      <div style={{ display:"flex", gap:4, flexWrap:"wrap", marginTop:8 }}>
+                        {g.sections.map(s=>(
+                          <button key={s} onClick={()=>setMatSecFilter(f=>f.includes(s)?f.filter(x=>x!==s):[...f,s])}
+                            style={{ fontSize:10, fontFamily:T.fontMono, padding:"2px 7px", borderRadius:4, cursor:"pointer",
+                              border:`1px solid ${matSecFilter.includes(s)?T.accent:T.border}`,
+                              background:matSecFilter.includes(s)?T.accent:"transparent",
+                              color:matSecFilter.includes(s)?T.bg:T.textMid }}>{s}</button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Selection total — dimension shown only when the selection is
+                  unit-homogeneous, otherwise weight alone. */}
+              {matSecFilter.length>0 && (
+                <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}`, fontSize:12, color:T.text }}>
+                  <b>Selected:</b> {fabList.length} type{fabList.length===1?"":"s"} ·{" "}
+                  <span style={{ fontFamily:T.fontMono, color:T.accent, fontWeight:700 }}>{fmt.num(Math.round(selTotals.wt))} kg</span>
+                  {selTotals.unit==="area" && <span style={{ fontFamily:T.fontMono }}> · {(selTotals.area/1e6).toFixed(2)} m²</span>}
+                  {selTotals.unit==="length" && <span style={{ fontFamily:T.fontMono }}> · {(selTotals.len/1000).toFixed(1)} m</span>}
+                  {selTotals.unit==="mixed" && <span style={{ color:T.textLow }}> · mixed units (area + length) — weight only</span>}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Table 1: Fabrication Materials */}
           <div style={{ ...css.card, marginBottom:16 }}>
@@ -18900,7 +19000,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
               </div>
             </div>
           </div>
-          {importErr&&<div style={{ background:importErr.startsWith("⚠")?T.amberBg:T.redBg, border:`1px solid ${importErr.startsWith("⚠")?T.amber:T.redLo}`, borderRadius:6, padding:"8px 12px", color:importErr.startsWith("⚠")?T.amber:T.red, fontSize:12, marginTop:10 }}>{importErr}</div>}
+          {importErr&&<div style={{ background:importErr.startsWith("⚠")?T.amberBg:T.redBg, border:`1px solid ${importErr.startsWith("⚠")?T.amber:T.redLo}`, borderRadius:6, padding:"8px 12px", color:importErr.startsWith("⚠")?T.amber:T.red, fontSize:12, marginTop:10, whiteSpace:"pre-wrap", lineHeight:1.5 }}>{importErr}</div>}
         </div>
 
         {importRows.length>0&&<div style={{ marginBottom:12 }}>
