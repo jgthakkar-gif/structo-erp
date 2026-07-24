@@ -18484,6 +18484,25 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
         const fClientWt = filtered.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.clientTotalWt||0)*(drg?.qty||1); },0);
         const fCalcWt   = filtered.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.calcTotalWt||0)*(drg?.qty||1); },0);
         const fTotalWt  = filtered.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.calcTotalWt||p.clientTotalWt||0)*(drg?.qty||1); },0);
+        // Ordering dimension beside the weights: length for linear sections,
+        // area for plate. Part length (unit length x pieces), not stock length —
+        // stock is rarely ordered at order level. Only shown when the rows in
+        // view share one unit, since m + m2 cannot be added.
+        const isPlateSec = (sec) => { const s=(sec||"").toUpperCase(); return s.includes("PLATE")||s==="SHEET"; };
+        const dimOf = (list) => list.reduce((a,p)=>{
+          const drg = drawings.find(d=>d.id===p.drawingId);
+          const pcs = (p.qtyPerDrg||0)*(drg?.qty||1);
+          if(isPlateSec(p.section)) a.area += (p.length||0)*(p.width||0)*pcs;
+          else a.len += (p.length||0)*pcs;
+          return a;
+        }, {len:0, area:0});
+        const unitOf = (list) => {
+          const u = new Set(list.filter(p=>p.section).map(p=>isPlateSec(p.section)?"area":"length"));
+          return u.size===1 ? [...u][0] : (u.size===0 ? "none" : "mixed");
+        };
+        const fDim = dimOf(filtered), fUnit = unitOf(filtered);
+        const aDim = dimOf(parts),    aUnit = unitOf(parts);
+        const dimStr = (d,u) => u==="area" ? `${(d.area/1e6).toFixed(2)} m²` : u==="length" ? `${(d.len/1000).toFixed(1)} m` : "—";
         const isFiltered = activeFilterCount>0;
         return (
           <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap", alignItems:"center", padding:"10px 14px", background:isFiltered?T.amberBg:T.bg, borderRadius:8, border:`1px solid ${isFiltered?T.amber:T.border}` }}>
@@ -18494,8 +18513,13 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
                 { label:"Client Wt", val:`${(fClientWt/1000).toFixed(2)}T`, total:`${(parts.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.clientTotalWt||0)*(drg?.qty||1); },0)/1000).toFixed(2)}T`, color:T.amber },
                 { label:"Calc Wt", val:`${(fCalcWt/1000).toFixed(2)}T`, total:`${(parts.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.calcTotalWt||0)*(drg?.qty||1); },0)/1000).toFixed(2)}T`, color:T.green },
                 { label:"Total Order Wt", val:`${(fTotalWt/1000).toFixed(2)}T`, total:`${(parts.reduce((s,p)=>{ const drg=drawings.find(d=>d.id===p.drawingId); return s+(p.calcTotalWt||p.clientTotalWt||0)*(drg?.qty||1); },0)/1000).toFixed(2)}T`, color:T.gold },
-              ].map(({label,val,total,color})=>(
-                <div key={label} style={{ display:"flex", flexDirection:"column", gap:1 }}>
+                { label: fUnit==="area" ? "Total Area" : "Total Length",
+                  val: fUnit==="mixed" ? "mixed" : dimStr(fDim,fUnit),
+                  total: aUnit==="mixed" ? "mixed" : dimStr(aDim,aUnit),
+                  color: fUnit==="mixed" ? T.textLow : (T.accentHi||T.accent),
+                  hint: fUnit==="mixed" ? "Select one material family (e.g. all PLATE, or all sections) to see a combined total" : "" },
+              ].map(({label,val,total,color,hint})=>(
+                <div key={label} style={{ display:"flex", flexDirection:"column", gap:1 }} title={hint||undefined}>
                   <span style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:".05em" }}>{label}</span>
                   <span style={{ fontFamily:T.fontMono, fontWeight:700, color, fontSize:14 }}>{val}</span>
                   {isFiltered&&<span style={{ fontFamily:T.fontMono, fontSize:10, color:T.textLow }}>of {total}</span>}
