@@ -16407,7 +16407,7 @@ const Row2 = ({ label, value, mono }) => (
     <span style={{ fontSize:13, color:T.text, fontFamily:mono?T.fontMono:T.font, fontWeight:500 }}>{value||"—"}</span>
   </div>
 );
-const DrawingReleaseBanner = ({ order }) => {
+const DrawingReleaseBanner = ({ order, onChange, canEdit, user }) => {
   const all = order.drawings||[];
   const totalRegisteredKg = all.reduce((s,d)=>s+(d.totalWt||0),0);
   const receivedKg = all.filter(d=>d.receivedDate).reduce((s,d)=>s+(d.totalWt||0),0);
@@ -16416,13 +16416,28 @@ const DrawingReleaseBanner = ({ order }) => {
   const recDrgs = all.filter(d=>d.receivedDate).length;
   const orderKg = (order.orderQty||0)*1000;
   const notInRegisterKg = orderKg - totalRegisteredKg;
+  // Gap dropdown: any register-vs-order weight difference beyond rounding is a
+  // discrepancy someone will re-investigate unless the explanation lives with
+  // the warning. Click the warning line to see the exact kg math and record why.
+  const gapKg = Math.round(notInRegisterKg*10)/10;
+  const hasGap = Math.abs(gapKg) >= 0.5 && orderKg > 0;
+  const [showGap, setShowGap] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(order.drawingWtGapNote||"");
+  const noteDirty = noteDraft !== (order.drawingWtGapNote||"");
+  const fmtKg = (kg) => `${kg.toLocaleString("en-IN",{maximumFractionDigits:1})} kg (${(kg/1000).toFixed(3)} T)`;
   return (
-    <div style={{ background:pct===100?T.greenBg:T.amberBg, border:`1px solid ${pct===100?T.green:T.amber}`, borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"center", gap:20, flexWrap:"wrap" }}>
+    <div style={{ background:pct===100?T.greenBg:T.amberBg, border:`1px solid ${pct===100?T.green:T.amber}`, borderRadius:8, padding:"12px 16px", marginBottom:16 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:20, flexWrap:"wrap" }}>
       <div>
         <div style={{ fontSize:11, color:T.textMid, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:2 }}>Drawing Release Status</div>
         <div style={{ fontSize:14, fontWeight:700, color:pct===100?T.green:T.amber }}>{recDrgs} of {all.length} drawings received · {(receivedKg/1000).toFixed(1)}T of {(totalRegisteredKg/1000).toFixed(1)}T registered</div>
         {pendingKg>0 && <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>⚠ {(pendingKg/1000).toFixed(1)}T drawing weight pending client release</div>}
-        {notInRegisterKg>0 && <div style={{ fontSize:12, color:T.amber, marginTop:2 }}>⚠ {(notInRegisterKg/1000).toFixed(1)}T of order weight not yet in drawing register</div>}
+        {hasGap && (
+          <div onClick={()=>setShowGap(s=>!s)} style={{ fontSize:12, color:T.amber, marginTop:2, cursor:"pointer", userSelect:"none" }}>
+            ⚠ {(Math.abs(gapKg)/1000).toFixed(1)}T {gapKg>0 ? "of order weight not yet in drawing register" : "registered above order weight"}
+            {order.drawingWtGapNote ? " · explained" : ""} <span style={{ fontFamily:T.fontMono }}>{showGap?"▾":"▸"}</span>
+          </div>
+        )}
       </div>
       <div style={{ flex:1, minWidth:200 }}>
         <div style={{ height:6, background:T.border, borderRadius:3, overflow:"hidden" }}>
@@ -16430,6 +16445,32 @@ const DrawingReleaseBanner = ({ order }) => {
         </div>
         <div style={{ fontSize:11, color:T.textMid, marginTop:4 }}>{pct}% drawings received by weight</div>
       </div>
+      </div>
+      {hasGap && showGap && (
+        <div style={{ marginTop:10, paddingTop:10, borderTop:`1px dashed ${T.amber}`, fontSize:12 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"auto 1fr", gap:"3px 14px", fontFamily:T.fontMono, color:T.text, maxWidth:520 }}>
+            <span style={{ color:T.textMid }}>Order weight (Basic Details)</span><span>{fmtKg(orderKg)}</span>
+            <span style={{ color:T.textMid }}>Drawing register total</span><span>{fmtKg(totalRegisteredKg)}</span>
+            <span style={{ color:T.textMid, fontWeight:700 }}>Difference</span><span style={{ color:T.amber, fontWeight:700 }}>{gapKg>0?"−":"+"}{fmtKg(Math.abs(gapKg))}</span>
+          </div>
+          <div style={{ marginTop:10 }}>
+            <label style={{ ...css.label, marginBottom:4 }}>Discrepancy explanation</label>
+            <textarea value={noteDraft} onChange={e=>setNoteDraft(e.target.value)} disabled={!canEdit}
+              placeholder="e.g. Drg 46070629 register unit wt 216.1 kg vs PO line wt 264.1 kg — clarification raised with client"
+              style={{ ...css.input, minHeight:52, resize:"vertical", fontSize:12 }} />
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginTop:6 }}>
+              {canEdit && onChange && (
+                <button disabled={!noteDirty} onClick={()=>onChange({ ...order, drawingWtGapNote:noteDraft.trim(), drawingWtGapNoteBy:(user?.name||user?.username||""), drawingWtGapNoteAt:new Date().toISOString().slice(0,10) })}
+                  style={{ ...css.btn.sm, background:noteDirty?T.accent:T.bgInput, color:noteDirty?T.bg:T.textLow, cursor:noteDirty?"pointer":"default" }}>Save note</button>
+              )}
+              {order.drawingWtGapNoteBy && !noteDirty && (
+                <span style={{ fontSize:11, color:T.textMid }}>noted by {order.drawingWtGapNoteBy}, {order.drawingWtGapNoteAt}</span>
+              )}
+              {noteDirty && <span style={{ fontSize:11, color:T.amber }}>unsaved — Save note, then Save Changes on the order</span>}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -17474,7 +17515,7 @@ const TabDrawings = ({ order, onChange, canEdit, user, drawingInstances, setDraw
   };
   return (
     <div>
-      <DrawingReleaseBanner order={order} />
+      <DrawingReleaseBanner order={order} onChange={onChange} canEdit={canEdit} user={user} />
 
       {/* Drawing Prefix Override */}
       {drawings.length > 0 && (
