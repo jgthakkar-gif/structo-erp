@@ -6388,7 +6388,23 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   };
   const blockedNoJoints = overParts.filter(p=>!p.jointsAllowed);
   const splitInvalid = overParts.filter(p=>p.jointsAllowed && splitIssues(p).length>0);
-  const runBlocked = blockedNoJoints.length>0 || splitInvalid.length>0;
+  // Mark-collision guard: markAgg and buildInputData key parts by BARE markNo.
+  // Client lists that restart marks per drawing (Takraf) make the same mark carry
+  // different geometry — aggregation then takes the first length and sums all
+  // quantities, so the nest is built (and cut!) with wrong lengths. Until parts
+  // carry nesting-unique identities, such a run must not start.
+  const markCollisions = (()=>{
+    const seen = {};
+    (allParts||[]).forEach(p=>{
+      const geo = `${p.length||0}x${p.width||0}`;
+      if(!seen[p.markNo]) seen[p.markNo]={};
+      if(!seen[p.markNo][geo]) seen[p.markNo][geo]={ drgs:[], len:p.length||0 };
+      seen[p.markNo][geo].drgs.push(p.drawingNo||p.drawing||"?");
+    });
+    return Object.entries(seen).filter(([mk,g])=>Object.keys(g).length>1)
+      .map(([mk,g])=>({ markNo:mk, variants:Object.entries(g).map(([geo,v])=>({geo,drgs:v.drgs})) }));
+  })();
+  const runBlocked = blockedNoJoints.length>0 || splitInvalid.length>0 || markCollisions.length>0;
 
   const addTrialSize = () => {
     const id = Date.now();
@@ -6441,6 +6457,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const { parts, rawMaterials } = await buildInputData();
       if(!parts.length||!rawMaterials.length){ alert("Need at least 1 part and 1 raw material."); setExporting(false); return; }
       if (blockedNoJoints.length>0) { alert("Over-length parts without joint permission — resolve before running."); setExporting(false); return; }
+      if (markCollisions.length>0) { alert(`Mark number collisions — same mark, different dimensions across drawings: ${markCollisions.map(c=>c.markNo).join(", ")}. Running would nest wrong lengths. Make marks unique first.`); setExporting(false); return; }
       // Fetch CAD profiles for parts with links (true-shape nesting). Failures are
       // surfaced, never silent — a part whose link fails nests as a rectangle and says so.
       const dxfMap = {};
@@ -6620,6 +6637,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
     try {
       const { parts, rawMaterials } = await buildInputData();
       if(!parts.length||!rawMaterials.length){ alert("Need at least 1 part and 1 raw material."); setExporting(false); return; }
+      if (markCollisions.length>0) { alert(`Mark number collisions — same mark, different dimensions across drawings: ${markCollisions.map(c=>c.markNo).join(", ")}. Running would nest wrong lengths. Make marks unique first.`); setExporting(false); return; }
       const batchId = `NEST-${row.matCode.replace(/\//g,"-")}-${today()}-${Date.now().toString().slice(-4)}`;
       const nestInput = await buildNestingInput(parts, rawMaterials, "PLASMA-1", batchId, {}, kerfPartPart, kerfPartEdge);
       const blob = new Blob([JSON.stringify(nestInput,null,2)],{type:"application/json"});
@@ -6651,6 +6669,17 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           {(()=>{ const missing=(allParts||[]).filter(p=>!(p.length>0)||(p.section||"").toUpperCase()==="PLATE"&&!(p.width>0)); return missing.length>0?<div style={{marginTop:6,padding:"4px 8px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber}}>⚠ {missing.length} part(s) missing dimensions — will use 100×100mm fallback: {missing.map(p=>p.markNo).join(", ")}</div>:null; })()}
         </div>
 
+        {markCollisions.length>0 && (
+          <div style={{ border:`1px solid ${T.redLo}`, background:T.redBg, borderRadius:6, padding:"10px 14px", marginBottom:14 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:T.red, marginBottom:6 }}>⛔ MARK NUMBER COLLISIONS — run blocked</div>
+            <div style={{ fontSize:11, color:"#991B1B", marginBottom:6 }}>The same mark number appears with different dimensions in different drawings. Nesting groups parts by mark number, so these would be cut to the WRONG length. Make the marks unique (e.g. prefix with drawing no in the part list) and re-open this export.</div>
+            {markCollisions.map(c=>(
+              <div key={c.markNo} style={{ fontSize:11, fontFamily:T.fontMono, color:"#991B1B", marginBottom:2 }}>
+                mark <b>{c.markNo}</b>: {c.variants.map(v=>`${v.geo}mm (drg ${[...new Set(v.drgs)].join(", ")})`).join(" · ")}
+              </div>
+            ))}
+          </div>
+        )}
         {overParts.length>0 && (
           <div style={{ marginBottom:14 }}>
             <div style={{fontSize:12,fontWeight:700,color:T.amber,marginBottom:6}}>{"⚠"} OVER-LENGTH PARTS — exceed longest trial bar ({maxTrialLen}mm)</div>
