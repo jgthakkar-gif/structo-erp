@@ -2691,7 +2691,8 @@ const BaysMaster = ({ user, bays, setBays }) => {
 
 // ─── MASTERS: MATERIALS LIBRARY ───────────────────────────────────────────────
 const MAT_PAGE_SIZE = 50;
-const MaterialsMaster = ({ user, materials, setMaterials, orders, stock }) => {
+const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, stock, pendingMaterials=[], setPendingMaterials }) => {
+  const [matTab, setMatTab] = useState("library"); // "library" | "review"
   const [search, setSearch] = useState(""); const [sectionFilter, setSectionFilter] = useState("all");
   const [gradeFilter, setGradeFilter] = useState("all"); const [page, setPage] = useState(0);
   const [modal, setModal] = useState(null); const [form, setForm] = useState({}); const [lenInput, setLenInput] = useState("");
@@ -2729,8 +2730,77 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, stock }) => {
     else { setMaterials(prev=>prev.map(m=>m.id===next.id?next:m)); }
     setModal(null);
   };
+  // Live verdict per pending item against the current library.
+  const reviewItems = (pendingMaterials||[]).map(pm => {
+    const v = matchMaterial(pm.section, pm.size, pm.grade, materials);
+    return { ...pm, verdict:v.status, match:v.match, reasons:v.reasons };
+  });
+  const reviewCount = reviewItems.filter(r=>r.verdict!=="exact").length;
+  const VBADGE = {
+    exact:     { c:"green",  t:"Already in library" },
+    cosmetic:  { c:"blue",   t:"Likely same (naming)" },
+    grade_diff:{ c:"amber",  t:"Check grade" },
+    none:      { c:"gray",   t:"New material" },
+  };
   return (
     <div>
+      {/* Sub-tab bar */}
+      <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
+        {[["library","Materials Library"],["review",`Review New Material${reviewCount>0?` (${reviewCount})`:""}`]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>setMatTab(id)} style={{ padding:"8px 14px", fontSize:13, fontWeight:matTab===id?700:500, color:matTab===id?T.accent:(id==="review"&&reviewCount>0?T.amber:T.textMid), background:"transparent", border:"none", borderBottom:matTab===id?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer", fontFamily:T.font, whiteSpace:"nowrap" }}>{lbl}</button>
+        ))}
+      </div>
+
+      {matTab==="review" && (
+        <div>
+          <div style={{ fontSize:15, fontWeight:700, color:T.text, marginBottom:2 }}>Review New Material</div>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:14 }}>
+            Materials seen on part-list imports that did not exactly match the library. The ERP has tried to match each against existing entries — review and resolve them so their parts get calculated weights, coverage and nesting.
+          </div>
+          {reviewItems.length===0 ? (
+            <div style={{ ...css.card, textAlign:"center", color:T.textLow, padding:32 }}>
+              Nothing to review — every imported material matched the library.
+            </div>
+          ) : (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead><tr>
+                  {["Imported material","Seen on","Count","ERP verdict","Proposed library match","Notes"].map(h=>(
+                    <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:".04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap" }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {reviewItems.map(r=>{
+                    const vb = VBADGE[r.verdict]||VBADGE.none;
+                    return (
+                      <tr key={r.id}>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono }}>
+                          <div style={{ fontWeight:700, color:T.text }}>{r.section} · {r.size}</div>
+                          <div style={{ fontSize:11, color:T.textMid }}>{r.matType||"MS"} · {r.grade||"—"}</div>
+                        </td>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:11, color:T.textMid }}>{r.orderRef||r.orderId||"—"}</td>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"center" }}>{r.count||1}</td>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}><Badge color={vb.c}>{vb.t}</Badge></td>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:11 }}>
+                          {r.match ? <span style={{ color:T.accentHi }}>{r.match.matCode||`${r.match.sectionType}/${r.match.size}`}</span> : <span style={{ color:T.textLow }}>—</span>}
+                        </td>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:11, color: r.verdict==="grade_diff"?T.amber:T.textMid }}>
+                          {(r.reasons||[]).join("; ")||"—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ fontSize:11, color:T.textLow, marginTop:10 }}>
+                Resolving actions (confirm match &amp; rename, or add as new with weight) arrive in the next update. For now this queue surfaces exactly what needs attention.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {matTab==="library" && <>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, flexWrap:"wrap", gap:8 }}>
         <div>
           <div style={{ fontSize:15, fontWeight:700, color:T.text }}>Materials Library</div>
@@ -2894,6 +2964,7 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, stock }) => {
           </button>
         </div>
       </Modal>}
+      </>}
     </div>
   );
 };
@@ -5904,7 +5975,7 @@ const ConsumablesModule = ({ user, consumables, setConsumables, setPurchaseReqs,
   );
 };
 
-const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, paint, setPaint, consumables, setConsumables, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders, setMod, setInstances, releases, setReleases, setNestingRuns, productionEngineers, setProductionEngineers, dprs, setDprs, nestingBatches, setNestingBatches, drawingInstances, setDrawingInstances, outboundJobs, setOutboundJobs, issueRequests, setIssueRequests, appUsers, setAppUsers, processTypes, setProcessTypes, outboundVendors, setOutboundVendors }) => {
+const MastersModule = ({ user, clients, setClients, vendors, setVendors, contractors, setContractors, bays, setBays, materials, setMaterials, pendingMaterials, setPendingMaterials, paint, setPaint, consumables, setConsumables, tpiAgencies, setTpiAgencies, approvedMakes, setApprovedMakes, company, setCompany, machines, setMachines, productionStandards, setProductionStandards, orders, setOrders, pos, setPos, stock, welders, setWelders, setMod, setInstances, releases, setReleases, setNestingRuns, productionEngineers, setProductionEngineers, dprs, setDprs, nestingBatches, setNestingBatches, drawingInstances, setDrawingInstances, outboundJobs, setOutboundJobs, issueRequests, setIssueRequests, appUsers, setAppUsers, processTypes, setProcessTypes, outboundVendors, setOutboundVendors }) => {
   const tabs = [
     { id:"company",     label:"Company Details",     show: user.role==="super_admin" },
     { id:"prodstd",     label:"Production Standards", show: ["super_admin","planning_admin"].includes(user.role) },
@@ -5942,7 +6013,7 @@ const MastersModule = ({ user, clients, setClients, vendors, setVendors, contrac
       {activeTab==="contractors" && <ContractorsMaster user={user} contractors={contractors} setContractors={setContractors} orders={orders||[]} dprs={dprs||[]} releases={releases||[]} />}
       {activeTab==="welders"     && <WeldersMaster user={user} welders={welders} setWelders={setWelders} contractors={contractors} />}
       {activeTab==="bays"        && <BaysMaster        user={user} bays={bays} setBays={setBays} />}
-      {activeTab==="materials"   && <MaterialsMaster   user={user} materials={materials} setMaterials={setMaterials} orders={orders||[]} stock={stock||[]} />}
+      {activeTab==="materials"   && <MaterialsMaster   user={user} materials={materials} setMaterials={setMaterials} orders={orders||[]} setOrders={setOrders} stock={stock||[]} pendingMaterials={pendingMaterials||[]} setPendingMaterials={setPendingMaterials} />}
       {activeTab==="paint"       && <PaintMaster       user={user} paint={paint} setPaint={setPaint} />}
       {activeTab==="consumables" && <ConsumablesMaster user={user} consumables={consumables} setConsumables={setConsumables} />}
       {activeTab==="tpi"         && <TPIMaster         user={user} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} orders={orders||[]} />}
@@ -9575,6 +9646,44 @@ const geometricKgPerM = (sectionType, size) => {
   if (["BAR","FLAT","FLT","FLAT BAR"].includes(st) && nums.length>=2) return Math.round(nums[0]*nums[1]*0.00785*1000)/1000;
   if (["SQ","SQUARE","SQUARE BAR"].includes(st) && nums.length>=1) return Math.round(nums[0]*nums[0]*0.00785*1000)/1000;
   return 0;
+};
+
+// ─── MATERIAL RECONCILIATION (matcher) ───────────────────────────────────────
+// Aggressive canonical form for comparing sizes/grades across naming styles:
+// unify separators (× * x → X), drop spaces, drop a trailing "MM", uppercase.
+// "42.9*3.2 32NB" / "42.9×3.2 32NB" / "42.9 X 3.2 32nb" all collapse to one key.
+const canonToken = (v) => (v||"").toString().toUpperCase()
+  .replace(/[×*]/g,"X").replace(/\s+/g,"").replace(/MM$/,"").trim();
+const canonGrade = (v) => (v||"").toString().toUpperCase().replace(/\s+/g,"").trim();
+// Classify an imported material against the library. Returns:
+//   status: "exact"      — section+size+grade already identical (as today)
+//           "cosmetic"   — section+size+grade equal after canonicalisation only
+//                          (separators/spaces/mm/case) — safe, high confidence
+//           "grade_diff" — section+size match but grade differs — CANDIDATE,
+//                          never silent; grade discrepancy surfaced for review
+//           "none"       — no reasonable library match
+//   match:  the library entry (for cosmetic/grade_diff/exact), else null
+//   reasons: human-readable notes for the review UI
+const matchMaterial = (section, size, grade, materials) => {
+  const secU = (section||"").toUpperCase().trim();
+  const szC  = canonToken(size);
+  const grC  = canonGrade(grade);
+  const lib  = materials||[];
+  // exact (mirrors the importer's own sectionType+normSize+grade test)
+  const exact = lib.find(m=> (m.sectionType||"").toUpperCase()===secU
+    && canonToken(m.size)===szC && canonGrade(m.grade)===grC);
+  if (exact) return { status:"exact", match:exact, reasons:[] };
+  // section+size, any grade
+  const sameSecSize = lib.filter(m=> (m.sectionType||"").toUpperCase()===secU && canonToken(m.size)===szC);
+  const sameGrade = sameSecSize.find(m=> canonGrade(m.grade)===grC);
+  if (sameGrade) return { status:"cosmetic", match:sameGrade,
+    reasons:[`Same material, different notation: "${size}" ↔ "${sameGrade.size}"`] };
+  if (sameSecSize.length>0) {
+    const cand = sameSecSize[0];
+    return { status:"grade_diff", match:cand,
+      reasons:[`Section & size match, but grade differs: imported "${grade||"—"}" vs library "${cand.grade||"—"}" — confirm these are the same grade`] };
+  }
+  return { status:"none", match:null, reasons:["Not found in Materials Library"] };
 };
 
 // Cross-module handoff: Nesting Runs' Convert button deep-links into the unified
@@ -18472,6 +18581,24 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
     // This ensures edits to markNo are always reflected correctly
     const allParts = [...base.filter(p=>!newKeys.has(`${drawings.find(d=>d.id===p.drawingId)?.drawingNo}__${p.markNo}`)), ...updatedRows];
     onChange({...order, parts:allParts});
+    // Material Reconciliation: collect materials that did NOT exactly match the
+    // library into the global "Review New Material" queue. Parts still import
+    // (flagged inert until resolved); the queue lets Jai reconcile afterwards.
+    // Skip any that were just added to the library in this same import.
+    const addedKeys = new Set(toAdd.map(i=>`${(i.section||"").toUpperCase()}|${canonToken(i.size)}|${canonGrade(i.grade)}`));
+    const queueMap = {};
+    updatedRows.forEach(r=>{
+      if(r._libMatched || !r.section) return;
+      const k = `${(r.section||"").toUpperCase()}|${canonToken(r.size)}|${canonGrade(r.grade)}`;
+      if(addedKeys.has(k)) return;
+      if(!queueMap[k]) queueMap[k] = { section:r.section, size:r.size, grade:r.grade, matType:r.matType||"MS", count:0, samples:[] };
+      queueMap[k].count += 1;
+      if(queueMap[k].samples.length<5) queueMap[k].samples.push(`${r.drawingNo}/${r.markNo}`);
+    });
+    const queueItems = Object.values(queueMap);
+    if(queueItems.length>0){
+      window.dispatchEvent(new CustomEvent('structo:queueMaterials', { detail: { orderId:order.id, orderRef:order.id, items:queueItems } }));
+    }
     setImportModal(false); setImportRows([]); setImportErr(""); setLibReviewItems({}); fileRef2.current.value="";
   };
 
@@ -19921,6 +20048,11 @@ export default function App() {
   const [consumablePOs, setConsumablePOs] = useState(() => { try { const s=localStorage.getItem('structo_consumablePOs'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [tpiAgencies, setTpiAgencies]   = useState(TPI_AGENCIES);
   const [approvedMakes, setApprovedMakes] = useState(APPROVED_MAKES_LIBRARY);
+  // Material Reconciliation queue (global): materials seen on part-list imports
+  // that did not exactly match the library. Each entry:
+  // { id, section, size, grade, matType, status, matchId, matchCode,
+  //   orderId, orderRef, count, firstSeen, sampleParts:[unique ids] }
+  const [pendingMaterials, setPendingMaterials] = useState(() => initVal('structo_pendingMaterials', []));
   const [machines, setMachines]         = useState(() => initVal('structo_machines', MACHINES_SEED));
   const [releases, setReleases]         = useState(() => { try { const s=localStorage.getItem('structo_releases'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [qcRules, setQcRules]           = useState(() => { try { const s=localStorage.getItem('structo_qcRules'); return s?JSON.parse(s):[]; } catch { return []; } });
@@ -20068,9 +20200,41 @@ export default function App() {
     window.addEventListener('structo:addMaterials', handler);
     return () => window.removeEventListener('structo:addMaterials', handler);
   }, []);
+  // Global Review-New-Material queue: an import dispatches unmatched materials;
+  // we upsert them (dedup on section|canon(size)|canon(grade)), tallying count
+  // and remembering which order/parts surfaced them.
+  useEffect(() => {
+    const handler = (e) => {
+      const { orderId, orderRef, items } = e.detail || {};
+      if(!items || !items.length) return;
+      setPendingMaterials(prev => {
+        const list = [...(prev||[])];
+        const keyOf = it => `${(it.section||"").toUpperCase()}|${(it.size||"").toUpperCase().replace(/[×*]/g,"X").replace(/\s+/g,"").replace(/MM$/,"")}|${(it.grade||"").toUpperCase().replace(/\s+/g,"")}`;
+        items.forEach(it => {
+          const k = keyOf(it);
+          const existing = list.find(p => keyOf(p)===k);
+          if(existing){
+            existing.count = (existing.count||0) + (it.count||1);
+            if(orderRef && !(existing.orders||[]).includes(orderRef)) existing.orders = [...(existing.orders||[existing.orderRef].filter(Boolean)), orderRef];
+            existing.orderRef = existing.orderRef || orderRef;
+            existing.orderId  = existing.orderId  || orderId;
+          } else {
+            list.push({ id:`PMAT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+              section:it.section, size:it.size, grade:it.grade, matType:it.matType||"MS",
+              count:it.count||1, orderId, orderRef, orders:[orderRef].filter(Boolean),
+              samples:it.samples||[], firstSeen:new Date().toISOString().slice(0,10) });
+          }
+        });
+        return list;
+      });
+    };
+    window.addEventListener('structo:queueMaterials', handler);
+    return () => window.removeEventListener('structo:queueMaterials', handler);
+  }, []);
   useEffect(() => { syncToSupa('structo_welders',           welders);           }, [welders]);
   useEffect(() => { syncToSupa('structo_contractors',       contractors);       }, [contractors]);
   useEffect(() => { syncToSupa('structo_machines',          machines);          }, [machines]);
+  useEffect(() => { syncToSupa('structo_pendingMaterials',  pendingMaterials);  }, [pendingMaterials]);
 
 
   // ── Load all data from Supabase on first mount (production only) ─────────────
@@ -20087,7 +20251,7 @@ export default function App() {
       "structo_drawingInstances","structo_processTypes","structo_outboundVendors","structo_outboundJobs",
       "structo_users","structo_bays","structo_paint","structo_materials",
       "structo_consumables","structo_approvedMakes","structo_tpiAgencies",
-      "structo_productionStandards",
+      "structo_productionStandards","structo_pendingMaterials",
     ];
     supaLoadAll(KEYS).then(data => {
       // Production: Supabase is the ONLY source of truth.
@@ -20124,6 +20288,7 @@ export default function App() {
       setWelders(             data["structo_welders"]             ?? []);
       setContractors(         data["structo_contractors"]         ?? []);
       setMachines(            data["structo_machines"]            ?? []);
+      setPendingMaterials(    data["structo_pendingMaterials"]    ?? []);
       if (data["structo_users"]?.length>0)         setAppUsers(data["structo_users"]);
       if (data["structo_bays"]?.length>0)          setBays(data["structo_bays"]);
       if (data["structo_paint"]?.length>0)         setPaint(data["structo_paint"]);
@@ -21799,7 +21964,7 @@ export default function App() {
   const renderMod = () => {
     // Role-specific routing overrides — consumables always goes to switch
     if (mod==="consumables") return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
-    if (user.role==="production_admin")   return mod==="masters" ? <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} releases={releases||[]} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} setDprs={setDprs} nestingBatches={nestingBatches||[]} setNestingBatches={setNestingBatches} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} outboundJobs={outboundJobs||[]} setOutboundJobs={setOutboundJobs} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} appUsers={appUsers} setAppUsers={setAppUsers} processTypes={processTypes||DEFAULT_PROCESS_TYPES} setProcessTypes={setProcessTypes} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} /> : <ProductionAdminFullDashboard />;
+    if (user.role==="production_admin")   return mod==="masters" ? <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} pendingMaterials={pendingMaterials} setPendingMaterials={setPendingMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} releases={releases||[]} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} setDprs={setDprs} nestingBatches={nestingBatches||[]} setNestingBatches={setNestingBatches} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} outboundJobs={outboundJobs||[]} setOutboundJobs={setOutboundJobs} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} appUsers={appUsers} setAppUsers={setAppUsers} processTypes={processTypes||DEFAULT_PROCESS_TYPES} setProcessTypes={setProcessTypes} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} /> : <ProductionAdminFullDashboard />;
     if (user.role==="production_engineer") return <ProductionEngineerDashboard />;
     if (user.role==="purchase_admin")      return <PurchaseAdminDashboard />;
     if (user.role==="finance_admin")       return <FinanceAdminDashboard />;
@@ -21879,7 +22044,7 @@ export default function App() {
       );
       case "dispatch":  return <DispatchModule dprs={dprs||[]} setDprs={setDprs} orders={orders||[]} challans={challans||[]} setChallans={setChallans} user={user} />;
       case "tools":     return <ToolsModule user={user} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} correctionsLog={correctionsLog||[]} setInstances={setInstances} setReleases={setReleases} setDprs={setDprs} setNestingBatches={setNestingBatches} setDrawingInstances={setDrawingInstances} setOutboundJobs={setOutboundJobs} setIssueRequests={setIssueRequests} setOrders={setOrders} setMod={setMod} />;
-      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} releases={releases||[]} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} setDprs={setDprs} nestingBatches={nestingBatches||[]} setNestingBatches={setNestingBatches} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} outboundJobs={outboundJobs||[]} setOutboundJobs={setOutboundJobs} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} appUsers={appUsers} setAppUsers={setAppUsers} processTypes={processTypes||DEFAULT_PROCESS_TYPES} setProcessTypes={setProcessTypes} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} />;
+      case "masters":   return <MastersModule user={user} clients={clients} setClients={setClients} vendors={vendors} setVendors={setVendors} contractors={contractors} setContractors={setContractors} bays={bays} setBays={setBays} materials={materials} setMaterials={setMaterials} pendingMaterials={pendingMaterials} setPendingMaterials={setPendingMaterials} paint={paint} setPaint={setPaint} consumables={consumables} setConsumables={setConsumables} tpiAgencies={tpiAgencies} setTpiAgencies={setTpiAgencies} approvedMakes={approvedMakes} setApprovedMakes={setApprovedMakes} company={company} setCompany={setCompany} machines={machines} setMachines={setMachines} productionStandards={productionStandards} setProductionStandards={setProductionStandards} orders={orders} setOrders={setOrders} pos={pos} setPos={setPos} stock={stock} welders={welders} setWelders={setWelders} setMod={setMod} setInstances={setInstances} releases={releases||[]} setReleases={setReleases} setNestingRuns={setNestingRuns} productionEngineers={productionEngineers} setProductionEngineers={setProductionEngineers} dprs={dprs||[]} setDprs={setDprs} nestingBatches={nestingBatches||[]} setNestingBatches={setNestingBatches} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} outboundJobs={outboundJobs||[]} setOutboundJobs={setOutboundJobs} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} appUsers={appUsers} setAppUsers={setAppUsers} processTypes={processTypes||DEFAULT_PROCESS_TYPES} setProcessTypes={setProcessTypes} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} />;
       default:          return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
     }
   };
