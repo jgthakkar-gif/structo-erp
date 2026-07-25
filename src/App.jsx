@@ -2728,6 +2728,13 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
     if (!plate) { next.wtPerM2=null; } else { next.wtPerMetre=null; }
     if (modal==="add") { next.id=`ML-${String(materials.length+1).padStart(3,"0")}`; setMaterials(prev=>[...prev,next]); }
     else { setMaterials(prev=>prev.map(m=>m.id===next.id?next:m)); }
+    // If this material was added from the review queue, drop that pending item —
+    // it now matches the library exactly, and re-point the order parts to it.
+    if (form._fromPendingId && setPendingMaterials) {
+      const item = (pendingMaterials||[]).find(pm=>pm.id===form._fromPendingId);
+      if (item) applyMatchToOrders({ ...item, verdict:"exact" }, next);
+      setPendingMaterials(prev=>(prev||[]).filter(pm=>pm.id!==form._fromPendingId));
+    }
     setModal(null);
   };
   // Live verdict per pending item against the current library.
@@ -2743,6 +2750,66 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
     grade_diff: { c:"amber",  t:"Check grade" },
     none:       { c:"gray",   t:"New material" },
   };
+
+  // ── Resolve actions (Phase 2) ──────────────────────────────────────────────
+  const [pickFor, setPickFor] = useState(null);   // review item whose match is being hand-picked
+  const [pickSearch, setPickSearch] = useState("");
+
+  // Rewrite every part on every order whose material equals the pending item's
+  // (section,size,grade — canonically) to the chosen library entry, so those
+  // parts pick up calc weights, coverage and nesting. Logged old→new (reversible
+  // via matReconcileLog on each part), then drop the item from the queue.
+  const applyMatchToOrders = (item, libEntry) => {
+    const secC = canonSection(item.section), szC = canonToken(item.size), grC = canonGrade(item.grade);
+    const stamp = { at:new Date().toISOString().slice(0,10), by:(user.name||user.username||"") };
+    let touched = 0;
+    setOrders(prevOrders => (prevOrders||[]).map(o => {
+      let changed = false;
+      const parts = (o.parts||[]).map(p => {
+        if (p._matReconciled) return p;
+        const pSecC = canonSection(p.section), pSzC = canonToken(p.size), pGrC = canonGrade(p.grade);
+        // A part belongs to this pending item when it carries the same material
+        // the item was raised from — same canonical section+size+grade as the
+        // IMPORTED values (that's what sits on the parts today).
+        const matches = pSecC===secC && pSzC===szC && pGrC===grC;
+        if (!matches) return p;
+        changed = true; touched++;
+        const prev = { section:p.section, size:p.size, grade:p.grade, matCode:p.matCode, matLibId:p.matLibId };
+        return { ...p,
+          section: libEntry.sectionType, size: libEntry.size, grade: libEntry.grade,
+          matType: libEntry.matType||p.matType, matCode: libEntry.matCode,
+          matLibId: libEntry.id, _libMatched: true, _matReconciled: true,
+          matReconcileLog: [ ...(p.matReconcileLog||[]), { ...stamp, from:prev, to:libEntry.matCode, action:"confirm_match" } ],
+        };
+      });
+      return changed ? { ...o, parts } : o;
+    }));
+    setPendingMaterials(prev => (prev||[]).filter(pm => pm.id !== item.id));
+    showToast(`Matched to ${libEntry.matCode} — ${touched} part(s) updated`, "green");
+  };
+
+  // Geometric kg/m (or kg/m² for plate) pre-fill for Add-as-new.
+  const prefillWeight = (section, size) => {
+    const s = (section||"").toUpperCase();
+    if (s.includes("PLATE")||s==="SHEET") {
+      const thk = parseFloat(canonToken(size))||0;
+      return { wtPerM2: thk>0 ? Math.round(7.85*thk*100)/100 : null, wtPerMetre:null };
+    }
+    return { wtPerMetre: geometricKgPerM(section, size)||null, wtPerM2:null };
+  };
+
+  // Open the Add-Material form pre-filled from an imported item (weight computed
+  // where geometry allows). Saving it via the normal flow, then the queue item
+  // clears on next render because it now matches exactly.
+  const openAddFromPending = (item) => {
+    const w = prefillWeight(item.section, item.size);
+    const isPlate = (item.section||"").toUpperCase().includes("PLATE")||(item.section||"").toUpperCase()==="SHEET";
+    setForm({ matType:item.matType||"MS", grade:item.grade||"E250", sectionType:item.section, size:item.size,
+      active:true, isPlate, wtPerMetre:w.wtPerMetre, wtPerM2:w.wtPerM2, _fromPendingId:item.id });
+    setLenInput(isPlate ? "" : "6000,8000,10000,12000");
+    setMatTab("library"); setModal("add");
+  };
+
   return (
     <div>
       {/* Sub-tab bar */}
@@ -2766,13 +2833,14 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
             <div style={{ overflowX:"auto" }}>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                 <thead><tr>
-                  {["Imported material","Seen on","Count","ERP verdict","Proposed library match","Notes"].map(h=>(
+                  {["Imported material","Seen on","Count","ERP verdict","Proposed library match","Notes","Action"].map(h=>(
                     <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:".04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap" }}>{h}</th>
                   ))}
                 </tr></thead>
                 <tbody>
                   {reviewItems.map(r=>{
                     const vb = VBADGE[r.verdict]||VBADGE.none;
+                    const hasMatch = !!r.match;
                     return (
                       <tr key={r.id}>
                         <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono }}>
@@ -2785,8 +2853,22 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
                         <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, fontSize:11 }}>
                           {r.match ? <span style={{ color:T.accentHi }}>{r.match.matCode||`${r.match.sectionType}/${r.match.size}`}</span> : <span style={{ color:T.textLow }}>—</span>}
                         </td>
-                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:11, color: r.verdict==="grade_diff"?T.amber:T.textMid }}>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontSize:11, color: (r.verdict==="grade_diff"||r.verdict==="section_syn")?T.amber:T.textMid, maxWidth:280 }}>
                           {(r.reasons||[]).join("; ")||"—"}
+                        </td>
+                        <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>
+                          {canEdit ? (
+                            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                              {hasMatch && (
+                                <button onClick={()=>{
+                                  if(window.confirm(`Confirm "${r.section} ${r.size}" is the library material:\n${r.match.matCode}\n\nThis will re-point ${r.count||1} part(s) to it and clear this from the queue.`))
+                                    applyMatchToOrders(r, r.match);
+                                }} style={{ ...css.btn.sm, background:T.green, color:T.bg }}>✓ Confirm match</button>
+                              )}
+                              <button onClick={()=>{ setPickFor(r); setPickSearch(""); }} style={{ ...css.btn.sm, background:T.bgInput, color:T.text, border:`1px solid ${T.border}` }}>Match to existing…</button>
+                              <button onClick={()=>openAddFromPending(r)} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>+ Add as new</button>
+                            </div>
+                          ) : <span style={{ fontSize:11, color:T.textLow }}>—</span>}
                         </td>
                       </tr>
                     );
@@ -2794,11 +2876,47 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
                 </tbody>
               </table>
               <div style={{ fontSize:11, color:T.textLow, marginTop:10 }}>
-                Resolving actions (confirm match &amp; rename, or add as new with weight) arrive in the next update. For now this queue surfaces exactly what needs attention.
+                <b>Confirm match</b> re-points the order's parts to the proposed library entry. <b>Match to existing…</b> lets you hand-pick a different library entry. <b>Add as new</b> creates a new library entry (weight pre-filled where geometry allows).
               </div>
             </div>
           )}
         </div>
+      )}
+
+      {/* Manual "Match to existing" picker — store admin hand-picks a library entry */}
+      {pickFor && (
+        <Modal title={`Match "${pickFor.section} ${pickFor.size}" to a library entry`} onClose={()=>setPickFor(null)} width={640}>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>
+            Pick the Materials Library entry this imported material corresponds to. The order's {pickFor.count||1} part(s) will be re-pointed to it and this item cleared from the queue.
+          </div>
+          <input autoFocus value={pickSearch} onChange={e=>setPickSearch(e.target.value)}
+            placeholder="Search section / size / grade / code…"
+            style={{ ...css.input, width:"100%", marginBottom:10 }} />
+          <div style={{ maxHeight:360, overflowY:"auto", border:`1px solid ${T.border}`, borderRadius:6 }}>
+            {(()=>{
+              const q = pickSearch.toLowerCase().trim();
+              const secC = canonSection(pickFor.section);
+              const pool = materials.filter(m=>{
+                if(!q) return canonSection(m.sectionType)===secC;
+                return (m.matCode||"").toLowerCase().includes(q) || (m.size||"").toLowerCase().includes(q)
+                  || (m.sectionType||"").toLowerCase().includes(q) || (m.grade||"").toLowerCase().includes(q);
+              }).slice(0,80);
+              if(pool.length===0) return <div style={{ padding:16, textAlign:"center", color:T.textLow, fontSize:12 }}>No matching library entries — try a different search, or use “Add as new”.</div>;
+              return pool.map(m=>(
+                <div key={m.id} onClick={()=>{ applyMatchToOrders(pickFor, m); setPickFor(null); }}
+                  style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 12px", borderBottom:`1px solid ${T.border}`, cursor:"pointer" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.bgInput}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div>
+                    <div style={{ fontFamily:T.fontMono, fontSize:12, color:T.accentHi, fontWeight:700 }}>{m.matCode}</div>
+                    <div style={{ fontSize:11, color:T.textMid }}>{m.sectionType} · {m.size} · {m.grade} · {m.isPlate?`${m.wtPerM2||"?"} kg/m²`:`${m.wtPerMetre||"?"} kg/m`}</div>
+                  </div>
+                  <span style={{ ...css.btn.sm, background:T.green, color:T.bg }}>Use this</span>
+                </div>
+              ));
+            })()}
+          </div>
+        </Modal>
       )}
 
       {matTab==="library" && <>
