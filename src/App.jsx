@@ -2737,10 +2737,11 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
   });
   const reviewCount = reviewItems.filter(r=>r.verdict!=="exact").length;
   const VBADGE = {
-    exact:     { c:"green",  t:"Already in library" },
-    cosmetic:  { c:"blue",   t:"Likely same (naming)" },
-    grade_diff:{ c:"amber",  t:"Check grade" },
-    none:      { c:"gray",   t:"New material" },
+    exact:      { c:"green",  t:"Already in library" },
+    cosmetic:   { c:"blue",   t:"Likely same (naming)" },
+    section_syn:{ c:"blue",   t:"Likely same (section name)" },
+    grade_diff: { c:"amber",  t:"Check grade" },
+    none:       { c:"gray",   t:"New material" },
   };
   return (
     <div>
@@ -9655,29 +9656,63 @@ const geometricKgPerM = (sectionType, size) => {
 const canonToken = (v) => (v||"").toString().toUpperCase()
   .replace(/[×*]/g,"X").replace(/\s+/g,"").replace(/MM$/,"").trim();
 const canonGrade = (v) => (v||"").toString().toUpperCase().replace(/\s+/g,"").trim();
+// Section-name synonyms: the client CSV and the library often name the same
+// section differently ("FLAT" vs "Flat Bar", "ROD" vs "Round Bar", "PIPE" vs
+// "CHS"). Canonical section key folds these together so the matcher can bridge
+// them — but a synonym bridge is SURFACED for confirmation the first time (never
+// silent), since the equivalence was inferred, not stated by the user.
+const SECTION_SYNONYMS = [
+  ["FLAT","FLATBAR","FLT","BAR"],
+  ["ROD","ROUNDBAR","ROUND","RND"],
+  ["SQ","SQUAREBAR","SQUARE","SQR"],
+  ["PIPE","CHS","TUBE"],
+  ["ANGLE","ISA"],
+  ["CHANNEL","ISMC","ISLC"],
+  ["BEAM","ISMB","UB","NPB"],
+  ["COLUMN","UC","ISSC"],
+];
+const canonSection = (v) => {
+  const s = (v||"").toString().toUpperCase().replace(/\s+/g,"").trim();
+  const grp = SECTION_SYNONYMS.find(g=>g.includes(s));
+  return grp ? grp[0] : s; // canonical = first member of the synonym group
+};
 // Classify an imported material against the library. Returns:
-//   status: "exact"      — section+size+grade already identical (as today)
-//           "cosmetic"   — section+size+grade equal after canonicalisation only
-//                          (separators/spaces/mm/case) — safe, high confidence
-//           "grade_diff" — section+size match but grade differs — CANDIDATE,
-//                          never silent; grade discrepancy surfaced for review
-//           "none"       — no reasonable library match
-//   match:  the library entry (for cosmetic/grade_diff/exact), else null
+//   status: "exact"       — section+size+grade already identical (as today)
+//           "cosmetic"    — equal after size/grade canonicalisation only
+//           "section_syn" — section is a known synonym of the library's name
+//                           (FLAT↔Flat Bar), size+grade otherwise match —
+//                           CANDIDATE, surfaced for first-time confirmation
+//           "grade_diff"  — section+size match but grade differs — CANDIDATE
+//           "none"        — no reasonable library match
+//   match:  the library entry (for exact/cosmetic/section_syn/grade_diff), else null
 //   reasons: human-readable notes for the review UI
 const matchMaterial = (section, size, grade, materials) => {
-  const secU = (section||"").toUpperCase().trim();
+  const secRaw = (section||"").toUpperCase().trim();
+  const secCanon = canonSection(section);
   const szC  = canonToken(size);
   const grC  = canonGrade(grade);
   const lib  = materials||[];
   // exact (mirrors the importer's own sectionType+normSize+grade test)
-  const exact = lib.find(m=> (m.sectionType||"").toUpperCase()===secU
+  const exact = lib.find(m=> (m.sectionType||"").toUpperCase()===secRaw
     && canonToken(m.size)===szC && canonGrade(m.grade)===grC);
   if (exact) return { status:"exact", match:exact, reasons:[] };
-  // section+size, any grade
-  const sameSecSize = lib.filter(m=> (m.sectionType||"").toUpperCase()===secU && canonToken(m.size)===szC);
+  // section+size (exact section name), any grade
+  const sameSecSize = lib.filter(m=> (m.sectionType||"").toUpperCase()===secRaw && canonToken(m.size)===szC);
   const sameGrade = sameSecSize.find(m=> canonGrade(m.grade)===grC);
   if (sameGrade) return { status:"cosmetic", match:sameGrade,
     reasons:[`Same material, different notation: "${size}" ↔ "${sameGrade.size}"`] };
+  // section SYNONYM + size match — bridge FLAT↔Flat Bar etc.
+  const synSecSize = lib.filter(m=> canonSection(m.sectionType)===secCanon && canonToken(m.size)===szC
+    && (m.sectionType||"").toUpperCase()!==secRaw);
+  const synSameGrade = synSecSize.find(m=> canonGrade(m.grade)===grC);
+  if (synSameGrade) return { status:"section_syn", match:synSameGrade,
+    reasons:[`Section name differs: imported "${section}" ↔ library "${synSameGrade.sectionType}" (same size & grade) — confirm these are the same section`] };
+  if (synSecSize.length>0) {
+    const cand = synSecSize[0];
+    return { status:"section_syn", match:cand,
+      reasons:[`Section name differs: imported "${section}" ↔ library "${cand.sectionType}"; also grade "${grade||"—"}" vs "${cand.grade||"—"}" — confirm`] };
+  }
+  // same exact section, size matches, only grade differs
   if (sameSecSize.length>0) {
     const cand = sameSecSize[0];
     return { status:"grade_diff", match:cand,
