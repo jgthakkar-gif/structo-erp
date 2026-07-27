@@ -2693,6 +2693,8 @@ const BaysMaster = ({ user, bays, setBays }) => {
 const MAT_PAGE_SIZE = 50;
 const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, stock, pendingMaterials=[], setPendingMaterials }) => {
   const [matTab, setMatTab] = useState("library"); // "library" | "review"
+  const [toast, setToast] = useState(null);
+  const showToast = (msg, color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
   const [search, setSearch] = useState(""); const [sectionFilter, setSectionFilter] = useState("all");
   const [gradeFilter, setGradeFilter] = useState("all"); const [page, setPage] = useState(0);
   const [modal, setModal] = useState(null); const [form, setForm] = useState({}); const [lenInput, setLenInput] = useState("");
@@ -2823,6 +2825,12 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
 
   return (
     <div>
+      {toast && (
+        <div style={{ position:"fixed", bottom:24, right:24, zIndex:9999,
+          background: toast.color==="green"?T.green:toast.color==="amber"?T.amber:T.red,
+          color:T.bg, padding:"10px 16px", borderRadius:8, fontSize:13, fontWeight:600,
+          boxShadow:"0 4px 12px rgba(0,0,0,0.2)", maxWidth:360 }}>{toast.msg}</div>
+      )}
       {/* Sub-tab bar */}
       <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
         {[["library","Materials Library"],["review",`Review New Material${reviewCount>0?` (${reviewCount})`:""}`]].map(([id,lbl])=>(
