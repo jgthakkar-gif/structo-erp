@@ -2972,15 +2972,18 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
           ? <>
               {/* Add mode — use MatCodePicker for consistent entry */}
               <MatCodePicker materials={materials} setMaterials={setMaterials}
-                label="Material"
+                label="Material" showToast={showToast}
                 onChange={mc=>setForm(f=>({...f,...mc,
                   isPlate:mc.sectionType==="PLATE",
+                  // Weight typed in the dimension quick-add flows up here so the
+                  // single Save Material persists it (no separate library save).
+                  ...(mc._quickWt ? (mc.sectionType==="PLATE" ? {wtPerM2:mc._quickWt} : {wtPerMetre:mc._quickWt}) : {}),
                   // Auto-calc wtPerM2 from density + thickness for plates
-                  wtPerM2: mc.sectionType==="PLATE" ? (()=>{
+                  wtPerM2: mc.sectionType==="PLATE" ? (mc._quickWt || (()=>{
                     const thk=parseFloat(normSize(mc.size))||0;
                     const den = (materials||[]).find(m=>(m.matType||"MS").toUpperCase()===mc.matType?.toUpperCase()&&m.density)?.density||7850;
                     return thk>0?parseFloat((den*thk/1000).toFixed(2)):null;
-                  })() : null,
+                  })()) : null,
                 }))} />
               {form.matCode&&(
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:12}}>
@@ -13510,24 +13513,20 @@ const MatCodePicker = ({ materials, setMaterials, onChange, label="", showToast 
     }
     if (adding==="grd") { setGrade(v); setSize(""); }
     if (adding==="sz") {
+      // Quick-add for dimension ONLY sets the size so the main form can generate
+      // the code. It must NOT save the material here — the single authoritative
+      // save is the "Save Material" button (saveMat). Saving in both places was
+      // creating TWO library rows (one here without the main-form weight, one on
+      // Save Material) and firing a false "already exists" on the second.
       const sz = normSize(v);
       setSize(sz);
-      if (secType&&matType&&grade&&setMaterials) {
-        const mc = buildMatCode(secType,matType,grade,sz);
-        const isP = secType==="PLATE";
+      // Carry the optional weight typed in the quick-add up to the parent form
+      // so Save Material persists it (parent reads via onChange/generatedCode).
+      if (wt != null && wt !== "" && onChange) {
         const w = parseFloat(wt)||0;
-        const density = getDensity(matType)||7850;
-        const thk = parseFloat(sz)||0;
-        const autoWtPerM2 = isP&&thk>0 ? parseFloat((density*thk/1000).toFixed(2)) : null;
-        setMaterials(prev=>[...prev,{
-          id:`ML-${Date.now()}`, sectionType:secType, matType, grade, size:sz,
-          isPlate:isP, active:true, matCode:mc,
-          density,
-          wtPerMetre:isP?null:(w||null),
-          wtPerM2:isP?(w||autoWtPerM2||null):null,
-          standardLengths:[]
-        }]);
-        toast(`${mc} added to library`);
+        if (w>0) onChange({ matCode:buildMatCode(secType,matType,grade,sz), matLibId:"",
+          sectionType:secType, matType, grade, size:sz, isPlate:secType==="PLATE",
+          _quickWt:w });
       }
     }
     if (!adding.startsWith("density_prompt_")) setAdding("");
