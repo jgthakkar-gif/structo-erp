@@ -2715,11 +2715,23 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
     const code = form.matCode || previewCode;
     if (!code) return showToast("Select all material fields first","amber");
     const plate = form.sectionType==="PLATE";
-    // ── Duplicate check ───────────────────────────────────────────────────────
+    // ── Already-in-library handling ───────────────────────────────────────────
+    // The picker shows a green "✓ In library" when the material already exists.
+    // Saving then shouldn't create a second row — but instead of a dead-end
+    // alert, resolve it usefully: if this was opened from the review queue, link
+    // its parts to the existing entry and close; otherwise just inform & close.
     if (modal==="add") {
-      const exists = materials.find(m => (m.matCode||"").toUpperCase() === previewCode.toUpperCase());
+      const exists = materials.find(m => (m.matCode||"").toUpperCase() === (previewCode||code).toUpperCase());
       if (exists) {
-        alert(`⚠ Material already exists in the library:\n${exists.matCode}\n\nEdit the existing entry instead.`);
+        if (form._fromPendingId && setPendingMaterials) {
+          const item = (pendingMaterials||[]).find(pm=>pm.id===form._fromPendingId);
+          if (item) applyMatchToOrders({ ...item, verdict:"exact" }, exists);
+          setPendingMaterials(prev=>(prev||[]).filter(pm=>pm.id!==form._fromPendingId));
+          showToast(`Already in library as ${exists.matCode} — linked ${item?.count||0} part(s) to it`, "green");
+        } else {
+          showToast(`Already in library as ${exists.matCode}`, "amber");
+        }
+        setModal(null);
         return;
       }
     }
@@ -2728,8 +2740,7 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
     if (!plate) { next.wtPerM2=null; } else { next.wtPerMetre=null; }
     if (modal==="add") { next.id=`ML-${String(materials.length+1).padStart(3,"0")}`; setMaterials(prev=>[...prev,next]); }
     else { setMaterials(prev=>prev.map(m=>m.id===next.id?next:m)); }
-    // If this material was added from the review queue, drop that pending item —
-    // it now matches the library exactly, and re-point the order parts to it.
+    // Genuinely-new material added from the review queue → re-point its parts.
     if (form._fromPendingId && setPendingMaterials) {
       const item = (pendingMaterials||[]).find(pm=>pm.id===form._fromPendingId);
       if (item) applyMatchToOrders({ ...item, verdict:"exact" }, next);
