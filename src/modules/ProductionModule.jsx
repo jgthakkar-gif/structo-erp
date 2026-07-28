@@ -5148,8 +5148,62 @@ const PipelineEditorModal = ({ pipelineEditDI, setPipelineEditDI, processTypes, 
   );
 };
 
-const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords }) => {
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S4c — NESTING SOURCE RESOLVER
+// The release wizard used to read MRP nesting batches directly. It now reads
+// whatever this returns: frozen PRODUCTION nests take precedence, MRP fills the
+// gaps. Backward compatible by construction — with no frozen nests it hands back
+// the MRP array itself, so orders planned before production nesting existed
+// behave exactly as they did.
+//
+// Two things must never both appear:
+//   · an "as_is" production sheet carries the SAME rmUnitId as its MRP original
+//   · a "renest" production sheet supersedes the MRP units it replaced
+// Either would double-count the RM, so the MRP copy is filtered out in both cases.
+// ═══════════════════════════════════════════════════════════════════════════
+const buildEffectiveNestSource = (nestingBatches, productionNests) => {
+  const frozen = (productionNests||[]).filter(n=>n && n.status==="frozen");
+  if(frozen.length===0) return nestingBatches||[];   // untouched legacy path
+
+  const claimed = new Set();      // rmUnitIds now owned by a production nest
+  const superseded = new Set();   // MRP rmUnitIds replaced by a re-nest
+  frozen.forEach(n=>{
+    (n.supersededRmUnitIds||[]).forEach(id=>superseded.add(id));
+    (n.lots||[]).forEach(l=>(l.sheets||[]).forEach(s=>{
+      if(s.rmUnitId) claimed.add(s.rmUnitId);
+      (s.supersedes||[]).forEach(id=>superseded.add(id));
+    }));
+  });
+
+  const prodBatches = frozen.map(n=>({
+    id: n.id,
+    productionNestId: n.id,
+    createdAt: n.createdAt,
+    createdBy: n.createdBy,
+    status: "Planned",
+    source: "production",
+    lots: n.lots||[],
+  }));
+
+  const mrpBatches = (nestingBatches||[]).map(b=>{
+    const lots = (b.lots||[]).map(l=>{
+      const sheets = (l.sheets||[]).filter(s=>!claimed.has(s.rmUnitId) && !superseded.has(s.rmUnitId));
+      if(sheets.length===0) return null;
+      return { ...l, sheets, parts:[...new Set(sheets.flatMap(s=>(s.parts||[]).map(p=>typeof p==="string"?p:p.markNo)))] };
+    }).filter(Boolean);
+    if(lots.length===0) return null;
+    return { ...b, lots };
+  }).filter(Boolean);
+
+  return [...prodBatches, ...mrpBatches];
+};
+
+const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords, productionNests=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
+  // S4c — the wizard's nesting source: frozen production nests first, MRP for the rest
+  const effBatches = buildEffectiveNestSource(nestingBatches, productionNests);
+  const usingProductionNest = effBatches.some(b=>b.productionNestId);
   const [step, setStep] = useState(1);
   const [selDrawings, setSelDrawings] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
@@ -5288,7 +5342,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       }
       // Find nesting batches covering this matCode for selected drawings
       const selMarkNosForMat=new Set(selDrawings.flatMap(({drawing,order})=>(order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.matCode===row.matCode&&p.fabType==="Fabricate").map(p=>p.markNo)));
-      const batchesForMat=(nestingBatches||[]).filter(b=>(b.lots||[]).some(l=>l.matCode===row.matCode&&(l.parts||[]).some(mn=>selMarkNosForMat.has(mn))));
+      const batchesForMat=effBatches.filter(b=>(b.lots||[]).some(l=>l.matCode===row.matCode&&(l.parts||[]).some(mn=>selMarkNosForMat.has(mn))));
       const allOrderParts=selDrawings.flatMap(({order})=>order.parts||[]);
       const rmUnitsForMat=[];
       batchesForMat.forEach(batch=>{
@@ -5368,7 +5422,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     ]);
     const rmUnits=[];
     const seen=new Set();
-    (nestingBatches||[]).forEach(batch=>{
+    effBatches.forEach(batch=>{
       (batch.lots||[]).forEach(lot=>{
         (lot.sheets||[]).forEach(sheet=>{
           if(!sheet.rmUnitId) return;
@@ -5382,6 +5436,8 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           rmUnits.push({
             rmUnitId: sheet.rmUnitId,
             batchId: batch.id,
+            productionNestId: batch.productionNestId||null,
+            nestPlan: sheet.plan||null,
             lotId: lot.lotId,
             matCode: lot.matCode,
             dimensions: sheet.sheetDim||"",
@@ -6107,6 +6163,13 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       <div>
         <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>Step 3 — Cutting Assignment</div>
         <div style={{fontSize:12,color:T.textMid,marginBottom:6}}>Assign each RM unit to a cutting contractor. Parts from non-selected drawings shown in amber.</div>
+        {usingProductionNest && (
+          <InfoBanner color="blue">
+            Reading the frozen production nest{effBatches.filter(b=>b.productionNestId).length===1
+              ? ` ${effBatches.find(b=>b.productionNestId).productionNestId}`
+              : "s"}. RM units it supersedes are excluded; anything it does not cover still comes from MRP nesting.
+          </InfoBanner>
+        )}
         {unassignedCount>0&&<InfoBanner color="amber">{unassignedCount} RM unit{unassignedCount!==1?"s":""} not yet assigned. You may proceed and assign later.</InfoBanner>}
         {rmUnits.length===0&&<InfoBanner color="blue">No RM units found in nesting batches for selected drawings. Check that nesting has been imported for this order.</InfoBanner>}
         {rmUnits.length>0&&(
@@ -12678,7 +12741,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       onBack={()=>setView("dashboard")} dprs={dprs||[]} setDprs={setDprs}
       drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances}
       processTypes={processTypes||DEFAULT_PROCESS_TYPES}
-      cutRecords={cutRecords||[]} setCutRecords={setCutRecords} />
+      cutRecords={cutRecords||[]} setCutRecords={setCutRecords}
+      productionNests={productionNests||[]} />
   );
 
   // ── Supervisor queue view ──
