@@ -8390,7 +8390,7 @@ const DrawingStatusCard = ({ user, drawing, order, stock, orders, setOrders, rel
 };
 
 // ─── C3: Cross-Order Production Drawing Register ──────────────────────────────
-const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, machines, onBack, onViewStatus, onViewProgress }) => {
+const ProductionDrawingRegister = ({ orders, instances, stock, releases, contractors, machines, onBack, onViewStatus, onViewProgress, cutRecords=[] }) => {
   const [filterOrder, setFilterOrder] = useState("");
   const [filterAssembly, setFilterAssembly] = useState("");
   const [filterStage, setFilterStage] = useState("");
@@ -8415,7 +8415,13 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
         const curr = bestStep1[i.markNo];
         if(!curr||STAGE_ORD_STEP1.indexOf(i.currentStage)<STAGE_ORD_STEP1.indexOf(curr)) bestStep1[i.markNo]=i.currentStage;
       });
-      const cutParts = Object.values(bestStep1).filter(s=>DONE_STAGES_STEP1.has(s)).length;
+      const cutStages = Object.entries(bestStep1).filter(([mk,s])=>DONE_STAGES_STEP1.has(s)).map(([mk])=>mk);
+      // Cut-record foundation (Slice 1): a mark also counts as cut if a cut record
+      // exists for it on this drawing — captures pre-cut parts of drawings whose
+      // instances haven't advanced (or don't exist yet). Union with stage-based.
+      const cutRecMarks = new Set((cutRecords||[]).filter(cr=>cr.drawingId===d.id&&cr.orderId===o.id).map(cr=>cr.markNo));
+      const cutMarkSet = new Set([...cutStages, ...[...cutRecMarks].filter(mk=>partMarkNosStep1.has(mk))]);
+      const cutParts = cutMarkSet.size;
       const matCodes = [...new Set(parts.map(p=>p.matCode).filter(Boolean))];
       const rmCoverage = matCodes.map(mc=>{
         const totalKg = parts.filter(p=>p.matCode===mc).reduce((s,p)=>s+(p.calcTotalWt||p.clientTotalWt||0),0);
@@ -9392,7 +9398,7 @@ const OutboundQcPanel = ({ user, instances, setInstances, orders }) => {
   );
 };
 
-const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue, stock }) => {
+const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue, stock, cutRecords=[], setCutRecords }) => {
   const isAdmin = ["super_admin","qc_admin"].includes(user.role);
   const [tab, setTab] = useState("cutting_qc");
   const [corrModal, setCorrModal] = useState(null);
@@ -10102,6 +10108,26 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
         // Find the drawing this rmUnit belongs to
         const drawingId = selGroup?.parts?.[0]?.drawingId || selGroup?.drawingId;
         const orderId   = selGroup?.parts?.[0]?.orderId   || selGroup?.orderId;
+        // ── Cut-record foundation (Slice 1) ──────────────────────────────────
+        // When a cutting_qc pass clears an RM-unit group, the parts are now
+        // physically cut. Record that fact — keyed to drawingId+markNo+rmUnitId,
+        // NOT instanceId — so it stands independent of release. (This panel also
+        // handles fitup/welding/etc, so only write on the cutting_qc stage.)
+        if (selGroup.stage === "cutting_qc" && setCutRecords) {
+          const rmUnitId = selGroup.rmUnitId || selGroup?.parts?.[0]?.rmUnitId || "";
+          const newRecords = (selGroup.parts||[]).map(p => ({
+            id: `CUT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            drawingId: p.drawingId,
+            orderId:   p.orderId,
+            markNo:    p.markNo,
+            qty:       1,                         // one instance = one part cut
+            fromRmUnitId: p.rmUnitId || rmUnitId,
+            fromInstanceId: p.instanceId || null, // provenance; claim logic is a later slice
+            claimedByInstanceId: p.instanceId || null, // already-released here → claimed by its own instance
+            cutAt: ts, cutBy: user.username,
+          }));
+          if (newRecords.length) setCutRecords(prev => [...(prev||[]), ...newRecords]);
+        }
         setInstances(prev=>prev.map(inst=>{
           if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
           // cutting_qc → awaiting_collection (contractor must collect before fitup)
@@ -12093,7 +12119,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders, pos, purchaseReqs,
                             dprs, setDprs, correctionsLog, setCorrectionsLog, notifications, setNotifications,
                             ncrs, setNcrs, scrapQueue, setScrapQueue,
-                            drawingInstances, setDrawingInstances, processTypes, appUsers }) => {
+                            drawingInstances, setDrawingInstances, processTypes, appUsers,
+                            cutRecords=[], setCutRecords }) => {
   const [view, setView]           = useState(() => {
     const forced = sessionStorage.getItem('dev_target_view');
     if (forced) { sessionStorage.removeItem('dev_target_view'); return forced; }
@@ -12453,7 +12480,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
 
   // ── Drawing Register view ──
   if (view==="register") return (
-    <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} machines={machines||[]} onBack={()=>setView("dashboard")}
+    <ProductionDrawingRegister orders={orders} instances={instances} stock={stock} releases={releases||[]} contractors={contractors||[]} machines={machines||[]} cutRecords={cutRecords||[]} onBack={()=>setView("dashboard")}
       onViewStatus={(drawingId, orderId)=>{ setSelStatusDrawing({drawingId,orderId}); setView("drawing_status"); }}
       onViewProgress={(orderId)=>{ setSelProgressOrderId(orderId); setView("order_progress"); }} />
   );
