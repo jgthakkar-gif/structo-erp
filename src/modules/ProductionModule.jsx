@@ -5220,6 +5220,91 @@ const buildEffectiveNestSource = (nestingBatches, productionNests) => {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
+// OUTBOUND PHASE 1 — WHICH IN-HOUSE STAGES DOES THE VENDOR OWN?
+// An outbound step declares its span with exitAfterStep → reEntryStep. Both are
+// mandatory in the pipeline editor (PipelineEditorModal.addStep / App's
+// InlinePipelineEditor), so the declaration is a contract, not a label. The
+// in-house stages strictly between them on the canonical ladder are the vendor's.
+//
+// CONTRACT (Jai, 28 Jul):
+//   · the SPAN decides which in-house stages do not run; tasks[] drives the QC
+//     checklist on return and nothing else
+//   · a PART's own pipeline wins ONLY when explicitly set; otherwise it inherits
+//     the drawing's decision
+//   · the RM UNIT is the dispatch unit — if any mark on a bar is cut by the
+//     vendor, the whole bar goes out and nothing on it is cut in-house
+//
+// Deliberately conservative: a stage still PRESENT in the pipeline is still
+// in-house whatever a span claims (save() already strips owned steps, so a
+// survivor means the strip did not run). Unresolvable span → owns nothing.
+// Both fallbacks land on today's behaviour, so legacy data is untouched.
+// ═══════════════════════════════════════════════════════════════════════════
+const OUTBOUND_LADDER = DEFAULT_PIPELINE_STEPS.map(s=>s.step);
+
+const outboundOwnedStages = (processSteps) => {
+  const owned = new Set();
+  const steps = Array.isArray(processSteps)&&processSteps.length ? processSteps : null;
+  if(!steps) return owned;                       // no pipeline → default ladder → nothing owned
+  steps.filter(s=>s&&s.type==="outbound").forEach(ob=>{
+    const a = OUTBOUND_LADDER.indexOf(ob.exitAfterStep);
+    const b = OUTBOUND_LADDER.indexOf(ob.reEntryStep);
+    if(a<0||b<0||b<=a) return;                   // span will not resolve → own nothing
+    OUTBOUND_LADDER.slice(a+1,b).forEach(st=>{
+      if(!steps.some(s=>s&&s.type!=="outbound"&&s.step===st)) owned.add(st);
+    });
+  });
+  return owned;
+};
+
+// The outbound step a piece must leave through for a given in-house stage.
+const outboundStepOwning = (processSteps, stage) => {
+  const steps = Array.isArray(processSteps)?processSteps:[];
+  if(!outboundOwnedStages(steps).has(stage)) return null;
+  return steps.find(s=>{
+    if(!s||s.type!=="outbound") return false;
+    const a=OUTBOUND_LADDER.indexOf(s.exitAfterStep), b=OUTBOUND_LADDER.indexOf(s.reEntryStep);
+    return a>=0&&b>a&&OUTBOUND_LADDER.slice(a+1,b).includes(stage);
+  })||null;
+};
+
+// Part wins only when it carries its own pipeline.
+const partPipelineOr = (part, drawingSteps) =>
+  (part&&Array.isArray(part.processSteps)&&part.processSteps.length) ? part.processSteps : drawingSteps;
+
+const stageOwnedForPart = (part, drawingSteps, stage) =>
+  outboundOwnedStages(partPipelineOr(part, drawingSteps)).has(stage);
+
+// Classify one RM unit (nested sheet/bar). Marks that cannot be resolved through
+// markNoMap are skipped, never guessed.
+const classifyRmUnitOutbound = (sheetParts, markNoMap, stage) => {
+  const st = stage||"cutting";
+  const ownerMarks=[], ridingMarks=[], ridingSelMarks=[];
+  let step=null;
+  (sheetParts||[]).forEach(raw=>{
+    const mn = typeof raw==="string" ? raw : (raw&&raw.markNo);
+    if(!mn) return;
+    const ent = (markNoMap||{})[mn];
+    if(!ent) return;
+    if(stageOwnedForPart(ent.part, ent.steps||null, st)){
+      ownerMarks.push(mn);
+      if(!step) step = outboundStepOwning(partPipelineOr(ent.part, ent.steps||null), st);
+    } else {
+      ridingMarks.push(mn);
+      if(ent.selected) ridingSelMarks.push(mn);
+    }
+  });
+  const vendorCut = ownerMarks.length>0 && !!step;
+  return {
+    vendorCut,
+    vendorCutStep: vendorCut?step:null,
+    ownerMarks,
+    ridingMarks: vendorCut?ridingMarks:[],
+    ridingSelMarks: vendorCut?ridingSelMarks:[],
+  };
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // S4d — CUT RECORDS FROM PER-RM CUTTING
 // The same physical cut can be reported twice: once when the operator completes
 // the RM unit, and again when QC later passes cutting_qc on those parts. Both
@@ -5414,6 +5499,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   // ── Step 2 compute ──
   const computeRmPicture = () => {
     const DONE_STAGES_RM = new Set(['cutting_qc','fitup','fit_up','welding','weld_qc','tpi_weld','blasting','painting','dispatch','complete']);
+    const obMarkMap = getSelDrawingMarkNos();   // Outbound Phase 1 — same map Step 3 uses
     const byMat={};
     selDrawings.forEach(entry=>{
       const {drawing,order}=entry;
@@ -5486,7 +5572,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             if(sheetIsCut) cuttingStatus="done";
             else if(sheetIsInCutting) cuttingStatus="partial";
             // ────────────────────────────────────────────────────────────────
+            const obCls = classifyRmUnitOutbound(allSheetParts, obMarkMap, "cutting");
             rmUnitsForMat.push({
+              vendorCut:obCls.vendorCut,
+              vendorCutStep:obCls.vendorCutStep,
+              ridingMarks:obCls.ridingMarks,
+              ridingSelMarks:obCls.ridingSelMarks,
               rmUnitId:sheet.rmUnitId,
               batchId:batch.id,
               sheetDim:sheet.sheetDim||"",
@@ -5509,17 +5600,27 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 
   // ── Step 3 — get RM units from nesting batches for selected drawings ──
   const getSelDrawingMarkNos = () => {
-    const map={}; // markNo -> {drawingNo, orderId, partId, selected}
+    const map={}; // markNo -> {drawingNo, drawingId, steps, orderId, partId, selected}
     const selDrawingIds=new Set(selDrawings.map(s=>s.drawingId));
-    selDrawings.forEach(({drawing,order})=>{
+    // Outbound Phase 1 — the pipeline that governs each mark, so a bar can be
+    // classified as vendor-cut or in-house without guessing from labels.
+    const stepsByDrawingId={};
+    (drawingInstances||[]).forEach(di=>{
+      if(di&&di.drawingId&&!stepsByDrawingId[di.drawingId]&&Array.isArray(di.processSteps)&&di.processSteps.length)
+        stepsByDrawingId[di.drawingId]=di.processSteps;
+    });
+    selDrawings.forEach(({drawing,order,processSteps})=>{
       (order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate").forEach(p=>{
-        map[p.markNo]={drawingNo:drawing.drawingNo,orderId:order.id,partId:p.id,selected:true,part:p};
+        map[p.markNo]={drawingNo:drawing.drawingNo,drawingId:drawing.id,
+          steps:(Array.isArray(processSteps)&&processSteps.length?processSteps:stepsByDrawingId[drawing.id])||null,
+          orderId:order.id,partId:p.id,selected:true,part:p};
       });
     });
     // Also map non-selected drawing markNos for colour coding
     orders.forEach(order=>{
       (order.parts||[]).filter(p=>!selDrawingIds.has(p.drawingId)&&p.fabType==="Fabricate").forEach(p=>{
-        if(!map[p.markNo]) map[p.markNo]={drawingNo:(order.drawings||[]).find(d=>d.id===p.drawingId)?.drawingNo||p.drawingId,orderId:order.id,partId:p.id,selected:false,part:p};
+        if(!map[p.markNo]) map[p.markNo]={drawingNo:(order.drawings||[]).find(d=>d.id===p.drawingId)?.drawingNo||p.drawingId,drawingId:p.drawingId,
+          steps:stepsByDrawingId[p.drawingId]||null,orderId:order.id,partId:p.id,selected:false,part:p};
       });
     });
     return map;
@@ -5546,8 +5647,15 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           if(!hasSelPart) return;
           // Skip sheets already fully cut in a previous release
           if(alreadyCutRmUnits.has(sheet.rmUnitId)) return;
+          // Outbound Phase 1 — the bar is the dispatch unit. If any mark on it is
+          // cut by a vendor the whole bar goes out; riders come back already cut.
+          const obCls = classifyRmUnitOutbound(sheet.parts, markNoMap, "cutting");
           seen.add(sheet.rmUnitId);
           rmUnits.push({
+            vendorCut: obCls.vendorCut,
+            vendorCutStep: obCls.vendorCutStep,
+            ridingMarks: obCls.ridingMarks,
+            ridingSelMarks: obCls.ridingSelMarks,
             rmUnitId: sheet.rmUnitId,
             batchId: batch.id,
             productionNestId: batch.productionNestId||null,
@@ -5669,7 +5777,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     const newInstances=[];
     const claimedRecIds=[]; // S3 — cut records claimed by the instances created below
     const nowIso=new Date().toISOString();
-    selDrawings.forEach(({drawing,order,unitsToRelease,diId,instanceNo,totalInstances,uniqueId:diUniqueId})=>{
+    selDrawings.forEach(({drawing,order,unitsToRelease,diId,instanceNo,totalInstances,uniqueId:diUniqueId,processSteps:dwgSteps})=>{
       const ca=contAsgnSnap[drawing.id]||{};
       const contractorName=(contractors||[]).find(c=>c.id===ca.contractorId)?.name||"";
       const qty=unitsToRelease??(drawing.qty||1);
@@ -5693,6 +5801,17 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       fabParts.forEach(part=>{
         // Find rmUnit containing this part
         const matchingRmUnit=rmUnits.find(ru=>ru.parts.some(p=>p.markNo===part.markNo));
+        // ── Outbound Phase 1 — where does this piece actually enter? ────────
+        // Its own pipeline may hand cutting to a vendor. If it does not, its BAR
+        // still might: the RM unit is the dispatch unit, so a piece nested on a
+        // vendor-cut bar rides along and comes back as a marked, cut part.
+        const obOwnStep = stageOwnedForPart(part, dwgSteps, "cutting")
+          ? outboundStepOwning(partPipelineOr(part, dwgSteps), "cutting")
+          : null;
+        const obRideStep = (!obOwnStep && matchingRmUnit && matchingRmUnit.vendorCut)
+          ? matchingRmUnit.vendorCutStep
+          : null;
+        const obStep = obOwnStep || obRideStep;
         const rmUnitAsgnEntry=matchingRmUnit?rmUnitAsgnSnap[matchingRmUnit.rmUnitId]:null;
         const partQty = part.qtyPerDrg || part.clientQty || 1;
         // Create one instance per physical piece
@@ -5717,8 +5836,20 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             assignedContractorId:ca.contractorId||null,
             assignedContractorName:contractorName,
             pinnedEngineerId:ca.pinnedEngineerId||"",
-            assignedStage:"fit_up",currentStage:claimedRecId?"fitup":"cutting",currentStatus:"pending",
+            assignedStage:"fit_up",
+            // Already cut in-house → fit-up (S3). Vendor owns the cut → it waits at
+            // the step it must leave through, which is exactly what OutboundProcessing
+            // matches on (exitAfterStep === currentStage). Otherwise → cutting.
+            currentStage:claimedRecId?"fitup":(obStep?(obStep.exitAfterStep||"cutting"):"cutting"),
+            currentStatus:"pending",
             ...(claimedRecId?{preCut:true,claimedCutRecordId:claimedRecId}:{}),
+            ...(!claimedRecId&&obStep?{
+              vendorCutPending:true,
+              outboundStepRef:obStep.step||"",
+              outboundExitAfter:obStep.exitAfterStep||"",
+              outboundReEntry:obStep.reEntryStep||"",
+              ...(obRideStep?{outboundRidesRmUnitId:matchingRmUnit?.rmUnitId||""}:{}),
+            }:{}),
             rmUnitId:matchingRmUnit?.rmUnitId||"",
             cuttingContractorId:rmUnitAsgnEntry?.contractorId||"",
             cuttingContractorName:(contractors||[]).find(c=>c.id===rmUnitAsgnEntry?.contractorId)?.name||"",
@@ -6261,15 +6392,55 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           </tbody>
         </table>
       )}
-      <div style={{marginTop:16,display:"flex",gap:8}}>
-        <button onClick={()=>setStep(1)} style={css.btn.ghost}>← Back</button>
-        <button onClick={()=>setStep(3)} style={css.btn.primary}>Next: Cutting Assignment →</button>
-      </div>
+      {(()=>{
+        // ── Outbound Phase 1 ───────────────────────────────────────────────
+        const _ru = getRmUnitsForRelease();
+        const _vendor  = _ru.filter(u=>u.vendorCut);
+        const _inhouse = _ru.filter(u=>!u.vendorCut);
+        const _riding  = _vendor.filter(u=>(u.ridingSelMarks||[]).length>0);
+        const _ridMarks= [...new Set(_riding.flatMap(u=>u.ridingSelMarks||[]))];
+        const _skip    = _ru.length>0 && _inhouse.length===0;
+        const _stepLbl = _vendor.length>0 && _vendor[0].vendorCutStep
+          ? (_vendor[0].vendorCutStep.label||_vendor[0].vendorCutStep.step||"") : "";
+        return (
+          <>
+            {_vendor.length>0&&(
+              <InfoBanner color="amber">
+                ⬆ {_vendor.length} RM unit{_vendor.length!==1?"s":""} go{_vendor.length===1?"es":""} out for cutting
+                {_stepLbl?` — ${_stepLbl}`:""}. No in-house cutting contractor is assigned for {_vendor.length===1?"it":"them"}.
+              </InfoBanner>
+            )}
+            {_riding.length>0&&(
+              <InfoBanner color="amber">
+                {_riding.length} of those bar{_riding.length!==1?"s":""} also carr{_riding.length===1?"ies":"y"} parts of drawings that never
+                declared an outbound step ({_ridMarks.slice(0,8).join(", ")}{_ridMarks.length>8?` +${_ridMarks.length-8} more`:""}).
+                The RM unit is the dispatch unit, so releasing these commits those parts to the vendor as well —
+                they return as marked, cut parts and resume at fit-up.
+              </InfoBanner>
+            )}
+            <div style={{marginTop:16,display:"flex",gap:8}}>
+              <button onClick={()=>setStep(1)} style={css.btn.ghost}>← Back</button>
+              {_skip
+                ? <button onClick={()=>setStep(4)} style={css.btn.primary}>Next: Operations &amp; Routing →</button>
+                : <button onClick={()=>setStep(3)} style={css.btn.primary}>Next: Cutting Assignment →</button>}
+            </div>
+            {_skip&&(
+              <div style={{fontSize:11,color:T.textMid,marginTop:6}}>
+                Step 3 (Cutting Assignment) skipped — every RM unit in this release is cut by a vendor
+                {_stepLbl?` under "${_stepLbl}"`:""}, so there is nothing to assign in-house.
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 
   const Step3 = () => {
-    const rmUnits=getRmUnitsForRelease();
+    const allRmUnits=getRmUnitsForRelease();
+    // Outbound Phase 1 — bars the vendor cuts are not assignable in-house.
+    const vendorUnits=allRmUnits.filter(ru=>ru.vendorCut);
+    const rmUnits=allRmUnits.filter(ru=>!ru.vendorCut);
     const cuttingContractors=(contractors||[]).filter(c=>c.active!==false&&(c.type||[]).includes('cutting'));
     const unassignedCount=rmUnits.filter(ru=>!rmUnitAsgn[ru.rmUnitId]?.contractorId).length;
 
@@ -6285,7 +6456,43 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           </InfoBanner>
         )}
         {unassignedCount>0&&<InfoBanner color="amber">{unassignedCount} RM unit{unassignedCount!==1?"s":""} not yet assigned. You may proceed and assign later.</InfoBanner>}
-        {rmUnits.length===0&&<InfoBanner color="blue">No RM units found in nesting batches for selected drawings. Check that nesting has been imported for this order.</InfoBanner>}
+        {vendorUnits.length>0&&(
+          <div style={{marginBottom:10,padding:"10px 12px",background:T.amberBg,border:`1px solid ${T.amber}`,borderRadius:6}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.amber,marginBottom:6}}>
+              ⬆ {vendorUnits.length} RM UNIT{vendorUnits.length!==1?"S":""} CUT BY VENDOR — NOT ASSIGNED HERE
+            </div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+              <thead>
+                <tr>
+                  {["RM Unit ID","Mat Code","Dimensions","Outbound step","Exit after","Back at","Riding marks"].map(h=>(
+                    <th key={h} style={{padding:"3px 8px",textAlign:"left",fontSize:10,color:T.textLow,fontWeight:600,borderBottom:`1px solid ${T.amber}55`}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {vendorUnits.map(ru=>(
+                  <tr key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.amber}22`}}>
+                    <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10,color:T.accentHi}}>{ru.rmUnitId}</td>
+                    <td style={{padding:"3px 8px",fontSize:10}}>{ru.matCode}</td>
+                    <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{ru.dimensions}</td>
+                    <td style={{padding:"3px 8px",fontSize:10,fontWeight:600,color:T.amber}}>{ru.vendorCutStep?.label||ru.vendorCutStep?.step||"—"}</td>
+                    <td style={{padding:"3px 8px",fontSize:10}}>{ru.vendorCutStep?.exitAfterStep||"—"}</td>
+                    <td style={{padding:"3px 8px",fontSize:10}}>{ru.vendorCutStep?.reEntryStep||"—"}</td>
+                    <td style={{padding:"3px 8px",fontSize:10,color:T.textMid}}>
+                      {(ru.ridingSelMarks||[]).length>0?(ru.ridingSelMarks||[]).join(", "):"—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{fontSize:10,color:T.textMid,marginTop:6}}>
+              Vendors are chosen at dispatch, not here. Riding marks belong to drawings without an outbound
+              step — the bar is the dispatch unit, so they go out with it and come back already cut.
+            </div>
+          </div>
+        )}
+        {allRmUnits.length===0&&<InfoBanner color="blue">No RM units found in nesting batches for selected drawings. Check that nesting has been imported for this order.</InfoBanner>}
+        {allRmUnits.length>0&&rmUnits.length===0&&<InfoBanner color="blue">Nothing to assign — every RM unit in this release is cut by a vendor.</InfoBanner>}
         {rmUnits.length>0&&(
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
@@ -6472,7 +6679,11 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           );
         })}
         <div style={{marginTop:16,display:"flex",gap:8}}>
-          <button onClick={()=>setStep(3)} style={css.btn.ghost}>← Back</button>
+          <button onClick={()=>{
+            // Outbound Phase 1 — Step 3 is skipped when no bar is cut in-house.
+            const _u=getRmUnitsForRelease();
+            setStep(_u.length>0&&_u.every(x=>x.vendorCut)?2:3);
+          }} style={css.btn.ghost}>← Back</button>
           <button onClick={()=>setStep(5)} style={css.btn.primary}>Next: Welding Assignment →</button>
         </div>
       </div>
@@ -8653,7 +8864,7 @@ const ProductionDrawingRegister = ({ orders, instances, stock, releases, contrac
       const parts = (o.parts||[]).filter(p=>p.drawingId===d.id&&p.fabType==="Fabricate");
       const totalParts = parts.length * (d.qty||1);
       const DONE_STAGES_STEP1 = new Set(["cutting_qc","fitup","fit_up","welding","weld_qc","tpi_fitup","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"]);
-      const STAGE_ORD_STEP1 = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending'];
+      const STAGE_ORD_STEP1 = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending','nesting'];
       const partMarkNosStep1 = new Set(parts.map(p=>p.markNo));
       const bestStep1 = {};
       (instances||[]).filter(i=>partMarkNosStep1.has(i.markNo)).forEach(i=>{
