@@ -5199,6 +5199,81 @@ const buildEffectiveNestSource = (nestingBatches, productionNests) => {
   return [...prodBatches, ...mrpBatches];
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S4d — CUT RECORDS FROM PER-RM CUTTING
+// The same physical cut can be reported twice: once when the operator completes
+// the RM unit, and again when QC later passes cutting_qc on those parts. Both
+// writers run through mergeCutRecords, which returns only what is genuinely new.
+//   · a proposal tied to an instance is dropped if that instance already has one
+//   · an unclaimed proposal is trimmed to the quantity not yet recorded
+// ═══════════════════════════════════════════════════════════════════════════
+const cutRecKey = (r) => `${r.drawingId}|${r.markNo}|${r.fromRmUnitId}`;
+
+const mergeCutRecords = (existing, proposed) => {
+  const seenInstances = new Set();
+  const totals = {};
+  (existing||[]).forEach(r=>{
+    if(r.fromInstanceId) seenInstances.add(r.fromInstanceId);
+    totals[cutRecKey(r)] = (totals[cutRecKey(r)]||0) + (r.qty||1);
+  });
+  const accepted = [];
+  (proposed||[]).forEach(rec=>{
+    let r = rec;
+    if(r.fromInstanceId){
+      if(seenInstances.has(r.fromInstanceId)) return;   // this piece is already recorded
+      seenInstances.add(r.fromInstanceId);
+    } else {
+      const have = totals[cutRecKey(r)]||0;
+      const want = r.qty||1;
+      if(have >= want) return;                          // fully covered already
+      if(have > 0) r = {...r, qty: want - have};        // record only the shortfall
+    }
+    totals[cutRecKey(r)] = (totals[cutRecKey(r)]||0) + (r.qty||1);
+    accepted.push(r);
+  });
+  return accepted;
+};
+
+// Build the cut records an RM unit produces when its cutting is completed.
+// Two populations come off the same sheet:
+//   (a) pieces of RELEASED drawings — exact identity from their instance
+//   (b) marks nested on the sheet whose drawing is NOT released — the pre-cut
+//       case the whole cut-record model exists for. Unclaimed; a later release
+//       claims them (S3) and that instance skips cutting.
+const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, ts }) => {
+  const recs = [];
+  const onUnit = (instances||[]).filter(i=>i.rmUnitId===rmUnitId);
+  const orderScope = onUnit[0]?.orderId || null;
+  const mkId = () => `CUT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+
+  onUnit.forEach(i=>{
+    recs.push({
+      id: mkId(), drawingId:i.drawingId, orderId:i.orderId, markNo:i.markNo, qty:1,
+      fromRmUnitId: rmUnitId, fromInstanceId:i.instanceId,
+      claimedByInstanceId:i.instanceId,          // already released → claimed by itself
+      source:"rm_cutting", cutAt:ts, cutBy:user?.username||"",
+    });
+  });
+
+  const releasedMarks = new Set(onUnit.map(i=>i.markNo));
+  (sheetParts||[]).forEach(p=>{
+    const mn  = typeof p==="string" ? p : p?.markNo;
+    const qty = typeof p==="object" ? (p?.qty||1) : 1;
+    if(!mn || releasedMarks.has(mn)) return;
+    const order = (orders||[]).find(o=>o.id===orderScope && (o.parts||[]).some(x=>x.markNo===mn))
+               || (orders||[]).find(o=>(o.parts||[]).some(x=>x.markNo===mn));
+    const part  = order && (order.parts||[]).find(x=>x.markNo===mn);
+    if(!order || !part) return;                  // can't identify it — never guess
+    recs.push({
+      id: mkId(), drawingId:part.drawingId, orderId:order.id, markNo:mn, qty,
+      fromRmUnitId: rmUnitId, fromInstanceId:null, claimedByInstanceId:null,
+      source:"rm_cutting", cutAt:ts, cutBy:user?.username||"",
+    });
+  });
+  return recs;
+};
+
 const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords, productionNests=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
   // S4c — the wizard's nesting source: frozen production nests first, MRP for the rest
@@ -6497,9 +6572,19 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 // ═══════════════════════════════════════════════════════════════════════════════
 // STEP 6: MACHINE OPERATOR QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
-const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, setStock, materials, instances, setInstances, orders, nestingBatches }) => {
+const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, setStock, materials, instances, setInstances, orders, nestingBatches, setCutRecords, productionNests=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
   const [tab, setTab] = useState("assignments");
+  // S4d — the nested parts of an RM unit, read through the same resolver the
+  // release wizard uses so production nests and MRP behave identically here.
+  const opEffBatches = buildEffectiveNestSource(nestingBatches, productionNests);
+  const sheetForRmUnit = (rmUnitId) => {
+    for(const b of (opEffBatches||[]))
+      for(const l of (b.lots||[]))
+        for(const s of (l.sheets||[]))
+          if(s.rmUnitId===rmUnitId) return s;
+    return null;
+  };
 
   // ── All rmUnits assigned to this operator / contractor ─────────────────────
   const myRmUnits = releases.filter(r => r.status === "in_progress").flatMap(r =>
@@ -6591,6 +6676,20 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
   };
 
   const completeCuttingRu = (ru, offcutWt, offcutDim) => {
+    // ── S4d — this is the physical cut event: record what came off this RM ──
+    if(setCutRecords){
+      const ts = new Date().toISOString();
+      const sheet = sheetForRmUnit(ru.rmUnitId);
+      const proposed = buildRmUnitCutRecords({
+        rmUnitId: ru.rmUnitId,
+        sheetParts: sheet?.parts || ru.parts || [],
+        instances, orders, user, ts,
+      });
+      setCutRecords(prev => {
+        const add = mergeCutRecords(prev||[], proposed);
+        return add.length ? [...(prev||[]), ...add] : (prev||[]);
+      });
+    }
     setReleases(prev => prev.map(r => r.id !== ru.releaseId ? r : {
       ...r, rmUnitAssignments:(r.rmUnitAssignments||[]).map(x =>
         x.rmUnitId === ru.rmUnitId
@@ -6958,6 +7057,21 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
   // Correction: revert cutting confirmation
   const doRevertCutting = (ru, reason) => {
     if (!reason?.trim()) return showToast("Reason required","amber");
+    // S4d — withdraw the cut records this RM unit's completion created.
+    // Conservative: records written by another process (e.g. the cutting_qc
+    // inspection) are left alone, and a record still claimed by an instance
+    // that survives this revert is left alone too — it is load-bearing.
+    if(setCutRecords){
+      const surviving = new Set((instances||[])
+        .filter(i=>!(i.rmUnitId===ru.rmUnitId && i.currentStage==="cutting"))
+        .map(i=>i.instanceId));
+      setCutRecords(prev => (prev||[]).filter(r=>{
+        if(r.fromRmUnitId !== ru.rmUnitId) return true;
+        if(r.source !== "rm_cutting") return true;
+        if(r.claimedByInstanceId && surviving.has(r.claimedByInstanceId)) return true;
+        return false;
+      }));
+    }
     // Remove instances created for this rmUnit that are still at cutting stage
     setInstances(prev => (prev||[]).filter(i =>
       !(i.rmUnitId === ru.rmUnitId && i.currentStage === "cutting")
@@ -10216,9 +10330,15 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
             fromRmUnitId: p.rmUnitId || rmUnitId,
             fromInstanceId: p.instanceId || null, // provenance; claim logic is a later slice
             claimedByInstanceId: p.instanceId || null, // already-released here → claimed by its own instance
+            source: "cutting_qc",
             cutAt: ts, cutBy: user.username,
           }));
-          if (newRecords.length) setCutRecords(prev => [...(prev||[]), ...newRecords]);
+          // S4d — the operator may already have recorded this cut when the RM
+          // unit was completed; merge instead of appending blindly.
+          if (newRecords.length) setCutRecords(prev => {
+            const add = mergeCutRecords(prev||[], newRecords);
+            return add.length ? [...(prev||[]), ...add] : (prev||[]);
+          });
         }
         setInstances(prev=>prev.map(inst=>{
           if(!selGroup.parts.some(p=>p.instanceId===inst.instanceId)) return inst;
@@ -12707,7 +12827,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
     return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} orders={orders||[]} nestingBatches={nestingBatches||[]} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} />;
   }
   // Machine operator → machine queue
-  if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} setStock={setStock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} orders={orders||[]} nestingBatches={nestingBatches||[]} />;
+  if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} setStock={setStock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} orders={orders||[]} nestingBatches={nestingBatches||[]} setCutRecords={setCutRecords} productionNests={productionNests||[]} />;
   // Stage workers (blasting/painting engineers) → stage-filtered work queue
   if (["blasting_engineer","painting_engineer"].includes(user.role)) return <StageWorkerQueue user={user} instances={instances} setInstances={setInstances} />;
 
