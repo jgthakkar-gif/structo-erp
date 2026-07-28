@@ -5148,7 +5148,7 @@ const PipelineEditorModal = ({ pipelineEditDI, setPipelineEditDI, processTypes, 
   );
 };
 
-const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes }) => {
+const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords }) => {
   const today = () => new Date().toISOString().slice(0,10);
   const [step, setStep] = useState(1);
   const [selDrawings, setSelDrawings] = useState([]);
@@ -5310,7 +5310,9 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             // A sheet is "done" if ANY instance from the selected-drawing parts is past cutting
             // OR if the release marks cuttingComplete (mirrors Step 1 logic)
             const selPartMarkNos=new Set(selParts);
-            const sheetIsCut=releaseForSheet||sheetInsts.some(i=>DONE_STAGES_RM.has(i.currentStage)&&selPartMarkNos.has(i.markNo));
+            // S2 — a cut record referencing this RM unit means it is physically spent
+            const cutRecForSheet=(cutRecords||[]).some(cr=>cr.fromRmUnitId===sheet.rmUnitId);
+            const sheetIsCut=releaseForSheet||cutRecForSheet||sheetInsts.some(i=>DONE_STAGES_RM.has(i.currentStage)&&selPartMarkNos.has(i.markNo));
             const sheetIsInCutting=!sheetIsCut&&sheetInsts.some(i=>i.currentStage==="cutting"&&selPartMarkNos.has(i.markNo));
             let cuttingStatus="pending";
             if(sheetIsCut) cuttingStatus="done";
@@ -5359,9 +5361,11 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     const markNoMap=getSelDrawingMarkNos();
     const selMarkNos=new Set(Object.keys(markNoMap).filter(mn=>markNoMap[mn].selected));
     // Build set of rmUnitIds already fully cut (from existing releases)
-    const alreadyCutRmUnits=new Set(
-      (releases||[]).flatMap(r=>(r.rmUnitAssignments||[]).filter(ru=>ru.cuttingComplete).map(ru=>ru.rmUnitId))
-    );
+    const alreadyCutRmUnits=new Set([
+      ...(releases||[]).flatMap(r=>(r.rmUnitAssignments||[]).filter(ru=>ru.cuttingComplete).map(ru=>ru.rmUnitId)),
+      // S2 — RM referenced by any cut record is spent and must not re-appear
+      ...(cutRecords||[]).map(cr=>cr.fromRmUnitId).filter(Boolean),
+    ]);
     const rmUnits=[];
     const seen=new Set();
     (nestingBatches||[]).forEach(batch=>{
@@ -5493,6 +5497,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 
     const baseTs=Date.now(); let instIdx=0;
     const newInstances=[];
+    const claimedRecIds=[]; // S3 — cut records claimed by the instances created below
     const nowIso=new Date().toISOString();
     selDrawings.forEach(({drawing,order,unitsToRelease,diId,instanceNo,totalInstances,uniqueId:diUniqueId})=>{
       const ca=contAsgnSnap[drawing.id]||{};
@@ -5506,6 +5511,15 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       const dInstNo = instanceNo || 1;
       const dInstTotal = totalInstances || drawing.qty || 1;
       const diUID = diUniqueId || buildDIUniqueId(orderPrefix, shortCode, dInstNo, dInstTotal);
+      // ── S3 — pool of UNCLAIMED cut records for this drawing, keyed by markNo ──
+      const claimPool={};
+      (cutRecords||[]).forEach(cr=>{
+        if(cr.drawingId!==drawing.id) return;
+        if(cr.claimedByInstanceId) return;
+        if(claimedRecIds.includes(cr.id)) return;
+        const k=cr.markNo||"";
+        (claimPool[k]=claimPool[k]||[]).push(cr.id);
+      });
       fabParts.forEach(part=>{
         // Find rmUnit containing this part
         const matchingRmUnit=rmUnits.find(ru=>ru.parts.some(p=>p.markNo===part.markNo));
@@ -5514,6 +5528,10 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         // Create one instance per physical piece
         for (let pieceNo = 1; pieceNo <= partQty; pieceNo++) {
           const uniqueId = buildPartUniqueId(diUID, part.markNo||"", pieceNo, partQty);
+          // S3 — claim one floating cut record for this piece, if one exists
+          const pool=claimPool[part.markNo||""]||[];
+          const claimedRecId=pool.length>0?pool.shift():null;
+          if(claimedRecId) claimedRecIds.push(claimedRecId);
           newInstances.push({
             instanceId:`INST-${baseTs}-${instIdx++}`,
             uniqueId,
@@ -5529,19 +5547,30 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             assignedContractorId:ca.contractorId||null,
             assignedContractorName:contractorName,
             pinnedEngineerId:ca.pinnedEngineerId||"",
-            assignedStage:"fit_up",currentStage:"cutting",currentStatus:"pending",
+            assignedStage:"fit_up",currentStage:claimedRecId?"fitup":"cutting",currentStatus:"pending",
+            ...(claimedRecId?{preCut:true,claimedCutRecordId:claimedRecId}:{}),
             rmUnitId:matchingRmUnit?.rmUnitId||"",
             cuttingContractorId:rmUnitAsgnEntry?.contractorId||"",
             cuttingContractorName:(contractors||[]).find(c=>c.id===rmUnitAsgnEntry?.contractorId)?.name||"",
             lotId:matchingRmUnit?.lotId||"",
             nestingRunId:null,barRef:null,batchNo:matchingRmUnit?.batchId||null,
-            cuttingBayUsed:"",stageHistory:[],defects:[],outboundCount:0,outboundHistory:[],
+            cuttingBayUsed:"",
+            stageHistory:claimedRecId?[{stage:"cutting",status:"pre_cut",at:nowIso,by:user.username,cutRecordId:claimedRecId}]:[],
+            defects:[],outboundCount:0,outboundHistory:[],
             qualityConcernFlag:false,rejectionCount:0,createdAt:nowIso,createdBy:user.username,
           });
         }
       });
     });
     if(newInstances.length>0) setInstances(prev=>[...prev,...newInstances]);
+    // ── S3 — mark claimed cut records against the instance that took them ──
+    if(claimedRecIds.length>0&&typeof setCutRecords==="function"){
+      const claimOwner={};
+      newInstances.forEach(i=>{ if(i.claimedCutRecordId) claimOwner[i.claimedCutRecordId]=i.instanceId; });
+      setCutRecords(prev=>(prev||[]).map(cr=>claimOwner[cr.id]
+        ? {...cr, claimedByInstanceId:claimOwner[cr.id], claimedAt:nowIso}
+        : cr));
+    }
 
     // Create Drawing Production Records (DPRs) — one per drawing
     const dprTs=Date.now();
@@ -12174,7 +12203,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       nestingBatches={nestingBatches||[]} purchaseReqs={purchaseReqs||[]}
       onBack={()=>setView("dashboard")} dprs={dprs||[]} setDprs={setDprs}
       drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances}
-      processTypes={processTypes||DEFAULT_PROCESS_TYPES} />
+      processTypes={processTypes||DEFAULT_PROCESS_TYPES}
+      cutRecords={cutRecords||[]} setCutRecords={setCutRecords} />
   );
 
   // ── Supervisor queue view ──
