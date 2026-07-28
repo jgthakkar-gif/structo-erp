@@ -11820,14 +11820,274 @@ const BlastPaintContractorQueue = ({ user, dprs, setDprs, orders, instances, set
 // Read-only analysis layer: checks which drawings/instances can be produced with
 // currently approved stock. Estimate only — real nesting confirms. Touches nothing
 // in MRP/PR/PO/GRN. Next build steps: nesting handoff + confirm/supersede chain.
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PRODUCTION NESTING — S4a
+// Selection unit is the RM NESTING (one MRP nest sheet = one RM), not the
+// drawing. Freezing NEVER touches the MRP nest: that stays as the procurement
+// record. A separate production nest is written and becomes the active cutting
+// plan. S4a offers "use as-is" and "exclude"; "re-nest" arrives in S4b once the
+// nesting engine (runNestingJob, App.jsx) is threaded down.
+// ═══════════════════════════════════════════════════════════════════════════
+const buildProductionNestNo = (productionNests) => {
+  const yr = new Date().getFullYear();
+  let max = 0;
+  (productionNests||[]).forEach(n=>{
+    const m=(n.id||"").match(/^PN-(\d{4})-(\d+)$/);
+    if(m&&+m[1]===yr) max=Math.max(max,+m[2]);
+  });
+  return `PN-${yr}-${String(max+1).padStart(3,"0")}`;
+};
+
+const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=[], cutRecords=[],
+                                productionNests=[], setProductionNests, onBack, onFrozen }) => {
+  const [decisions, setDecisions]   = useState({});   // rmUnitId -> "as_is" | "exclude"
+  const [confirmOpen, setConfirm]   = useState(false);
+  const [note, setNote]             = useState("");
+  const tn = (kg)=>((kg||0)/1000).toFixed(2)+" T";
+
+  // ── Scope of this plan ──────────────────────────────────────────────────
+  const selDrawingIds = new Set(selRows.map(r=>r.drawing.id));
+  // markNo -> {qty required, wt, drawingId, orderId, hasDxf}
+  const markInfo = {};
+  selRows.forEach(r=>{
+    const insts = r.n || 1;
+    (r.order.parts||[])
+      .filter(p=>p.drawingId===r.drawing.id&&(p.fabType||"").toLowerCase()==="fabricate")
+      .forEach(p=>{
+        const mn = p.markNo||"";
+        if(!mn) return;
+        const qty = (p.qtyPerDrg||p.clientQty||1)*insts;
+        const e = markInfo[mn] || (markInfo[mn]={qty:0,wt:0,drawingId:r.drawing.id,orderId:r.order.id,hasDxf:false});
+        e.qty += qty;
+        e.wt  += (p.clientUnitWt||0)*qty;
+        if(p.partLink) e.hasDxf = true;
+      });
+  });
+  const selMarkNos = new Set(Object.keys(markInfo));
+  const spentRm    = new Set((cutRecords||[]).map(cr=>cr.fromRmUnitId).filter(Boolean));
+  const unitWt     = (mn)=>{ const e=markInfo[mn]; return e&&e.qty>0 ? e.wt/e.qty : 0; };
+
+  // ── RM units from MRP nesting carrying any selected mark ────────────────
+  const rmUnits = [];
+  const seen = new Set();
+  (nestingBatches||[]).forEach(batch=>{
+    (batch.lots||[]).forEach(lot=>{
+      (lot.sheets||[]).forEach(sheet=>{
+        if(!sheet.rmUnitId || seen.has(sheet.rmUnitId)) return;
+        const parts = (sheet.parts||[]).map(p=>typeof p==="string"?{markNo:p,qty:1}:{markNo:p.markNo,qty:p.qty||1});
+        const sel   = parts.filter(p=>selMarkNos.has(p.markNo));
+        if(sel.length===0) return;
+        seen.add(sheet.rmUnitId);
+        rmUnits.push({
+          rmUnitId:sheet.rmUnitId, batchId:batch.id, lotId:lot.lotId, matCode:lot.matCode,
+          sheetDim:sheet.sheetDim||"", utilisPct:sheet.utilisPct||0,
+          parts, selParts:sel, otherCount:parts.length-sel.length,
+          selWt:sel.reduce((s,p)=>s+unitWt(p.markNo)*(p.qty||1),0),
+          sheetWt:calcSheetWt(sheet.rmUnitId)||0,
+          spent:spentRm.has(sheet.rmUnitId),
+        });
+      });
+    });
+  });
+
+  const decOf    = (ru)=> ru.spent ? "exclude" : (decisions[ru.rmUnitId]||"as_is");
+  const included = rmUnits.filter(ru=>decOf(ru)==="as_is");
+  const setDec   = (rmUnitId,v)=>setDecisions(p=>({...p,[rmUnitId]:v}));
+
+  // ── Completion — BOTH weight-% and nos (warnings, never hard blocks) ────
+  const coveredQty = {};
+  included.forEach(ru=>ru.selParts.forEach(p=>{ coveredQty[p.markNo]=(coveredQty[p.markNo]||0)+(p.qty||1); }));
+  let wtTotal=0, wtCovered=0, nosTotal=0, nosCovered=0;
+  Object.entries(markInfo).forEach(([mn,e])=>{
+    wtTotal += e.wt; nosTotal += e.qty;
+    const c = Math.min(e.qty, coveredQty[mn]||0);
+    nosCovered += c;
+    wtCovered  += unitWt(mn)*c;
+  });
+  const wtPct  = wtTotal>0 ? (wtCovered/wtTotal*100) : 0;
+  const nosPct = nosTotal>0 ? (nosCovered/nosTotal*100) : 0;
+  const noDxfMarks = Object.keys(markInfo).filter(mn=>!markInfo[mn].hasDxf && (coveredQty[mn]||0)>0);
+
+  const warnings = [];
+  if(wtPct>=99.5 && nosCovered<nosTotal)
+    warnings.push(`Weight is complete but ${nosTotal-nosCovered} of ${nosTotal} pieces are not covered — nos is the sole blocker.`);
+  else if(wtPct<99.5)
+    warnings.push(`${(100-wtPct).toFixed(1)}% by weight is not covered by the included RM (${tn(wtTotal-wtCovered)} short).`);
+  if(noDxfMarks.length>0)
+    warnings.push(`${noDxfMarks.length} mark(s) have no DXF link — shapes are approximate. Freeze is allowed, cutting will need the shop drawing.`);
+  const spentCount = rmUnits.filter(ru=>ru.spent).length;
+  if(spentCount>0)
+    warnings.push(`${spentCount} RM unit(s) are already spent (a cut record exists) and are excluded automatically.`);
+
+  const doFreeze = () => {
+    const id = buildProductionNestNo(productionNests);
+    const byMat = {};
+    included.forEach(ru=>{ (byMat[ru.matCode]=byMat[ru.matCode]||[]).push(ru); });
+    const lots = Object.entries(byMat).map(([mc,rus])=>({
+      lotId: `${id}-${(mc||"UNK").replace(/[^a-zA-Z0-9]/g,"-")}`,
+      matCode: mc,
+      // rmUnitId is CARRIED OVER unchanged — RM identity stays stable so every
+      // downstream reader (calcSheetWt, release wizard, cut records) still matches.
+      sheets: rus.map((ru,i)=>({
+        sheetNo:i+1, sheetDim:ru.sheetDim, utilisPct:ru.utilisPct,
+        parts:ru.parts, rmUnitId:ru.rmUnitId,
+        sourceBatchId:ru.batchId, sourceLotId:ru.lotId, plan:"as_is",
+      })),
+      parts: [...new Set(rus.flatMap(ru=>ru.parts.map(p=>p.markNo)))],
+    }));
+    const nest = {
+      id,
+      createdAt: today(),
+      createdBy: user?.username||user?.name||"",
+      status: "frozen",
+      frozenAt: new Date().toISOString(),
+      frozenBy: user?.username||user?.name||"",
+      source: "mrp_as_is",
+      orderIds: [...new Set(selRows.map(r=>r.order.id))],
+      drawingIds: [...selDrawingIds],
+      drawingInstanceIds: selRows.flatMap(r=>(r.dis||[]).filter(di=>selInstIds[di.id]).map(di=>di.id)),
+      sourceBatchIds: [...new Set(included.map(ru=>ru.batchId))],
+      decisions: rmUnits.reduce((a,ru)=>{ a[ru.rmUnitId]=decOf(ru); return a; },{}),
+      completion: {
+        wtCovered:+wtCovered.toFixed(1), wtTotal:+wtTotal.toFixed(1), wtPct:+wtPct.toFixed(1),
+        nosCovered, nosTotal, nosPct:+nosPct.toFixed(1),
+      },
+      warnings,
+      note: note||"",
+      lots,
+    };
+    if(setProductionNests) setProductionNests(prev=>[...(prev||[]), nest]);
+    setConfirm(false);
+    if(onFrozen) onFrozen(nest);
+  };
+
+  const Tile = ({label,value,sub,color}) => (
+    <div style={{ flex:1, minWidth:150, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:6, padding:"10px 12px" }}>
+      <div style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:0.5 }}>{label}</div>
+      <div style={{ fontSize:18, fontWeight:700, color:color||T.text, fontFamily:T.fontMono }}>{value}</div>
+      {sub && <div style={{ fontSize:10, color:T.textMid }}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Feasibility</button>
+        <div>
+          <div style={{ fontSize:16, fontWeight:700, color:T.text }}>Production Nesting — RM Selection</div>
+          <div style={{ fontSize:11, color:T.textMid }}>
+            One row per RM unit. Freezing writes a production nest and leaves the MRP nest untouched as the procurement record.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:14 }}>
+        <Tile label="RM units" value={`${included.length} / ${rmUnits.length}`} sub="included / found" />
+        <Tile label="Complete by weight" value={`${wtPct.toFixed(1)}%`} sub={`${tn(wtCovered)} of ${tn(wtTotal)}`}
+              color={wtPct>=99.5?T.green:wtPct>=80?T.amber:T.red} />
+        <Tile label="Complete by nos" value={`${nosCovered} / ${nosTotal}`} sub={`${nosPct.toFixed(1)}% of pieces`}
+              color={nosCovered>=nosTotal?T.green:T.amber} />
+        <Tile label="Drawings in plan" value={selDrawingIds.size} sub={`${selRows.reduce((s,r)=>s+(r.n||0),0)} instances`} />
+      </div>
+
+      {warnings.length>0 && (
+        <div style={{ background:T.bgInput, border:`1px solid ${T.amber}`, borderRadius:6, padding:"10px 12px", marginBottom:14 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginBottom:4 }}>Warnings — none of these block the freeze</div>
+          {warnings.map((w,i)=><div key={i} style={{ fontSize:11, color:T.textMid }}>• {w}</div>)}
+        </div>
+      )}
+
+      <div style={{ border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+          <thead><tr>
+            <TH>RM unit</TH><TH>Material</TH><TH>Size</TH>
+            <TH right>Util %</TH><TH right>Parts (this plan)</TH><TH right>Weight</TH><TH>Plan</TH>
+          </tr></thead>
+          <tbody>
+            {rmUnits.map(ru=>(
+              <tr key={ru.rmUnitId} style={{ opacity: decOf(ru)==="exclude" ? 0.5 : 1 }}>
+                <TD mono>{ru.rmUnitId}
+                  {ru.spent && <div style={{fontSize:10}}><Badge color="gray">already cut</Badge></div>}
+                </TD>
+                <TD mono>{ru.matCode}</TD>
+                <TD mono>{ru.sheetDim}</TD>
+                <TD right mono>{(ru.utilisPct||0).toFixed(1)}</TD>
+                <TD right mono>{ru.selParts.length}
+                  {ru.otherCount>0 && <span style={{ color:T.textLow }}> (+{ru.otherCount} other)</span>}
+                </TD>
+                <TD right mono>{tn(ru.selWt)}</TD>
+                <TD>
+                  <select value={decOf(ru)} disabled={ru.spent}
+                    onChange={e=>setDec(ru.rmUnitId, e.target.value)}
+                    style={{ ...css.input, fontSize:11, padding:"3px 6px", width:150 }}>
+                    <option value="as_is">Use MRP nest as-is</option>
+                    <option value="exclude">Exclude from this plan</option>
+                  </select>
+                </TD>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rmUnits.length===0 && (
+          <div style={{ padding:20, textAlign:"center", color:T.textLow, fontSize:12 }}>
+            No nested RM units carry parts from the selected drawings. Run MRP nesting first.
+          </div>
+        )}
+      </div>
+
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14, gap:12 }}>
+        <div style={{ fontSize:11, color:T.textLow }}>
+          Re-nesting an RM unit arrives in the next build step (S4b). Today every included unit is taken as MRP planned it.
+        </div>
+        <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          <button onClick={()=>setDecisions({})} style={css.btn.ghost}>Reset choices</button>
+          <button disabled={included.length===0} onClick={()=>setConfirm(true)}
+            style={{ ...css.btn.primary, ...(included.length===0?{opacity:0.45,cursor:"not-allowed"}:{}) }}>
+            Freeze production nest →
+          </button>
+        </div>
+      </div>
+
+      {confirmOpen && (
+        <Modal title="Freeze production nest" onClose={()=>setConfirm(false)}>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>
+            This creates <b style={{color:T.text}}>{buildProductionNestNo(productionNests)}</b> covering{" "}
+            <b style={{color:T.text}}>{included.length}</b> RM unit(s) at{" "}
+            <b style={{color:T.text}}>{wtPct.toFixed(1)}%</b> by weight and{" "}
+            <b style={{color:T.text}}>{nosCovered}/{nosTotal}</b> by nos.
+            The MRP nest is preserved unchanged.
+          </div>
+          {warnings.length>0 && (
+            <div style={{ background:T.bgInput, border:`1px solid ${T.amber}`, borderRadius:6, padding:10, marginBottom:10 }}>
+              {warnings.map((w,i)=><div key={i} style={{ fontSize:11, color:T.textMid }}>• {w}</div>)}
+            </div>
+          )}
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:11, color:T.textLow, marginBottom:4 }}>Planner note (optional)</div>
+            <textarea value={note} onChange={e=>setNote(e.target.value)} rows={2}
+              style={{ ...css.input, width:"100%", fontSize:12 }} placeholder="Why this plan — shortfalls, sequence, anything the floor should know" />
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
+            <button onClick={()=>setConfirm(false)} style={css.btn.ghost}>Cancel</button>
+            <button onClick={doFreeze} style={css.btn.primary}>Freeze</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
 const PLAN_PLATE_SET = new Set(["PLATE","PLATES","PL","FLAT PLATE","CHECKER PLATE"]);
 const planIsPlate = (section) => PLAN_PLATE_SET.has((section||"").toUpperCase().trim());
 
-const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBatches, purchaseReqs, productionStandards, onBack }) => {
+const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBatches, purchaseReqs, productionStandards, onBack,
+                               productionNests=[], setProductionNests, cutRecords=[] }) => {
   const [selOrderIds, setSelOrderIds] = useState([]);
   const [selInstIds, setSelInstIds]   = useState({});   // {diId:true}
   const [expanded, setExpanded]       = useState({});   // {drawingId:true}
   const [showBlocked, setShowBlocked] = useState(true);
+  const [nestScreen, setNestScreen]   = useState(false); // S4a — production nesting handoff
 
   const cutCap = productionStandards?.cuttingCapacity || { plateTPD:0, sectionTPD:0 };
 
@@ -12002,6 +12262,15 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
 
   const visibleRows = allRows.filter(r => showBlocked || r.status!=="blocked");
 
+  // S4a — handoff to production nesting. Placed AFTER every hook above so the
+  // early return can never change hook order (React #310).
+  if(nestScreen) return (
+    <ProductionNestScreen user={user} selRows={selRows} selInstIds={selInstIds}
+      nestingBatches={nestingBatches||[]} cutRecords={cutRecords||[]}
+      productionNests={productionNests||[]} setProductionNests={setProductionNests}
+      onBack={()=>setNestScreen(false)} onFrozen={()=>setNestScreen(false)} />
+  );
+
   return (
     <div>
       <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
@@ -12132,10 +12401,14 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
             {allRows.length===0 && <div style={{ padding:20, textAlign:"center", color:T.textLow, fontSize:12 }}>No unreleased instances in the selected project(s).</div>}
           </div>
 
-          {/* Handoff placeholder — next build step wires this to floor nesting */}
+          {/* S4a — handoff to production nesting (RM unit selection + freeze) */}
           <div style={{ display:"flex", justifyContent:"flex-end", marginTop:14, gap:10, alignItems:"center" }}>
-            <span style={{ fontSize:11, color:T.textLow }}>Next step (upcoming build): send selection to floor nesting with RM unit selection</span>
-            <button disabled style={{ ...css.btn.primary, opacity:0.45, cursor:"not-allowed" }}>Send to Nesting →</button>
+            <span style={{ fontSize:11, color:T.textLow }}>
+              {selRows.length===0 ? "Select at least one drawing instance to plan its RM"
+                : `${selRows.length} drawing(s) selected · ${selRows.reduce((s,r)=>s+(r.n||0),0)} instance(s)`}
+            </span>
+            <button disabled={selRows.length===0} onClick={()=>setNestScreen(true)}
+              style={{ ...css.btn.primary, ...(selRows.length===0?{opacity:0.45,cursor:"not-allowed"}:{}) }}>Send to Nesting →</button>
           </div>
         </>
       )}
@@ -12149,7 +12422,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
                             dprs, setDprs, correctionsLog, setCorrectionsLog, notifications, setNotifications,
                             ncrs, setNcrs, scrapQueue, setScrapQueue,
                             drawingInstances, setDrawingInstances, processTypes, appUsers,
-                            cutRecords=[], setCutRecords }) => {
+                            cutRecords=[], setCutRecords, productionNests=[], setProductionNests }) => {
   const [view, setView]           = useState(() => {
     const forced = sessionStorage.getItem('dev_target_view');
     if (forced) { sessionStorage.removeItem('dev_target_view'); return forced; }
@@ -12188,6 +12461,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   // ── Production Engineer DPR view ──
   if (view==="plan_production") return (
     <PlanProductionScreen user={user} orders={orders||[]} drawingInstances={drawingInstances||[]}
+      productionNests={productionNests||[]} setProductionNests={setProductionNests} cutRecords={cutRecords||[]}
       stock={stock||[]} nestingBatches={nestingBatches||[]} purchaseReqs={purchaseReqs||[]}
       productionStandards={productionStandards} onBack={()=>setView("dashboard")} />
   );

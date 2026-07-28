@@ -20229,6 +20229,7 @@ export default function App() {
   // instanceId — so parts of not-yet-released drawings are captured too. Read by the
   // "X/N already cut" display; later slices add RM-retirement and instance-claim.
   const [cutRecords, setCutRecords] = useState(() => initVal('structo_cutRecords', []));
+  const [productionNests, setProductionNests] = useState(() => initVal('structo_productionNests', []));
   const [machines, setMachines]         = useState(() => initVal('structo_machines', MACHINES_SEED));
   const [releases, setReleases]         = useState(() => { try { const s=localStorage.getItem('structo_releases'); return s?JSON.parse(s):[]; } catch { return []; } });
   const [qcRules, setQcRules]           = useState(() => { try { const s=localStorage.getItem('structo_qcRules'); return s?JSON.parse(s):[]; } catch { return []; } });
@@ -20412,6 +20413,7 @@ export default function App() {
   useEffect(() => { syncToSupa('structo_machines',          machines);          }, [machines]);
   useEffect(() => { syncToSupa('structo_pendingMaterials',  pendingMaterials);  }, [pendingMaterials]);
   useEffect(() => { syncToSupa('structo_cutRecords',        cutRecords);        }, [cutRecords]);
+  useEffect(() => { syncToSupa('structo_productionNests',   productionNests);   }, [productionNests]);
 
 
   // ── Load all data from Supabase on first mount (production only) ─────────────
@@ -20428,7 +20430,7 @@ export default function App() {
       "structo_drawingInstances","structo_processTypes","structo_outboundVendors","structo_outboundJobs",
       "structo_users","structo_bays","structo_paint","structo_materials",
       "structo_consumables","structo_approvedMakes","structo_tpiAgencies",
-      "structo_productionStandards","structo_pendingMaterials","structo_cutRecords",
+      "structo_productionStandards","structo_pendingMaterials","structo_cutRecords","structo_productionNests",
     ];
     supaLoadAll(KEYS).then(data => {
       // Production: Supabase is the ONLY source of truth.
@@ -20467,6 +20469,7 @@ export default function App() {
       setMachines(            data["structo_machines"]            ?? []);
       setPendingMaterials(    data["structo_pendingMaterials"]    ?? []);
       setCutRecords(          data["structo_cutRecords"]          ?? []);
+      setProductionNests(     data["structo_productionNests"]     ?? []);
       if (data["structo_users"]?.length>0)         setAppUsers(data["structo_users"]);
       if (data["structo_bays"]?.length>0)          setBays(data["structo_bays"]);
       if (data["structo_paint"]?.length>0)         setPaint(data["structo_paint"]);
@@ -22162,7 +22165,7 @@ export default function App() {
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} setClients={setClients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} ncrs={ncrs||[]} setNcrs={setNcrs} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} appUsers={appUsers||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} />;
+      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} ncrs={ncrs||[]} setNcrs={setNcrs} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} appUsers={appUsers||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} productionNests={productionNests||[]} setProductionNests={setProductionNests} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "notifications": return (
         <div>
