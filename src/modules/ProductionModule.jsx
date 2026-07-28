@@ -11840,10 +11840,13 @@ const buildProductionNestNo = (productionNests) => {
 };
 
 const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=[], cutRecords=[],
-                                productionNests=[], setProductionNests, onBack, onFrozen }) => {
-  const [decisions, setDecisions]   = useState({});   // rmUnitId -> "as_is" | "exclude"
+                                productionNests=[], setProductionNests, nestingService=null, onBack, onFrozen }) => {
+  const [decisions, setDecisions]   = useState({});   // rmUnitId -> "as_is" | "exclude" | "renest"
   const [confirmOpen, setConfirm]   = useState(false);
   const [note, setNote]             = useState("");
+  // S4b — re-nest workspace, keyed by matCode: {rawMats, status, pct, msg, error, sheets}
+  const [renest, setRenest]         = useState({});
+  const [runNo, setRunNo]           = useState(1);
   const tn = (kg)=>((kg||0)/1000).toFixed(2)+" T";
 
   // ── Scope of this plan ──────────────────────────────────────────────────
@@ -11893,11 +11896,110 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
 
   const decOf    = (ru)=> ru.spent ? "exclude" : (decisions[ru.rmUnitId]||"as_is");
   const included = rmUnits.filter(ru=>decOf(ru)==="as_is");
+  const toRenest = rmUnits.filter(ru=>decOf(ru)==="renest");
   const setDec   = (rmUnitId,v)=>setDecisions(p=>({...p,[rmUnitId]:v}));
+
+  // ── S4b — re-nested sheets count toward the plan exactly like as-is units ──
+  const renestUnits = Object.values(renest).flatMap(g=>(g&&g.status==="done"?(g.sheets||[]):[]));
+  const planUnits   = [...included, ...renestUnits];
+
+  // Groups awaiting a re-nest run, seeded from the source RM units' real sizes
+  const renestMatCodes = [...new Set(toRenest.map(ru=>ru.matCode))];
+  const parseDim = (dim) => {
+    const s = String(dim||"");
+    const m = s.match(/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)/i);
+    if(m) return { length:+m[1], width:+m[2] };
+    const l = s.match(/(\d+(?:\.\d+)?)/);
+    return { length: l?+l[1]:6000, width:100 };
+  };
+  useEffect(()=>{
+    setRenest(prev=>{
+      const next = {...prev};
+      renestMatCodes.forEach(mc=>{
+        if(next[mc]) return;
+        const src = rmUnits.filter(ru=>ru.matCode===mc && decOf(ru)==="renest");
+        const dims = {};
+        src.forEach(ru=>{ const k=ru.sheetDim||""; dims[k]=(dims[k]||0)+1; });
+        const rawMats = Object.entries(dims).map(([dim,qty],i)=>({ name:`Stock ${i+1}`, ...parseDim(dim), qty }));
+        next[mc] = { rawMats: rawMats.length?rawMats:[{name:"Stock 1",length:6000,width:100,qty:10}], status:"idle", pct:0, msg:"", error:"", sheets:[] };
+      });
+      Object.keys(next).forEach(mc=>{ if(!renestMatCodes.includes(mc)) delete next[mc]; });
+      return next;
+    });
+  }, [renestMatCodes.join("|")]);
+
+  const updRaw = (mc,i,f,v)=>setRenest(prev=>({...prev,[mc]:{...prev[mc],rawMats:prev[mc].rawMats.map((r,ix)=>ix===i?{...r,[f]:v}:r)}}));
+  const addRaw = (mc)=>setRenest(prev=>({...prev,[mc]:{...prev[mc],rawMats:[...prev[mc].rawMats,{name:`Stock ${prev[mc].rawMats.length+1}`,length:6000,width:100,qty:5}]}}));
+  const delRaw = (mc,i)=>setRenest(prev=>({...prev,[mc]:{...prev[mc],rawMats:prev[mc].rawMats.filter((_,ix)=>ix!==i)}}));
+
+  // ── S4b — the run. Calls the SAME engine + input builder MRP nesting uses;
+  //          they arrive as props (nestingService) because they are module-level
+  //          functions in App.jsx and App imports this module, not the reverse.
+  const runRenest = async (mc) => {
+    const g = renest[mc];
+    if(!g || !nestingService) return;
+    const src = rmUnits.filter(ru=>ru.matCode===mc && decOf(ru)==="renest");
+    const qtyByMark = {};
+    src.forEach(ru=>ru.selParts.forEach(p=>{ qtyByMark[p.markNo]=(qtyByMark[p.markNo]||0)+(p.qty||1); }));
+    const meta = {};
+    selRows.forEach(r=>(r.order.parts||[]).forEach(p=>{ if(qtyByMark[p.markNo]!=null && !meta[p.markNo]) meta[p.markNo]=p; }));
+    const parts = Object.entries(qtyByMark).map(([mn,qty])=>{
+      const p = meta[mn]||{};
+      return { markNo:mn, length:p.length||p.unitLen||0, width:p.width||0,
+               totalQty:qty, partLink:p.partLink||"", section:p.section||"" };
+    });
+    if(parts.length===0) return;
+    const isPlate = nestingService.isPlateSection ? nestingService.isPlateSection(parts[0].section) : false;
+    setRenest(prev=>({...prev,[mc]:{...prev[mc],status:"running",pct:2,msg:"Fetching DXF files…",error:"",sheets:[]}}));
+    try {
+      const dxfMap = {};
+      for(const p of parts.filter(x=>x.partLink)){
+        const b64 = await nestingService.fetchDxfBase64(p.partLink);
+        if(b64) dxfMap[p.markNo] = b64;
+      }
+      const input  = await nestingService.buildNestingInput(parts, g.rawMats, "PLASMA-1", `PN-R${runNo}-${mc}`, dxfMap);
+      const result = await nestingService.runNestingJob(
+        input,
+        (pct,msg)=>setRenest(prev=>({...prev,[mc]:{...prev[mc],pct,msg}})),
+        nestingService.getNestingToken
+      );
+      const rawPlates  = result?.Result?.RawPlatesNested || [];
+      const partsOrder = input?.Context?.Problem?.Parts || [];
+      const np         = result?.Result?.NP ?? 0;
+      const base       = src[0]?.rmUnitId || mc;
+      const sheets = rawPlates.map((rp,idx)=>{
+        const rm = g.rawMats[rp.RawPlateIndex] || g.rawMats[0] || {};
+        const pl = (rp.PartsNested||[]).reduce((acc,pn)=>{
+          const p = partsOrder[pn.PartIndex];
+          if(p){ const q = pn.Quantity ?? 1;
+                 const ex = acc.find(a=>a.markNo===p.Name);
+                 if(ex) ex.qty += q; else acc.push({markNo:p.Name, qty:q}); }
+          return acc;
+        },[]);
+        return {
+          rmUnitId: `${base}-R${runNo}.${idx+1}`,
+          matCode: mc,
+          sheetDim: isPlate ? `${rm.length}×${rm.width}` : `${rm.length}mm`,
+          utilisPct: rp.LengthUsed != null ? +((1-(rp.Scrap||0))*100).toFixed(1) : np,
+          parts: pl,
+          selParts: pl.filter(x=>selMarkNos.has(x.markNo)),
+          plan: "renest",
+          supersedes: src.map(s=>s.rmUnitId),
+          sheetWt: 0,
+          otherCount: 0,
+          selWt: pl.filter(x=>selMarkNos.has(x.markNo)).reduce((s,p)=>s+unitWt(p.markNo)*(p.qty||1),0),
+        };
+      });
+      setRenest(prev=>({...prev,[mc]:{...prev[mc],status:"done",pct:100,msg:`${sheets.length} sheet(s) nested`,sheets}}));
+      setRunNo(n=>n+1);
+    } catch(e) {
+      setRenest(prev=>({...prev,[mc]:{...prev[mc],status:"error",error:e?.message||"Nesting run failed"}}));
+    }
+  };
 
   // ── Completion — BOTH weight-% and nos (warnings, never hard blocks) ────
   const coveredQty = {};
-  included.forEach(ru=>ru.selParts.forEach(p=>{ coveredQty[p.markNo]=(coveredQty[p.markNo]||0)+(p.qty||1); }));
+  planUnits.forEach(ru=>(ru.selParts||[]).forEach(p=>{ coveredQty[p.markNo]=(coveredQty[p.markNo]||0)+(p.qty||1); }));
   let wtTotal=0, wtCovered=0, nosTotal=0, nosCovered=0;
   Object.entries(markInfo).forEach(([mn,e])=>{
     wtTotal += e.wt; nosTotal += e.qty;
@@ -11916,6 +12018,9 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
     warnings.push(`${(100-wtPct).toFixed(1)}% by weight is not covered by the included RM (${tn(wtTotal-wtCovered)} short).`);
   if(noDxfMarks.length>0)
     warnings.push(`${noDxfMarks.length} mark(s) have no DXF link — shapes are approximate. Freeze is allowed, cutting will need the shop drawing.`);
+  const pendingRenest = renestMatCodes.filter(mc=>(renest[mc]?.status)!=="done");
+  if(pendingRenest.length>0)
+    warnings.push(`${pendingRenest.length} material group(s) are marked for re-nesting but have not been run yet — their parts are not counted as covered.`);
   const spentCount = rmUnits.filter(ru=>ru.spent).length;
   if(spentCount>0)
     warnings.push(`${spentCount} RM unit(s) are already spent (a cut record exists) and are excluded automatically.`);
@@ -11923,7 +12028,7 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   const doFreeze = () => {
     const id = buildProductionNestNo(productionNests);
     const byMat = {};
-    included.forEach(ru=>{ (byMat[ru.matCode]=byMat[ru.matCode]||[]).push(ru); });
+    planUnits.forEach(ru=>{ (byMat[ru.matCode]=byMat[ru.matCode]||[]).push(ru); });
     const lots = Object.entries(byMat).map(([mc,rus])=>({
       lotId: `${id}-${(mc||"UNK").replace(/[^a-zA-Z0-9]/g,"-")}`,
       matCode: mc,
@@ -11932,7 +12037,9 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
       sheets: rus.map((ru,i)=>({
         sheetNo:i+1, sheetDim:ru.sheetDim, utilisPct:ru.utilisPct,
         parts:ru.parts, rmUnitId:ru.rmUnitId,
-        sourceBatchId:ru.batchId, sourceLotId:ru.lotId, plan:"as_is",
+        sourceBatchId:ru.batchId||null, sourceLotId:ru.lotId||null,
+        plan: ru.plan || "as_is",
+        ...(ru.supersedes?{supersedes:ru.supersedes}:{}),
       })),
       parts: [...new Set(rus.flatMap(ru=>ru.parts.map(p=>p.markNo)))],
     }));
@@ -11943,7 +12050,8 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
       status: "frozen",
       frozenAt: new Date().toISOString(),
       frozenBy: user?.username||user?.name||"",
-      source: "mrp_as_is",
+      source: renestUnits.length>0 ? (included.length>0 ? "mixed" : "renest") : "mrp_as_is",
+      supersededRmUnitIds: [...new Set(renestUnits.flatMap(s=>s.supersedes||[]))],
       orderIds: [...new Set(selRows.map(r=>r.order.id))],
       drawingIds: [...selDrawingIds],
       drawingInstanceIds: selRows.flatMap(r=>(r.dis||[]).filter(di=>selInstIds[di.id]).map(di=>di.id)),
@@ -12022,6 +12130,7 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
                     onChange={e=>setDec(ru.rmUnitId, e.target.value)}
                     style={{ ...css.input, fontSize:11, padding:"3px 6px", width:150 }}>
                     <option value="as_is">Use MRP nest as-is</option>
+                    <option value="renest">Re-nest this RM</option>
                     <option value="exclude">Exclude from this plan</option>
                   </select>
                 </TD>
@@ -12036,14 +12145,103 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
         )}
       </div>
 
+
+      {renestMatCodes.length>0 && (
+        <div style={{ marginTop:14, border:`1px solid ${T.border}`, borderRadius:6, padding:12 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:T.text, marginBottom:2 }}>Re-nesting</div>
+          <div style={{ fontSize:11, color:T.textMid, marginBottom:10 }}>
+            Runs the same nesting engine MRP uses. Stock sizes are seeded from the RM units you marked — adjust them to what the floor actually holds, then run.
+          </div>
+          {!nestingService && (
+            <div style={{ fontSize:11, color:T.red, marginBottom:8 }}>
+              Nesting service unavailable in this context — re-nesting cannot run.
+            </div>
+          )}
+          {renestMatCodes.map(mc=>{
+            const g = renest[mc]||{};
+            const src = rmUnits.filter(ru=>ru.matCode===mc && decOf(ru)==="renest");
+            return (
+              <div key={mc} style={{ borderTop:`1px solid ${T.border}`, paddingTop:10, marginTop:10 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                  <div>
+                    <div style={{ fontSize:12, fontWeight:700, color:T.text, fontFamily:T.fontMono }}>{mc}</div>
+                    <div style={{ fontSize:11, color:T.textMid }}>
+                      {src.length} RM unit(s) marked · {new Set(src.flatMap(s=>s.selParts.map(p=>p.markNo))).size} mark(s)
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                    {g.status==="done" && <Badge color="green">{g.sheets?.length||0} sheet(s)</Badge>}
+                    {g.status==="error" && <Badge color="red">Failed</Badge>}
+                    <button disabled={!nestingService||g.status==="running"} onClick={()=>runRenest(mc)}
+                      style={{ ...css.btn.primary, fontSize:11, padding:"4px 10px",
+                        ...((!nestingService||g.status==="running")?{opacity:0.45,cursor:"not-allowed"}:{}) }}>
+                      {g.status==="running" ? "Running…" : g.status==="done" ? "Re-run" : "Run nesting"}
+                    </button>
+                  </div>
+                </div>
+
+                {g.status==="running" && (
+                  <div style={{ marginTop:8 }}>
+                    <div style={{ height:6, background:T.bgInput, borderRadius:3, overflow:"hidden" }}>
+                      <div style={{ width:`${g.pct||0}%`, height:"100%", background:T.teal||T.green, transition:"width .3s" }} />
+                    </div>
+                    <div style={{ fontSize:10, color:T.textMid, marginTop:3 }}>{g.msg||""}</div>
+                  </div>
+                )}
+                {g.status==="error" && <div style={{ fontSize:11, color:T.red, marginTop:6 }}>{g.error}</div>}
+
+                {g.status!=="running" && (
+                  <div style={{ marginTop:8 }}>
+                    <div style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:0.5, marginBottom:4 }}>Stock available to nest into</div>
+                    <table style={{ borderCollapse:"collapse", fontSize:11 }}>
+                      <thead><tr><TH>Name</TH><TH right>Length</TH><TH right>Width</TH><TH right>Qty</TH><TH> </TH></tr></thead>
+                      <tbody>
+                        {(g.rawMats||[]).map((r,i)=>(
+                          <tr key={i}>
+                            <TD><input value={r.name||""} onChange={e=>updRaw(mc,i,"name",e.target.value)} style={{ ...css.input, fontSize:11, padding:"2px 6px", width:90 }} /></TD>
+                            <TD right><input type="number" value={r.length} onChange={e=>updRaw(mc,i,"length",+e.target.value||0)} style={{ ...css.input, fontSize:11, padding:"2px 6px", width:80, textAlign:"right" }} /></TD>
+                            <TD right><input type="number" value={r.width} onChange={e=>updRaw(mc,i,"width",+e.target.value||0)} style={{ ...css.input, fontSize:11, padding:"2px 6px", width:80, textAlign:"right" }} /></TD>
+                            <TD right><input type="number" value={r.qty} onChange={e=>updRaw(mc,i,"qty",+e.target.value||0)} style={{ ...css.input, fontSize:11, padding:"2px 6px", width:60, textAlign:"right" }} /></TD>
+                            <TD><button onClick={()=>delRaw(mc,i)} style={{ ...css.btn.ghost, fontSize:10, padding:"2px 6px" }}>Remove</button></TD>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <button onClick={()=>addRaw(mc)} style={{ ...css.btn.ghost, fontSize:11, padding:"3px 8px", marginTop:6 }}>+ Add stock size</button>
+                  </div>
+                )}
+
+                {g.status==="done" && (g.sheets||[]).length>0 && (
+                  <div style={{ marginTop:8 }}>
+                    <div style={{ fontSize:10, color:T.textLow, textTransform:"uppercase", letterSpacing:0.5, marginBottom:4 }}>Result — these replace the marked RM units in this plan</div>
+                    <table style={{ borderCollapse:"collapse", fontSize:11, width:"100%" }}>
+                      <thead><tr><TH>New RM unit</TH><TH>Size</TH><TH right>Util %</TH><TH right>Parts</TH></tr></thead>
+                      <tbody>
+                        {g.sheets.map(s=>(
+                          <tr key={s.rmUnitId}>
+                            <TD mono>{s.rmUnitId}</TD><TD mono>{s.sheetDim}</TD>
+                            <TD right mono>{(s.utilisPct||0).toFixed(1)}</TD>
+                            <TD right mono>{s.parts.reduce((a,p)=>a+(p.qty||1),0)}</TD>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14, gap:12 }}>
         <div style={{ fontSize:11, color:T.textLow }}>
-          Re-nesting an RM unit arrives in the next build step (S4b). Today every included unit is taken as MRP planned it.
+          {planUnits.length} RM unit(s) in this plan{renestUnits.length>0?` (${renestUnits.length} re-nested)`:""}.
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
           <button onClick={()=>setDecisions({})} style={css.btn.ghost}>Reset choices</button>
-          <button disabled={included.length===0} onClick={()=>setConfirm(true)}
-            style={{ ...css.btn.primary, ...(included.length===0?{opacity:0.45,cursor:"not-allowed"}:{}) }}>
+          <button disabled={planUnits.length===0} onClick={()=>setConfirm(true)}
+            style={{ ...css.btn.primary, ...(planUnits.length===0?{opacity:0.45,cursor:"not-allowed"}:{}) }}>
             Freeze production nest →
           </button>
         </div>
@@ -12053,7 +12251,7 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
         <Modal title="Freeze production nest" onClose={()=>setConfirm(false)}>
           <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>
             This creates <b style={{color:T.text}}>{buildProductionNestNo(productionNests)}</b> covering{" "}
-            <b style={{color:T.text}}>{included.length}</b> RM unit(s) at{" "}
+            <b style={{color:T.text}}>{planUnits.length}</b> RM unit(s) at{" "}
             <b style={{color:T.text}}>{wtPct.toFixed(1)}%</b> by weight and{" "}
             <b style={{color:T.text}}>{nosCovered}/{nosTotal}</b> by nos.
             The MRP nest is preserved unchanged.
@@ -12082,7 +12280,7 @@ const PLAN_PLATE_SET = new Set(["PLATE","PLATES","PL","FLAT PLATE","CHECKER PLAT
 const planIsPlate = (section) => PLAN_PLATE_SET.has((section||"").toUpperCase().trim());
 
 const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBatches, purchaseReqs, productionStandards, onBack,
-                               productionNests=[], setProductionNests, cutRecords=[] }) => {
+                               productionNests=[], setProductionNests, cutRecords=[], nestingService=null }) => {
   const [selOrderIds, setSelOrderIds] = useState([]);
   const [selInstIds, setSelInstIds]   = useState({});   // {diId:true}
   const [expanded, setExpanded]       = useState({});   // {drawingId:true}
@@ -12268,6 +12466,7 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
     <ProductionNestScreen user={user} selRows={selRows} selInstIds={selInstIds}
       nestingBatches={nestingBatches||[]} cutRecords={cutRecords||[]}
       productionNests={productionNests||[]} setProductionNests={setProductionNests}
+      nestingService={nestingService}
       onBack={()=>setNestScreen(false)} onFrozen={()=>setNestScreen(false)} />
   );
 
@@ -12422,7 +12621,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
                             dprs, setDprs, correctionsLog, setCorrectionsLog, notifications, setNotifications,
                             ncrs, setNcrs, scrapQueue, setScrapQueue,
                             drawingInstances, setDrawingInstances, processTypes, appUsers,
-                            cutRecords=[], setCutRecords, productionNests=[], setProductionNests }) => {
+                            cutRecords=[], setCutRecords, productionNests=[], setProductionNests, nestingService=null }) => {
   const [view, setView]           = useState(() => {
     const forced = sessionStorage.getItem('dev_target_view');
     if (forced) { sessionStorage.removeItem('dev_target_view'); return forced; }
@@ -12462,6 +12661,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   if (view==="plan_production") return (
     <PlanProductionScreen user={user} orders={orders||[]} drawingInstances={drawingInstances||[]}
       productionNests={productionNests||[]} setProductionNests={setProductionNests} cutRecords={cutRecords||[]}
+      nestingService={nestingService}
       stock={stock||[]} nestingBatches={nestingBatches||[]} purchaseReqs={purchaseReqs||[]}
       productionStandards={productionStandards} onBack={()=>setView("dashboard")} />
   );
