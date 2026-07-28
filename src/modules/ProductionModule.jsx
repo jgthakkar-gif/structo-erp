@@ -4625,7 +4625,7 @@ const DrawingProgressGrid = ({ drawing, order, instances, onBack }) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 const OUTBOUND_TYPES = ["Bending","Rolling","Galvanising","Hot Dip Galvanising","Powder Coating","Other"];
 
-const OutboundProcessing = ({ user, instances, setInstances, orders, vendors, onBack }) => {
+const OutboundProcessing = ({ user, instances, setInstances, orders, vendors, onBack, setCutRecords }) => {
   const [selInsts, setSelInsts]   = useState(new Set());
   const [form, setForm]           = useState({ type:"Bending", vendorId:"", expectedReturn:"", notes:"" });
   const [viewRet, setViewRet]     = useState(false); // show returns panel
@@ -4687,6 +4687,25 @@ const OutboundProcessing = ({ user, instances, setInstances, orders, vendors, on
   };
 
   const doReturn = (instId) => {
+    // ── S5 — if the vendor did the cutting, the piece comes back already cut.
+    // Same record, same store, same dedupe as in-house cutting: the RM is spent
+    // (S2 retires it) and the piece must never be cut again.
+    const retInst = (instances||[]).find(i=>i.instanceId===instId);
+    const retOb   = (retInst?.outboundHistory||[]).slice(-1)[0];
+    if(setCutRecords && retInst && outboundDidCutting(retOb)){
+      const ts = new Date().toISOString();
+      const proposed = [makeCutRecord({
+        drawingId: retInst.drawingId, orderId: retInst.orderId, markNo: retInst.markNo, qty: 1,
+        fromRmUnitId: retInst.rmUnitId || "",
+        fromInstanceId: retInst.instanceId,
+        claimedByInstanceId: retInst.instanceId,   // this piece is the one that came back
+        source: "outbound_return", ts, by: user?.username,
+      })];
+      setCutRecords(prev => {
+        const add = mergeCutRecords(prev||[], proposed);
+        return add.length ? [...(prev||[]), ...add] : (prev||[]);
+      });
+    }
     setInstances(prev => prev.map(i => {
       if (i.instanceId !== instId) return i;
       const hist = [...(i.outboundHistory||[])];
@@ -5210,6 +5229,27 @@ const buildEffectiveNestSource = (nestingBatches, productionNests) => {
 // ═══════════════════════════════════════════════════════════════════════════
 const cutRecKey = (r) => `${r.drawingId}|${r.markNo}|${r.fromRmUnitId}`;
 
+// The single definition of what a cut record looks like. In-house cutting,
+// the cutting_qc inspection and outbound returns all build theirs from here,
+// so the shape can never drift between the three.
+const makeCutRecord = ({ drawingId, orderId, markNo, qty=1, fromRmUnitId,
+                        fromInstanceId=null, claimedByInstanceId=null, source, ts, by }) => ({
+  id: `CUT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+  drawingId, orderId, markNo, qty,
+  fromRmUnitId, fromInstanceId, claimedByInstanceId,
+  source, cutAt: ts, cutBy: by||"",
+});
+
+// Did the work this instance went out for actually include cutting? If so the
+// vendor cut it, the RM is spent, and the returning piece must not be cut again.
+const outboundDidCutting = (ob) => {
+  if(!ob) return false;
+  if(/cut/i.test(ob.type||"")) return true;
+  if((ob.tasks||[]).some(t=>/cut/i.test(typeof t==="string"?t:(t?.name||t?.label||"")))) return true;
+  if((ob.stageAtDispatch||"")==="cutting") return true;   // left before in-house cutting
+  return false;
+};
+
 const mergeCutRecords = (existing, proposed) => {
   const seenInstances = new Set();
   const totals = {};
@@ -5245,15 +5285,14 @@ const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, 
   const recs = [];
   const onUnit = (instances||[]).filter(i=>i.rmUnitId===rmUnitId);
   const orderScope = onUnit[0]?.orderId || null;
-  const mkId = () => `CUT-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
 
   onUnit.forEach(i=>{
-    recs.push({
-      id: mkId(), drawingId:i.drawingId, orderId:i.orderId, markNo:i.markNo, qty:1,
+    recs.push(makeCutRecord({
+      drawingId:i.drawingId, orderId:i.orderId, markNo:i.markNo, qty:1,
       fromRmUnitId: rmUnitId, fromInstanceId:i.instanceId,
       claimedByInstanceId:i.instanceId,          // already released → claimed by itself
-      source:"rm_cutting", cutAt:ts, cutBy:user?.username||"",
-    });
+      source:"rm_cutting", ts, by:user?.username,
+    }));
   });
 
   const releasedMarks = new Set(onUnit.map(i=>i.markNo));
@@ -5265,11 +5304,11 @@ const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, 
                || (orders||[]).find(o=>(o.parts||[]).some(x=>x.markNo===mn));
     const part  = order && (order.parts||[]).find(x=>x.markNo===mn);
     if(!order || !part) return;                  // can't identify it — never guess
-    recs.push({
-      id: mkId(), drawingId:part.drawingId, orderId:order.id, markNo:mn, qty,
+    recs.push(makeCutRecord({
+      drawingId:part.drawingId, orderId:order.id, markNo:mn, qty,
       fromRmUnitId: rmUnitId, fromInstanceId:null, claimedByInstanceId:null,
-      source:"rm_cutting", cutAt:ts, cutBy:user?.username||"",
-    });
+      source:"rm_cutting", ts, by:user?.username,
+    }));
   });
   return recs;
 };
@@ -12875,7 +12914,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
 
   // ── Outbound processing view ──
   if (view==="outbound") return (
-    <OutboundProcessing user={user} instances={instances} setInstances={setInstances}
+    <OutboundProcessing user={user} instances={instances} setInstances={setInstances} setCutRecords={setCutRecords}
       orders={orders} vendors={vendors||[]} onBack={()=>setView("dashboard")} />
   );
 
