@@ -4989,6 +4989,30 @@ const buildSplitIndex = (batches) => {
   return { map, byParent };
 };
 
+// ── Production-nest discard: what a frozen nest owns, and what stands in the way ──
+// A release is a PLAN and can be reverted; a CUT is physical and cannot. So a
+// release only warns, while any cut record against the nest's RM units blocks.
+const nestRmUnitIds = (nest) => new Set(
+  ((nest&&nest.lots)||[]).flatMap(l=>(l.sheets||[]).map(x=>x.rmUnitId).filter(Boolean))
+);
+const nestDiscardBlockers = (nest, cutRecords, releases) => {
+  const ids = nestRmUnitIds(nest);
+  const cuts = (cutRecords||[]).filter(cr=>cr && ids.has(cr.fromRmUnitId));
+  const cutRmUnits = [...new Set(cuts.map(cr=>cr.fromRmUnitId))];
+  const dwgIds = (nest&&nest.drawingIds)||[];
+  const rels = (releases||[]).filter(r=> !!r && (
+    (r.rmUnitAssignments||[]).some(ru=>ru&&ids.has(ru.rmUnitId)) ||
+    (r.drawings||[]).some(d=>dwgIds.includes(d&&d.drawingId?d.drawingId:d))
+  ));
+  return {
+    rmUnitCount: ids.size,
+    cutRmUnits,
+    cutCount: cuts.length,
+    blocked: cutRmUnits.length>0,          // cutting has started — nest is locked
+    releases: rels,                        // warn only
+  };
+};
+
 const markNoOf   = (raw)   => typeof raw==="string" ? raw : ((raw && raw.markNo) || "");
 const parentMark = (idx,mn)=> (idx && idx.map && idx.map[mn] && idx.map[mn].parent) || mn;
 const markShare  = (idx,mn)=> (idx && idx.map && idx.map[mn] && idx.map[mn].share!=null) ? idx.map[mn].share : 1;
@@ -12348,6 +12372,10 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   // S4b — re-nest workspace, keyed by matCode: {rawMats, status, pct, msg, error, sheets}
   const [renest, setRenest]         = useState({});
   const [runNo, setRunNo]           = useState(1);
+  // Nesting Center auth. MSAL redirect does not survive some browsers, so the two
+  // MRP screens let you paste a Bearer token instead — same affordance here.
+  const [manualToken, setManualToken] = useState("");
+  const [showToken, setShowToken]     = useState(false);
   const tn = (kg)=>((kg||0)/1000).toFixed(2)+" T";
 
   // ── Scope of this plan ──────────────────────────────────────────────────
@@ -12465,10 +12493,21 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
         if(b64) dxfMap[p.markNo] = b64;
       }
       const input  = await nestingService.buildNestingInput(parts, g.rawMats, "PLASMA-1", `PN-R${runNo}-${mc}`, dxfMap);
+      // Manual token first, MSAL second — mirrors NestExportModal and MRPNestExport.
+      const manualTok = (manualToken||"").trim();
+      const getToken = async () => {
+        if(manualTok) return manualTok;
+        try { return await nestingService.getNestingToken(); }
+        catch(authErr){
+          if(authErr && authErr.isMsalRedirect)
+            throw new Error("Nesting Center login could not open in this browser — paste a Bearer token above and run again.");
+          throw authErr;
+        }
+      };
       const result = await nestingService.runNestingJob(
         input,
         (pct,msg)=>setRenest(prev=>({...prev,[mc]:{...prev[mc],pct,msg}})),
-        nestingService.getNestingToken
+        getToken
       );
       const rawPlates  = result?.Result?.RawPlatesNested || [];
       const partsOrder = input?.Context?.Problem?.Parts || [];
@@ -12598,6 +12637,12 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
           <div style={{ fontSize:16, fontWeight:700, color:T.text }}>Production Nesting — RM Selection</div>
           <div style={{ fontSize:11, color:T.textMid }}>
             One row per RM unit. Freezing writes a production nest and leaves the MRP nest untouched as the procurement record.
+            {selRows.length>0 && (
+              <div style={{ marginTop:4, color:T.textMid }}>
+                Planning <b>{selRows.length}</b> drawing{selRows.length!==1?"s":""} · <b>{selRows.reduce((a,r)=>a+(r.n||1),0)}</b> instance{selRows.reduce((a,r)=>a+(r.n||1),0)!==1?"s":""} from <b>{[...new Set(selRows.map(r=>r.order&&(r.order.orderNo||r.order.id)).filter(Boolean))].join(", ")}</b>
+                <span style={{ color:T.textLow }}> — {[...new Set(selRows.map(r=>r.drawing&&r.drawing.drawingNo).filter(Boolean))].slice(0,6).join(", ")}{[...new Set(selRows.map(r=>r.drawing&&r.drawing.drawingNo).filter(Boolean))].length>6?" …":""}</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -12622,18 +12667,25 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
           <thead><tr>
             <TH>RM unit</TH><TH>Material</TH><TH>Size</TH>
-            <TH right>Util %</TH><TH right>Parts (this plan)</TH><TH right>Weight</TH><TH>Plan</TH>
+            <TH right>Util %</TH><TH right>Marks · Pcs (this plan)</TH><TH right>Weight</TH><TH>Plan</TH>
           </tr></thead>
           <tbody>
             {rmUnits.map(ru=>(
               <tr key={ru.rmUnitId} style={{ opacity: decOf(ru)==="exclude" ? 0.5 : 1 }}>
                 <TD mono>{ru.rmUnitId}
+                  {ru.selParts.some(x=>parentMark(splitIdx,x.markNo)!==x.markNo) && (
+                    <span
+                      title={ru.selParts.filter(x=>parentMark(splitIdx,x.markNo)!==x.markNo)
+                        .map(x=>`${x.markNo} → part of ${parentMark(splitIdx,x.markNo)}`).join(", ")}
+                      style={{ marginLeft:6, fontSize:9, fontWeight:700, color:T.amber }}>SPLICED</span>
+                  )}
                   {ru.spent && <div style={{fontSize:10}}><Badge color="gray">already cut</Badge></div>}
                 </TD>
                 <TD mono>{ru.matCode}</TD>
                 <TD mono>{ru.sheetDim}</TD>
                 <TD right mono>{(ru.utilisPct||0).toFixed(1)}</TD>
                 <TD right mono>{ru.selParts.length}
+                  <span style={{ color:T.textLow }}> · {ru.selParts.reduce((a,x)=>a+(x.qty||1),0)} pcs</span>
                   {ru.otherCount>0 && <span style={{ color:T.textLow }}> (+{ru.otherCount} other)</span>}
                 </TD>
                 <TD right mono>{tn(ru.selWt)}</TD>
@@ -12669,6 +12721,23 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
               Nesting service unavailable in this context — re-nesting cannot run.
             </div>
           )}
+          <div style={{ borderTop:`1px solid ${T.border}`, paddingTop:10, marginTop:8 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <span style={{ fontSize:11, fontWeight:700, color:manualToken.trim()?T.green:T.amber }}>
+                {manualToken.trim()?"✓ Token set — API ready":"Paste Bearer token to run via API"}
+              </span>
+              <button onClick={()=>setShowToken(v=>!v)} style={{ ...css.btn.ghost, fontSize:10, padding:"2px 6px" }}>
+                {showToken?"hide ▲":"show ▼"}
+              </button>
+            </div>
+            <div style={{ fontSize:10, color:T.textMid, marginBottom:6 }}>
+              Same token the MRP nesting screens use. Needed when the Nesting Center login window cannot open in this browser.
+            </div>
+            {showToken && <textarea value={manualToken} onChange={e=>setManualToken(e.target.value)}
+              placeholder="eyJ0eXAiOiJKV1QiLCJhbGci..." rows={2}
+              style={{ width:"100%", background:T.bgInput, border:`1px solid ${T.borderHi}`, borderRadius:4,
+                       padding:"6px 8px", color:T.text, fontSize:11, fontFamily:T.fontMono, resize:"vertical", boxSizing:"border-box" }} />}
+          </div>
           {renestMatCodes.map(mc=>{
             const g = renest[mc]||{};
             const src = rmUnits.filter(ru=>ru.matCode===mc && decOf(ru)==="renest");
@@ -12792,12 +12861,15 @@ const PLAN_PLATE_SET = new Set(["PLATE","PLATES","PL","FLAT PLATE","CHECKER PLAT
 const planIsPlate = (section) => PLAN_PLATE_SET.has((section||"").toUpperCase().trim());
 
 const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBatches, purchaseReqs, productionStandards, onBack,
-                               productionNests=[], setProductionNests, cutRecords=[], nestingService=null }) => {
+                               productionNests=[], setProductionNests, cutRecords=[], nestingService=null, releases=[] }) => {
   const [selOrderIds, setSelOrderIds] = useState([]);
   const [selInstIds, setSelInstIds]   = useState({});   // {diId:true}
   const [expanded, setExpanded]       = useState({});   // {drawingId:true}
   const [showBlocked, setShowBlocked] = useState(true);
   const [nestScreen, setNestScreen]   = useState(false); // S4a — production nesting handoff
+  const [showNests, setShowNests]     = useState(false); // frozen production nests panel
+  const [discardFor, setDiscardFor]   = useState(null);  // nest pending discard
+  const [discardNote, setDiscardNote] = useState("");
 
   const cutCap = productionStandards?.cuttingCapacity || { plateTPD:0, sectionTPD:0 };
 
@@ -13046,6 +13118,115 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
             </InfoBanner>
           )}
 
+          {/* ── Frozen production nests — freeze is no longer one-way ────────── */}
+          {(() => {
+            const frozen = (productionNests||[]).filter(n=>n&&n.status==="frozen");
+            if(frozen.length===0) return null;
+            return (
+              <div style={{ ...css.card, marginBottom:12 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ fontSize:13, fontWeight:700, color:T.text }}>
+                    Frozen production nests ({frozen.length})
+                  </div>
+                  <button onClick={()=>setShowNests(v=>!v)} style={css.btn.ghost}>{showNests?"Hide":"Show"}</button>
+                </div>
+                <div style={{ fontSize:11, color:T.textMid, marginTop:2 }}>
+                  A frozen nest drives what its drawings release against. Discarding one sends those drawings back to MRP nesting.
+                </div>
+                {showNests && (
+                  <div style={{ overflowX:"auto", marginTop:8 }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                      <thead>
+                        <tr style={{ background:T.bgInput }}>
+                          {["Nest","Frozen","By","Source","Drawings","RM units","Complete","",].map((h,i)=>(
+                            <th key={i} style={{ padding:"4px 8px", textAlign:"left", fontSize:10, color:T.textLow, fontWeight:600, borderBottom:`1px solid ${T.border}` }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {frozen.map(n=>{
+                          const b = nestDiscardBlockers(n, cutRecords, releases);
+                          return (
+                            <tr key={n.id} style={{ borderBottom:`1px solid ${T.border}33` }}>
+                              <td style={{ padding:"4px 8px", fontFamily:T.fontMono, fontSize:10, color:T.accentHi }}>{n.id}</td>
+                              <td style={{ padding:"4px 8px", fontSize:10 }}>{(n.frozenAt||n.createdAt||"").slice(0,10)}</td>
+                              <td style={{ padding:"4px 8px", fontSize:10, color:T.textMid }}>{n.frozenBy||n.createdBy||"—"}</td>
+                              <td style={{ padding:"4px 8px", fontSize:10 }}>{n.source||"—"}</td>
+                              <td style={{ padding:"4px 8px", fontSize:10 }}>{(n.drawingIds||[]).length}</td>
+                              <td style={{ padding:"4px 8px", fontSize:10 }}>{b.rmUnitCount}</td>
+                              <td style={{ padding:"4px 8px", fontSize:10 }}>{n.completion?`${n.completion.wtPct}% wt · ${n.completion.nosCovered}/${n.completion.nosTotal}`:"—"}</td>
+                              <td style={{ padding:"4px 8px" }}>
+                                {b.blocked
+                                  ? <span style={{ fontSize:10, color:T.textLow }} title={`Cutting has started on ${b.cutRmUnits.length} RM unit(s)`}>🔒 Cutting started</span>
+                                  : <button onClick={()=>{ setDiscardNote(""); setDiscardFor(n); }} style={{ ...css.btn.ghost, fontSize:10, padding:"2px 8px", color:T.red }}>Discard</button>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* ── Discard confirm — warn on releases, refuse once cutting has started ── */}
+          {discardFor && (()=>{
+            const b = nestDiscardBlockers(discardFor, cutRecords, releases);
+            return (
+              <Modal title={`Discard ${discardFor.id}?`} onClose={()=>setDiscardFor(null)} width={560}>
+                <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>
+                  {(discardFor.drawingIds||[]).length} drawing(s) go back to MRP nesting.
+                  {(discardFor.supersededRmUnitIds||[]).length>0 &&
+                    ` ${discardFor.supersededRmUnitIds.length} superseded RM unit(s) become available again.`}
+                  {" "}The MRP nest was never overwritten, so nothing is regenerated.
+                </div>
+                {b.blocked ? (
+                  <InfoBanner color="red">
+                    <b>Cannot discard — cutting has started.</b> {b.cutRmUnits.length} RM unit(s) in this
+                    nest already have cut records. Those cuts are physical and reference this plan, so the
+                    nest is locked. Re-plan the remainder instead of reverting it.
+                  </InfoBanner>
+                ) : b.releases.length>0 ? (
+                  <InfoBanner color="amber">
+                    <b>{b.releases.length} release(s) already exist against this nest.</b> Nothing has been
+                    cut yet, so discarding is allowed — but those releases will re-read the MRP nest, and
+                    their RM picture can change.
+                    <div style={{ marginTop:4, fontFamily:T.fontMono, fontSize:10 }}>
+                      {b.releases.slice(0,6).map(r=>r.releaseNo||r.id).join(", ")}
+                      {b.releases.length>6?` +${b.releases.length-6} more`:""}
+                    </div>
+                  </InfoBanner>
+                ) : (
+                  <InfoBanner color="blue">No releases and no cutting against this nest — clean to discard.</InfoBanner>
+                )}
+                <div style={{ marginTop:10 }}>
+                  <div style={{ fontSize:11, color:T.textLow, marginBottom:4 }}>Reason (optional)</div>
+                  <textarea value={discardNote} onChange={e=>setDiscardNote(e.target.value)} rows={2}
+                    style={{ ...css.input, width:"100%", fontSize:12 }} placeholder="Why this plan is being dropped" />
+                </div>
+                <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:12 }}>
+                  <button onClick={()=>setDiscardFor(null)} style={css.btn.ghost}>Cancel</button>
+                  <button
+                    disabled={b.blocked}
+                    onClick={()=>{
+                      if(b.blocked) return;
+                      const nowIso = new Date().toISOString();
+                      setProductionNests(prev=>(prev||[]).map(n=>n.id!==discardFor.id?n:({
+                        ...n, status:"discarded", discardedAt:nowIso,
+                        discardedBy:user?.username||user?.name||"", discardNote:discardNote||"",
+                      })));
+                      setDiscardFor(null); setDiscardNote("");
+                    }}
+                    style={{ ...css.btn.primary, ...(b.blocked?{opacity:0.4,cursor:"not-allowed"}:{background:T.red}) }}>
+                    Discard nest
+                  </button>
+                </div>
+              </Modal>
+            );
+          })()}
+
           {/* Drawing list */}
           <div style={{ ...css.card }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
@@ -13173,7 +13354,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   if (view==="plan_production") return (
     <PlanProductionScreen user={user} orders={orders||[]} drawingInstances={drawingInstances||[]}
       productionNests={productionNests||[]} setProductionNests={setProductionNests} cutRecords={cutRecords||[]}
-      nestingService={nestingService}
+      nestingService={nestingService} releases={releases||[]}
       stock={stock||[]} nestingBatches={nestingBatches||[]} purchaseReqs={purchaseReqs||[]}
       productionStandards={productionStandards} onBack={()=>setView("dashboard")} />
   );
