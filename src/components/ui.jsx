@@ -52,12 +52,12 @@ export const SectionHd = ({ title, action, sub, children }) => (
   </div>
 );
 
-export const TH = ({ children, right, mono }) => (
-  <th style={{ padding:"7px 10px", textAlign:right?"right":"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap", fontFamily:mono?T.fontMono:T.font }}>{children}</th>
+export const TH = ({ children, right, mono, colSpan }) => (
+  <th colSpan={colSpan} style={{ padding:"7px 10px", textAlign:right?"right":"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput, whiteSpace:"nowrap", fontFamily:mono?T.fontMono:T.font }}>{children}</th>
 );
 
-export const TD = ({ children, right, mono, bold, color, style:s }) => (
-  <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, textAlign:right?"right":"left", fontFamily:mono?T.fontMono:T.font, fontWeight:bold?700:400, color:color||T.text, ...s }}>{children}</td>
+export const TD = ({ children, right, mono, bold, color, style:s, colSpan }) => (
+  <td colSpan={colSpan} style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, textAlign:right?"right":"left", fontFamily:mono?T.fontMono:T.font, fontWeight:bold?700:400, color:color||T.text, ...s }}>{children}</td>
 );
 
 export const InfoBanner = ({ color="amber", children }) => {

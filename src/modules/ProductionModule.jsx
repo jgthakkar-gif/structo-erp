@@ -5445,6 +5445,54 @@ const PipelineEditorModal = ({ pipelineEditDI, setPipelineEditDI, processTypes, 
 //   · a "renest" production sheet supersedes the MRP units it replaced
 // Either would double-count the RM, so the MRP copy is filtered out in both cases.
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// WHICH MRP NEST IS CURRENT — mirrors App.jsx ~7673-7685 exactly
+// MRP applies three rules when it decides what a material is nested against.
+// The production planning screens applied NONE of them and were therefore
+// counting discarded and superseded runs as if they were live bars:
+//   1. a discarded batch is not a nest
+//   2. scope to the orders in play — b.orderIds, else per-lot drawingNos,
+//      else (legacy, neither recorded) keep it
+//   3. LATEST WINS, per MATERIAL — one batch can carry several materials, so
+//      the rule is applied lot by lot, not batch by batch
+// Used only where a PLAN is being built. Deliberately NOT applied to the
+// rmUnitId resolver in MachineOperatorQueue: that is a lookup into history and
+// must still resolve a sheet from a run that has since been superseded.
+// ═══════════════════════════════════════════════════════════════════════════
+const currentMrpBatches = (nestingBatches, scope) => {
+  const orderIds = new Set(((scope&&scope.orderIds)||[]).filter(Boolean));
+  const drgNos   = new Set(((scope&&scope.drawingNos)||[])
+    .map(d=>String(d||"").trim().toUpperCase()).filter(Boolean));
+  const scoped = orderIds.size>0 || drgNos.size>0;
+
+  const inScope = (b, lots) => {
+    if(!scoped) return true;
+    if((b.orderIds||[]).length>0) return b.orderIds.some(o=>orderIds.has(o));
+    const bd = lots.flatMap(l=>l.drawingNos||[]).map(d=>String(d||"").trim().toUpperCase());
+    return bd.length===0 || bd.some(d=>drgNos.has(d));
+  };
+
+  const live = (nestingBatches||[]).filter(b=>b && b.status!=="discarded");
+
+  // last index wins for each material
+  const latestIdx = {};
+  live.forEach((b,i)=>{
+    (b.lots||[]).forEach(l=>{
+      const key = normMatCode(l.matCode||"");
+      if(!key || !inScope(b,[l])) return;
+      latestIdx[key] = i;
+    });
+  });
+
+  return live.map((b,i)=>{
+    const lots = (b.lots||[]).filter(l=>{
+      const key = normMatCode(l.matCode||"");
+      return key && inScope(b,[l]) && latestIdx[key]===i;
+    });
+    return lots.length ? { ...b, lots } : null;
+  }).filter(Boolean);
+};
+
 const buildEffectiveNestSource = (nestingBatches, productionNests) => {
   const frozen = (productionNests||[]).filter(n=>n && n.status==="frozen");
   if(frozen.length===0) return nestingBatches||[];   // untouched legacy path
@@ -5667,7 +5715,13 @@ const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, 
 const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords, productionNests=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
   // S4c — the wizard's nesting source: frozen production nests first, MRP for the rest
-  const effBatches = buildEffectiveNestSource(nestingBatches, productionNests);
+  const effBatches = buildEffectiveNestSource(
+    currentMrpBatches(nestingBatches, {
+      orderIds:  selDrawings.map(r=>r.order&&r.order.id).filter(Boolean),
+      drawingNos:selDrawings.map(r=>r.drawing&&r.drawing.drawingNo).filter(Boolean),
+    }),
+    productionNests
+  );
   // Spliced sheets carry 2A/S1 style names; resolve them back to order marks.
   const splitIdx = buildSplitIndex(nestingBatches);
   const usingProductionNest = effBatches.some(b=>b.productionNestId);
@@ -12589,8 +12643,14 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   const selMarkNos = new Set(Object.keys(markInfo));
   const spentRm    = new Set((cutRecords||[]).map(cr=>cr.fromRmUnitId).filter(Boolean));
   const unitWt     = (mn)=>{ const e=markInfo[mn]; return e&&e.qty>0 ? e.wt/e.qty : 0; };
-  // Spliced sheets carry 2A/S1 style names while markInfo only knows 2A.
+  // splitMap is a translation table — build it from EVERY batch, including
+  // superseded ones, so a segment name always resolves.
   const splitIdx   = buildSplitIndex(nestingBatches);
+  // …but PLAN only against the current nest per material, scoped to these orders.
+  const liveBatches = currentMrpBatches(nestingBatches, {
+    orderIds:  selRows.map(r=>r.order&&r.order.id).filter(Boolean),
+    drawingNos:selRows.map(r=>r.drawing&&r.drawing.drawingNo).filter(Boolean),
+  });
   const isSel      = (mn)=> selMarkNos.has(parentMark(splitIdx, mn));
   // A segment carries its length share of the parent's unit weight, so a sheet
   // holding only S1 books its share and not the whole member.
@@ -12599,7 +12659,7 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   // ── RM units from MRP nesting carrying any selected mark ────────────────
   const rmUnits = [];
   const seen = new Set();
-  (nestingBatches||[]).forEach(batch=>{
+  (liveBatches||[]).forEach(batch=>{
     (batch.lots||[]).forEach(lot=>{
       (lot.sheets||[]).forEach(sheet=>{
         if(!sheet.rmUnitId || seen.has(sheet.rmUnitId)) return;
