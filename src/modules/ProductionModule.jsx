@@ -4954,11 +4954,70 @@ const getRmUnitWt = (lot, rmUnitId) => {
 };
 
 // Sum part weights and areas for a list of mark numbers
-const getRmUnitPartStats = (markNos, allOrderParts) => {
+// ═══════════════════════════════════════════════════════════════════════════
+// SPLICE SEGMENTS — RESOLVING SHEET MARK NAMES BACK TO ORDER MARKS
+// NestExportModal splits over-length joints-allowed parts BEFORE nesting
+// (App.jsx ~6702: `${markNo}/S${i+1}`), so a nested sheet carries 2A/S1 and
+// 2A/S2 while the ORDER part list only ever knows 2A. The batch stores the
+// translation table as batch.splitMap {segName:{parent,segLen,segIndex,segCount}}.
+// This reads it. The NAME is never parsed — a name is not a contract, the
+// splitMap is. No splitMap → identity, so unspliced orders are untouched.
+//
+// Two rules, both mirroring the nest exporter (App.jsx ~6818):
+//   · a spliced parent is PLACED only as often as its SCARCEST segment
+//   · a segment carries its LENGTH SHARE of the parent's unit weight
+// ═══════════════════════════════════════════════════════════════════════════
+const EMPTY_SPLIT = { map:{}, byParent:{} };
+
+const buildSplitIndex = (batches) => {
+  const map = {};
+  (batches||[]).forEach(b=>{
+    const sm = b && b.splitMap;
+    if(!sm || typeof sm !== "object") return;
+    Object.entries(sm).forEach(([seg,info])=>{
+      if(!info || !info.parent || map[seg]) return;
+      map[seg] = { parent:info.parent, segLen:+info.segLen||0,
+                   segIndex:+info.segIndex||0, segCount:+info.segCount||0 };
+    });
+  });
+  const byParent = {};
+  Object.entries(map).forEach(([seg,e])=>{ (byParent[e.parent]=byParent[e.parent]||[]).push(seg); });
+  Object.entries(byParent).forEach(([parent,segs])=>{
+    const tot = segs.reduce((a,x)=>a+(map[x].segLen||0),0);
+    segs.forEach(x=>{ map[x].share = tot>0 ? map[x].segLen/tot : 1/segs.length; });
+  });
+  return { map, byParent };
+};
+
+const markNoOf   = (raw)   => typeof raw==="string" ? raw : ((raw && raw.markNo) || "");
+const parentMark = (idx,mn)=> (idx && idx.map && idx.map[mn] && idx.map[mn].parent) || mn;
+const markShare  = (idx,mn)=> (idx && idx.map && idx.map[mn] && idx.map[mn].share!=null) ? idx.map[mn].share : 1;
+
+// Roll raw sheet placements up to ORDER marks. Unspliced marks pass through
+// unchanged; a spliced parent counts only as often as its scarcest segment, and
+// not at all if splitMap declares more segments than we can account for.
+const rollUpPlacement = (placedRaw, idx) => {
+  const out = {};
+  const isSeg = (mn)=> !!(idx && idx.map && idx.map[mn]);
+  Object.entries(placedRaw||{}).forEach(([mn,q])=>{ if(!isSeg(mn)) out[mn]=(out[mn]||0)+q; });
+  Object.entries((idx&&idx.byParent)||{}).forEach(([parent,segs])=>{
+    const declared = Math.max(segs.length, ...segs.map(x=>idx.map[x].segCount||0));
+    if(segs.length < declared) return;      // a segment name is missing — cannot claim the parent placed
+    const placed = Math.min(...segs.map(x=>placedRaw[x]||0));
+    if(placed>0) out[parent] = (out[parent]||0) + placed;
+  });
+  return out;
+};
+
+// splitIdx is optional — omitted means identity, i.e. exactly the old behaviour.
+const getRmUnitPartStats = (markNos, allOrderParts, splitIdx) => {
   let wt = 0, area = 0;
-  (markNos||[]).forEach(mn => {
-    const p = (allOrderParts||[]).find(x=>x.markNo===mn);
-    if(p){ wt += (p.clientUnitWt||0)*(p.clientQty||1); area += (p.area||0)*(p.clientQty||1); }
+  (markNos||[]).forEach(raw => {
+    const mn  = markNoOf(raw);
+    const par = parentMark(splitIdx, mn);
+    const sh  = markShare(splitIdx, mn);
+    const p = (allOrderParts||[]).find(x=>x.markNo===par);
+    if(p){ wt += (p.clientUnitWt||0)*(p.clientQty||1)*sh; area += (p.area||0)*(p.clientQty||1)*sh; }
   });
   return {wt, area, totalWt:wt};
 };
@@ -5276,30 +5335,32 @@ const stageOwnedForPart = (part, drawingSteps, stage) =>
 
 // Classify one RM unit (nested sheet/bar). Marks that cannot be resolved through
 // markNoMap are skipped, never guessed.
-const classifyRmUnitOutbound = (sheetParts, markNoMap, stage) => {
+const classifyRmUnitOutbound = (sheetParts, markNoMap, stage, splitIdx) => {
   const st = stage||"cutting";
-  const ownerMarks=[], ridingMarks=[], ridingSelMarks=[];
+  const owners=new Set(), riders=new Set(), ridersSel=new Set();
   let step=null;
   (sheetParts||[]).forEach(raw=>{
-    const mn = typeof raw==="string" ? raw : (raw&&raw.markNo);
+    const raw2 = markNoOf(raw);
+    // a spliced segment belongs to its parent's drawing — resolve before deciding
+    const mn = parentMark(splitIdx, raw2);
     if(!mn) return;
     const ent = (markNoMap||{})[mn];
     if(!ent) return;
     if(stageOwnedForPart(ent.part, ent.steps||null, st)){
-      ownerMarks.push(mn);
+      owners.add(mn);
       if(!step) step = outboundStepOwning(partPipelineOr(ent.part, ent.steps||null), st);
     } else {
-      ridingMarks.push(mn);
-      if(ent.selected) ridingSelMarks.push(mn);
+      riders.add(mn);
+      if(ent.selected) ridersSel.add(mn);
     }
   });
-  const vendorCut = ownerMarks.length>0 && !!step;
+  const vendorCut = owners.size>0 && !!step;
   return {
     vendorCut,
     vendorCutStep: vendorCut?step:null,
-    ownerMarks,
-    ridingMarks: vendorCut?ridingMarks:[],
-    ridingSelMarks: vendorCut?ridingSelMarks:[],
+    ownerMarks: [...owners],
+    ridingMarks: vendorCut?[...riders]:[],
+    ridingSelMarks: vendorCut?[...ridersSel]:[],
   };
 };
 
@@ -5402,6 +5463,8 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const today = () => new Date().toISOString().slice(0,10);
   // S4c — the wizard's nesting source: frozen production nests first, MRP for the rest
   const effBatches = buildEffectiveNestSource(nestingBatches, productionNests);
+  // Spliced sheets carry 2A/S1 style names; resolve them back to order marks.
+  const splitIdx = buildSplitIndex(nestingBatches);
   const usingProductionNest = effBatches.some(b=>b.productionNestId);
   const [step, setStep] = useState(1);
   const [selDrawings, setSelDrawings] = useState([]);
@@ -5542,7 +5605,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       }
       // Find nesting batches covering this matCode for selected drawings
       const selMarkNosForMat=new Set(selDrawings.flatMap(({drawing,order})=>(order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.matCode===row.matCode&&p.fabType==="Fabricate").map(p=>p.markNo)));
-      const batchesForMat=effBatches.filter(b=>(b.lots||[]).some(l=>l.matCode===row.matCode&&(l.parts||[]).some(mn=>selMarkNosForMat.has(mn))));
+      const batchesForMat=effBatches.filter(b=>(b.lots||[]).some(l=>l.matCode===row.matCode&&(l.parts||[]).some(mn=>selMarkNosForMat.has(parentMark(splitIdx,markNoOf(mn))))));
       const allOrderParts=selDrawings.flatMap(({order})=>order.parts||[]);
       const rmUnitsForMat=[];
       batchesForMat.forEach(batch=>{
@@ -5550,11 +5613,11 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           if(lot.matCode!==row.matCode) return;
           (lot.sheets||[]).forEach(sheet=>{
             if(!sheet.rmUnitId) return;
-            const selParts=(sheet.parts||[]).filter(mn=>selMarkNosForMat.has(mn));
+            const selParts=(sheet.parts||[]).filter(mn=>selMarkNosForMat.has(parentMark(splitIdx,markNoOf(mn))));
             if(selParts.length===0) return;
             const allSheetParts=(sheet.parts||[]);
-            const allStats=getRmUnitPartStats(allSheetParts,allOrderParts);
-            const selStats=getRmUnitPartStats(selParts,allOrderParts);
+            const allStats=getRmUnitPartStats(allSheetParts,allOrderParts,splitIdx);
+            const selStats=getRmUnitPartStats(selParts,allOrderParts,splitIdx);
             const sheetWt=calcSheetWt(sheet.rmUnitId)||0;
             const utilisPct=sheet.utilisPct||0;
             // ── Detect already-cut status ──────────────────────────────────
@@ -5572,7 +5635,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             if(sheetIsCut) cuttingStatus="done";
             else if(sheetIsInCutting) cuttingStatus="partial";
             // ────────────────────────────────────────────────────────────────
-            const obCls = classifyRmUnitOutbound(allSheetParts, obMarkMap, "cutting");
+            const obCls = classifyRmUnitOutbound(allSheetParts, obMarkMap, "cutting", splitIdx);
             rmUnitsForMat.push({
               vendorCut:obCls.vendorCut,
               vendorCutStep:obCls.vendorCutStep,
@@ -5643,13 +5706,13 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           if(!sheet.rmUnitId) return;
           if(seen.has(sheet.rmUnitId)) return;
           // Only include sheets that have at least one part from selected drawings
-          const hasSelPart=(sheet.parts||[]).some(p=>selMarkNos.has(typeof p==="string"?p:p.markNo));
+          const hasSelPart=(sheet.parts||[]).some(p=>selMarkNos.has(parentMark(splitIdx,markNoOf(p))));
           if(!hasSelPart) return;
           // Skip sheets already fully cut in a previous release
           if(alreadyCutRmUnits.has(sheet.rmUnitId)) return;
           // Outbound Phase 1 — the bar is the dispatch unit. If any mark on it is
           // cut by a vendor the whole bar goes out; riders come back already cut.
-          const obCls = classifyRmUnitOutbound(sheet.parts, markNoMap, "cutting");
+          const obCls = classifyRmUnitOutbound(sheet.parts, markNoMap, "cutting", splitIdx);
           seen.add(sheet.rmUnitId);
           rmUnits.push({
             vendorCut: obCls.vendorCut,
@@ -5663,7 +5726,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             lotId: lot.lotId,
             matCode: lot.matCode,
             dimensions: sheet.sheetDim||"",
-            parts: (sheet.parts||[]).map(p=>{ const mn=typeof p==="string"?p:p.markNo; return {markNo:mn,qty:typeof p==="object"?p.qty:1,...(markNoMap[mn]||{selected:false,drawingNo:"?",orderId:"?"})}; }),
+            parts: (sheet.parts||[]).map(p=>{
+              const mn=markNoOf(p), par=parentMark(splitIdx,mn);
+              return {markNo:mn, parentMarkNo:par, isSegment:par!==mn, segShare:markShare(splitIdx,mn),
+                qty:typeof p==="object"?(p.qty||1):1,
+                ...(markNoMap[par]||{selected:false,drawingNo:"?",orderId:"?"})};
+            }),
           });
         });
       });
@@ -5800,7 +5868,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       });
       fabParts.forEach(part=>{
         // Find rmUnit containing this part
-        const matchingRmUnit=rmUnits.find(ru=>ru.parts.some(p=>p.markNo===part.markNo));
+        const matchingRmUnit=rmUnits.find(ru=>ru.parts.some(p=>(p.parentMarkNo||p.markNo)===part.markNo));
         // ── Outbound Phase 1 — where does this piece actually enter? ────────
         // Its own pipeline may hand cutting to a vendor. If it does not, its BAR
         // still might: the RM unit is the dispatch unit, so a piece nested on a
@@ -12303,6 +12371,12 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   const selMarkNos = new Set(Object.keys(markInfo));
   const spentRm    = new Set((cutRecords||[]).map(cr=>cr.fromRmUnitId).filter(Boolean));
   const unitWt     = (mn)=>{ const e=markInfo[mn]; return e&&e.qty>0 ? e.wt/e.qty : 0; };
+  // Spliced sheets carry 2A/S1 style names while markInfo only knows 2A.
+  const splitIdx   = buildSplitIndex(nestingBatches);
+  const isSel      = (mn)=> selMarkNos.has(parentMark(splitIdx, mn));
+  // A segment carries its length share of the parent's unit weight, so a sheet
+  // holding only S1 books its share and not the whole member.
+  const pieceWt    = (mn)=> unitWt(parentMark(splitIdx,mn)) * markShare(splitIdx,mn);
 
   // ── RM units from MRP nesting carrying any selected mark ────────────────
   const rmUnits = [];
@@ -12312,14 +12386,14 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
       (lot.sheets||[]).forEach(sheet=>{
         if(!sheet.rmUnitId || seen.has(sheet.rmUnitId)) return;
         const parts = (sheet.parts||[]).map(p=>typeof p==="string"?{markNo:p,qty:1}:{markNo:p.markNo,qty:p.qty||1});
-        const sel   = parts.filter(p=>selMarkNos.has(p.markNo));
+        const sel   = parts.filter(p=>isSel(p.markNo));
         if(sel.length===0) return;
         seen.add(sheet.rmUnitId);
         rmUnits.push({
           rmUnitId:sheet.rmUnitId, batchId:batch.id, lotId:lot.lotId, matCode:lot.matCode,
           sheetDim:sheet.sheetDim||"", utilisPct:sheet.utilisPct||0,
           parts, selParts:sel, otherCount:parts.length-sel.length,
-          selWt:sel.reduce((s,p)=>s+unitWt(p.markNo)*(p.qty||1),0),
+          selWt:sel.reduce((s,p)=>s+pieceWt(p.markNo)*(p.qty||1),0),
           sheetWt:calcSheetWt(sheet.rmUnitId)||0,
           spent:spentRm.has(sheet.rmUnitId),
         });
@@ -12415,12 +12489,12 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
           sheetDim: isPlate ? `${rm.length}×${rm.width}` : `${rm.length}mm`,
           utilisPct: rp.LengthUsed != null ? +((1-(rp.Scrap||0))*100).toFixed(1) : np,
           parts: pl,
-          selParts: pl.filter(x=>selMarkNos.has(x.markNo)),
+          selParts: pl.filter(x=>isSel(x.markNo)),
           plan: "renest",
           supersedes: src.map(s=>s.rmUnitId),
           sheetWt: 0,
           otherCount: 0,
-          selWt: pl.filter(x=>selMarkNos.has(x.markNo)).reduce((s,p)=>s+unitWt(p.markNo)*(p.qty||1),0),
+          selWt: pl.filter(x=>isSel(x.markNo)).reduce((s,p)=>s+pieceWt(p.markNo)*(p.qty||1),0),
         };
       });
       setRenest(prev=>({...prev,[mc]:{...prev[mc],status:"done",pct:100,msg:`${sheets.length} sheet(s) nested`,sheets}}));
@@ -12431,8 +12505,13 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   };
 
   // ── Completion — BOTH weight-% and nos (warnings, never hard blocks) ────
-  const coveredQty = {};
-  planUnits.forEach(ru=>(ru.selParts||[]).forEach(p=>{ coveredQty[p.markNo]=(coveredQty[p.markNo]||0)+(p.qty||1); }));
+  // Count what is physically on the sheets under the names the sheets use, then
+  // roll up: an unspliced mark passes through, a spliced parent is placed only as
+  // often as its SCARCEST segment (mirrors the nest exporter). Summing the segments
+  // instead would call 2A covered when only 2A/S1 had been placed.
+  const placedRaw = {};
+  planUnits.forEach(ru=>(ru.selParts||[]).forEach(p=>{ placedRaw[p.markNo]=(placedRaw[p.markNo]||0)+(p.qty||1); }));
+  const coveredQty = rollUpPlacement(placedRaw, splitIdx);
   let wtTotal=0, wtCovered=0, nosTotal=0, nosCovered=0;
   Object.entries(markInfo).forEach(([mn,e])=>{
     wtTotal += e.wt; nosTotal += e.qty;
