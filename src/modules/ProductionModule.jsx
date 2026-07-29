@@ -5037,6 +5037,48 @@ const buildBatchScorecard = ({ units, drawingIds, instanceIds, wtTotal, wtCovere
   };
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MATERIAL GROUPS — one row per RM TYPE, all sizes together, expanding to the
+// individual nesting runs. The planner reasons about a material, not a bar:
+// disturbing one run of an RM disturbs the rest, so the material is the unit
+// the display should match.
+//   used  = bars still in the plan (not excluded, not already cut)
+//   touch = bars carrying your marks at all — "4 of 7" says you dropped three
+// avgUtil weights the nester's own utilisPct by sheet weight.
+// dragged counts PIECES of drawings not in this plan — the bay-clog cost.
+// ═══════════════════════════════════════════════════════════════════════════
+const buildMatGroups = (units, decOf) => {
+  const by = {};
+  (units||[]).forEach(u=>{ (by[u.matCode]=by[u.matCode]||[]).push(u); });
+  return Object.entries(by).map(([matCode, all])=>{
+    const dec  = (u)=> decOf ? decOf(u) : "as_is";
+    const used = all.filter(u=>!u.spent && dec(u)!=="exclude");
+    const rmWt = used.reduce((a,u)=>a+(u.sheetWt||0),0);
+    const dragged = used.reduce((a,u)=>
+      a+(u.parts||[]).filter(pt=>!(u.selParts||[]).includes(pt)).reduce((b,pt)=>b+(pt.qty||1),0),0);
+    // heaviest contribution first — "take the top two" becomes obvious
+    const sorted = [...all].sort((a,b)=>
+      (b.selWt||0)-(a.selWt||0) || (b.utilisPct||0)-(a.utilisPct||0) ||
+      String(a.rmUnitId).localeCompare(String(b.rmUnitId)));
+    const pendingRenest = all.some(u=>dec(u)==="renest");
+    return {
+      matCode, units:sorted,
+      touch: all.length,
+      used: used.length,
+      excluded: all.filter(u=>!u.spent && dec(u)==="exclude").length,
+      spent: all.filter(u=>u.spent).length,
+      pendingRenest,
+      sizes: [...new Set(all.map(u=>u.sheetDim).filter(Boolean))],
+      selWt: used.reduce((a,u)=>a+(u.selWt||0),0),
+      rmWt,
+      avgUtil: rmWt>0 ? +(used.reduce((a,u)=>a+((u.utilisPct||0)*(u.sheetWt||0)),0)/rmWt).toFixed(1) : 0,
+      draggedPcs: dragged,
+      // open by default only when there is something to decide
+      needsAttention: dragged>0 || all.some(u=>u.spent) || used.length<all.length || pendingRenest,
+    };
+  }).sort((a,b)=>b.draggedPcs-a.draggedPcs || String(a.matCode).localeCompare(String(b.matCode)));
+};
+
 // Competing attempts = drafts that plan any of the SAME drawing instances.
 // A draft covering unrelated drawings is not a rival and survives a freeze.
 const rivalDrafts = (nests, nest) => {
@@ -12437,6 +12479,8 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   const [showToken, setShowToken]     = useState(false);
   const [freezeMode, setFreezeMode]   = useState("freeze"); // "draft" | "freeze"
   const [compareOpen, setCompareOpen] = useState(false);
+  const [grouped, setGrouped]         = useState(true);   // material rows vs the flat list
+  const [openMats, setOpenMats]       = useState({});     // matCode -> forced open/closed
   // Nesting runs are external API calls — 7 materials is 7 calls per attempt.
   // Cache on (matCode + parts + stock) so an attempt that differs by a couple of
   // drawings only re-runs the materials those drawings actually touch.
@@ -12744,7 +12788,8 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
         <div>
           <div style={{ fontSize:16, fontWeight:700, color:T.text }}>Production Nesting — RM Selection</div>
           <div style={{ fontSize:11, color:T.textMid }}>
-            One row per RM unit. Freezing writes a production nest and leaves the MRP nest untouched as the procurement record.
+            {grouped?"Grouped by RM type — expand a type to see its nesting runs and the marks on each.":"One row per RM unit."}
+            {" "}Freezing writes a production nest and leaves the MRP nest untouched as the procurement record.
             {selRows.length>0 && (
               <div style={{ marginTop:4, color:T.textMid }}>
                 Planning <b>{selRows.length}</b> drawing{selRows.length!==1?"s":""} · <b>{selRows.reduce((a,r)=>a+(r.n||1),0)}</b> instance{selRows.reduce((a,r)=>a+(r.n||1),0)!==1?"s":""} from <b>{[...new Set(selRows.map(r=>r.order&&(r.order.orderNo||r.order.id)).filter(Boolean))].join(", ")}</b>
@@ -12774,11 +12819,97 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
       <div style={{ border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
           <thead><tr>
-            <TH>RM unit</TH><TH>Material</TH><TH>Size</TH>
-            <TH right>Util %</TH><TH right>Marks · Pcs (this plan)</TH><TH right>Weight</TH><TH>Plan</TH>
+            <TH>{grouped?"RM type / unit":"RM unit"}</TH><TH>{grouped?"Size":"Material"}</TH><TH>{grouped?"RM wt":"Size"}</TH>
+            <TH right>Util %</TH><TH right>{grouped?"Bay drag":"Marks · Pcs (this plan)"}</TH><TH right>Weight</TH><TH>Plan</TH>
           </tr></thead>
           <tbody>
-            {rmUnits.map(ru=>(
+            {grouped && buildMatGroups(rmUnits, decOf).map(g=>{
+              const open = openMats[g.matCode]!==undefined ? openMats[g.matCode] : g.needsAttention;
+              return (
+                <React.Fragment key={g.matCode}>
+                  <tr style={{ background:T.bgInput, cursor:"pointer" }}
+                      onClick={()=>setOpenMats(m=>({...m,[g.matCode]:!open}))}>
+                    <TD mono colSpan={3}>
+                      <span style={{ color:T.textLow, marginRight:6 }}>{open?"▼":"▶"}</span>
+                      <b>{g.matCode}</b>
+                      <span style={{ color:T.textLow, fontSize:10 }}>
+                        {" "}· {g.used} of {g.touch} bar{g.touch!==1?"s":""}
+                        {g.sizes.length>1?` · ${g.sizes.length} sizes`:""}
+                        {g.spent>0?` · ${g.spent} already cut`:""}
+                        {g.pendingRenest?" · marked for re-nest":""}
+                      </span>
+                    </TD>
+                    <TD right mono>{g.avgUtil.toFixed(1)}</TD>
+                    <TD right mono>
+                      <span style={{ color:g.draggedPcs>0?T.amber:T.textLow }}>
+                        {g.draggedPcs>0?`${g.draggedPcs} pcs dragged`:"no drag"}
+                      </span>
+                    </TD>
+                    <TD right mono>{tn(g.selWt)}</TD>
+                    <TD onClick={e=>e.stopPropagation()}>
+                      <select value="" onChange={e=>{
+                          const v=e.target.value; if(!v) return;
+                          g.units.forEach(u=>{ if(!u.spent) setDec(u.rmUnitId, v); });
+                          e.target.value="";
+                        }}
+                        style={{ ...css.input, fontSize:11, padding:"3px 6px", width:150 }}>
+                        <option value="">Set all {g.used||g.touch} bars…</option>
+                        <option value="as_is">Use MRP nest as-is</option>
+                        <option value="renest">Re-nest this RM</option>
+                        <option value="exclude">Exclude from this plan</option>
+                      </select>
+                    </TD>
+                  </tr>
+                  {open && g.units.map(ru=>{
+                    const foreign = (ru.parts||[]).filter(pt=>!(ru.selParts||[]).includes(pt));
+                    return (
+                      <tr key={ru.rmUnitId} style={{ opacity: decOf(ru)==="exclude" ? 0.5 : 1 }}>
+                        <TD mono style={{ paddingLeft:22 }}>{ru.rmUnitId}
+                          {ru.selParts.some(x=>parentMark(splitIdx,x.markNo)!==x.markNo) && (
+                            <span
+                              title={ru.selParts.filter(x=>parentMark(splitIdx,x.markNo)!==x.markNo)
+                                .map(x=>`${x.markNo} → part of ${parentMark(splitIdx,x.markNo)}`).join(", ")}
+                              style={{ marginLeft:6, fontSize:9, fontWeight:700, color:T.amber }}>SPLICED</span>
+                          )}
+                          {ru.spent && <div style={{fontSize:10}}><Badge color="gray">already cut</Badge></div>}
+                          <div style={{ fontSize:10, color:T.textLow, marginTop:2, whiteSpace:"normal" }}>
+                            {ru.selParts.slice(0,10).map(x=>(
+                              <span key={x.markNo} style={{ color:T.text, marginRight:6 }}>
+                                {x.markNo}{(x.qty||1)>1?`×${x.qty}`:""}
+                              </span>
+                            ))}
+                            {ru.selParts.length>10 && <span style={{marginRight:6}}>+{ru.selParts.length-10} more</span>}
+                            {foreign.length>0 && (
+                              <span title={foreign.map(x=>`${x.markNo}×${x.qty||1}`).join(", ")}
+                                style={{ color:T.textLow, fontStyle:"italic" }}>
+                                · {foreign.reduce((a,x)=>a+(x.qty||1),0)} pcs from other drawings
+                              </span>
+                            )}
+                          </div>
+                        </TD>
+                        <TD mono>{ru.sheetDim}</TD>
+                        <TD mono style={{ color:T.textLow, fontSize:10 }}>{tn(ru.sheetWt)} RM</TD>
+                        <TD right mono>{(ru.utilisPct||0).toFixed(1)}</TD>
+                        <TD right mono>{ru.selParts.length}
+                          <span style={{ color:T.textLow }}> · {ru.selParts.reduce((a,x)=>a+(x.qty||1),0)} pcs</span>
+                        </TD>
+                        <TD right mono>{tn(ru.selWt)}</TD>
+                        <TD>
+                          <select value={decOf(ru)} disabled={ru.spent}
+                            onChange={e=>setDec(ru.rmUnitId, e.target.value)}
+                            style={{ ...css.input, fontSize:11, padding:"3px 6px", width:150 }}>
+                            <option value="as_is">Use MRP nest as-is</option>
+                            <option value="renest">Re-nest this RM</option>
+                            <option value="exclude">Exclude from this plan</option>
+                          </select>
+                        </TD>
+                      </tr>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+            {!grouped && rmUnits.map(ru=>(
               <tr key={ru.rmUnitId} style={{ opacity: decOf(ru)==="exclude" ? 0.5 : 1 }}>
                 <TD mono>{ru.rmUnitId}
                   {ru.selParts.some(x=>parentMark(splitIdx,x.markNo)!==x.markNo) && (
@@ -12938,6 +13069,16 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
               onChange={e=>setFreezeMode(e.target.checked?"draft":"freeze")} />
             Keep as draft attempt
           </label>
+          <button onClick={()=>setGrouped(g=>!g)} style={css.btn.ghost}>
+            {grouped?"Flat list":"Group by RM type"}
+          </button>
+          {grouped && (
+            <button onClick={()=>{
+              const gs = buildMatGroups(rmUnits, decOf);
+              const anyClosed = gs.some(g=>(openMats[g.matCode]!==undefined?openMats[g.matCode]:g.needsAttention)===false);
+              setOpenMats(Object.fromEntries(gs.map(g=>[g.matCode, anyClosed])));
+            }} style={css.btn.ghost}>Expand / collapse all</button>
+          )}
           <button onClick={()=>setDecisions({})} style={css.btn.ghost}>Reset choices</button>
           <button disabled={planUnits.length===0} onClick={()=>setConfirm(true)}
             style={{ ...css.btn.primary, ...(planUnits.length===0?{opacity:0.45,cursor:"not-allowed"}:{}) }}>
