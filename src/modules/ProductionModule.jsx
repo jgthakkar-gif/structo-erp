@@ -5038,6 +5038,87 @@ const buildBatchScorecard = ({ units, drawingIds, instanceIds, wtTotal, wtCovere
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CUMULATIVE FEASIBILITY — "what can I still build with what is left?"
+// The default screen judges every drawing ALONE against the full pool, so five
+// drawings that each pass can still bust the pool together. In feasibility mode
+// the pool is consumed as drawings are ticked and every remaining drawing is
+// re-judged against what actually remains.
+// Tick ORDER does not matter: subtraction is commutative, so what is left is the
+// same however he got there. Order would only decide which drawing "won" scarce
+// material, and the existing shortfalls banner already reports that.
+// Thresholds are the SAME locked rules the default view uses — only the pool changes.
+// ═══════════════════════════════════════════════════════════════════════════
+const feasStatusOf = ({ matRows, totalMarks, wtPerInst, nForCheck }) => {
+  if (!matRows || matRows.length === 0) return "nodata";
+  if (matRows.every(m=>m.covered)) return "feasible";
+  const coveredMarks = matRows.filter(m=>m.covered).reduce((s,m)=>s+(m.marks||[]).length,0);
+  const coveredWtPI  = matRows.filter(m=>m.covered).reduce((s,m)=>s+(m.reqWt/Math.max(nForCheck,1)),0);
+  const cntPct  = totalMarks>0  ? coveredMarks/totalMarks : 0;
+  const wtPct   = wtPerInst>0   ? coveredWtPI/wtPerInst   : 0;
+  const missing = totalMarks - coveredMarks;
+  return (totalMarks>10 ? (cntPct>=0.8 && wtPct>=0.6) : (missing<=2 && missing>0)) ? "warn" : "blocked";
+};
+
+const cumulativeFeasibility = ({ rows, pool, selInstIds }) => {
+  const sel = selInstIds || {};
+  const perInst = (r,m) => m.reqWt / Math.max(r.selCount || (r.dis||[]).length, 1);
+
+  const consumed = {};
+  (rows||[]).forEach(r=>{
+    const n = (r.dis||[]).filter(di=>sel[di.id]).length;
+    if(!n) return;
+    (r.matRows||[]).forEach(m=>{ consumed[m.key] = (consumed[m.key]||0) + perInst(r,m)*n; });
+  });
+
+  const remaining = {};
+  Object.entries(pool||{}).forEach(([k,v])=>{ remaining[k] = (v.approvedWt||0) - (consumed[k]||0); });
+  // a material needed but absent from the pool shows as negative, not missing
+  Object.keys(consumed).forEach(k=>{ if(remaining[k]===undefined) remaining[k] = -consumed[k]; });
+
+  const out = (rows||[]).map(r=>{
+    const dis  = r.dis||[];
+    const nAdd = dis.length - dis.filter(di=>sel[di.id]).length;
+    if(nAdd===0) return { ...r, status:"taken", baseStatus:r.status, nAdd:0, shortOf:[] };
+    const matRows = (r.matRows||[]).map(m=>{
+      const reqWt = perInst(r,m)*nAdd;
+      const have  = remaining[m.key]!==undefined ? remaining[m.key] : 0;
+      return { ...m, reqWt, approvedWt:have, covered: have >= reqWt && reqWt>0 };
+    });
+    return {
+      ...r, matRows, baseStatus:r.status, nAdd,
+      status: feasStatusOf({ matRows, totalMarks:r.totalMarks, wtPerInst:r.wtPerInst, nForCheck:nAdd }),
+      shortOf: matRows.filter(m=>!m.covered)
+        .map(m=>({ key:m.key, display:m.display, short:+(m.reqWt-m.approvedWt).toFixed(0) })),
+    };
+  });
+  return { remaining, consumed, rows: out };
+};
+
+// The material-side roll-up: "of 25 RM types, 15 full, 5 part, 5 none".
+// Measured against the FULL unreleased requirement of the order, so it answers
+// "what can I do with what I have" before anything has been decided.
+const materialPosition = (rows, pool) => {
+  const req = {}; const disp = {};
+  (rows||[]).forEach(r=>{
+    const per = Math.max(r.selCount || (r.dis||[]).length, 1);
+    const n   = (r.dis||[]).length;
+    (r.matRows||[]).forEach(m=>{
+      req[m.key] = (req[m.key]||0) + (m.reqWt/per)*n;
+      if(!disp[m.key]) disp[m.key] = m.display || m.key;
+    });
+  });
+  let full=0, part=0, none=0; const detail=[];
+  Object.entries(req).forEach(([k,need])=>{
+    const have = ((pool||{})[k]||{}).approvedWt || 0;
+    const band = have>=need ? "full" : have>0 ? "part" : "none";
+    if(band==="full") full++; else if(band==="part") part++; else none++;
+    detail.push({ key:k, display:disp[k], need:+need.toFixed(0), have:+have.toFixed(0), band });
+  });
+  detail.sort((a,b)=>({none:0,part:1,full:2})[a.band]-({none:0,part:1,full:2})[b.band] || b.need-a.need);
+  return { types:Object.keys(req).length, full, part, none, detail };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MATERIAL GROUPS — one row per RM TYPE, all sizes together, expanding to the
 // individual nesting runs. The planner reasons about a material, not a bar:
 // disturbing one run of an RM disturbs the rest, so the material is the unit
@@ -13228,6 +13309,7 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
   const [selInstIds, setSelInstIds]   = useState({});   // {diId:true}
   const [expanded, setExpanded]       = useState({});   // {drawingId:true}
   const [showBlocked, setShowBlocked] = useState(true);
+  const [feasMode, setFeasMode]       = useState(false); // feasibility by material
   const [nestScreen, setNestScreen]   = useState(false); // S4a — production nesting handoff
   const [showNests, setShowNests]     = useState(false); // frozen production nests panel
   const [discardFor, setDiscardFor]   = useState(null);  // nest pending discard
@@ -13397,14 +13479,36 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
     return next;
   });
 
-  const stBadge = (s) => s==="feasible" ? <Badge color="green">Feasible</Badge>
+  const stBadge = (s) => s==="taken" ? <Badge color="teal">In selection</Badge>
+    : s==="feasible" ? <Badge color="green">{feasMode?"Still fits":"Feasible"}</Badge>
     : s==="warn" ? <Badge color="amber">Partial — review</Badge>
     : s==="nodata" ? <Badge color="gray">No part data</Badge>
     : <Badge color="red">Blocked</Badge>;
   const tierBadge = (t) => t===1 ? <Badge color="teal">Tier 1 · nested</Badge> : t===2 ? <Badge color="purple">Tier 2 · MRP</Badge> : <Badge color="gray">Tier 3 · calc</Badge>;
   const tonnes = (kg) => (kg/1000).toFixed(2)+" T";
 
-  const visibleRows = allRows.filter(r => showBlocked || r.status!=="blocked");
+  // ── Feasibility by material ────────────────────────────────────────────
+  // OFF → every path below behaves exactly as before.
+  const cumByOrder = feasMode ? analyses.map(a=>({ a, cf:cumulativeFeasibility({ rows:a.rows, pool:a.pool, selInstIds }) })) : null;
+  const matPos     = feasMode ? analyses.map(a=>({ order:a.rows[0]?.order, pos:materialPosition(a.rows, a.pool) })) : null;
+  const shownRows  = feasMode ? cumByOrder.flatMap(x=>x.cf.rows) : allRows;
+
+  // Greedy fill in the planner's own priority order — predictable beats clever.
+  // Recomputes what remains after each drawing, so it stops at the real limit.
+  const fillWithWhatFits = () => setSelInstIds(prev => {
+    let next = {...prev};
+    analyses.forEach(a=>{
+      for(let guard=0; guard<300; guard++){
+        const cf = cumulativeFeasibility({ rows:a.rows, pool:a.pool, selInstIds:next });
+        const cand = cf.rows.find(r=>r.status==="feasible" && r.nAdd>0);
+        if(!cand) break;
+        cand.dis.forEach(di=>{ next[di.id]=true; });
+      }
+    });
+    return next;
+  });
+
+  const visibleRows = shownRows.filter(r => showBlocked || r.status!=="blocked");
 
   // S4a — handoff to production nesting. Placed AFTER every hook above so the
   // early return can never change hook order (React #310).
@@ -13612,12 +13716,46 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
           {/* Drawing list */}
           <div style={{ ...css.card }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Drawings with unreleased instances ({allRows.length})</div>
-              <div style={{ display:"flex", gap:8 }}>
-                <button onClick={selectAllFeasible} style={css.btn.sm}>Select all feasible</button>
+              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>
+                Drawings with unreleased instances ({allRows.length})
+                {feasMode && <span style={{ fontSize:11, fontWeight:400, color:T.textLow }}> · cumulative</span>}
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:11, color:T.textMid, cursor:"pointer" }}
+                  title="Judge every drawing against what is LEFT after the ones already ticked, instead of against the full pool">
+                  <input type="checkbox" checked={feasMode} onChange={e=>setFeasMode(e.target.checked)} />
+                  Feasibility by material
+                </label>
+                {feasMode
+                  ? <button onClick={fillWithWhatFits} style={css.btn.sm}>Fill with what fits</button>
+                  : <button onClick={selectAllFeasible} style={css.btn.sm}>Select all feasible</button>}
                 <button onClick={()=>setShowBlocked(v=>!v)} style={css.btn.ghost}>{showBlocked?"Hide":"Show"} blocked</button>
               </div>
             </div>
+
+            {/* ── Material position — what the stock can actually carry ────── */}
+            {feasMode && matPos && matPos.map(({order,pos},oi)=>(
+              <div key={oi} style={{ marginBottom:10, padding:"8px 10px", background:T.bgInput,
+                                     border:`1px solid ${T.border}`, borderRadius:6 }}>
+                <div style={{ fontSize:11, color:T.textMid }}>
+                  <b style={{ color:T.text }}>{order?.orderNo||order?.id||"Order"}</b> — of <b style={{color:T.text}}>{pos.types}</b> RM type{pos.types!==1?"s":""} needed for every unreleased instance:{" "}
+                  <span style={{ color:T.green, fontWeight:700 }}>{pos.full} in full</span> ·{" "}
+                  <span style={{ color:T.amber, fontWeight:700 }}>{pos.part} in part</span> ·{" "}
+                  <span style={{ color:T.red,   fontWeight:700 }}>{pos.none} not available</span>
+                </div>
+                {(pos.part>0||pos.none>0) && (
+                  <div style={{ fontSize:10, color:T.textLow, marginTop:4, fontFamily:T.fontMono }}>
+                    {pos.detail.filter(d=>d.band!=="full").slice(0,8)
+                      .map(d=>`${d.display}: have ${d.have} of ${d.need} kg`).join(" · ")}
+                    {pos.detail.filter(d=>d.band!=="full").length>8
+                      ? ` +${pos.detail.filter(d=>d.band!=="full").length-8} more` : ""}
+                  </div>
+                )}
+                <div style={{ fontSize:10, color:T.textLow, marginTop:4 }}>
+                  Rows below are judged against what is <b>left</b> after your current selection, not the full pool.
+                </div>
+              </div>
+            ))}
             <div style={{ overflowX:"auto" }}>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                 <thead><tr>
