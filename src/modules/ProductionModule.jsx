@@ -4989,6 +4989,64 @@ const buildSplitIndex = (batches) => {
   return { map, byParent };
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BATCH SCORECARD — what an attempt DELIVERS and what it COSTS
+// An attempt with 12 drawings uses more bars than one with 10 because it does
+// more work, so cost alone would rank the smaller attempt higher every time.
+// Delivers and costs are therefore both reported and never collapsed.
+//
+// draggedPcs counts pieces belonging to drawings NOT in this batch. Parts of
+// drawings the planner ADDED are deliberate — they get cut, become unclaimed
+// cut records and wait for release — so they are not counted as drag.
+// avgUtil is weighted by sheet weight and comes from the nester's own utilisPct,
+// not from re-deriving areas we do not hold for foreign marks.
+// ═══════════════════════════════════════════════════════════════════════════
+const buildBatchScorecard = ({ units, drawingIds, instanceIds, wtTotal, wtCovered,
+                               nosTotal, nosCovered, cutCap, isPlate }) => {
+  const u = units||[];
+  const rmWeight = u.reduce((a,x)=>a+(x.sheetWt||0),0);
+  const utilNum  = u.reduce((a,x)=>a+((x.utilisPct||0)*(x.sheetWt||0)),0);
+  const dragged  = u.reduce((a,x)=>a+(x.parts||[]).filter(pt=>!(x.selParts||[]).includes(pt))
+                                       .reduce((b,pt)=>b+(pt.qty||1),0),0);
+  const rmWeightByMat = {};
+  u.forEach(x=>{ rmWeightByMat[x.matCode]=(rmWeightByMat[x.matCode]||0)+(x.sheetWt||0); });
+
+  // Plate and section cut in PARALLEL — the bottleneck is the larger, not the sum.
+  let plateWt=0, sectionWt=0;
+  u.forEach(x=>{ if(isPlate&&isPlate(x.matCode)) plateWt+=(x.selWt||0); else sectionWt+=(x.selWt||0); });
+  const cap = cutCap||{};
+  const plateDays   = cap.plateTPD>0   ? (plateWt/1000)/cap.plateTPD     : null;
+  const sectionDays = cap.sectionTPD>0 ? (sectionWt/1000)/cap.sectionTPD : null;
+  const bottleneckDays = (plateDays==null&&sectionDays==null) ? null
+                       : Math.max(plateDays||0, sectionDays||0);
+
+  return {
+    drawings: (drawingIds||[]).length,
+    instances: (instanceIds||[]).length,
+    rmUnits: u.length,
+    rmWeight: +rmWeight.toFixed(1),
+    rmWeightByMat,
+    avgUtil: rmWeight>0 ? +(utilNum/rmWeight).toFixed(1) : 0,
+    draggedPcs: dragged,
+    plateDays: plateDays==null?null:+plateDays.toFixed(1),
+    sectionDays: sectionDays==null?null:+sectionDays.toFixed(1),
+    bottleneckDays: bottleneckDays==null?null:+bottleneckDays.toFixed(1),
+    wtTotal:+(wtTotal||0).toFixed(1), wtCovered:+(wtCovered||0).toFixed(1),
+    wtPct: wtTotal>0 ? +((wtCovered/wtTotal)*100).toFixed(1) : 0,
+    nosTotal:nosTotal||0, nosCovered:nosCovered||0,
+  };
+};
+
+// Competing attempts = drafts that plan any of the SAME drawing instances.
+// A draft covering unrelated drawings is not a rival and survives a freeze.
+const rivalDrafts = (nests, nest) => {
+  const mine = new Set((nest&&nest.drawingInstanceIds)||[]);
+  return (nests||[]).filter(n=>
+    n && n.status==="draft" && n.id!==(nest&&nest.id) &&
+    (n.drawingInstanceIds||[]).some(x=>mine.has(x))
+  );
+};
+
 // ── Production-nest discard: what a frozen nest owns, and what stands in the way ──
 // A release is a PLAN and can be reverted; a CUT is physical and cannot. So a
 // release only warns, while any cut record against the nest's RM units blocks.
@@ -12365,7 +12423,8 @@ const buildProductionNestNo = (productionNests) => {
 };
 
 const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=[], cutRecords=[],
-                                productionNests=[], setProductionNests, nestingService=null, onBack, onFrozen }) => {
+                                productionNests=[], setProductionNests, nestingService=null, onBack, onFrozen,
+                                cutCap=null, checkMaterial=null }) => {
   const [decisions, setDecisions]   = useState({});   // rmUnitId -> "as_is" | "exclude" | "renest"
   const [confirmOpen, setConfirm]   = useState(false);
   const [note, setNote]             = useState("");
@@ -12376,6 +12435,12 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   // MRP screens let you paste a Bearer token instead — same affordance here.
   const [manualToken, setManualToken] = useState("");
   const [showToken, setShowToken]     = useState(false);
+  const [freezeMode, setFreezeMode]   = useState("freeze"); // "draft" | "freeze"
+  const [compareOpen, setCompareOpen] = useState(false);
+  // Nesting runs are external API calls — 7 materials is 7 calls per attempt.
+  // Cache on (matCode + parts + stock) so an attempt that differs by a couple of
+  // drawings only re-runs the materials those drawings actually touch.
+  const runCache = useRef({});
   const tn = (kg)=>((kg||0)/1000).toFixed(2)+" T";
 
   // ── Scope of this plan ──────────────────────────────────────────────────
@@ -12485,6 +12550,17 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
     });
     if(parts.length===0) return;
     const isPlate = nestingService.isPlateSection ? nestingService.isPlateSection(parts[0].section) : false;
+    // An attempt usually differs from the last by a couple of drawings, so most
+    // materials are byte-identical to a run we already paid for.
+    const cacheKey = JSON.stringify([mc,
+      parts.map(x=>`${x.markNo}:${x.totalQty}:${x.length}x${x.width}`).sort(),
+      (g.rawMats||[]).map(r=>`${r.length}x${r.width}x${r.qty}`).sort()]);
+    const cached = runCache.current[cacheKey];
+    if(cached){
+      setRenest(prev=>({...prev,[mc]:{...prev[mc],status:"done",pct:100,
+        msg:`reused from an earlier attempt — ${cached.length} sheet(s), no API call`,error:"",sheets:cached}}));
+      return;
+    }
     setRenest(prev=>({...prev,[mc]:{...prev[mc],status:"running",pct:2,msg:"Fetching DXF files…",error:"",sheets:[]}}));
     try {
       const dxfMap = {};
@@ -12536,6 +12612,7 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
           selWt: pl.filter(x=>isSel(x.markNo)).reduce((s,p)=>s+pieceWt(p.markNo)*(p.qty||1),0),
         };
       });
+      runCache.current[cacheKey] = sheets;
       setRenest(prev=>({...prev,[mc]:{...prev[mc],status:"done",pct:100,msg:`${sheets.length} sheet(s) nested`,sheets}}));
       setRunNo(n=>n+1);
     } catch(e) {
@@ -12576,7 +12653,8 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   if(spentCount>0)
     warnings.push(`${spentCount} RM unit(s) are already spent (a cut record exists) and are excluded automatically.`);
 
-  const doFreeze = () => {
+  const doFreeze = (mode) => {
+    const asDraft = (mode||freezeMode) === "draft";
     const id = buildProductionNestNo(productionNests);
     const byMat = {};
     planUnits.forEach(ru=>{ (byMat[ru.matCode]=byMat[ru.matCode]||[]).push(ru); });
@@ -12594,13 +12672,31 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
       })),
       parts: [...new Set(rus.flatMap(ru=>ru.parts.map(p=>p.markNo)))],
     }));
+    const instIds = selRows.flatMap(r=>(r.dis||[]).filter(di=>selInstIds[di.id]).map(di=>di.id));
+    const scorecard = buildBatchScorecard({
+      units: planUnits, drawingIds:[...selDrawingIds], instanceIds:instIds,
+      wtTotal, wtCovered, nosTotal, nosCovered, cutCap,
+      isPlate: (mc)=>/PLATE|SHEET/i.test(mc||""),
+    });
     const nest = {
       id,
       createdAt: today(),
       createdBy: user?.username||user?.name||"",
-      status: "frozen",
-      frozenAt: new Date().toISOString(),
-      frozenBy: user?.username||user?.name||"",
+      status: asDraft ? "draft" : "frozen",
+      attemptLabel: `Attempt ${String.fromCharCode(65 + (productionNests||[]).filter(n=>n&&n.status==="draft").length)}`,
+      scorecard,
+      // inputs make an attempt reproducible, and explain WHY one beat another
+      inputs: {
+        drawingInstanceIds: instIds,
+        stockByMat: Object.fromEntries(Object.entries(renest||{})
+          .filter(([,g])=>g&&Array.isArray(g.rawMats))
+          .map(([mc,g])=>[mc, g.rawMats.map(r=>({length:r.length,width:r.width,qty:r.qty}))])),
+        sourceRmUnitIds: rmUnits.map(ru=>ru.rmUnitId),
+      },
+      ...(asDraft ? {} : {
+        frozenAt: new Date().toISOString(),
+        frozenBy: user?.username||user?.name||"",
+      }),
       source: renestUnits.length>0 ? (included.length>0 ? "mixed" : "renest") : "mrp_as_is",
       supersededRmUnitIds: [...new Set(renestUnits.flatMap(s=>s.supersedes||[]))],
       orderIds: [...new Set(selRows.map(r=>r.order.id))],
@@ -12616,9 +12712,21 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
       note: note||"",
       lots,
     };
-    if(setProductionNests) setProductionNests(prev=>[...(prev||[]), nest]);
+    if(setProductionNests) setProductionNests(prev=>{
+      const list = [...(prev||[]), nest];
+      if(asDraft) return list;
+      // Committing one attempt retires the rivals — drafts planning any of the
+      // same drawing instances. Drafts for other work are left alone.
+      const rivals = rivalDrafts(list, nest);
+      const nowIso = new Date().toISOString();
+      return list.map(n=>rivals.some(r=>r.id===n.id) ? {
+        ...n, status:"discarded", discardedAt:nowIso,
+        discardedBy:user?.username||user?.name||"",
+        discardNote:`Superseded by ${nest.id}`,
+      } : n);
+    });
     setConfirm(false);
-    if(onFrozen) onFrozen(nest);
+    if(!asDraft && onFrozen) onFrozen(nest);
   };
 
   const Tile = ({label,value,sub,color}) => (
@@ -12820,23 +12928,131 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
           {planUnits.length} RM unit(s) in this plan{renestUnits.length>0?` (${renestUnits.length} re-nested)`:""}.
         </div>
         <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+          {(productionNests||[]).some(n=>n&&n.status==="draft") && (
+            <button onClick={()=>setCompareOpen(true)} style={css.btn.ghost}>
+              Compare attempts ({(productionNests||[]).filter(n=>n&&n.status==="draft").length})
+            </button>
+          )}
+          <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:11, color:T.textMid, cursor:"pointer" }}>
+            <input type="checkbox" checked={freezeMode==="draft"}
+              onChange={e=>setFreezeMode(e.target.checked?"draft":"freeze")} />
+            Keep as draft attempt
+          </label>
           <button onClick={()=>setDecisions({})} style={css.btn.ghost}>Reset choices</button>
           <button disabled={planUnits.length===0} onClick={()=>setConfirm(true)}
             style={{ ...css.btn.primary, ...(planUnits.length===0?{opacity:0.45,cursor:"not-allowed"}:{}) }}>
-            Freeze production nest →
+            {freezeMode==="draft" ? "Save as draft attempt →" : "Freeze production nest →"}
           </button>
         </div>
       </div>
 
+      {compareOpen && (()=>{
+        const drafts = (productionNests||[]).filter(n=>n&&n.status==="draft");
+        const best = (key, lower) => {
+          const vals = drafts.map(d=>(d.scorecard||{})[key]).filter(v=>typeof v==="number");
+          if(vals.length===0) return null;
+          return lower ? Math.min(...vals) : Math.max(...vals);
+        };
+        const winner = { rmUnits:best("rmUnits",true), draggedPcs:best("draggedPcs",true),
+                         avgUtil:best("avgUtil",false), bottleneckDays:best("bottleneckDays",true) };
+        const cell = (d,key,fmtFn,lower)=>{
+          const v=(d.scorecard||{})[key];
+          const isBest = typeof v==="number" && winner[key]!=null && v===winner[key] && drafts.length>1;
+          return <td style={{ padding:"4px 10px", fontSize:11, textAlign:"right",
+                              color:isBest?T.green:T.text, fontWeight:isBest?700:400 }}>
+            {v==null?"—":fmtFn(v)}</td>;
+        };
+        return (
+          <Modal title="Compare draft attempts" onClose={()=>setCompareOpen(false)} width={760}>
+            <div style={{ fontSize:11, color:T.textMid, marginBottom:10 }}>
+              An attempt covering more drawings will use more RM — that is more work, not worse planning.
+              Read the delivers and costs together. Best value in each column is highlighted.
+            </div>
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                <thead><tr style={{ background:T.bgInput }}>
+                  {["Attempt","Drawings","Instances","RM units","RM wt (kg)","Avg util %","Cutting days","Dragged pcs","Coverage"].map(h=>(
+                    <th key={h} style={{ padding:"4px 10px", fontSize:10, color:T.textLow, fontWeight:600,
+                      textAlign: h==="Attempt"?"left":"right", borderBottom:`1px solid ${T.border}` }}>{h}</th>))}
+                </tr></thead>
+                <tbody>
+                  {drafts.map(d=>{
+                    const sc=d.scorecard||{};
+                    return (
+                      <tr key={d.id} style={{ borderBottom:`1px solid ${T.border}33` }}>
+                        <td style={{ padding:"4px 10px", fontSize:11 }}>
+                          <b>{d.attemptLabel||d.id}</b>
+                          <div style={{ fontSize:9, color:T.textLow, fontFamily:T.fontMono }}>{d.id}</div>
+                        </td>
+                        <td style={{ padding:"4px 10px", fontSize:11, textAlign:"right" }}>{sc.drawings??"—"}</td>
+                        <td style={{ padding:"4px 10px", fontSize:11, textAlign:"right" }}>{sc.instances??"—"}</td>
+                        {cell(d,"rmUnits",v=>v,true)}
+                        <td style={{ padding:"4px 10px", fontSize:11, textAlign:"right" }}>{sc.rmWeight??"—"}</td>
+                        {cell(d,"avgUtil",v=>`${v}%`,false)}
+                        {cell(d,"bottleneckDays",v=>v,true)}
+                        {cell(d,"draggedPcs",v=>v,true)}
+                        <td style={{ padding:"4px 10px", fontSize:11, textAlign:"right" }}>
+                          {sc.wtPct!=null?`${sc.wtPct}% · ${sc.nosCovered}/${sc.nosTotal}`:"—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize:10, color:T.textLow, marginTop:8 }}>
+              Cutting days is the bottleneck of plate and section, not their sum — they run in parallel.
+              Dragged pcs counts parts of drawings <b>not</b> in that attempt; parts of drawings you added
+              are deliberate and excluded. Freeze the one you want from its own plan — the rest are discarded.
+            </div>
+            <div style={{ display:"flex", justifyContent:"flex-end", marginTop:12 }}>
+              <button onClick={()=>setCompareOpen(false)} style={css.btn.primary}>Close</button>
+            </div>
+          </Modal>
+        );
+      })()}
+
       {confirmOpen && (
-        <Modal title="Freeze production nest" onClose={()=>setConfirm(false)}>
+        <Modal title={freezeMode==="draft"?"Save as draft attempt":"Freeze production nest"} onClose={()=>setConfirm(false)}>
           <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>
             This creates <b style={{color:T.text}}>{buildProductionNestNo(productionNests)}</b> covering{" "}
             <b style={{color:T.text}}>{planUnits.length}</b> RM unit(s) at{" "}
             <b style={{color:T.text}}>{wtPct.toFixed(1)}%</b> by weight and{" "}
             <b style={{color:T.text}}>{nosCovered}/{nosTotal}</b> by nos.
             The MRP nest is preserved unchanged.
+            {freezeMode==="draft"
+              ? " A draft is invisible to releases — nothing changes on the floor until you freeze it."
+              : " Freezing makes this authoritative for what these drawings release against."}
           </div>
+          {(() => {
+            if(freezeMode==="draft") return null;
+            const instIds = selRows.flatMap(r=>(r.dis||[]).filter(di=>selInstIds[di.id]).map(di=>di.id));
+            const rivals  = rivalDrafts(productionNests, { id:null, drawingInstanceIds:instIds });
+            const scAll   = buildBatchScorecard({ units:planUnits, drawingIds:[...selDrawingIds],
+              instanceIds:instIds, wtTotal, wtCovered, nosTotal, nosCovered, cutCap,
+              isPlate:(mc)=>/PLATE|SHEET/i.test(mc||"") });
+            const shorts  = checkMaterial ? (checkMaterial(scAll.rmWeightByMat)||[]) : [];
+            return (
+              <>
+                {shorts.length>0 && (
+                  <InfoBanner color="amber">
+                    <b>{shorts.length} material(s) short against approved stock.</b> Freezing is allowed —
+                    raise a PR for the balance.
+                    <div style={{ marginTop:4, fontSize:10, fontFamily:T.fontMono }}>
+                      {shorts.slice(0,6).map(x=>`${x.matCode}: need ${x.need} kg, approved ${x.have} kg`).join(" · ")}
+                      {shorts.length>6?` +${shorts.length-6} more`:""}
+                    </div>
+                  </InfoBanner>
+                )}
+                {rivals.length>0 && (
+                  <InfoBanner color="blue">
+                    {rivals.length} competing draft attempt(s) plan the same drawings and will be
+                    discarded when this is frozen: {rivals.map(r=>r.attemptLabel||r.id).join(", ")}.
+                  </InfoBanner>
+                )}
+              </>
+            );
+          })()}
           {warnings.length>0 && (
             <div style={{ background:T.bgInput, border:`1px solid ${T.amber}`, borderRadius:6, padding:10, marginBottom:10 }}>
               {warnings.map((w,i)=><div key={i} style={{ fontSize:11, color:T.textMid }}>• {w}</div>)}
@@ -12849,7 +13065,12 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
           </div>
           <div style={{ display:"flex", justifyContent:"flex-end", gap:10 }}>
             <button onClick={()=>setConfirm(false)} style={css.btn.ghost}>Cancel</button>
-            <button onClick={doFreeze} style={css.btn.primary}>Freeze</button>
+            {freezeMode!=="draft" && (
+              <button onClick={()=>doFreeze("draft")} style={css.btn.ghost}>Save as draft instead</button>
+            )}
+            <button onClick={()=>doFreeze(freezeMode)} style={css.btn.primary}>
+              {freezeMode==="draft"?"Save draft":"Freeze"}
+            </button>
           </div>
         </Modal>
       )}
@@ -13051,6 +13272,20 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       nestingBatches={nestingBatches||[]} cutRecords={cutRecords||[]}
       productionNests={productionNests||[]} setProductionNests={setProductionNests}
       nestingService={nestingService}
+      cutCap={cutCap}
+      checkMaterial={(rmWeightByMat)=>{
+        // Pool lives here, so the nesting screen asks rather than rebuilding it.
+        const shorts=[];
+        selOrderIds.forEach(oid=>{
+          const order=(orders||[]).find(o=>o.id===oid); if(!order) return;
+          const pool=buildPool(order);
+          Object.entries(rmWeightByMat||{}).forEach(([mc,kg])=>{
+            const have=(pool[normMatCode(mc)]||{}).approvedWt||0;
+            if(kg>have+0.5) shorts.push({ matCode:mc, need:+kg.toFixed(0), have:+have.toFixed(0) });
+          });
+        });
+        return shorts;
+      }}
       onBack={()=>setNestScreen(false)} onFrozen={()=>setNestScreen(false)} />
   );
 
@@ -13120,13 +13355,14 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
 
           {/* ── Frozen production nests — freeze is no longer one-way ────────── */}
           {(() => {
-            const frozen = (productionNests||[]).filter(n=>n&&n.status==="frozen");
+            const frozen = (productionNests||[]).filter(n=>n&&(n.status==="frozen"||n.status==="draft"));
             if(frozen.length===0) return null;
+            const nDraft = frozen.filter(n=>n.status==="draft").length;
             return (
               <div style={{ ...css.card, marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <div style={{ fontSize:13, fontWeight:700, color:T.text }}>
-                    Frozen production nests ({frozen.length})
+                    Production nests ({frozen.length}){nDraft>0?` — ${nDraft} draft attempt${nDraft!==1?"s":""}`:""}
                   </div>
                   <button onClick={()=>setShowNests(v=>!v)} style={css.btn.ghost}>{showNests?"Hide":"Show"}</button>
                 </div>
@@ -13138,7 +13374,7 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
                     <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
                       <thead>
                         <tr style={{ background:T.bgInput }}>
-                          {["Nest","Frozen","By","Source","Drawings","RM units","Complete","",].map((h,i)=>(
+                          {["Nest","Status","When","By","Source","Drawings","RM units","Complete","",].map((h,i)=>(
                             <th key={i} style={{ padding:"4px 8px", textAlign:"left", fontSize:10, color:T.textLow, fontWeight:600, borderBottom:`1px solid ${T.border}` }}>{h}</th>
                           ))}
                         </tr>
@@ -13148,7 +13384,12 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
                           const b = nestDiscardBlockers(n, cutRecords, releases);
                           return (
                             <tr key={n.id} style={{ borderBottom:`1px solid ${T.border}33` }}>
-                              <td style={{ padding:"4px 8px", fontFamily:T.fontMono, fontSize:10, color:T.accentHi }}>{n.id}</td>
+                              <td style={{ padding:"4px 8px", fontFamily:T.fontMono, fontSize:10, color:T.accentHi }}>
+                                {n.id}{n.attemptLabel?<span style={{color:T.textLow}}> · {n.attemptLabel}</span>:null}
+                              </td>
+                              <td style={{ padding:"4px 8px", fontSize:10 }}>
+                                <Badge color={n.status==="draft"?"gray":"green"}>{n.status==="draft"?"draft":"frozen"}</Badge>
+                              </td>
                               <td style={{ padding:"4px 8px", fontSize:10 }}>{(n.frozenAt||n.createdAt||"").slice(0,10)}</td>
                               <td style={{ padding:"4px 8px", fontSize:10, color:T.textMid }}>{n.frozenBy||n.createdBy||"—"}</td>
                               <td style={{ padding:"4px 8px", fontSize:10 }}>{n.source||"—"}</td>
@@ -13156,7 +13397,7 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
                               <td style={{ padding:"4px 8px", fontSize:10 }}>{b.rmUnitCount}</td>
                               <td style={{ padding:"4px 8px", fontSize:10 }}>{n.completion?`${n.completion.wtPct}% wt · ${n.completion.nosCovered}/${n.completion.nosTotal}`:"—"}</td>
                               <td style={{ padding:"4px 8px" }}>
-                                {b.blocked
+                                {b.blocked && n.status!=="draft"
                                   ? <span style={{ fontSize:10, color:T.textLow }} title={`Cutting has started on ${b.cutRmUnits.length} RM unit(s)`}>🔒 Cutting started</span>
                                   : <button onClick={()=>{ setDiscardNote(""); setDiscardFor(n); }} style={{ ...css.btn.ghost, fontSize:10, padding:"2px 8px", color:T.red }}>Discard</button>}
                               </td>
