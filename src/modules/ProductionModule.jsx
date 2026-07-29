@@ -5714,17 +5714,9 @@ const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, 
 
 const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords, productionNests=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
-  // S4c — the wizard's nesting source: frozen production nests first, MRP for the rest
-  const effBatches = buildEffectiveNestSource(
-    currentMrpBatches(nestingBatches, {
-      orderIds:  selDrawings.map(r=>r.order&&r.order.id).filter(Boolean),
-      drawingNos:selDrawings.map(r=>r.drawing&&r.drawing.drawingNo).filter(Boolean),
-    }),
-    productionNests
-  );
   // Spliced sheets carry 2A/S1 style names; resolve them back to order marks.
+  // Built from EVERY batch so a segment name always resolves.
   const splitIdx = buildSplitIndex(nestingBatches);
-  const usingProductionNest = effBatches.some(b=>b.productionNestId);
   const [step, setStep] = useState(1);
   const [selDrawings, setSelDrawings] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
@@ -5735,6 +5727,18 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const [confirmedOps, setConfirmedOps] = useState({}); // {partId: string[]}
   const [contAsgn, setContAsgn] = useState({});
   const [exitWarning, setExitWarning] = useState(false);
+
+  // S4c — the wizard's nesting source: frozen production nests first, MRP for the rest.
+  // MUST sit below the state block: it reads selDrawings, and a const declared above
+  // a useState that it references throws "cannot access before initialization".
+  const effBatches = buildEffectiveNestSource(
+    currentMrpBatches(nestingBatches, {
+      orderIds:  (selDrawings||[]).map(r=>r&&r.order&&r.order.id).filter(Boolean),
+      drawingNos:(selDrawings||[]).map(r=>r&&r.drawing&&r.drawing.drawingNo).filter(Boolean),
+    }),
+    productionNests
+  );
+  const usingProductionNest = effBatches.some(b=>b.productionNestId);
 
   // ── buildProductionSteps ──
   const buildProductionSteps = (drawing, order, contAsgnSnap, confirmedOpsSnap, rmUnitAsgnSnap) => {
