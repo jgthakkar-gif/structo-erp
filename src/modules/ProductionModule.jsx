@@ -4955,6 +4955,102 @@ const getRmUnitWt = (lot, rmUnitId) => {
 
 // Sum part weights and areas for a list of mark numbers
 // ═══════════════════════════════════════════════════════════════════════════
+// OUTBOUND EXIT GATE — everything below is DERIVED from the outbound step.
+// The screen shows these; it never asks the planner to re-enter them.
+//   exitAfterStep → what physically leaves
+//   span          → which QC receives it on return
+//   tasks[]       → what that QC checks
+// ═══════════════════════════════════════════════════════════════════════════
+
+// What leaves the shop, from the stage it leaves after.
+const outboundDispatchUnit = (step) => {
+  const after = step && step.exitAfterStep;
+  const i = OUTBOUND_LADDER.indexOf(after);
+  if(i < 0) return { unit:"rm", label:"RM units" };
+  if(after === "nesting") return { unit:"rm", label:"RM units" };
+  if(after === "cutting") return { unit:"part", label:"cut parts" };
+  return { unit:"assembly", label:"assemblies" };
+};
+
+// Which QC receives it back. A REPLACEMENT span hands over at the QC of the last
+// stage the vendor owned — that is the last thing they physically did. An INSERT
+// (empty span: bending, galvanising) has no owned stage, so the check is the
+// task-driven Outbound QC instead.
+const OUTBOUND_STAGE_QC = { cutting:"cutting_qc", fitup:"fitup_qc", welding:"weld_qc",
+                            blasting:"blast_qc", painting:"paint_qc" };
+// INSP_TABS is declared inside QcAdminScreen, so it cannot be read from here.
+const OUTBOUND_QC_LABEL = { cutting_qc:"Cutting QC", fitup_qc:"Fit-Up QC", weld_qc:"Weld QC",
+                            blast_qc:"Blast QC", paint_qc:"Paint QC", outbound_qc:"Outbound QC" };
+const outboundReceivingQc = (step, processSteps) => {
+  const owned = outboundOwnedStages(processSteps);
+  const last = [...OUTBOUND_LADDER].reverse().find(st=>owned.has(st));
+  if(!last) return { qc:"outbound_qc", stage:null, kind:"insert",
+                     why:"the vendor adds an operation rather than replacing one, so the check is task-driven" };
+  return { qc: OUTBOUND_STAGE_QC[last] || "outbound_qc", stage:last, kind:"replacement",
+           why:`the last stage the vendor owns is ${last}` };
+};
+
+// Pending dispatches: vendor-cut RM units on a release that have not gone out yet,
+// grouped the way they physically travel — one vendor, one outbound step, one lorry.
+const buildOutboundDispatches = (releases) => {
+  const out = {};
+  (releases||[]).forEach(r=>{
+    (r.rmUnitAssignments||[]).forEach(ru=>{
+      if(!ru || !ru.outbound || ru.outboundIssuedAt) return;
+      const key = `${r.id}|${ru.vendorId||"__none__"}|${ru.outboundStepRef||""}`;
+      const g = out[key] || (out[key] = {
+        key, releaseId:r.id, releaseNo:r.releaseNo||r.id,
+        vendorId:ru.vendorId||"", vendorName:ru.vendorName||"",
+        stepRef:ru.outboundStepRef||"", stepLabel:ru.outboundStepLabel||"",
+        exitAfterStep:ru.outboundExitAfter||"", reEntryStep:ru.outboundReEntry||"",
+        units:[], totalWt:0,
+      });
+      g.units.push(ru);
+      g.totalWt += (+ru.sheetWt||0);
+    });
+  });
+  return Object.values(out).map(g=>({ ...g, totalWt:+g.totalWt.toFixed(1) }))
+    .sort((a,b)=>String(a.releaseId).localeCompare(String(b.releaseId)) ||
+                 String(a.vendorName).localeCompare(String(b.vendorName)));
+};
+
+// The declared return list — DERIVED, never authored. Three populations:
+//   (a) the dispatched drawing's own pieces  → come back as assemblies
+//   (b) every other mark on those bars       → come back as cut parts (riders)
+//   (c) offcuts                              → dims blank, stores fill at receipt
+// (a) and (b) come from buildRmUnitCutRecords so there is ONE definition of what
+// is on a bar; this only enriches those records for printing.
+const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, ts, user }) => {
+  const lines = [];
+  (units||[]).forEach(ru=>{
+    const sheetParts = sheetPartsOf ? (sheetPartsOf(ru.rmUnitId)||[]) : (ru.parts||[]).map(m=>({markNo:m,qty:1}));
+    const recs = buildRmUnitCutRecords({
+      rmUnitId: ru.rmUnitId, sheetParts, instances, orders,
+      user: user||{username:""}, ts: ts||new Date().toISOString(),
+    });
+    recs.forEach(rec=>{
+      const ord  = (orders||[]).find(o=>o.id===rec.orderId);
+      const part = ((ord||{}).parts||[]).find(pt=>pt.markNo===rec.markNo && pt.drawingId===rec.drawingId);
+      const drg  = ((ord||{}).drawings||[]).find(d=>d.id===rec.drawingId);
+      const uw   = (part&&part.clientUnitWt)||0;
+      lines.push({
+        rmUnitId: ru.rmUnitId,
+        role: rec.claimedByInstanceId ? "assembly" : "part",
+        drawingId: rec.drawingId, drawingNo:(drg&&drg.drawingNo)||rec.drawingId,
+        markNo: rec.markNo, description:(part&&part.description)||"",
+        dimensions:(part&&(part.size||part.dimensions))||"",
+        qty: rec.qty||1, unitWt:+uw.toFixed(2), totalWt:+(uw*(rec.qty||1)).toFixed(1),
+        instanceId: rec.claimedByInstanceId || "",
+      });
+    });
+    lines.push({ rmUnitId:ru.rmUnitId, role:"offcut", drawingNo:"—", markNo:"OFFCUT",
+                 description:"To be measured by stores on receipt", dimensions:"",
+                 qty:1, unitWt:0, totalWt:0, instanceId:"" });
+  });
+  return lines;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SPLICE SEGMENTS — RESOLVING SHEET MARK NAMES BACK TO ORDER MARKS
 // NestExportModal splits over-length joints-allowed parts BEFORE nesting
 // (App.jsx ~6702: `${markNo}/S${i+1}`), so a nested sheet carries 2A/S1 and
@@ -7193,6 +7289,250 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 // ═══════════════════════════════════════════════════════════════════════════════
 // STEP 6: MACHINE OPERATOR QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// OUTBOUND EXIT GATE (Phase 2b) — issue RM to the vendor with the declared return
+// list. Everything derivable is shown, not asked. Raises the SAME issue request
+// the machine operator raises, with a vendor destination and transport, and pushes
+// the SAME outboundHistory entry OutboundProcessing writes so the existing return
+// and Outbound-QC path works unchanged.
+// ═══════════════════════════════════════════════════════════════════════════
+const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIssueRequests,
+                               instances, setInstances, orders, vendors=[], nestingBatches=[],
+                               productionNests=[], onBack }) => {
+  const [openKey, setOpenKey] = useState("");
+  const [form, setForm]       = useState({});
+  const [toast, setToast]     = useState("");
+
+  const effB = buildEffectiveNestSource(nestingBatches, productionNests);
+  const sheetForRmUnit = (rmUnitId) => {
+    for(const b of (effB||[])) for(const l of (b.lots||[])) for(const sh of (l.sheets||[]))
+      if(sh.rmUnitId===rmUnitId) return sh;
+    return null;
+  };
+  const sheetPartsOf = (rmUnitId) => {
+    const sh = sheetForRmUnit(rmUnitId);
+    return (sh&&sh.parts)||[];
+  };
+
+  const dispatches = buildOutboundDispatches(releases);
+  const f = (k, d) => (form[openKey]||{})[k] ?? d;
+  const setF = (k, v) => setForm(p=>({ ...p, [openKey]:{ ...(p[openKey]||{}), [k]:v } }));
+
+  const stepsForRelease = (rel) => {
+    // the drawing pipeline that declared this outbound step
+    const oid = (rel.drawings||[])[0];
+    const dwgIds = (rel.drawings||[]).map(d=>d&&d.drawingId?d.drawingId:d);
+    for(const o of (orders||[]))
+      for(const d of (o.drawings||[]))
+        if(dwgIds.includes(d.id) && Array.isArray(d.processSteps) && d.processSteps.length) return d.processSteps;
+    return null;
+  };
+
+  const doIssue = (g) => {
+    const rel = (releases||[]).find(r=>r.id===g.releaseId); if(!rel) return;
+    if(!g.vendorId){ setToast("No vendor on these RM units — assign one in the release wizard first."); return; }
+    const nowIso = new Date().toISOString();
+    const dispatchDate = f("dispatchDate", today());
+    const expectedReturn = f("expectedReturn", "");
+    const transport = {
+      vehicleNo:f("vehicleNo",""), lrNo:f("lrNo",""), driver:f("driver",""),
+      dispatchDate, expectedReturn, remarks:f("remarks",""),
+    };
+    const steps = stepsForRelease(rel);
+    const recv  = outboundReceivingQc({ exitAfterStep:g.exitAfterStep, reEntryStep:g.reEntryStep }, steps);
+    const list  = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, ts:nowIso, user });
+    const issueId = `OBI-${new Date().getFullYear()}-${String((issueRequests||[]).filter(r=>r&&r.outbound).length+1).padStart(3,"0")}`;
+
+    // 1) one issue request per RM unit — the store's existing queue, vendor-destined
+    const yr = new Date().getFullYear();
+    let seq = (issueRequests||[]).length;
+    const reqs = g.units.map(ru=>{
+      seq += 1;
+      return {
+        id:`IRQ-${yr}-${String(seq).padStart(3,"0")}`,
+        requestDate:dispatchDate, requestedBy:user.username, requestedByName:user.name,
+        rmUnitId:ru.rmUnitId, releaseId:g.releaseId,
+        lotId:ru.stockLotId||ru.lotId||"", lotNo:ru.stockLotNo||"",
+        matCode:ru.matCode, dimensions:ru.dimensions||"",
+        wtRequested:+ru.sheetWt||0, parts:ru.parts||[],
+        status:"pending", remarks:transport.remarks,
+        // outbound destination in place of a machine
+        outbound:true, outboundIssueId:issueId,
+        vendorId:g.vendorId, vendorName:g.vendorName,
+        outboundStepRef:g.stepRef, outboundStepLabel:g.stepLabel,
+        transport,
+      };
+    });
+    setIssueRequests(prev=>[...(prev||[]), ...reqs]);
+
+    // 2) stamp the release so the dispatch leaves the pending list and the receipt
+    //    (Phase 3) has the declared list to tally against
+    setReleases(prev=>(prev||[]).map(r=>r.id!==g.releaseId?r:({
+      ...r,
+      rmUnitAssignments:(r.rmUnitAssignments||[]).map(x=>
+        g.units.some(u=>u.rmUnitId===x.rmUnitId)
+          ? { ...x, outboundIssuedAt:nowIso, outboundIssuedBy:user.username,
+              outboundIssueId:issueId, transport,
+              returnList:list.filter(l=>l.rmUnitId===x.rmUnitId),
+              receivingQc:recv.qc }
+          : x),
+    })));
+
+    // 3) the instances on those bars go outbound — SAME history shape as
+    //    OutboundProcessing.doCreate, so doReturn and OutboundQcPanel work unchanged
+    const unitIds = new Set(g.units.map(u=>u.rmUnitId));
+    setInstances(prev=>(prev||[]).map(i=>{
+      if(!unitIds.has(i.rmUnitId)) return i;
+      return {
+        ...i,
+        currentStatus:"outbound",
+        outboundHistory:[...(i.outboundHistory||[]), {
+          type:g.stepLabel||g.stepRef||"outbound", vendorId:g.vendorId,
+          sentDate:dispatchDate, expectedReturn, notes:transport.remarks,
+          stageAtDispatch:i.currentStage, statusAtDispatch:i.currentStatus,
+          tasks:[], reEntryStep:g.reEntryStep,
+          outboundIssueId:issueId, transport,
+        }],
+      };
+    }));
+    setOpenKey(""); setToast(`${issueId} issued to ${g.vendorName} — ${g.units.length} RM unit(s).`);
+  };
+
+  const doPrint = (g) => {
+    const list = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, user });
+    const esc = (x)=>String(x==null?"":x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+    const rows = list.map(l=>`<tr class="${l.role}"><td>${esc(l.rmUnitId)}</td><td>${esc(l.drawingNo)}</td>`
+      + `<td>${esc(l.markNo)}</td><td>${esc(l.description)}</td><td>${esc(l.dimensions)}</td>`
+      + `<td class="r">${esc(l.qty)}</td><td class="r">${esc(l.unitWt||"")}</td><td class="r">${esc(l.totalWt||"")}</td>`
+      + `<td>${l.role==="assembly"?"Assembly":l.role==="part"?"Cut part":"Offcut"}</td></tr>`).join("");
+    const w = window.open("", "_blank", "width=980,height=700");
+    if(!w){ setToast("Popup blocked — allow popups to print the challan."); return; }
+    w.document.write(`<html><head><title>${esc(g.releaseNo)} — outbound challan</title><style>
+      body{font-family:system-ui,sans-serif;font-size:12px;padding:18px;color:#111}
+      h1{font-size:16px;margin:0 0 2px} .sub{color:#555;margin-bottom:12px}
+      table{width:100%;border-collapse:collapse;margin-top:8px}
+      th,td{border:1px solid #bbb;padding:4px 6px;text-align:left}
+      th{background:#eee;font-size:10px;text-transform:uppercase}
+      .r{text-align:right} tr.part td{background:#fffaf0} tr.offcut td{background:#f4f4f4;font-style:italic}
+      .box{border:1px solid #bbb;padding:8px;margin-top:10px}
+      </style></head><body>
+      <h1>Outbound challan — ${esc(g.stepLabel||g.stepRef)}</h1>
+      <div class="sub">${esc(g.releaseNo)} · Vendor: <b>${esc(g.vendorName)}</b> ·
+        Out after ${esc(g.exitAfterStep)} · Back at ${esc(g.reEntryStep)} ·
+        ${g.units.length} RM unit(s) · ${esc(g.totalWt)} kg</div>
+      <div class="box">Vehicle: ${esc(f("vehicleNo",""))} &nbsp; LR/Challan: ${esc(f("lrNo",""))}
+        &nbsp; Driver: ${esc(f("driver",""))} &nbsp; Dispatched: ${esc(f("dispatchDate",today()))}
+        &nbsp; Expected back: ${esc(f("expectedReturn",""))}</div>
+      <table><thead><tr><th>RM unit</th><th>Drawing</th><th>Mark</th><th>Description</th><th>Dimensions</th>
+        <th class="r">Qty</th><th class="r">Unit kg</th><th class="r">Total kg</th><th>Comes back as</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+      <div class="box">Offcut dimensions to be entered by stores on receipt.
+        Received by ______________________ Date ____________</div>
+      </body></html>`);
+    w.document.close(); w.focus(); w.print();
+  };
+
+  return (
+    <div>
+      <button onClick={onBack} style={{...css.btn.ghost,marginBottom:10}}>← Production</button>
+      <div style={{fontSize:18,fontWeight:700,color:T.text,marginBottom:2}}>Outbound — Issue to Vendor</div>
+      <div style={{fontSize:12,color:T.textMid,marginBottom:14}}>
+        RM units assigned to an outbound vendor in the release wizard, waiting to go out.
+        The return list is derived from the nest — nothing to type.
+      </div>
+      {toast&&<InfoBanner color="green">{toast}</InfoBanner>}
+      {dispatches.length===0&&(
+        <InfoBanner color="blue">
+          Nothing waiting. RM units appear here once a release assigns them to an outbound vendor.
+        </InfoBanner>
+      )}
+      {dispatches.map(g=>{
+        const open = openKey===g.key;
+        const rel  = (releases||[]).find(r=>r.id===g.releaseId);
+        const steps= rel?stepsForRelease(rel):null;
+        const recv = outboundReceivingQc({ exitAfterStep:g.exitAfterStep, reEntryStep:g.reEntryStep }, steps);
+        const du   = outboundDispatchUnit({ exitAfterStep:g.exitAfterStep });
+        const list = open?buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, user }):[];
+        const nAsm = list.filter(l=>l.role==="assembly").length;
+        const nPart= list.filter(l=>l.role==="part").length;
+        return (
+          <div key={g.key} style={{...css.card,marginBottom:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}
+                 onClick={()=>setOpenKey(open?"":g.key)}>
+              <div>
+                <span style={{color:T.textLow,marginRight:6}}>{open?"▼":"▶"}</span>
+                <b style={{color:T.amber}}>⬆ {g.stepLabel||g.stepRef||"Outbound"}</b>
+                <span style={{fontSize:11,color:T.textMid,marginLeft:8}}>
+                  {g.releaseNo} · {g.vendorName||<span style={{color:T.red}}>no vendor</span>} ·
+                  {" "}{g.units.length} {du.label} · {g.totalWt} kg
+                </span>
+              </div>
+              <span style={{fontSize:11,color:T.textLow}}>out after {g.exitAfterStep} → back at {g.reEntryStep}</span>
+            </div>
+            {open&&(
+              <div style={{marginTop:12}}>
+                <InfoBanner color="blue">
+                  <b>{du.label}</b> leave after <b>{g.exitAfterStep}</b>. On return they are received by{" "}
+                  <b>{OUTBOUND_QC_LABEL[recv.qc]||recv.qc}</b> — {recv.why} — and resume at{" "}
+                  <b>{g.reEntryStep}</b>.
+                </InfoBanner>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+                  <div><label style={css.label}>Vehicle no</label>
+                    <input value={f("vehicleNo","")} onChange={e=>setF("vehicleNo",e.target.value)} style={css.input} /></div>
+                  <div><label style={css.label}>LR / challan no</label>
+                    <input value={f("lrNo","")} onChange={e=>setF("lrNo",e.target.value)} style={css.input} /></div>
+                  <div><label style={css.label}>Driver</label>
+                    <input value={f("driver","")} onChange={e=>setF("driver",e.target.value)} style={css.input} /></div>
+                  <div><label style={css.label}>Dispatch date</label>
+                    <input type="date" value={f("dispatchDate",today())} onChange={e=>setF("dispatchDate",e.target.value)} style={css.input} /></div>
+                  <div><label style={css.label}>Expected return</label>
+                    <input type="date" value={f("expectedReturn","")} onChange={e=>setF("expectedReturn",e.target.value)} style={css.input} /></div>
+                  <div><label style={css.label}>Remarks</label>
+                    <input value={f("remarks","")} onChange={e=>setF("remarks",e.target.value)} style={css.input} /></div>
+                </div>
+                <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:4}}>
+                  DECLARED RETURN — {nAsm} assembl{nAsm===1?"y":"ies"} · {nPart} cut part line(s) · {g.units.length} offcut line(s)
+                </div>
+                <div style={{maxHeight:280,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:6}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead><tr style={{background:T.bgInput,position:"sticky",top:0}}>
+                      {["RM unit","Drawing","Mark","Dimensions","Qty","Total kg","Comes back as"].map(h=>(
+                        <th key={h} style={{padding:"4px 8px",textAlign:"left",fontSize:10,color:T.textLow,fontWeight:700,borderBottom:`1px solid ${T.border}`}}>{h}</th>))}
+                    </tr></thead>
+                    <tbody>
+                      {list.map((l,i)=>(
+                        <tr key={i} style={{borderBottom:`1px solid ${T.border}33`,
+                          background:l.role==="part"?`${T.amber}0C`:l.role==="offcut"?`${T.textLow}0C`:"transparent"}}>
+                          <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{l.rmUnitId}</td>
+                          <td style={{padding:"3px 8px",fontSize:10}}>{l.drawingNo}</td>
+                          <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{l.markNo}</td>
+                          <td style={{padding:"3px 8px",fontSize:10}}>{l.dimensions}</td>
+                          <td style={{padding:"3px 8px",fontSize:10}}>{l.qty}</td>
+                          <td style={{padding:"3px 8px",fontSize:10}}>{l.totalWt||""}</td>
+                          <td style={{padding:"3px 8px",fontSize:10,color:l.role==="assembly"?T.green:l.role==="part"?T.amber:T.textLow}}>
+                            {l.role==="assembly"?"Assembly":l.role==="part"?"Cut part (rider)":"Offcut — stores to measure"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{display:"flex",gap:8,marginTop:12,justifyContent:"flex-end"}}>
+                  <button onClick={()=>doPrint(g)} style={css.btn.ghost}>🖨 Print challan</button>
+                  <button onClick={()=>doIssue(g)} disabled={!g.vendorId}
+                    style={{...css.btn.primary,...(g.vendorId?{}:{opacity:0.4,cursor:"not-allowed"})}}>
+                    Issue to {g.vendorName||"vendor"} →
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, setStock, materials, instances, setInstances, orders, nestingBatches, setCutRecords, productionNests=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
   const [tab, setTab] = useState("assignments");
@@ -14008,6 +14348,14 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   );
 
   // ── Outbound processing view ──
+  if (view==="outbound_issue") return (
+    <OutboundIssueScreen user={user} releases={releases||[]} setReleases={setReleases}
+      issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests}
+      instances={instances||[]} setInstances={setInstances} orders={orders||[]}
+      vendors={vendors||[]} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]}
+      onBack={()=>setView("dashboard")} />
+  );
+
   if (view==="outbound") return (
     <OutboundProcessing user={user} instances={instances} setInstances={setInstances} setCutRecords={setCutRecords}
       orders={orders} vendors={vendors||[]} onBack={()=>setView("dashboard")} />
@@ -14524,6 +14872,12 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
         {canAssign&&<button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("assignments");}} style={css.btn.secondary}>📋 Assignment</button>}
         <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={css.btn.secondary}>📊 Progress Grid</button>
         {canAssign&&<button onClick={()=>setView("outbound")} style={css.btn.secondary}>🔄 Outbound</button>}
+        {canAssign&&(()=>{
+          const n=buildOutboundDispatches(releases||[]).length;
+          return <button onClick={()=>setView("outbound_issue")} style={css.btn.secondary}>
+            ⬆ Issue to Vendor{n>0?` (${n})`:""}
+          </button>;
+        })()}
         {["super_admin","planning_admin","floor_planner","production_engineer","supervisor"].includes(user.role)&&(
           <>
           <button onClick={()=>setView("assignments")} style={{...css.btn.ghost,fontSize:12,position:"relative"}}>
