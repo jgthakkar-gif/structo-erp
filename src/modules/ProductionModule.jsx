@@ -5712,7 +5712,7 @@ const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, 
   return recs;
 };
 
-const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords, productionNests=[] }) => {
+const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords, productionNests=[], vendors=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
   // Spliced sheets carry 2A/S1 style names; resolve them back to order marks.
   // Built from EVERY batch so a segment name always resolves.
@@ -6096,10 +6096,21 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         dimensions:ru.dimensions,parts:ru.parts.map(p=>p.markNo),
         contractorId:a.contractorId||"",
         contractorName:(contractors||[]).find(c=>c.id===a.contractorId)?.name||"",
+        // Phase 2a — a vendor-cut bar carries its destination vendor and the step it
+        // leaves under, so the exit gate has everything it needs without re-deriving.
+        ...(ru.vendorCut?{
+          outbound:true,
+          vendorId:a.vendorId||"",
+          vendorName:(vendors||[]).find(v=>v.id===a.vendorId)?.name||"",
+          outboundStepRef:ru.vendorCutStep?.step||"",
+          outboundStepLabel:ru.vendorCutStep?.label||"",
+          outboundExitAfter:ru.vendorCutStep?.exitAfterStep||"",
+          outboundReEntry:ru.vendorCutStep?.reEntryStep||"",
+        }:{}),
         dxfLink:a.dxfLink||"",
         nestingFile:a.nestingFile||"",
         startDate:a.startDate||today(),endDate:a.endDate||today(),
-        ops:a.ops||{},status:a.contractorId?"assigned":"pending",
+        ops:a.ops||{},status:(ru.vendorCut?a.vendorId:a.contractorId)?"assigned":"pending",
         assignedBy:user.username,
       };
     });
@@ -6751,14 +6762,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             )}
             <div style={{marginTop:16,display:"flex",gap:8}}>
               <button onClick={()=>setStep(1)} style={css.btn.ghost}>← Back</button>
-              {_skip
-                ? <button onClick={()=>setStep(4)} style={css.btn.primary}>Next: Operations &amp; Routing →</button>
-                : <button onClick={()=>setStep(3)} style={css.btn.primary}>Next: Cutting Assignment →</button>}
+              <button onClick={()=>setStep(3)} style={css.btn.primary}>
+                {_skip?"Next: Assign Outbound Vendor →":"Next: Cutting Assignment →"}
+              </button>
             </div>
             {_skip&&(
               <div style={{fontSize:11,color:T.textMid,marginTop:6}}>
-                Step 3 (Cutting Assignment) skipped — every RM unit in this release is cut by a vendor
-                {_stepLbl?` under "${_stepLbl}"`:""}, so there is nothing to assign in-house.
+                Every RM unit here is cut by a vendor{_stepLbl?` under "${_stepLbl}"`:""} — the next step
+                assigns the outbound vendor instead of an in-house cutting contractor.
               </div>
             )}
           </>
@@ -6768,17 +6779,22 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   );
 
   const Step3 = () => {
-    const allRmUnits=getRmUnitsForRelease();
-    // Outbound Phase 1 — bars the vendor cuts are not assignable in-house.
-    const vendorUnits=allRmUnits.filter(ru=>ru.vendorCut);
-    const rmUnits=allRmUnits.filter(ru=>!ru.vendorCut);
+    // Phase 2a — this screen assigns a DESTINATION per RM unit. In-house cutting takes
+    // a contractor; a vendor-cut bar takes an outbound vendor. Same screen, same act.
+    const rmUnits=getRmUnitsForRelease();
+    const vendorUnits=rmUnits.filter(ru=>ru.vendorCut);
     const cuttingContractors=(contractors||[]).filter(c=>c.active!==false&&(c.type||[]).includes('cutting'));
-    const unassignedCount=rmUnits.filter(ru=>!rmUnitAsgn[ru.rmUnitId]?.contractorId).length;
+    const obVendors=(vendors||[]).filter(v=>v&&v.active!==false);
+    const destOf=(ru)=>{ const a=rmUnitAsgn[ru.rmUnitId]||{}; return ru.vendorCut?a.vendorId:a.contractorId; };
+    const unassignedCount=rmUnits.filter(ru=>!destOf(ru)).length;
 
     return (
       <div>
         <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>Step 3 — Cutting Assignment</div>
-        <div style={{fontSize:12,color:T.textMid,marginBottom:6}}>Assign each RM unit to a cutting contractor. Parts from non-selected drawings shown in amber.</div>
+        <div style={{fontSize:12,color:T.textMid,marginBottom:6}}>
+          Assign each RM unit to a cutting contractor. Parts from non-selected drawings shown in amber.
+          {vendorUnits.length>0&&" Bars cut by a vendor take an outbound vendor instead — marked ⬆."}
+        </div>
         {usingProductionNest && (
           <InfoBanner color="blue">
             Reading the frozen production nest{effBatches.filter(b=>b.productionNestId).length===1
@@ -6788,42 +6804,17 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         )}
         {unassignedCount>0&&<InfoBanner color="amber">{unassignedCount} RM unit{unassignedCount!==1?"s":""} not yet assigned. You may proceed and assign later.</InfoBanner>}
         {vendorUnits.length>0&&(
-          <div style={{marginBottom:10,padding:"10px 12px",background:T.amberBg,border:`1px solid ${T.amber}`,borderRadius:6}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.amber,marginBottom:6}}>
-              ⬆ {vendorUnits.length} RM UNIT{vendorUnits.length!==1?"S":""} CUT BY VENDOR — NOT ASSIGNED HERE
-            </div>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-              <thead>
-                <tr>
-                  {["RM Unit ID","Mat Code","Dimensions","Outbound step","Exit after","Back at","Riding marks"].map(h=>(
-                    <th key={h} style={{padding:"3px 8px",textAlign:"left",fontSize:10,color:T.textLow,fontWeight:600,borderBottom:`1px solid ${T.amber}55`}}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {vendorUnits.map(ru=>(
-                  <tr key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.amber}22`}}>
-                    <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10,color:T.accentHi}}>{ru.rmUnitId}</td>
-                    <td style={{padding:"3px 8px",fontSize:10}}>{ru.matCode}</td>
-                    <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{ru.dimensions}</td>
-                    <td style={{padding:"3px 8px",fontSize:10,fontWeight:600,color:T.amber}}>{ru.vendorCutStep?.label||ru.vendorCutStep?.step||"—"}</td>
-                    <td style={{padding:"3px 8px",fontSize:10}}>{ru.vendorCutStep?.exitAfterStep||"—"}</td>
-                    <td style={{padding:"3px 8px",fontSize:10}}>{ru.vendorCutStep?.reEntryStep||"—"}</td>
-                    <td style={{padding:"3px 8px",fontSize:10,color:T.textMid}}>
-                      {(ru.ridingSelMarks||[]).length>0?(ru.ridingSelMarks||[]).join(", "):"—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div style={{fontSize:10,color:T.textMid,marginTop:6}}>
-              Vendors are chosen at dispatch, not here. Riding marks belong to drawings without an outbound
-              step — the bar is the dispatch unit, so they go out with it and come back already cut.
-            </div>
-          </div>
+          <InfoBanner color="amber">
+            ⬆ <b>{vendorUnits.length} RM unit{vendorUnits.length!==1?"s":""} go out for cutting</b>
+            {vendorUnits[0].vendorCutStep
+              ? ` under "${vendorUnits[0].vendorCutStep.label||vendorUnits[0].vendorCutStep.step}" — out after `
+                + `${vendorUnits[0].vendorCutStep.exitAfterStep}, back at ${vendorUnits[0].vendorCutStep.reEntryStep}.`
+              : "."}
+            {" "}Assign the outbound vendor on those rows. The bar is the dispatch unit, so marks from
+            drawings without an outbound step ride along and come back already cut.
+          </InfoBanner>
         )}
-        {allRmUnits.length===0&&<InfoBanner color="blue">No RM units found in nesting batches for selected drawings. Check that nesting has been imported for this order.</InfoBanner>}
-        {allRmUnits.length>0&&rmUnits.length===0&&<InfoBanner color="blue">Nothing to assign — every RM unit in this release is cut by a vendor.</InfoBanner>}
+        {rmUnits.length===0&&<InfoBanner color="blue">No RM units found in nesting batches for selected drawings. Check that nesting has been imported for this order.</InfoBanner>}
         {rmUnits.length>0&&(
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
@@ -6837,7 +6828,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
               <tbody>
                 {rmUnits.map(ru=>{
                   const a=rmUnitAsgn[ru.rmUnitId]||{};
-                  const assigned=!!a.contractorId;
+                  const assigned=!!(ru.vendorCut?a.vendorId:a.contractorId);
                   const expanded=expandedMat[`ru::${ru.rmUnitId}`];
                   const selCount=ru.parts.filter(p=>p.selected).length;
                   return (
@@ -6846,7 +6837,10 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}}>
                           <button onClick={()=>setExpandedMat(p=>({...p,[`ru::${ru.rmUnitId}`]:!p[`ru::${ru.rmUnitId}`]}))} style={{...css.btn.ghost,padding:"2px 6px",fontSize:11}}>{expanded?"▼":"▶"}</button>
                         </td>
-                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:11,color:T.accentHi}}>{ru.rmUnitId}</td>
+                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:11,color:T.accentHi}}>
+                          {ru.vendorCut&&<span title={`Goes out under "${ru.vendorCutStep?.label||"outbound"}" — back at ${ru.vendorCutStep?.reEntryStep||"?"}`} style={{color:T.amber,fontWeight:700,marginRight:4}}>⬆</span>}
+                          {ru.rmUnitId}
+                        </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11}}>{ru.matCode}</td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,fontFamily:T.fontMono}}>{ru.dimensions}</td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,color:T.textMid}}>{selCount}/{ru.parts.length}</td>
@@ -6854,10 +6848,18 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                           <input type="text" value={a.dxfLink||""} onChange={e=>updRmUnitAsgn(ru.rmUnitId,"dxfLink",e.target.value)} placeholder="Drive link..." style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:120}} />
                         </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}}>
-                          <select value={a.contractorId||""} onChange={e=>updRmUnitAsgn(ru.rmUnitId,"contractorId",e.target.value)} style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:150}}>
-                            <option value="">— Assign contractor —</option>
-                            {cuttingContractors.map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
-                          </select>
+                          {ru.vendorCut ? (
+                            <select value={a.vendorId||""} onChange={e=>updRmUnitAsgn(ru.rmUnitId,"vendorId",e.target.value)}
+                              style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:150,borderColor:a.vendorId?undefined:T.amber}}>
+                              <option value="">— Assign outbound vendor —</option>
+                              {obVendors.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+                            </select>
+                          ) : (
+                            <select value={a.contractorId||""} onChange={e=>updRmUnitAsgn(ru.rmUnitId,"contractorId",e.target.value)} style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:150}}>
+                              <option value="">— Assign contractor —</option>
+                              {cuttingContractors.map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
+                            </select>
+                          )}
                         </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}}>
                           <input type="date" value={a.startDate||today()} onChange={e=>updRmUnitAsgn(ru.rmUnitId,"startDate",e.target.value)} style={{...css.input,fontSize:11,padding:"3px 5px"}} />
@@ -6927,12 +6929,28 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         {rmUnits.map(ru=>{
           const a=rmUnitAsgn[ru.rmUnitId]||{};
           const cuttingContractorName=(contractors||[]).find(c=>c.id===a.contractorId)?.name||"Unassigned";
+          // Phase 2a — a vendor-cut bar has a vendor, not a cutting contractor, and the
+          // vendor performs the secondary ops its tasks[] declare.
+          const obVendorName=ru.vendorCut?((vendors||[]).find(v=>v.id===a.vendorId)?.name||"Unassigned"):null;
+          const obTasks=ru.vendorCut?((ru.vendorCutStep&&ru.vendorCutStep.tasks)||[]):[];
           return (
             <div key={ru.rmUnitId} style={{...css.card,marginBottom:16}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:13}}>{ru.rmUnitId}</span>
-                <span style={{fontSize:11,color:T.textMid}}>Cutting: <span style={{color:T.text,fontWeight:600}}>{cuttingContractorName}</span></span>
+                <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi,fontSize:13}}>
+                  {ru.vendorCut&&<span style={{color:T.amber,marginRight:4}}>⬆</span>}{ru.rmUnitId}
+                </span>
+                <span style={{fontSize:11,color:T.textMid}}>
+                  {ru.vendorCut
+                    ? <>Outbound: <span style={{color:T.amber,fontWeight:600}}>{obVendorName}</span></>
+                    : <>Cutting: <span style={{color:T.text,fontWeight:600}}>{cuttingContractorName}</span></>}
+                </span>
               </div>
+              {ru.vendorCut&&(
+                <div style={{fontSize:10,color:T.textLow,marginTop:-6,marginBottom:10}}>
+                  The vendor performs {obTasks.length?obTasks.join(", "):"the declared tasks"} on this bar —
+                  operations below are recorded for routing on return, not assigned in-house.
+                </div>
+              )}
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                   <thead>
@@ -7010,11 +7028,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           );
         })}
         <div style={{marginTop:16,display:"flex",gap:8}}>
-          <button onClick={()=>{
-            // Outbound Phase 1 — Step 3 is skipped when no bar is cut in-house.
-            const _u=getRmUnitsForRelease();
-            setStep(_u.length>0&&_u.every(x=>x.vendorCut)?2:3);
-          }} style={css.btn.ghost}>← Back</button>
+          <button onClick={()=>setStep(3)} style={css.btn.ghost}>← Back</button>
           <button onClick={()=>setStep(5)} style={css.btn.primary}>Next: Welding Assignment →</button>
         </div>
       </div>
@@ -7022,22 +7036,33 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   };
 
   const Step5 = () => {
-    const missingContractor=selDrawings.some(({drawingId})=>{
-      const ca=contAsgn[drawingId]||{};
-      return (ca.stages||[]).some(s=>['fitup','welding'].includes(s))&&!ca.contractorId;
+    const ownedOf=(row)=>outboundOwnedStages(row&&row.processSteps);
+    const missingContractor=selDrawings.some((row)=>{
+      const ca=contAsgn[row.drawingId]||{};
+      const owned=ownedOf(row);
+      // only in-house stages can be missing a contractor
+      const need=(ca.stages||[]).filter(s=>['fitup','welding'].includes(s)&&!owned.has(s));
+      return need.length>0&&!ca.contractorId;
     });
     return (
       <div>
         <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>Step 5 — Welding & Contractor Assignment</div>
-        <div style={{fontSize:12,color:T.textMid,marginBottom:8}}>Assign fit-up and welding contractors per drawing.</div>
+        <div style={{fontSize:12,color:T.textMid,marginBottom:8}}>
+          Assign fit-up and welding contractors per drawing. Stages a vendor owns are not assigned here —
+          TPI hold points on them still apply and are satisfied when the work comes back.
+        </div>
         <div style={{marginBottom:14,display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={()=>selDrawings.forEach(({drawingId})=>{
             const ca=contAsgn[drawingId]||{};
             if(ca.fitupContractorId) updCont(drawingId,"contractorId",ca.fitupContractorId);
           })} style={{...css.btn.ghost,fontSize:11}}>Copy all fit-up → welding</button>
         </div>
-        {selDrawings.map(({drawingId,orderId,drawing,order})=>{
+        {selDrawings.map((row)=>{
+          const {drawingId,orderId,drawing,order}=row;
           const ca=contAsgn[drawingId]||{};
+          const owned=ownedOf(row);
+          const obStep=outboundStepOwning(row.processSteps,"welding")||outboundStepOwning(row.processSteps,"fitup");
+          const fitupOwned=owned.has("fitup"), weldOwned=owned.has("welding");
           const stages=ca.stages||[];
           const tpiStages=ca.tpiStages!==undefined?ca.tpiStages:(order.quality?.tpiHoldPoints||[]);
           const toggleStage=s=>updCont(drawingId,"stages",stages.includes(s)?stages.filter(x=>x!==s):[...stages,s]);
@@ -7051,7 +7076,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                 </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:10}}>
-                <div>
+                {!fitupOwned&&<div>
                   <label style={css.label}>Fit-Up Contractor</label>
                   <select value={ca.fitupContractorId||ca.contractorId||""} onChange={e=>{
                     updCont(drawingId,"fitupContractorId",e.target.value);
@@ -7060,8 +7085,8 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                     <option value="">Select contractor...</option>
                     {(contractors||[]).filter(c=>(c.type||[]).some(t=>['fit_up','welding'].includes(t))).map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
                   </select>
-                </div>
-                <div>
+                </div>}
+                {!weldOwned&&<div>
                   <label style={css.label}>
                     Welding Contractor
                     <button onClick={()=>updCont(drawingId,"contractorId",ca.fitupContractorId||ca.contractorId||"")} style={{...css.btn.ghost,fontSize:9,padding:"1px 6px",marginLeft:8}}>= Same as fit-up</button>
@@ -7070,7 +7095,19 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                     <option value="">Select contractor...</option>
                     {(contractors||[]).filter(c=>(c.type||[]).some(t=>['fit_up','welding'].includes(t))).map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
                   </select>
-                </div>
+                </div>}
+                {(fitupOwned||weldOwned)&&(
+                  <div>
+                    <label style={css.label}>Owned by vendor</label>
+                    <div style={{fontSize:11,color:T.amber,fontWeight:600,paddingTop:6}}>
+                      ⬆ {[fitupOwned?"Fit-up":null,weldOwned?"Welding":null].filter(Boolean).join(" and ")}
+                      {obStep?` under "${obStep.label||obStep.step}"`:""}
+                    </div>
+                    <div style={{fontSize:10,color:T.textLow,marginTop:2}}>
+                      No in-house contractor. Comes back at {obStep?.reEntryStep||"the declared re-entry step"}.
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label style={css.label}>Pin to Engineer (optional)</label>
                   <select value={ca.pinnedEngineerId||""} onChange={e=>updCont(drawingId,"pinnedEngineerId",e.target.value)} style={css.input}>
@@ -7081,8 +7118,11 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
               </div>
               <div style={{marginBottom:10}}>
                 <label style={css.label}>Stages (Fit-Up / Welding Contractor)</label>
+                {FITUP_WELDING_STAGES.every(s=>owned.has(s.id))&&(
+                  <div style={{fontSize:11,color:T.textLow}}>Both stages are vendor-owned — nothing to assign.</div>
+                )}
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {FITUP_WELDING_STAGES.map(s=>(
+                  {FITUP_WELDING_STAGES.filter(s=>!owned.has(s.id)).map(s=>(
                     <label key={s.id} style={{display:"flex",alignItems:"center",gap:4,fontSize:12,cursor:"pointer",color:stages.includes(s.id)?T.accent:T.textMid}}>
                       <input type="checkbox" checked={stages.includes(s.id)} onChange={()=>toggleStage(s.id)} />{s.label}
                     </label>
@@ -13954,7 +13994,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       nestingBatches={nestingBatches||[]} purchaseReqs={purchaseReqs||[]}
       onBack={()=>setView("dashboard")} dprs={dprs||[]} setDprs={setDprs}
       drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances}
-      processTypes={processTypes||DEFAULT_PROCESS_TYPES}
+      processTypes={processTypes||DEFAULT_PROCESS_TYPES} vendors={vendors||[]}
       cutRecords={cutRecords||[]} setCutRecords={setCutRecords}
       productionNests={productionNests||[]} />
   );
