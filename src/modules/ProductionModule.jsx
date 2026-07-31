@@ -5020,8 +5020,12 @@ const buildOutboundDispatches = (releases) => {
 //   (c) offcuts                              → dims blank, stores fill at receipt
 // (a) and (b) come from buildRmUnitCutRecords so there is ONE definition of what
 // is on a bar; this only enriches those records for printing.
-const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, ts, user }) => {
+const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, drawingInstances, ts, user }) => {
   const lines = [];
+  const anchor = ((units||[])[0]||{}).rmUnitId || "";
+  const asm = {};            // instanceId -> assembly line (dispatch-level, not per bar)
+  const rid = {};            // rmUnitId|drawingId|markNo -> aggregated rider line
+
   (units||[]).forEach(ru=>{
     const sheetParts = sheetPartsOf ? (sheetPartsOf(ru.rmUnitId)||[]) : (ru.parts||[]).map(m=>({markNo:m,qty:1}));
     const recs = buildRmUnitCutRecords({
@@ -5033,22 +5037,47 @@ const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, ts, u
       const part = ((ord||{}).parts||[]).find(pt=>pt.markNo===rec.markNo && pt.drawingId===rec.drawingId);
       const drg  = ((ord||{}).drawings||[]).find(d=>d.id===rec.drawingId);
       const uw   = (part&&part.clientUnitWt)||0;
-      lines.push({
-        rmUnitId: ru.rmUnitId,
-        role: rec.claimedByInstanceId ? "assembly" : "part",
-        drawingId: rec.drawingId, drawingNo:(drg&&drg.drawingNo)||rec.drawingId,
-        markNo: rec.markNo, description:(part&&part.description)||"",
-        dimensions:(part&&(part.size||part.dimensions))||"",
-        qty: rec.qty||1, unitWt:+uw.toFixed(2), totalWt:+(uw*(rec.qty||1)).toFixed(1),
-        instanceId: rec.claimedByInstanceId || "",
-      });
+      const wt   = uw*(rec.qty||1);
+
+      if(rec.claimedByInstanceId){
+        // one line PER DRAWING INSTANCE — the vendor returns a welded assembly, not
+        // 300 loose pieces. Pieces are rolled up for reference only.
+        const di = (drawingInstances||[]).find(x=>x.id===rec.claimedByInstanceId
+                                              || x.instanceId===rec.claimedByInstanceId);
+        const k = rec.claimedByInstanceId;
+        const a = asm[k] || (asm[k] = {
+          rmUnitId: anchor, key:`ASM|${k}`, role:"assembly",
+          drawingId: rec.drawingId, drawingNo:(drg&&drg.drawingNo)||rec.drawingId,
+          markNo:"ASSEMBLY", description:"Welded assembly",
+          instanceId:k, instanceNo:(di&&(di.instanceNo||di.uniqueId))||"",
+          dimensions:"", qty:1, pieces:0, unitWt:0, totalWt:0, bars:new Set(),
+        });
+        a.pieces += (rec.qty||1); a.totalWt = +(a.totalWt + wt).toFixed(1); a.bars.add(ru.rmUnitId);
+      } else {
+        const k = `${ru.rmUnitId}|${rec.drawingId}|${rec.markNo}`;
+        const r = rid[k] || (rid[k] = {
+          rmUnitId: ru.rmUnitId, key:`${ru.rmUnitId}|${rec.markNo}`, role:"part",
+          drawingId: rec.drawingId, drawingNo:(drg&&drg.drawingNo)||rec.drawingId,
+          markNo: rec.markNo, description:(part&&part.description)||"",
+          dimensions:(part&&(part.size||part.dimensions))||"",
+          qty:0, unitWt:+uw.toFixed(2), totalWt:0, instanceId:"",
+        });
+        r.qty += (rec.qty||1); r.totalWt = +(r.totalWt + wt).toFixed(1);
+      }
     });
-    lines.push({ rmUnitId:ru.rmUnitId, role:"offcut", drawingNo:"—", markNo:"OFFCUT",
+    lines.push({ rmUnitId:ru.rmUnitId, key:`${ru.rmUnitId}|OFFCUT`, role:"offcut",
+                 drawingNo:"—", markNo:"OFFCUT", matCode:ru.matCode||"",
                  description:"To be measured by stores on receipt", dimensions:"",
                  qty:1, unitWt:0, totalWt:0, instanceId:"" });
   });
-  return lines;
+
+  const asmLines = Object.values(asm).map(a=>({ ...a, barCount:a.bars.size, bars:undefined }));
+  return [...asmLines, ...Object.values(rid), ...lines];
 };
+
+// Stable key for tally + receipts. Assemblies are dispatch-level so they cannot key
+// on a bar; everything else keys on the bar it belongs to.
+const outboundLineKey = (l) => (l && (l.key || `${l.rmUnitId}|${l.markNo}`)) || "";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // OUTBOUND ENTRY GATE (Phase 3) — the PRODUCTION RECEIPT.
@@ -5058,6 +5087,29 @@ const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, ts, u
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Issued dispatches still open, grouped exactly as they were issued.
+// Where is this bar right now? Built once from every release, keyed by rmUnitId.
+//   issued  → gone to a vendor and not yet closed
+//   closed  → the dispatch is finished with
+const buildOutboundBarState = (releases) => {
+  const st = {};
+  (releases||[]).forEach(r=>{
+    (r.rmUnitAssignments||[]).forEach(ru=>{
+      if(!ru || !ru.outbound || !ru.outboundIssuedAt) return;
+      const received = (ru.outboundReceipts||[]).reduce((a,rc)=>a+((rc.lines||[]).length),0);
+      st[ru.rmUnitId] = {
+        state: ru.outboundClosedAt ? "closed" : "issued",
+        vendorName: ru.vendorName||"", issueId: ru.outboundIssueId||"",
+        issuedAt: ru.outboundIssuedAt,
+        expectedReturn: (ru.transport&&ru.transport.expectedReturn)||"",
+        stepLabel: ru.outboundStepLabel||ru.outboundStepRef||"",
+        batches: (ru.outboundReceipts||[]).length, receivedLines: received,
+        releaseNo: r.releaseNo||r.id,
+      };
+    });
+  });
+  return st;
+};
+
 const buildOutboundReceipts = (releases) => {
   const out = {};
   (releases||[]).forEach(r=>{
@@ -5083,19 +5135,29 @@ const buildOutboundReceipts = (releases) => {
 // Tally: declared vs received so far. Short and excess are RECORDED, never forced
 // to match — the vendor delivering less than promised is the normal case.
 const outboundTally = (lines, receipts) => {
-  const got = {};
+  const got = {}, declared = new Set();
+  (lines||[]).forEach(l=>declared.add(outboundLineKey(l)));
   (receipts||[]).forEach(rc=>(rc.lines||[]).forEach(l=>{
-    const k = `${l.rmUnitId}|${l.markNo}`;
+    const k = outboundLineKey(l);
     got[k] = (got[k]||0) + (+l.qty||0);
   }));
   const rows = (lines||[]).map(l=>{
-    const k = `${l.rmUnitId}|${l.markNo}`;
-    const received = got[k]||0;
-    return { ...l, received, balance:(+l.qty||0) - received,
-             over: received > (+l.qty||0) };
+    const received = got[outboundLineKey(l)]||0;
+    return { ...l, received, balance:(+l.qty||0) - received, over: received > (+l.qty||0) };
   });
+  // Anything received that was never declared. Jai 31 Jul: ALLOW, but flag it —
+  // the vendor returning something unexpected is real and must not be silently lost.
+  const unlisted = [];
+  (receipts||[]).forEach(rc=>(rc.lines||[]).forEach(l=>{
+    if(declared.has(outboundLineKey(l))) return;
+    const ex = unlisted.find(u=>outboundLineKey(u)===outboundLineKey(l));
+    if(ex) ex.received += (+l.qty||0);
+    else unlisted.push({ ...l, received:(+l.qty||0), qty:0, balance:0, over:true, unlisted:true });
+  }));
+  const by = (role)=>rows.filter(r=>r.role===role);
   return {
-    rows,
+    rows, unlisted,
+    assemblies: by("assembly"), parts: by("part"), offcuts: by("offcut"),
     complete: rows.length>0 && rows.every(r=>r.balance<=0),
     outstanding: rows.filter(r=>r.balance>0).length,
   };
@@ -5879,6 +5941,8 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   // Spliced sheets carry 2A/S1 style names; resolve them back to order marks.
   // Built from EVERY batch so a segment name always resolves.
   const splitIdx = buildSplitIndex(nestingBatches);
+  // Bars already dispatched to a vendor — the state the wizard could not see before.
+  const barState = buildOutboundBarState(releases);
   const [step, setStep] = useState(1);
   const [selDrawings, setSelDrawings] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
@@ -6138,12 +6202,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           // Outbound Phase 1 — the bar is the dispatch unit. If any mark on it is
           // cut by a vendor the whole bar goes out; riders come back already cut.
           const obCls = classifyRmUnitOutbound(sheet.parts, markNoMap, "cutting", splitIdx);
+          const obAway = barState[sheet.rmUnitId] || null;
           seen.add(sheet.rmUnitId);
           rmUnits.push({
             vendorCut: obCls.vendorCut,
             vendorCutStep: obCls.vendorCutStep,
             ridingMarks: obCls.ridingMarks,
             ridingSelMarks: obCls.ridingSelMarks,
+            awayWith: obAway && obAway.state==="issued" ? obAway : null,
             rmUnitId: sheet.rmUnitId,
             batchId: batch.id,
             productionNestId: batch.productionNestId||null,
@@ -6955,7 +7021,9 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     const obVendors=matching.length>0?matching:allOb;
     const obNarrowed=obPt&&matching.length>0&&matching.length<allOb.length;
     const destOf=(ru)=>{ const a=rmUnitAsgn[ru.rmUnitId]||{}; return ru.vendorCut?a.vendorId:a.contractorId; };
-    const unassignedCount=rmUnits.filter(ru=>!destOf(ru)).length;
+    // A bar already dispatched needs nobody assigned — it is physically at the vendor.
+    const awayUnits=rmUnits.filter(ru=>ru.awayWith);
+    const unassignedCount=rmUnits.filter(ru=>!ru.awayWith&&!destOf(ru)).length;
 
     return (
       <div>
@@ -6972,6 +7040,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           </InfoBanner>
         )}
         {unassignedCount>0&&<InfoBanner color="amber">{unassignedCount} RM unit{unassignedCount!==1?"s":""} not yet assigned. You may proceed and assign later.</InfoBanner>}
+        {awayUnits.length>0&&(
+          <InfoBanner color="amber">
+            ⬆ <b>{awayUnits.length} RM unit{awayUnits.length!==1?"s":""} already out with a vendor</b> for cutting and not yet
+            fully back ({[...new Set(awayUnits.map(u=>u.awayWith.vendorName).filter(Boolean))].join(", ")||"vendor"}).
+            Nothing to assign on those rows — their parts return already cut and enter at fit-up. Assign the
+            fit-up and welding contractor on step 5 as usual.
+          </InfoBanner>
+        )}
         {vendorUnits.length>0&&(
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10,
                        padding:"8px 10px",background:T.bgInput,border:`1px solid ${T.border}`,borderRadius:6}}>
@@ -6980,7 +7056,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             </span>
             <select value="" onChange={e=>{
                 const v=e.target.value; if(!v) return;
-                vendorUnits.forEach(ru=>updRmUnitAsgn(ru.rmUnitId,"vendorId",v));
+                vendorUnits.filter(ru=>!ru.awayWith).forEach(ru=>updRmUnitAsgn(ru.rmUnitId,"vendorId",v));
                 e.target.value="";
               }} style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:210}}>
               <option value="">Assign all {vendorUnits.length} to one vendor…</option>
@@ -6993,7 +7069,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                 const nv={ id:`OV-${Date.now()}`, name, processTypes:obPt?[obPt]:[],
                            address:"", contact:"", turnaroundDays:7, active:true };
                 setOutboundVendors(prev=>[...(prev||[]), nv]);
-                vendorUnits.forEach(ru=>updRmUnitAsgn(ru.rmUnitId,"vendorId",nv.id));
+                vendorUnits.filter(ru=>!ru.awayWith).forEach(ru=>updRmUnitAsgn(ru.rmUnitId,"vendorId",nv.id));
               }} style={{...css.btn.ghost,fontSize:11,padding:"3px 8px"}}>
               ＋ Quick-add vendor
             </button>
@@ -7034,7 +7110,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
               <tbody>
                 {rmUnits.map(ru=>{
                   const a=rmUnitAsgn[ru.rmUnitId]||{};
-                  const assigned=!!(ru.vendorCut?a.vendorId:a.contractorId);
+                  const assigned=!!ru.awayWith||!!(ru.vendorCut?a.vendorId:a.contractorId);
                   const expanded=expandedMat[`ru::${ru.rmUnitId}`];
                   const selCount=ru.parts.filter(p=>p.selected).length;
                   return (
@@ -7054,7 +7130,17 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                           <input type="text" value={a.dxfLink||""} onChange={e=>updRmUnitAsgn(ru.rmUnitId,"dxfLink",e.target.value)} placeholder="Drive link..." style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:120}} />
                         </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}}>
-                          {ru.vendorCut ? (
+                          {ru.awayWith ? (
+                            <div style={{fontSize:10,color:T.amber,lineHeight:1.4}}>
+                              ⬆ Out with <b>{ru.awayWith.vendorName||"vendor"}</b> since {String(ru.awayWith.issuedAt).slice(0,10)}
+                              {ru.awayWith.expectedReturn?` · expected back ${ru.awayWith.expectedReturn}`:""}
+                              <div style={{color:T.textLow}}>
+                                {ru.awayWith.issueId} · {ru.awayWith.batches>0
+                                  ? `${ru.awayWith.batches} batch(es) received so far`
+                                  : "nothing back yet"} — these parts return already cut, so no cutting contractor is needed.
+                              </div>
+                            </div>
+                          ) : ru.vendorCut ? (
                             <select value={a.vendorId||""} onChange={e=>updRmUnitAsgn(ru.rmUnitId,"vendorId",e.target.value)}
                               style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:150,borderColor:a.vendorId?undefined:T.amber}}>
                               <option value="">— Assign outbound vendor —</option>
@@ -7408,8 +7494,9 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 // ═══════════════════════════════════════════════════════════════════════════
 const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIssueRequests,
                                instances, setInstances, orders, vendors=[], nestingBatches=[],
-                               productionNests=[], onBack }) => {
+                               productionNests=[], drawingInstances=[], onBack }) => {
   const [openKey, setOpenKey] = useState("");
+  const [barOpen, setBarOpen] = useState({});
   const [form, setForm]       = useState({});
   const [toast, setToast]     = useState("");
 
@@ -7428,13 +7515,16 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
   const f = (k, d) => (form[openKey]||{})[k] ?? d;
   const setF = (k, v) => setForm(p=>({ ...p, [openKey]:{ ...(p[openKey]||{}), [k]:v } }));
 
+  // The pipeline lives on the DRAWING INSTANCE (di.processSteps), not on order.drawings.
+  // Searching the wrong place made every span look empty, so a replacement span was
+  // reported as an "insert" and routed to Outbound QC instead of Weld QC.
   const stepsForRelease = (rel) => {
-    // the drawing pipeline that declared this outbound step
-    const oid = (rel.drawings||[])[0];
-    const dwgIds = (rel.drawings||[]).map(d=>d&&d.drawingId?d.drawingId:d);
-    for(const o of (orders||[]))
-      for(const d of (o.drawings||[]))
-        if(dwgIds.includes(d.id) && Array.isArray(d.processSteps) && d.processSteps.length) return d.processSteps;
+    const dwgIds  = (rel.drawings||[]).map(d=>d&&d.drawingId?d.drawingId:d).filter(Boolean);
+    const instIds = (rel.drawingInstanceIds||[]);
+    for(const di of (drawingInstances||[])){
+      if(!di || !Array.isArray(di.processSteps) || !di.processSteps.length) continue;
+      if(instIds.includes(di.id) || dwgIds.includes(di.drawingId)) return di.processSteps;
+    }
     return null;
   };
 
@@ -7450,7 +7540,7 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
     };
     const steps = stepsForRelease(rel);
     const recv  = outboundReceivingQc({ exitAfterStep:g.exitAfterStep, reEntryStep:g.reEntryStep }, steps);
-    const list  = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, ts:nowIso, user });
+    const list  = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, drawingInstances, ts:nowIso, user });
     const issueId = `OBI-${new Date().getFullYear()}-${String((issueRequests||[]).filter(r=>r&&r.outbound).length+1).padStart(3,"0")}`;
 
     // 1) one issue request per RM unit — the store's existing queue, vendor-destined
@@ -7509,7 +7599,7 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
   };
 
   const doPrint = (g) => {
-    const list = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, user });
+    const list = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, drawingInstances, user });
     const esc = (x)=>String(x==null?"":x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
     const rows = list.map(l=>`<tr class="${l.role}"><td>${esc(l.rmUnitId)}</td><td>${esc(l.drawingNo)}</td>`
       + `<td>${esc(l.markNo)}</td><td>${esc(l.description)}</td><td>${esc(l.dimensions)}</td>`
@@ -7562,7 +7652,7 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
         const steps= rel?stepsForRelease(rel):null;
         const recv = outboundReceivingQc({ exitAfterStep:g.exitAfterStep, reEntryStep:g.reEntryStep }, steps);
         const du   = outboundDispatchUnit({ exitAfterStep:g.exitAfterStep });
-        const list = open?buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, user }):[];
+        const list = open?buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, drawingInstances, user }):[];
         const nAsm = list.filter(l=>l.role==="assembly").length;
         const nPart= list.filter(l=>l.role==="part").length;
         return (
@@ -7600,33 +7690,78 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
                   <div><label style={css.label}>Remarks</label>
                     <input value={f("remarks","")} onChange={e=>setF("remarks",e.target.value)} style={css.input} /></div>
                 </div>
-                <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:4}}>
-                  DECLARED RETURN — {nAsm} assembl{nAsm===1?"y":"ies"} · {nPart} cut part line(s) · {g.units.length} offcut line(s)
-                </div>
-                <div style={{maxHeight:280,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:6}}>
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                    <thead><tr style={{background:T.bgInput,position:"sticky",top:0}}>
-                      {["RM unit","Drawing","Mark","Dimensions","Qty","Total kg","Comes back as"].map(h=>(
-                        <th key={h} style={{padding:"4px 8px",textAlign:"left",fontSize:10,color:T.textLow,fontWeight:700,borderBottom:`1px solid ${T.border}`}}>{h}</th>))}
-                    </tr></thead>
-                    <tbody>
-                      {list.map((l,i)=>(
-                        <tr key={i} style={{borderBottom:`1px solid ${T.border}33`,
-                          background:l.role==="part"?`${T.amber}0C`:l.role==="offcut"?`${T.textLow}0C`:"transparent"}}>
-                          <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{l.rmUnitId}</td>
-                          <td style={{padding:"3px 8px",fontSize:10}}>{l.drawingNo}</td>
-                          <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{l.markNo}</td>
-                          <td style={{padding:"3px 8px",fontSize:10}}>{l.dimensions}</td>
-                          <td style={{padding:"3px 8px",fontSize:10}}>{l.qty}</td>
-                          <td style={{padding:"3px 8px",fontSize:10}}>{l.totalWt||""}</td>
-                          <td style={{padding:"3px 8px",fontSize:10,color:l.role==="assembly"?T.green:l.role==="part"?T.amber:T.textLow}}>
-                            {l.role==="assembly"?"Assembly":l.role==="part"?"Cut part (rider)":"Offcut — stores to measure"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {(() => {
+                  const asm = list.filter(l=>l.role==="assembly");
+                  const rid = list.filter(l=>l.role==="part");
+                  const byBar = {};
+                  rid.forEach(l=>(byBar[l.rmUnitId]=byBar[l.rmUnitId]||[]).push(l));
+                  return (
+                    <>
+                      <div style={{fontSize:11,fontWeight:700,color:T.textMid,margin:"10px 0 4px"}}>
+                        COMES BACK AS ASSEMBLIES — {asm.length}
+                      </div>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:12}}>
+                        <thead><tr style={{background:T.bgInput}}>
+                          {["Drawing","Instance","Pieces in it","Bars","Weight kg"].map(h=>(
+                            <th key={h} style={{padding:"4px 8px",textAlign:"left",fontSize:10,color:T.textLow,fontWeight:700,borderBottom:`1px solid ${T.border}`}}>{h}</th>))}
+                        </tr></thead>
+                        <tbody>
+                          {asm.length===0&&<tr><td colSpan={5} style={{padding:"6px 8px",fontSize:10,color:T.textLow}}>
+                            None — the vendor is only cutting on this dispatch.</td></tr>}
+                          {asm.map(a=>(
+                            <tr key={a.key} style={{borderBottom:`1px solid ${T.border}33`}}>
+                              <td style={{padding:"3px 8px",fontSize:11}}>{a.drawingNo}</td>
+                              <td style={{padding:"3px 8px",fontSize:11}}>{a.instanceNo||a.instanceId}</td>
+                              <td style={{padding:"3px 8px",fontSize:11,color:T.textLow}}>{a.pieces}</td>
+                              <td style={{padding:"3px 8px",fontSize:11,color:T.textLow}}>{a.barCount}</td>
+                              <td style={{padding:"3px 8px",fontSize:11}}>{a.totalWt}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+
+                      <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:4}}>
+                        RM UNITS GOING OUT — {g.units.length} · expand a bar to see what rides on it
+                      </div>
+                      <div style={{maxHeight:340,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:6}}>
+                        {g.units.map(ru=>{
+                          const bars = byBar[ru.rmUnitId]||[];
+                          const isOpen = !!barOpen[ru.rmUnitId];
+                          return (
+                            <div key={ru.rmUnitId} style={{borderBottom:`1px solid ${T.border}33`}}>
+                              <div onClick={()=>setBarOpen(p=>({...p,[ru.rmUnitId]:!isOpen}))}
+                                style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                                        padding:"5px 8px",cursor:"pointer"}}>
+                                <span style={{fontFamily:T.fontMono,fontSize:11}}>
+                                  <span style={{color:T.textLow,marginRight:6}}>{isOpen?"▼":"▶"}</span>{ru.rmUnitId}
+                                </span>
+                                <span style={{fontSize:10,color:T.textLow}}>
+                                  {ru.dimensions||ru.sheetDim||""} · {ru.sheetWt||0} kg ·
+                                  {" "}{bars.length} rider mark{bars.length!==1?"s":""} · 1 offcut
+                                </span>
+                              </div>
+                              {isOpen&&(
+                                <div style={{padding:"2px 8px 8px 26px",fontSize:10}}>
+                                  {bars.length===0&&<div style={{color:T.textLow}}>No rider marks — every piece on this bar belongs to the dispatched drawing.</div>}
+                                  {bars.map(l=>(
+                                    <div key={l.key} style={{color:T.textMid}}>
+                                      <span style={{fontFamily:T.fontMono,color:T.amber}}>{l.markNo}</span>
+                                      {" ×"}{l.qty} · {l.drawingNo} · {l.dimensions} · {l.totalWt} kg
+                                      <span style={{color:T.textLow}}> — comes back cut</span>
+                                    </div>
+                                  ))}
+                                  <div style={{color:T.textLow,fontStyle:"italic",marginTop:2}}>
+                                    offcut — dimensions measured by stores on receipt
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
                 <div style={{display:"flex",gap:8,marginTop:12,justifyContent:"flex-end"}}>
                   <button onClick={()=>doPrint(g)} style={css.btn.ghost}>🖨 Print challan</button>
                   <button onClick={()=>doIssue(g)} disabled={!g.vendorId}
@@ -7652,10 +7787,12 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
   const [openKey, setOpenKey] = useState("");
   const [qty, setQty]         = useState({});   // key -> qty received now
   const [dims, setDims]       = useState({});   // key -> offcut dimensions
+  const [chal, setChal]       = useState({});   // dispatch key -> vendor challan no for THIS batch
+  const [extra, setExtra]     = useState({});   // dispatch key -> unlisted lines being added
   const [toast, setToast]     = useState("");
 
   const groups = buildOutboundReceipts(releases);
-  const lk = (l)=>`${l.rmUnitId}|${l.markNo}`;
+  const lk = (l)=>outboundLineKey(l);
 
   // same maths the in-house offcut path uses
   const offcutWt = (dim, matCode) => {
@@ -7680,11 +7817,20 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
       .filter(x=>x.n>0 || (x.r.role==="offcut" && x.dim));
     if(taking.length===0){ setToast("Nothing entered on this batch."); return; }
 
+    const unlisted = (extra[g.key]||[]).filter(u=>u&&u.markNo&&(+u.qty||0)>0);
     const batch = {
       receiptNo:`OBR-${new Date().getFullYear()}-${String((g.receipts.length||0)+1).padStart(3,"0")}`,
       at:nowIso, by:user.username,
-      lines:taking.map(x=>({ rmUnitId:x.r.rmUnitId, markNo:x.r.markNo, role:x.r.role,
-                             qty:x.n||1, dimensions:x.dim||"" })),
+      vendorChallanNo:(chal[g.key]||"").trim(),      // Jai 31 Jul: captured PER BATCH
+      lines:[
+        ...taking.map(x=>({ rmUnitId:x.r.rmUnitId, key:outboundLineKey(x.r), markNo:x.r.markNo,
+                            role:x.r.role, qty:x.n||1, dimensions:x.dim||"" })),
+        // unlisted: allowed, but marked so it can never be mistaken for declared
+        ...unlisted.map(u=>({ rmUnitId:u.rmUnitId||((g.units[0]||{}).rmUnitId||""),
+                              key:`UNLISTED|${u.markNo}`, markNo:u.markNo, role:u.role||"part",
+                              qty:+u.qty||0, dimensions:u.dimensions||"", unlisted:true,
+                              note:u.note||"" })),
+      ],
     };
 
     // (a) assemblies → the derived QC, flagged from outbound. OutboundQcPanel then
@@ -7744,7 +7890,8 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
     }
 
     // record the batch on every RM unit it touched
-    const touched = new Set(taking.map(x=>x.r.rmUnitId));
+    const anchor = (g.units[0]||{}).rmUnitId||"";
+    const touched = new Set(batch.lines.map(l=>l.rmUnitId||anchor));
     setReleases(prev=>(prev||[]).map(r=>r.id!==g.releaseId?r:({
       ...r, rmUnitAssignments:(r.rmUnitAssignments||[]).map(x=>
         touched.has(x.rmUnitId)
@@ -7754,7 +7901,44 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
     })));
 
     setQty({}); setDims({});
-    setToast(`${batch.receiptNo} received — ${taking.length} line(s) from ${g.vendorName}.`);
+    setChal(p=>({...p,[g.key]:""})); setExtra(p=>({...p,[g.key]:[]}));
+    doPrintNote(g, batch);
+    setToast(`${batch.receiptNo} received — ${batch.lines.length} line(s) from ${g.vendorName}`
+      + (batch.vendorChallanNo?` against challan ${batch.vendorChallanNo}`:"")
+      + (unlisted.length?` · ${unlisted.length} unlisted`:"") + ".");
+  };
+
+  // One numbered, printable note per batch — this is the document that matches the
+  // vendor's challan. The dispatch stays open across as many of these as it takes.
+  const doPrintNote = (g, batch) => {
+    const esc=(x)=>String(x==null?"":x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+    const rows=(batch.lines||[]).map(l=>`<tr class="${l.unlisted?"un":l.role}">`
+      +`<td>${esc(l.rmUnitId)}</td><td>${esc(l.markNo)}</td>`
+      +`<td>${l.role==="assembly"?"Assembly":l.role==="offcut"?"Offcut":"Cut part"}</td>`
+      +`<td class="r">${esc(l.qty)}</td><td>${esc(l.dimensions)}</td>`
+      +`<td>${l.unlisted?"NOT ON DECLARED LIST":""}</td></tr>`).join("");
+    const w=window.open("","_blank","width=900,height=680");
+    if(!w){ setToast("Popup blocked — allow popups to print the receipt note."); return; }
+    w.document.write(`<html><head><title>${esc(batch.receiptNo)}</title><style>
+      body{font-family:system-ui,sans-serif;font-size:12px;padding:18px;color:#111}
+      h1{font-size:16px;margin:0 0 2px}.sub{color:#555;margin-bottom:10px}
+      table{width:100%;border-collapse:collapse;margin-top:8px}
+      th,td{border:1px solid #bbb;padding:4px 6px;text-align:left}
+      th{background:#eee;font-size:10px;text-transform:uppercase}.r{text-align:right}
+      tr.part td{background:#fffaf0}tr.offcut td{background:#f4f4f4}
+      tr.un td{background:#fde8e8;font-weight:600}
+      .box{border:1px solid #bbb;padding:8px;margin-top:10px}</style></head><body>
+      <h1>Production Receipt Note — ${esc(batch.receiptNo)}</h1>
+      <div class="sub">Against ${esc(g.issueId)} · ${esc(g.releaseNo)} · Vendor: <b>${esc(g.vendorName)}</b>
+        · Vendor challan: <b>${esc(batch.vendorChallanNo||"—")}</b> · Received ${esc(String(batch.at).slice(0,10))}
+        by ${esc(batch.by)}</div>
+      <div class="sub">This is a production receipt, not a GRN. Assemblies and cut parts remain work in
+        progress; only offcuts enter stock.</div>
+      <table><thead><tr><th>RM unit</th><th>Mark</th><th>Type</th><th class="r">Qty</th>
+        <th>Dimensions</th><th>Flag</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="box">Received by ______________________ &nbsp; Checked by ______________________
+        &nbsp; Date ____________</div></body></html>`);
+    w.document.close(); w.focus(); w.print();
   };
 
   const doClose = (g) => {
@@ -7803,46 +7987,115 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
                   <i> from outbound</i> and resume at <b>{g.reEntryStep}</b> once passed. Riders become cut
                   records and resume at fit-up at their own release. Offcuts need dimensions here.
                 </InfoBanner>
-                <div style={{maxHeight:340,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:6}}>
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                    <thead><tr style={{background:T.bgInput,position:"sticky",top:0}}>
-                      {["RM unit","Drawing","Mark","Comes back as","Declared","In","Balance","Receiving now","Offcut dims"].map(h=>(
-                        <th key={h} style={{padding:"4px 8px",textAlign:"left",fontSize:10,color:T.textLow,fontWeight:700,borderBottom:`1px solid ${T.border}`}}>{h}</th>))}
-                    </tr></thead>
-                    <tbody>
-                      {tally.rows.map((r,i)=>{
-                        const route=outboundLineRoute(r,g);
-                        return (
-                          <tr key={i} style={{borderBottom:`1px solid ${T.border}33`,
-                            background:r.balance<=0?`${T.green}0A`:r.role==="part"?`${T.amber}0A`:"transparent"}}>
-                            <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{r.rmUnitId}</td>
-                            <td style={{padding:"3px 8px",fontSize:10}}>{r.drawingNo}</td>
-                            <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{r.markNo}</td>
-                            <td style={{padding:"3px 8px",fontSize:10}} title={route?route.note:""}>
-                              {r.role==="assembly"?"Assembly":r.role==="part"?"Cut part (rider)":"Offcut"}
-                            </td>
-                            <td style={{padding:"3px 8px",fontSize:10}}>{r.qty}</td>
-                            <td style={{padding:"3px 8px",fontSize:10}}>{r.received}</td>
-                            <td style={{padding:"3px 8px",fontSize:10,color:r.over?T.amber:r.balance>0?T.textMid:T.green}}>
-                              {r.over?`+${-r.balance} over`:r.balance}
-                            </td>
-                            <td style={{padding:"3px 8px"}}>
-                              <input type="number" min="0" value={qty[lk(r)]||""} placeholder="0"
-                                onChange={e=>setQty(p=>({...p,[lk(r)]:e.target.value}))}
-                                style={{...css.input,fontSize:11,padding:"2px 5px",width:70}} />
-                            </td>
-                            <td style={{padding:"3px 8px"}}>
-                              {r.role==="offcut"
-                                ? <input value={dims[lk(r)]||""} placeholder="2100×600"
-                                    onChange={e=>setDims(p=>({...p,[lk(r)]:e.target.value}))}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 2fr",gap:10,marginBottom:10}}>
+                  <div>
+                    <label style={css.label}>Vendor challan no (this batch)</label>
+                    <input value={chal[g.key]||""} onChange={e=>setChal(p=>({...p,[g.key]:e.target.value}))}
+                      placeholder="Vendor's own challan / DC number" style={css.input} />
+                  </div>
+                  <div style={{fontSize:10,color:T.textLow,alignSelf:"end",paddingBottom:6}}>
+                    Each batch produces its own numbered Production Receipt Note, printed when you receive.
+                  </div>
+                </div>
+
+                {[
+                  {role:"assembly", title:"DRAWING ASSEMBLIES", rows:tally.assemblies,
+                   note:`inspected at ${OUTBOUND_QC_LABEL[g.receivingQc]||g.receivingQc}, then resume at ${g.reEntryStep}`},
+                  {role:"part", title:"DRAWING PARTS (riders)", rows:tally.parts,
+                   note:"become cut records; a contractor is assigned when their own drawing is released"},
+                  {role:"offcut", title:"OFFCUTS", rows:tally.offcuts,
+                   note:"enter dimensions — weight is computed and the offcut becomes stock"},
+                ].map(sec=>(
+                  <div key={sec.role} style={{marginBottom:12}}>
+                    <div style={{fontSize:11,fontWeight:700,color:T.textMid}}>
+                      {sec.title} — {sec.rows.length} line(s)
+                      <span style={{fontWeight:400,color:T.textLow}}> · {sec.note}</span>
+                    </div>
+                    <div style={{maxHeight:240,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:6,marginTop:4}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                        <thead><tr style={{background:T.bgInput,position:"sticky",top:0}}>
+                          {(sec.role==="assembly"
+                            ? ["Drawing","Instance","Pieces","Declared","In","Balance","Receiving now"]
+                            : sec.role==="part"
+                            ? ["RM unit","Drawing","Mark","Declared","In","Balance","Receiving now"]
+                            : ["RM unit","Declared","In","Balance","Receiving now","Offcut dims"]
+                          ).map(h=>(
+                            <th key={h} style={{padding:"4px 8px",textAlign:"left",fontSize:10,color:T.textLow,fontWeight:700,borderBottom:`1px solid ${T.border}`}}>{h}</th>))}
+                        </tr></thead>
+                        <tbody>
+                          {sec.rows.length===0&&<tr><td colSpan={7} style={{padding:"6px 8px",fontSize:10,color:T.textLow}}>None on this dispatch.</td></tr>}
+                          {sec.rows.map((r,i)=>(
+                            <tr key={lk(r)+i} style={{borderBottom:`1px solid ${T.border}33`,
+                              background:r.balance<=0?`${T.green}0A`:"transparent"}}>
+                              {sec.role==="assembly"&&<>
+                                <td style={{padding:"3px 8px",fontSize:10}}>{r.drawingNo}</td>
+                                <td style={{padding:"3px 8px",fontSize:10}}>{r.instanceNo||r.instanceId}</td>
+                                <td style={{padding:"3px 8px",fontSize:10,color:T.textLow}}>{r.pieces}</td>
+                              </>}
+                              {sec.role==="part"&&<>
+                                <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{r.rmUnitId}</td>
+                                <td style={{padding:"3px 8px",fontSize:10}}>{r.drawingNo}</td>
+                                <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{r.markNo}</td>
+                              </>}
+                              {sec.role==="offcut"&&
+                                <td style={{padding:"3px 8px",fontFamily:T.fontMono,fontSize:10}}>{r.rmUnitId}</td>}
+                              <td style={{padding:"3px 8px",fontSize:10}}>{r.qty}</td>
+                              <td style={{padding:"3px 8px",fontSize:10}}>{r.received}</td>
+                              <td style={{padding:"3px 8px",fontSize:10,color:r.over?T.amber:r.balance>0?T.textMid:T.green}}>
+                                {r.over?`+${-r.balance} over`:r.balance}
+                              </td>
+                              <td style={{padding:"3px 8px"}}>
+                                <input type="number" min="0" value={qty[lk(r)]||""} placeholder="0"
+                                  onChange={e=>setQty(pv=>({...pv,[lk(r)]:e.target.value}))}
+                                  style={{...css.input,fontSize:11,padding:"2px 5px",width:70}} />
+                              </td>
+                              {sec.role==="offcut"&&
+                                <td style={{padding:"3px 8px"}}>
+                                  <input value={dims[lk(r)]||""} placeholder="2100x600"
+                                    onChange={e=>setDims(pv=>({...pv,[lk(r)]:e.target.value}))}
                                     style={{...css.input,fontSize:11,padding:"2px 5px",width:110}} />
-                                : <span style={{color:T.textLow,fontSize:10}}>—</span>}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                                </td>}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Unlisted — allowed, but never mistaken for something declared */}
+                <div style={{marginBottom:10,padding:"8px 10px",border:`1px dashed ${T.borderHi}`,borderRadius:6}}>
+                  <div style={{fontSize:11,fontWeight:700,color:T.textMid,marginBottom:4}}>
+                    NOT ON THE DECLARED LIST
+                    <span style={{fontWeight:400,color:T.textLow}}> · accepted and flagged, never silently absorbed</span>
+                  </div>
+                  {(extra[g.key]||[]).map((u,i)=>(
+                    <div key={i} style={{display:"flex",gap:6,marginBottom:4}}>
+                      <input value={u.markNo||""} placeholder="Mark / description"
+                        onChange={e=>setExtra(p=>({...p,[g.key]:(p[g.key]||[]).map((x,j)=>j===i?{...x,markNo:e.target.value}:x)}))}
+                        style={{...css.input,fontSize:11,padding:"2px 5px",flex:2}} />
+                      <select value={u.role||"part"}
+                        onChange={e=>setExtra(p=>({...p,[g.key]:(p[g.key]||[]).map((x,j)=>j===i?{...x,role:e.target.value}:x)}))}
+                        style={{...css.input,fontSize:11,padding:"2px 5px",width:110}}>
+                        <option value="part">Cut part</option><option value="offcut">Offcut</option>
+                      </select>
+                      <input type="number" min="0" value={u.qty||""} placeholder="Qty"
+                        onChange={e=>setExtra(p=>({...p,[g.key]:(p[g.key]||[]).map((x,j)=>j===i?{...x,qty:e.target.value}:x)}))}
+                        style={{...css.input,fontSize:11,padding:"2px 5px",width:70}} />
+                      <input value={u.note||""} placeholder="Why it came back"
+                        onChange={e=>setExtra(p=>({...p,[g.key]:(p[g.key]||[]).map((x,j)=>j===i?{...x,note:e.target.value}:x)}))}
+                        style={{...css.input,fontSize:11,padding:"2px 5px",flex:2}} />
+                      <button onClick={()=>setExtra(p=>({...p,[g.key]:(p[g.key]||[]).filter((_,j)=>j!==i)}))}
+                        style={{...css.btn.ghost,fontSize:11,padding:"2px 8px",color:T.red}}>✕</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setExtra(p=>({...p,[g.key]:[...(p[g.key]||[]),{markNo:"",role:"part",qty:"",note:""}]}))}
+                    style={{...css.btn.ghost,fontSize:11,padding:"2px 8px"}}>＋ Add unlisted item</button>
+                  {tally.unlisted.length>0&&(
+                    <div style={{fontSize:10,color:T.amber,marginTop:6}}>
+                      Already received unlisted: {tally.unlisted.map(u=>`${u.markNo} ×${u.received}`).join(", ")}
+                    </div>
+                  )}
                 </div>
                 {g.receipts.length>0&&(
                   <div style={{fontSize:10,color:T.textLow,marginTop:6}}>
@@ -14716,6 +14969,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests}
       instances={instances||[]} setInstances={setInstances} orders={orders||[]}
       vendors={vendors||[]} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]}
+      drawingInstances={drawingInstances||[]}
       onBack={()=>setView("dashboard")} />
   );
 
