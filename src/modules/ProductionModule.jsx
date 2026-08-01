@@ -5293,11 +5293,17 @@ const findOutboundRepairs = ({ instances, releases }) => {
     if(!ru || !ru.outbound) return;
     const stg = OUTBOUND_QC_DPR_STAGE[ru.receivingQc] || null;
     if(!stg) return;
+    // receipts written before drawingId was carried have only the line KEY — the
+    // declared return list still holds the drawing, so resolve through it
+    const declared = ru.returnList || [];
     (ru.outboundReceipts||[]).forEach(rc=>(rc.lines||[]).forEach(l=>{
-      if(!l || l.role!=="assembly" || !l.drawingId) return;
-      if(C.some(x=>x.drawingId===l.drawingId && x.releaseId===r.id)) return;
-      C.push({ kind:"drawing", releaseId:r.id, drawingId:l.drawingId,
-               drawingNo:l.drawingNo||l.drawingId, receiptNo:rc.receiptNo,
+      if(!l || l.role!=="assembly") return;
+      const dec = declared.find(d=>d && d.role==="assembly" && outboundLineKey(d)===outboundLineKey(l));
+      const drawingId = l.drawingId || (dec && dec.drawingId) || "";
+      const drawingNo = l.drawingNo || (dec && dec.drawingNo) || drawingId;
+      if(!drawingId) return;
+      if(C.some(x=>x.drawingId===drawingId && x.releaseId===r.id)) return;
+      C.push({ kind:"drawing", releaseId:r.id, drawingId, drawingNo, receiptNo:rc.receiptNo,
                to:{ currentStage:stg, currentStatus:"pending_supervisor" } });
     }));
   }));
@@ -8154,7 +8160,10 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
       vendorChallanNo:(chal[g.key]||"").trim(),      // Jai 31 Jul: captured PER BATCH
       lines:[
         ...taking.map(x=>({ rmUnitId:x.r.rmUnitId, key:outboundLineKey(x.r), markNo:x.r.markNo,
-                            role:x.r.role, qty:x.n||1, dimensions:x.dim||"" })),
+                            role:x.r.role, qty:x.n||1, dimensions:x.dim||"",
+                            // carried so a receipt can be traced back to its drawing
+                            drawingId:x.r.drawingId||"", drawingNo:x.r.drawingNo||"",
+                            instanceId:x.r.instanceId||"" })),
         // rider allocations land at BAR level so cut records keep their fromRmUnitId
         ...riderTaking.map(x=>({ ...x.alloc, drawingId:x.pg.drawingId, drawingNo:x.pg.drawingNo })),
         // unlisted: allowed, but marked so it can never be mistaken for declared
