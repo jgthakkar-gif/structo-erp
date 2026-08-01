@@ -4985,6 +4985,10 @@ const OUTBOUND_QC_LABEL = { cutting_qc:"Cutting QC", fitup_qc:"Fit-Up QC", weld_
 // is what actually makes the returned work show up where the banner says it will.
 const OUTBOUND_QC_STAGE = { cutting_qc:"cutting_qc", fitup_qc:"fitup", weld_qc:"welding",
                             blast_qc:"blast_qc", paint_qc:"paint_qc" };
+// …and the DPR stage that puts the DRAWING in that tab. Fit-Up/Weld/Blast/Paint QC are
+// drawing-level panels driven by dpr.currentStage; only Cutting QC reads instances.
+const OUTBOUND_QC_DPR_STAGE = { fitup_qc:"fitup_qc", weld_qc:"weld_qc",
+                                blast_qc:"blast_qc", paint_qc:"paint_qc" };
 const outboundReceivingQc = (step, processSteps) => {
   const owned = outboundOwnedStages(processSteps);
   const last = [...OUTBOUND_LADDER].reverse().find(st=>owned.has(st));
@@ -5281,8 +5285,40 @@ const findOutboundRepairs = ({ instances, releases }) => {
                      : { currentStatus:"outbound_qc_pending", fromOutbound:true } };
   });
 
-  return { queue:A, received:B, total:A.length + B.length };
+  // Drawings whose assembly was received but whose DPR never advanced. The QC tab for
+  // fit-up/weld/blast/paint lists DPRs, so without this the drawing stays invisible
+  // however healthy its instances are.
+  const C = [];
+  (releases||[]).forEach(r=>(r.rmUnitAssignments||[]).forEach(ru=>{
+    if(!ru || !ru.outbound) return;
+    const stg = OUTBOUND_QC_DPR_STAGE[ru.receivingQc] || null;
+    if(!stg) return;
+    (ru.outboundReceipts||[]).forEach(rc=>(rc.lines||[]).forEach(l=>{
+      if(!l || l.role!=="assembly" || !l.drawingId) return;
+      if(C.some(x=>x.drawingId===l.drawingId && x.releaseId===r.id)) return;
+      C.push({ kind:"drawing", releaseId:r.id, drawingId:l.drawingId,
+               drawingNo:l.drawingNo||l.drawingId, receiptNo:rc.receiptNo,
+               to:{ currentStage:stg, currentStatus:"pending_supervisor" } });
+    }));
+  }));
+
+  return { queue:A, received:B, drawings:C, total:A.length + B.length + C.length };
 };
+
+// DPRs still short of where their received assembly should have put them.
+const pendingDprRepairs = (repairs, dprs) => (repairs.drawings||[]).filter(c=>
+  (dprs||[]).some(d=>d && d.releaseId===c.releaseId && d.drawingId===c.drawingId
+                   && d.currentStage !== c.to.currentStage));
+
+const applyDprRepairs = (dprs, repairs, user, ts) =>
+  (dprs||[]).map(d=>{
+    const c = (repairs.drawings||[]).find(x=>x.releaseId===d.releaseId && x.drawingId===d.drawingId);
+    if(!c || d.currentStage===c.to.currentStage) return d;
+    return { ...d, ...c.to, fromOutbound:true, repairedAt:ts,
+             stageHistory:[...(d.stageHistory||[]), {
+               stage:c.to.currentStage, action:"outbound repair", by:(user&&user.username)||"", at:ts,
+               reason:`Assembly received on ${c.receiptNo} but the drawing never advanced` }] };
+  });
 
 const applyOutboundRepairs = (instances, repairs, user, ts) => {
   const byId = {};
@@ -8048,7 +8084,8 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
 // ═══════════════════════════════════════════════════════════════════════════
 const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInstances,
                                  orders, stock, setStock, materials=[], setCutRecords,
-                                 cutRecords=[], nestingBatches=[], productionNests=[], onBack }) => {
+                                 cutRecords=[], nestingBatches=[], productionNests=[],
+                                 dprs=[], setDprs, onBack }) => {
   const [openKey, setOpenKey] = useState("");
   const [qty, setQty]         = useState({});   // key -> qty received now
   const [dims, setDims]       = useState({});   // key -> offcut dimensions
@@ -8127,6 +8164,22 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
                               note:u.note||"" })),
       ],
     };
+
+    // (a2) the DRAWING itself must move too — the QC tab for fit-up/weld/blast/paint
+    //      lists DPRs, not instances. Without this the assembly can never appear.
+    const asmDrawings = new Set(taking.filter(x=>x.r.role==="assembly"&&x.r.drawingId)
+                                      .map(x=>x.r.drawingId));
+    const dprStage = OUTBOUND_QC_DPR_STAGE[g.receivingQc] || null;
+    if(asmDrawings.size>0 && dprStage && setDprs){
+      setDprs(prev=>(prev||[]).map(d=>{
+        if(!d || d.releaseId!==g.releaseId || !asmDrawings.has(d.drawingId)) return d;
+        return { ...d, currentStage:dprStage, currentStatus:"pending_supervisor",
+                 fromOutbound:true, fromOutboundReceipt:batch.receiptNo,
+                 stageHistory:[...(d.stageHistory||[]), {
+                   stage:dprStage, action:"returned from outbound", by:user.username, at:nowIso,
+                   reason:`Received on ${batch.receiptNo} from ${g.vendorName}` }] };
+      }));
+    }
 
     // (a) assemblies → the derived QC, flagged from outbound. OutboundQcPanel then
     //     advances them to reEntryStep on pass — unchanged behaviour.
@@ -8268,7 +8321,10 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
 
       {/* ── Repair: work stranded by earlier builds ───────────────────────── */}
       {(() => {
-        const rp = findOutboundRepairs({ instances, releases });
+        const rp0 = findOutboundRepairs({ instances, releases });
+        const dprFix = pendingDprRepairs(rp0, dprs);
+        const rp = { ...rp0, drawings:dprFix,
+                     total: rp0.queue.length + rp0.received.length + dprFix.length };
         if(rp.total===0) return null;
         return (
           <div style={{ ...css.card, marginBottom:14, border:`1px solid ${T.amber}`, background:T.amberBg }}>
@@ -8283,6 +8339,7 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
                 <button onClick={()=>{
                     const ts=new Date().toISOString();
                     setInstances(prev=>applyOutboundRepairs(prev, rp, user, ts));
+                    if(setDprs) setDprs(prev=>applyDprRepairs(prev, rp, user, ts));
                     setRepairOpen(false);
                     setToast(`${rp.total} piece(s) repaired — they now appear in their QC queue.`);
                   }} style={css.btn.primary}>Apply repair</button>
@@ -8302,13 +8359,15 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
                         fontWeight:700, borderBottom:`1px solid ${T.border}` }}>{h}</th>))}
                   </tr></thead>
                   <tbody>
-                    {[...rp.queue, ...rp.received].slice(0,200).map((r,i)=>(
-                      <tr key={r.instanceId+i} style={{ borderBottom:`1px solid ${T.border}33` }}>
+                    {[...rp.queue, ...rp.received, ...dprFix].slice(0,200).map((r,i)=>(
+                      <tr key={(r.instanceId||r.drawingId||"")+i} style={{ borderBottom:`1px solid ${T.border}33` }}>
                         <td style={{ padding:"3px 8px", fontSize:10 }}>
-                          {r.kind==="queue" ? "never queued for QC" : `received on ${r.receiptNo}, never moved`}
+                          {r.kind==="queue" ? "never queued for QC"
+                            : r.kind==="drawing" ? `drawing never advanced (${r.receiptNo})`
+                            : `received on ${r.receiptNo}, never moved`}
                         </td>
                         <td style={{ padding:"3px 8px", fontSize:10 }}>{r.drawingNo}</td>
-                        <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontSize:10 }}>{r.markNo}</td>
+                        <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontSize:10 }}>{r.markNo||"— whole drawing —"}</td>
                         <td style={{ padding:"3px 8px", fontSize:10, color:T.textMid }}>{r.stage}</td>
                         <td style={{ padding:"3px 8px", fontSize:10, color:T.green }}>
                           {r.to.currentStage||r.stage} · {r.to.currentStatus}
@@ -15375,6 +15434,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       stock={stock||[]} setStock={setStock} materials={materials||[]}
       cutRecords={cutRecords||[]} setCutRecords={setCutRecords}
       nestingBatches={nestingBatches||[]} productionNests={productionNests||[]}
+      dprs={dprs||[]} setDprs={setDprs}
       onBack={()=>setView("dashboard")} />
   );
 
