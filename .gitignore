@@ -11,3 +11,8 @@ Archive.zip
 .netlify/
 
 Archive.zip
+backups/
+src/structo-backup-*.json
+.claude/
+.agents/
+skills-lock.json
