@@ -5235,6 +5235,68 @@ const enrichOutboundLine = (line, orders, sheetOf) => {
     dimensions: cutSize };
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// OUTBOUND REPAIR — fixes instances left in a dead state by earlier builds.
+// Two faults, both now fixed at source, but the data they created is stranded:
+//   A  a vendor-cut piece was parked at a QC stage with currentStatus "pending".
+//      InspectionPanel needs "pending_supervisor", so it was counted by the
+//      dashboard and listed by nothing.
+//   B  an assembly was received, but the update matched the wrong instance id, so
+//      the pieces are still sitting at currentStatus "outbound" with the vendor.
+// Deliberately NARROW: each rule requires a signature only the broken path could
+// produce. Anything else is left alone.
+// ═══════════════════════════════════════════════════════════════════════════
+const OUTBOUND_QC_STAGES = ["cutting_qc","fitup","welding","blast_qc","paint_qc"];
+
+const findOutboundRepairs = ({ instances, releases }) => {
+  const A = (instances||[]).filter(i=>
+    i && i.currentStatus === "pending"
+      && i.cutByVendor === true
+      && OUTBOUND_QC_STAGES.includes(i.currentStage)
+  ).map(i=>({ kind:"queue", instanceId:i.instanceId, drawingNo:i.drawingNo, markNo:i.markNo,
+              stage:i.currentStage, to:{ currentStatus:"pending_supervisor" } }));
+
+  // every drawing instance whose assembly line has actually been received
+  const receivedDi = {};
+  (releases||[]).forEach(r=>(r.rmUnitAssignments||[]).forEach(ru=>{
+    if(!ru || !ru.outbound) return;
+    (ru.outboundReceipts||[]).forEach(rc=>(rc.lines||[]).forEach(l=>{
+      if(l && l.role==="assembly"){
+        const di = (l.key||"").startsWith("ASM|") ? l.key.slice(4) : (l.instanceId||"");
+        if(di) receivedDi[di] = { receiptNo:rc.receiptNo, qc:ru.receivingQc||"outbound_qc",
+                                  reEntry:ru.outboundReEntry||"" };
+      }
+    }));
+  }));
+
+  const B = (instances||[]).filter(i=>
+    i && i.currentStatus === "outbound"
+      && (receivedDi[i.drawingInstanceId] || receivedDi[i.instanceId])
+  ).map(i=>{
+    const info = receivedDi[i.drawingInstanceId] || receivedDi[i.instanceId];
+    const stg  = OUTBOUND_QC_STAGE[info.qc] || null;
+    return { kind:"received", instanceId:i.instanceId, drawingNo:i.drawingNo, markNo:i.markNo,
+             stage:i.currentStage, receiptNo:info.receiptNo,
+             to: stg ? { currentStatus:"pending_supervisor", currentStage:stg, fromOutbound:true }
+                     : { currentStatus:"outbound_qc_pending", fromOutbound:true } };
+  });
+
+  return { queue:A, received:B, total:A.length + B.length };
+};
+
+const applyOutboundRepairs = (instances, repairs, user, ts) => {
+  const byId = {};
+  [...(repairs.queue||[]), ...(repairs.received||[])].forEach(r=>{ byId[r.instanceId] = r; });
+  return (instances||[]).map(i=>{
+    const r = byId[i.instanceId];
+    if(!r) return i;
+    return { ...i, ...r.to, repairedAt:ts, repairedBy:(user&&user.username)||"",
+             repairNote:r.kind==="queue"
+               ? "Outbound repair — was parked at a QC stage but never queued"
+               : `Outbound repair — assembly received on ${r.receiptNo} but the instance never moved` };
+  });
+};
+
 // ── Riders, the way material actually comes back ──────────────────────────
 // The vendor returns a bundle of "2N x50"; nobody sorts returning parts by the bar
 // they were cut from. So the SCREEN groups by drawing + mark. The underlying bar
@@ -7990,6 +8052,7 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
   const [openKey, setOpenKey] = useState("");
   const [qty, setQty]         = useState({});   // key -> qty received now
   const [dims, setDims]       = useState({});   // key -> offcut dimensions
+  const [repairOpen, setRepairOpen] = useState(false);
   const [partOpen, setPartOpen] = useState({}); // partKey -> show its bar breakdown
   const [chal, setChal]       = useState({});   // dispatch key -> vendor challan no for THIS batch
   const [extra, setExtra]     = useState({});   // dispatch key -> unlisted lines being added
@@ -8202,6 +8265,66 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
         parts stay work in progress; only offcuts enter stock. Arrives in batches; short is normal.
       </div>
       {toast&&<InfoBanner color="green">{toast}</InfoBanner>}
+
+      {/* ── Repair: work stranded by earlier builds ───────────────────────── */}
+      {(() => {
+        const rp = findOutboundRepairs({ instances, releases });
+        if(rp.total===0) return null;
+        return (
+          <div style={{ ...css.card, marginBottom:14, border:`1px solid ${T.amber}`, background:T.amberBg }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#92400E" }}>
+                {rp.total} piece(s) stranded by an earlier build
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={()=>setRepairOpen(v=>!v)} style={css.btn.ghost}>
+                  {repairOpen?"Hide":"Review"}
+                </button>
+                <button onClick={()=>{
+                    const ts=new Date().toISOString();
+                    setInstances(prev=>applyOutboundRepairs(prev, rp, user, ts));
+                    setRepairOpen(false);
+                    setToast(`${rp.total} piece(s) repaired — they now appear in their QC queue.`);
+                  }} style={css.btn.primary}>Apply repair</button>
+              </div>
+            </div>
+            <div style={{ fontSize:11, color:"#92400E", marginTop:6 }}>
+              These were received or claimed correctly, but an earlier bug left them in a state no
+              screen lists. Nothing else is touched, and your contractor assignments are not affected.
+            </div>
+            {repairOpen && (
+              <div style={{ marginTop:10, maxHeight:260, overflow:"auto", background:T.bgCard,
+                            border:`1px solid ${T.border}`, borderRadius:6 }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                  <thead><tr style={{ background:T.bgInput, position:"sticky", top:0 }}>
+                    {["Problem","Drawing","Mark","Now at","Will become"].map(h=>(
+                      <th key={h} style={{ padding:"4px 8px", textAlign:"left", fontSize:10, color:T.textLow,
+                        fontWeight:700, borderBottom:`1px solid ${T.border}` }}>{h}</th>))}
+                  </tr></thead>
+                  <tbody>
+                    {[...rp.queue, ...rp.received].slice(0,200).map((r,i)=>(
+                      <tr key={r.instanceId+i} style={{ borderBottom:`1px solid ${T.border}33` }}>
+                        <td style={{ padding:"3px 8px", fontSize:10 }}>
+                          {r.kind==="queue" ? "never queued for QC" : `received on ${r.receiptNo}, never moved`}
+                        </td>
+                        <td style={{ padding:"3px 8px", fontSize:10 }}>{r.drawingNo}</td>
+                        <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontSize:10 }}>{r.markNo}</td>
+                        <td style={{ padding:"3px 8px", fontSize:10, color:T.textMid }}>{r.stage}</td>
+                        <td style={{ padding:"3px 8px", fontSize:10, color:T.green }}>
+                          {r.to.currentStage||r.stage} · {r.to.currentStatus}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {rp.total>200&&<div style={{ padding:"4px 8px", fontSize:10, color:T.textLow }}>
+                  showing the first 200 of {rp.total}</div>}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {groups.length===0&&<InfoBanner color="blue">Nothing out with a vendor right now.</InfoBanner>}
       {groups.map(g=>{
         const open=openKey===g.key;
