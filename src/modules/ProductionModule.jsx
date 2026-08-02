@@ -6172,6 +6172,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   // Bars already dispatched to a vendor — the state the wizard could not see before.
   const barState = buildOutboundBarState(releases);
   const [step, setStep] = useState(1);
+  const [dupWarn, setDupWarn] = useState(null);
   const [selDrawings, setSelDrawings] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [pipelineEditDI, setPipelineEditDI] = useState(null);
@@ -7678,7 +7679,19 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         {missingContractor&&<InfoBanner color="amber">Contractor required for fit-up/welding drawings before confirming.</InfoBanner>}
         <div style={{marginTop:16,display:"flex",gap:8}}>
           <button onClick={()=>setStep(4)} style={css.btn.ghost}>← Back</button>
-          <button onClick={confirm} disabled={missingContractor} style={missingContractor?{...css.btn.green,opacity:0.45,cursor:"not-allowed"}:css.btn.green}>✓ Create Release</button>
+          <button onClick={()=>{
+              // Releasing the same drawing instance twice creates a second DPR, a
+              // second set of contractor assignments and a doubled denominator on
+              // every progress figure. Catch it here, where it is still preventable.
+              const already=(releases||[])
+                .filter(r=>r && r.status!=="cancelled")
+                .flatMap(r=>(r.drawingInstanceIds||[]).map(id=>({id, rel:r.releaseNo||r.id})));
+              const clash=selDrawings
+                .map(sd=>{ const hit=already.find(a=>a.id===sd.diId); return hit?{...sd, rel:hit.rel}:null; })
+                .filter(Boolean);
+              if(clash.length>0){ setDupWarn(clash); return; }
+              confirm();
+            }} disabled={missingContractor} style={missingContractor?{...css.btn.green,opacity:0.45,cursor:"not-allowed"}:css.btn.green}>✓ Create Release</button>
         </div>
       </div>
     );
@@ -7717,6 +7730,42 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       {step===3&&<Step3 />}
       {step===4&&<Step4 />}
       {step===5&&<Step5 />}
+
+      {dupWarn&&(
+        <Modal title="These instances are already released" onClose={()=>setDupWarn(null)} width={560}>
+          <InfoBanner color="red">
+            <b>{dupWarn.length} drawing instance(s) already belong to a release.</b> Releasing them
+            again creates a second DPR and a second set of contractor assignments for the same
+            physical work, and every progress percentage will then read against a doubled total.
+          </InfoBanner>
+          <div style={{ maxHeight:220, overflow:"auto", border:`1px solid ${T.border}`, borderRadius:6 }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+              <thead><tr style={{ background:T.bgInput }}>
+                {["Drawing","Instance","Already in"].map(h=>(
+                  <th key={h} style={{ padding:"4px 8px", textAlign:"left", fontSize:10, color:T.textLow, fontWeight:700, borderBottom:`1px solid ${T.border}` }}>{h}</th>))}
+              </tr></thead>
+              <tbody>
+                {dupWarn.map((c,i)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${T.border}33` }}>
+                    <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontSize:10 }}>{c.drawing?.drawingNo||c.drawingId}</td>
+                    <td style={{ padding:"3px 8px", fontSize:10 }}>{c.instanceNo}{c.totalInstances?`/${c.totalInstances}`:""}</td>
+                    <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontSize:10, color:T.amber }}>{c.rel}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize:11, color:T.textMid, marginTop:8 }}>
+            Cancel that release first if it was a mistake, or untick these instances.
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <button onClick={()=>setDupWarn(null)} style={css.btn.primary}>Go back and fix</button>
+            <button onClick={()=>{ setDupWarn(null); confirm(); }} style={{ ...css.btn.ghost, color:T.red }}>
+              Release anyway
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };
@@ -13154,7 +13203,8 @@ const DPR_STAGE_META = {
 };
 const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","tpi_fitup","welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"];
 
-const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, onBack }) => {
+const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, onBack,
+                                   releases=[], drawingInstances=[] }) => {
   const [filterOrder,  setFilterOrder]  = useState("all");
   const [filterStage,  setFilterStage]  = useState("all");
   const [filterContr,  setFilterContr]  = useState("all");
@@ -13451,6 +13501,7 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
               <tr>
                 <SortHd col="order">Order</SortHd>
                 <SortHd col="drawing">Drawing</SortHd>
+                <th style={{ padding:"8px 10px", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput }}>Release / Instances</th>
                 <th style={{ padding:"8px 10px", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput }}>Fit-Up By</th>
                 <th style={{ padding:"8px 10px", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`2px solid ${T.borderHi}`, background:T.bgInput }}>Weld By</th>
                 <SortHd col="stage">Stage</SortHd>
@@ -13466,6 +13517,25 @@ const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, 
                   onMouseLeave={e => e.currentTarget.style.background=i%2===0?"transparent":T.bgInput}>
                   <TD mono>{order.orderNo || dpr.orderId}</TD>
                   <TD mono>{dpr.drawingNo || dpr.drawingId}</TD>
+                  <TD>
+                    <div style={{ fontFamily:T.fontMono, fontSize:11 }}>
+                      {(releases||[]).find(r=>r.id===dpr.releaseId)?.releaseNo || dpr.releaseId || "—"}
+                    </div>
+                    <div style={{ fontSize:10, color:T.textLow }}>
+                      {(() => {
+                        // A DPR is one per release+drawing carrying a qty — name the
+                        // instances it actually covers so two DPRs on the same drawing
+                        // can be told apart.
+                        const rel=(releases||[]).find(r=>r.id===dpr.releaseId);
+                        const ids=(rel&&rel.drawingInstanceIds)||[];
+                        const nos=(drawingInstances||[])
+                          .filter(di=>di&&di.drawingId===dpr.drawingId&&ids.includes(di.id))
+                          .map(di=>di.totalInstances?`${di.instanceNo}/${di.totalInstances}`:di.instanceNo)
+                          .filter(Boolean);
+                        return nos.length>0 ? nos.join(", ") : `qty ${dpr.qty||1}`;
+                      })()}
+                    </div>
+                  </TD>
                   <TD>{fitupCon ? <span>{fitupCon.name}{fitupCon.isInHouse?" 🏭":""}</span> : <span style={{color:T.textLow}}>—</span>}</TD>
                   <TD>{weldCon  ? <span>{weldCon.name}{weldCon.isInHouse?" 🏭":""}</span>  : <span style={{color:T.textLow}}>—</span>}</TD>
                   <TD>
@@ -15411,7 +15481,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       productionStandards={productionStandards} onBack={()=>setView("dashboard")} />
   );
   if (view==="eng_dpr") return (
-    <ProductionEngineerScreen user={user} dprs={dprs||[]} orders={orders||[]} instances={instances||[]} contractors={contractors||[]} onBack={()=>setView("dashboard")} />
+    <ProductionEngineerScreen user={user} dprs={dprs||[]} orders={orders||[]} instances={instances||[]}
+      releases={releases||[]} drawingInstances={drawingInstances||[]} contractors={contractors||[]} onBack={()=>setView("dashboard")} />
   );
 
   // ── Release creation wizard ──

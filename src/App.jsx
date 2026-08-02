@@ -17739,7 +17739,41 @@ const TabDrawings = ({ order, onChange, canEdit, user, drawingInstances, setDraw
     return [...s].sort();
   };
   const filteredDrawings = applyDrgFilters(drawings);
-  const saveDrawing = () => { const twc=(form.qty||0)*(form.unitWt||0); const updated=modal==="add"?[...drawings,{...form,id:`D-${Date.now()}`,totalWt:twc,status:form.receivedDate?"active":"pending",revHistory:[{rev:form.revNo||"A",date:form.drawingDate||"",note:"Initial issue"}]}]:drawings.map(d=>d.id===form.id?{...d,...form,totalWt:twc}:d); onChange({...order,drawings:updated}); setModal(null); };
+  const saveDrawing = () => {
+    // Guard the create path: a row with no number or no weight is a slip of the
+    // hand, and until now it saved happily and could not be removed again.
+    const problems=[];
+    if(!(form.drawingNo||"").trim()) problems.push("Drawing No is blank");
+    if(!(+form.qty>0))               problems.push("Qty must be more than 0");
+    if(!(+form.unitWt>0))            problems.push("Unit Wt must be more than 0");
+    const dupNo = (drawings||[]).some(d=>d.id!==form.id &&
+      String(d.drawingNo||"").trim().toUpperCase()===String(form.drawingNo||"").trim().toUpperCase());
+    if(dupNo) problems.push(`Drawing No "${(form.drawingNo||"").trim()}" already exists on this order`);
+    if(problems.length>0){ setDrgErr(problems); return; }
+    setDrgErr([]);
+    const twc=(form.qty||0)*(form.unitWt||0); const updated=modal==="add"?[...drawings,{...form,id:`D-${Date.now()}`,totalWt:twc,status:form.receivedDate?"active":"pending",revHistory:[{rev:form.revNo||"A",date:form.drawingDate||"",note:"Initial issue"}]}]:drawings.map(d=>d.id===form.id?{...d,...form,totalWt:twc}:d); onChange({...order,drawings:updated}); setModal(null); };
+  const [drgErr, setDrgErr] = useState([]);
+  const [delDrg, setDelDrg] = useState(null);
+
+  // What stops a drawing being removed. Each reason is something downstream that
+  // would be orphaned — so we name it rather than just refusing.
+  const drawingBlockers = (d) => {
+    if(!d) return [];
+    const out=[];
+    const dis=(drawingInstances||[]).filter(x=>x&&x.drawingId===d.id);
+    if(dis.some(x=>x.status==="released")) out.push(`${dis.filter(x=>x.status==="released").length} instance(s) already released`);
+    const parts=(order.parts||[]).filter(x=>x&&x.drawingId===d.id);
+    if(parts.length>0) out.push(`${parts.length} part(s) on the part list — delete those first`);
+    return out;
+  };
+
+  const doDeleteDrawing = (d) => {
+    const keptDis=(drawingInstances||[]).filter(x=>!(x&&x.drawingId===d.id));
+    if(setDrawingInstances && keptDis.length!==(drawingInstances||[]).length) setDrawingInstances(keptDis);
+    onChange({ ...order, drawings:(drawings||[]).filter(x=>x.id!==d.id) });
+    setDelDrg(null);
+  };
+
   const saveRevision = () => { const updated=drawings.map(d=>d.id===form.id?{...d,revNo:form.revNo||d.revNo,drawingDate:form.drawingDate||d.drawingDate,receivedDate:form.receivedDate||d.receivedDate,driveLink:form.driveLink||d.driveLink,status:"active",revHistory:[...(d.revHistory||[]).map(r=>r.rev===d.revNo?{...r,superseded:true,supersededDate:today(),supersededBy:user?.name||""}:r),{rev:form.revNo,date:form.drawingDate,note:form.note,superseded:false}]}:d); onChange({...order,drawings:updated}); setModal(null); };
 
   // ── Drawing Register column spec (matches MRP Sheet 1) ──
@@ -18069,6 +18103,8 @@ const TabDrawings = ({ order, onChange, canEdit, user, drawingInstances, setDraw
                     <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
                       {canEdit&&<button onClick={()=>{setForm({...d});setModal("edit");}} style={css.btn.ghost}>Edit</button>}
                       {canEdit&&<button onClick={()=>{setForm({...d,oldRevNo:d.revNo});setModal("revise");}} style={{ ...css.btn.ghost, fontSize:11 }}>Revise</button>}
+                      {canEdit&&<button onClick={()=>setDelDrg(d)} title="Delete this drawing"
+                        style={{ ...css.btn.ghost, fontSize:11, color:T.red }}>Delete</button>}
                       <button onClick={()=>setExpandRev(expandRev===d.id?null:d.id)} style={{ ...css.btn.ghost, fontSize:11 }}>{expandRev===d.id?"▲":"▼"} Rev</button>
                       {canEdit&&<button onClick={()=>setPipelineModal({drawing:d,mode:"drawing"})}
                         style={{...css.btn.ghost,fontSize:11,color:T.accent,border:`1px solid ${T.accent}`}}>
@@ -18098,7 +18134,31 @@ const TabDrawings = ({ order, onChange, canEdit, user, drawingInstances, setDraw
         </table>
 
       </div>
-            {(modal==="add"||modal==="edit")&&<Modal title={modal==="add"?"Add Drawing":"Edit Drawing"} onClose={()=>setModal(null)} width={700}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Drawing No</label><input value={form.drawingNo||""} onChange={e=>setForm({...form,drawingNo:e.target.value})} style={css.input} /></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Title</label><input value={form.title||""} onChange={e=>setForm({...form,title:e.target.value})} style={css.input} /></div><div><label style={css.label}>Qty</label><input type="number" value={form.qty||""} onChange={e=>setForm({...form,qty:+e.target.value,totalWt:(+e.target.value)*(form.unitWt||0)})} style={css.input} /></div><div><label style={css.label}>Unit Wt (kg)</label><input type="number" value={form.unitWt||""} onChange={e=>setForm({...form,unitWt:+e.target.value,totalWt:(form.qty||0)*(+e.target.value)})} style={css.input} /></div><div><label style={css.label}>Rev No</label><input value={form.revNo||""} onChange={e=>setForm({...form,revNo:e.target.value})} style={css.input} placeholder="A" /></div><div><label style={css.label}>Drawing Date</label><input type="date" value={form.drawingDate||""} onChange={e=>setForm({...form,drawingDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Received Date</label><input type="date" value={form.receivedDate||""} onChange={e=>setForm({...form,receivedDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>PO Line Item</label><input type="number" value={form.poLineItem||""} onChange={e=>setForm({...form,poLineItem:+e.target.value})} style={css.input} placeholder="1" /></div><div><label style={css.label}>Phase</label><select value={form.phase||1} onChange={e=>setForm({...form,phase:+e.target.value})} style={css.input}>{[1,2,3,4,5].map(n=><option key={n} value={n}>Phase {n}</option>)}</select></div><div><label style={css.label}>Priority</label><select value={form.priority||1} onChange={e=>setForm({...form,priority:+e.target.value})} style={css.input}>{[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>Priority {n}</option>)}</select></div><div><label style={css.label}>Drive Link</label><input value={form.driveLink||""} onChange={e=>setForm({...form,driveLink:e.target.value})} style={css.input} placeholder="https://drive.google.com/..." /></div><div><label style={css.label}>Client Tag <span style={{color:T.textLow,fontWeight:400,textTransform:"none"}}>(optional)</span></label><input value={form.clientTag||""} onChange={e=>setForm({...form,clientTag:e.target.value})} style={css.input} placeholder="e.g. SBK101-1, TAG-101" /></div><div><label style={css.label}>User Field 1 <span style={{color:T.textLow,fontWeight:400,textTransform:"none"}}>(optional)</span></label><input value={form.userField1||""} onChange={e=>setForm({...form,userField1:e.target.value})} style={css.input} /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={saveDrawing} style={css.btn.primary}>Save Drawing</button></div></Modal>}
+            {(modal==="add"||modal==="edit")&&<Modal title={modal==="add"?"Add Drawing":"Edit Drawing"} onClose={()=>setModal(null)} width={700}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>Drawing No</label><input value={form.drawingNo||""} onChange={e=>setForm({...form,drawingNo:e.target.value})} style={css.input} /></div><div style={{ gridColumn:"span 1" }}><label style={css.label}>Title</label><input value={form.title||""} onChange={e=>setForm({...form,title:e.target.value})} style={css.input} /></div><div><label style={css.label}>Qty</label><input type="number" value={form.qty||""} onChange={e=>setForm({...form,qty:+e.target.value,totalWt:(+e.target.value)*(form.unitWt||0)})} style={css.input} /></div><div><label style={css.label}>Unit Wt (kg)</label><input type="number" value={form.unitWt||""} onChange={e=>setForm({...form,unitWt:+e.target.value,totalWt:(form.qty||0)*(+e.target.value)})} style={css.input} /></div><div><label style={css.label}>Rev No</label><input value={form.revNo||""} onChange={e=>setForm({...form,revNo:e.target.value})} style={css.input} placeholder="A" /></div><div><label style={css.label}>Drawing Date</label><input type="date" value={form.drawingDate||""} onChange={e=>setForm({...form,drawingDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Received Date</label><input type="date" value={form.receivedDate||""} onChange={e=>setForm({...form,receivedDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>PO Line Item</label><input type="number" value={form.poLineItem||""} onChange={e=>setForm({...form,poLineItem:+e.target.value})} style={css.input} placeholder="1" /></div><div><label style={css.label}>Phase</label><select value={form.phase||1} onChange={e=>setForm({...form,phase:+e.target.value})} style={css.input}>{[1,2,3,4,5].map(n=><option key={n} value={n}>Phase {n}</option>)}</select></div><div><label style={css.label}>Priority</label><select value={form.priority||1} onChange={e=>setForm({...form,priority:+e.target.value})} style={css.input}>{[1,2,3,4,5,6,7,8,9,10].map(n=><option key={n} value={n}>Priority {n}</option>)}</select></div><div><label style={css.label}>Drive Link</label><input value={form.driveLink||""} onChange={e=>setForm({...form,driveLink:e.target.value})} style={css.input} placeholder="https://drive.google.com/..." /></div><div><label style={css.label}>Client Tag <span style={{color:T.textLow,fontWeight:400,textTransform:"none"}}>(optional)</span></label><input value={form.clientTag||""} onChange={e=>setForm({...form,clientTag:e.target.value})} style={css.input} placeholder="e.g. SBK101-1, TAG-101" /></div><div><label style={css.label}>User Field 1 <span style={{color:T.textLow,fontWeight:400,textTransform:"none"}}>(optional)</span></label><input value={form.userField1||""} onChange={e=>setForm({...form,userField1:e.target.value})} style={css.input} /></div></div>{drgErr.length>0&&<div style={{ marginTop:12, padding:"8px 12px", background:T.redBg, border:`1px solid ${T.redLo}`, borderRadius:6, fontSize:12, color:"#991B1B" }}>{drgErr.map((e,i)=><div key={i}>• {e}</div>)}</div>}<div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>{setModal(null);setDrgErr([]);}} style={css.btn.secondary}>Cancel</button><button onClick={saveDrawing} style={css.btn.primary}>Save Drawing</button></div></Modal>}
+
+            {delDrg&&(()=>{ const blockers=drawingBlockers(delDrg); return (
+              <Modal title={`Delete ${delDrg.drawingNo||"drawing"}?`} onClose={()=>setDelDrg(null)} width={520}>
+                {blockers.length>0 ? (
+                  <div style={{ padding:"10px 14px", background:T.redBg, border:`1px solid ${T.redLo}`, borderRadius:6, fontSize:12, color:"#991B1B" }}>
+                    <b>Cannot delete — work already depends on this drawing.</b>
+                    {blockers.map((b,i)=><div key={i} style={{ marginTop:4 }}>• {b}</div>)}
+                    <div style={{ marginTop:8, color:T.textMid }}>
+                      Revise the drawing instead, or remove the dependent records first.
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize:12, color:T.textMid }}>
+                    This removes the drawing and its {(drawingInstances||[]).filter(x=>x&&x.drawingId===delDrg.id).length} unreleased
+                    instance(s) from <b style={{color:T.text}}>{order.orderNo||order.id}</b>. Nothing downstream references it.
+                    This cannot be undone.
+                  </div>
+                )}
+                <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+                  <button onClick={()=>setDelDrg(null)} style={css.btn.secondary}>Cancel</button>
+                  {blockers.length===0&&<button onClick={()=>doDeleteDrawing(delDrg)} style={{ ...css.btn.primary, background:T.red }}>Delete drawing</button>}
+                </div>
+              </Modal>
+            ); })()}
       {modal==="revise"&&<Modal title={`Revise — ${form.drawingNo}`} onClose={()=>setModal(null)} width={500}><div style={{ ...css.card, background:T.amberBg, border:`1px solid ${T.amber}`, marginBottom:14, fontSize:12, color:T.amber }}>Current Rev <strong>{form.oldRevNo}</strong> will be marked Superseded.</div><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div><label style={css.label}>New Rev No</label><input value={form.revNo||""} onChange={e=>setForm({...form,revNo:e.target.value})} style={css.input} placeholder="B" /></div><div><label style={css.label}>Drawing Date</label><input type="date" value={form.drawingDate||""} onChange={e=>setForm({...form,drawingDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Received Date</label><input type="date" value={form.receivedDate||""} onChange={e=>setForm({...form,receivedDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>Drive Link</label><input value={form.driveLink||""} onChange={e=>setForm({...form,driveLink:e.target.value})} style={css.input} /></div><div style={{ gridColumn:"span 2" }}><label style={css.label}>Revision Note</label><input value={form.note||""} onChange={e=>setForm({...form,note:e.target.value})} style={css.input} placeholder="e.g. Column dimensions revised" /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={saveRevision} style={{ ...css.btn.primary, background:T.amber }}>Save Revision</button></div></Modal>}
 
       {/* ── PIPELINE EDITOR for DRAWING LEVEL ── */}
@@ -18273,7 +18333,8 @@ const UniqueIdCell = ({ order, drg, part }) => {
 // Returns gross paintable area in m² for one physical piece
 // computePaintableArea imported from helpers.js
 
-const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) => {
+const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes,
+                   nestingBatches=[], cutRecords=[], instances=[] }) => {
   const [modal, setModal] = useState(null); const [form, setForm] = useState({}); const [filterDrg, setFilterDrg] = useState("all");
   const [partPipelineModal, setPartPipelineModal] = useState(null);
   // ── Column filters state ──
@@ -18342,6 +18403,57 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
     return [...s].sort();
   };
   const activeFilterCount = Object.values(colFilters).filter(v=>v instanceof Set?v.size>0:v&&(v.min||v.max)).length + (filterDrg!=="all"?1:0);
+  const [delPart, setDelPart] = useState(null);
+
+  // A part that has been nested or cut is referenced by records that would be
+  // orphaned. Name the reason rather than refusing blankly.
+  const partBlockers = (pt) => {
+    if(!pt) return [];
+    const out=[];
+    const mk=String(pt.markNo||"").trim();
+    if(!mk) return out;
+    const nested=(nestingBatches||[]).some(b=>b&&b.status!=="discarded"&&(b.lots||[])
+      .some(l=>(l.sheets||[]).some(sh=>(sh.parts||[])
+        .some(x=>String(typeof x==="string"?x:(x&&x.markNo)||"").split("/")[0]===mk))));
+    if(nested) out.push("this mark is nested in a nesting run");
+    const cut=(cutRecords||[]).filter(cr=>cr&&cr.markNo===mk&&cr.drawingId===pt.drawingId).length;
+    if(cut>0) out.push(`${cut} cut record(s) exist for this mark`);
+    const inst=(instances||[]).filter(i=>i&&i.markNo===mk&&i.drawingId===pt.drawingId).length;
+    if(inst>0) out.push(`${inst} released piece(s) carry this mark`);
+    return out;
+  };
+
+  const partDeleteModal = () => {
+    if(!delPart) return null;
+    const blockers = partBlockers(delPart);
+    return (
+      <Modal title={`Delete mark ${delPart.markNo||""}?`} onClose={()=>setDelPart(null)} width={520}>
+        {blockers.length>0 ? (
+          <div style={{ padding:"10px 14px", background:T.redBg, border:`1px solid ${T.redLo}`, borderRadius:6, fontSize:12, color:"#991B1B" }}>
+            <b>Cannot delete — this part is already in production.</b>
+            {blockers.map((b,i)=><div key={i} style={{ marginTop:4 }}>• {b}</div>)}
+            <div style={{ marginTop:8, color:T.textMid }}>
+              Correcting a part that has been nested or cut would orphan those records. Raise a
+              revision instead.
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize:12, color:T.textMid }}>
+            Removes <b style={{color:T.text}}>{delPart.markNo}</b> ({delPart.description||"no description"})
+            from the part list. Nothing has been nested or cut against it. This cannot be undone.
+          </div>
+        )}
+        <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+          <button onClick={()=>setDelPart(null)} style={css.btn.secondary}>Cancel</button>
+          {blockers.length===0&&<button onClick={()=>{
+              onChange({ ...order, parts:(parts||[]).filter(x=>x.id!==delPart.id) });
+              setDelPart(null);
+            }} style={{ ...css.btn.primary, background:T.red }}>Delete part</button>}
+        </div>
+      </Modal>
+    );
+  };
+
   const savePart = () => {
     const calcUnitWt = form.calcUnitWt||form.clientUnitWt||0;
     const calcTotalWt = calcUnitWt*(form.qtyPerDrg||0);
@@ -19013,6 +19125,8 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}` }}>
                   <div style={{display:"flex",gap:4}}>
                     {canEdit&&<button onClick={()=>{setForm({...p});setModal("edit");}} style={css.btn.ghost}>Edit</button>}
+                    {canEdit&&<button onClick={()=>setDelPart(p)} title="Delete this part"
+                      style={{ ...css.btn.ghost, color:T.red }}>Delete</button>}
                     {canEdit&&<button onClick={()=>setPartPipelineModal(p)}
                       style={{...css.btn.ghost,fontSize:10,color:T.accent}}>⚙</button>}
                   </div>
@@ -19409,6 +19523,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes }) 
           </button>
         </div>
       </Modal>}
+      {partDeleteModal()}
     </div>
   );
 };
@@ -19746,7 +19861,8 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
           canEdit={canEdit}
         />
       )}
-            {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]} />}
+            {activeTab==="parts"      && <TabParts         order={localOrder} onChange={update} canEdit={canEdit} materials={materials||[]} stock={stock||[]}
+                                                              nestingBatches={nestingBatches||[]} cutRecords={cutRecords||[]} instances={instances||[]} />}
       {activeTab==="quality"    && <TabQuality       order={localOrder} onChange={update} canEdit={canEdit} vendors={vendors||[]} tpiAgencies={tpiAgencies||[]} />}
       {activeTab==="assemblies" && <TabAssemblies    order={localOrder} onChange={update} canEdit={canEdit} />}
       {activeTab==="progress"   && <OrderProgressTracker order={localOrder} onChange={update} user={user} pos={pos||[]} stock={stock||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} instances={instances||[]} purchaseReqs={purchaseReqs||[]} dprs={dprs||[]} drawingInstances={drawingInstances||[]} />}
