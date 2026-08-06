@@ -18349,6 +18349,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes,
   const [bulkEditModal, setBulkEditModal] = useState(false);
   const [bulkForm, setBulkForm] = useState({});
   const [bulkConfirmText, setBulkConfirmText] = useState("");
+  const [delPart, setDelPart] = useState(null);  // moved up: hooks run unconditionally, in stable order
   const fileRef2 = useRef(null);
   const parts = order.parts||[]; const drawings = order.drawings||[];
   // ── Apply all column filters ──
@@ -18403,8 +18404,6 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes,
     return [...s].sort();
   };
   const activeFilterCount = Object.values(colFilters).filter(v=>v instanceof Set?v.size>0:v&&(v.min||v.max)).length + (filterDrg!=="all"?1:0);
-  const [delPart, setDelPart] = useState(null);
-
   // A part that has been nested or cut is referenced by records that would be
   // orphaned. Name the reason rather than refusing blankly.
   const partBlockers = (pt) => {
