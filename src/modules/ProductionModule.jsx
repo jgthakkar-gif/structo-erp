@@ -5428,7 +5428,8 @@ const buildSplitIndex = (batches) => {
     Object.entries(sm).forEach(([seg,info])=>{
       if(!info || !info.parent || map[seg]) return;
       map[seg] = { parent:info.parent, segLen:+info.segLen||0,
-                   segIndex:+info.segIndex||0, segCount:+info.segCount||0 };
+                   segIndex:+info.segIndex||0, segCount:+info.segCount||0,
+                   axis:info.axis||"length" };  // width-splice plates carry axis:"width"
     });
   });
   const byParent = {};

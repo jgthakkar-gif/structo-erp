@@ -6593,6 +6593,39 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
     return segs;
   };
   const splitFor = (p) => splitPlan[p.markNo] || proposeSplit(p.length, maxTrialLen);
+
+  // ── Plate width-splice (Jai 6 Aug) ─────────────────────────────────────────
+  // A plate wider than every sheet cannot be length-split (that helps sections,
+  // not plate). If joints are allowed we cut it ACROSS its width into strips that
+  // each fit the sheet, weld the seams back. LAST RESORT — only when it won't fit
+  // whole. ERP PROPOSES the seam; the operator confirms/adjusts before nesting.
+  const [plateSeams, setPlateSeams] = useState({});   // markNo -> [w1, w2, ...]
+  const proposePlateSeam = (width, sheetWidth) => {
+    const allow = spliceCfg.jointAllowanceMm || 3;
+    const usable = Math.max(0, sheetWidth);
+    if(width <= usable) return [width];                // fits whole, no seam
+    // fewest strips that each fit, sharing the root gap across joints
+    let n = 1; while(usable*n < width - allow*(n-1)) n++;
+    const total = width - allow*(n-1);
+    // BALANCE the strips (unlike length-splicing, a narrow plate strip is usable,
+    // so an even split is cleaner than max-out-then-sliver). Equal shares, rounded,
+    // with the rounding remainder settled on the last strip.
+    const each = Math.floor((total / n) * 100) / 100;
+    const strips = Array(n-1).fill(each);
+    strips.push(Math.round((total - each*(n-1)) * 100) / 100);
+    return strips;
+  };
+  const plateSeamFor = (p, sheetWidth) => plateSeams[p.markNo] || proposePlateSeam(+p.width||0, sheetWidth);
+  const plateSeamIssues = (p, sheetWidth) => {
+    const floor = spliceCfg.minSegmentMm || 1500, allow = spliceCfg.jointAllowanceMm || 3;
+    const strips = plateSeamFor(p, sheetWidth);
+    const req = (+p.width||0) - allow*(strips.length-1);
+    const sum = strips.reduce((a,b)=>a+(parseFloat(b)||0),0);
+    const errs = [];
+    if(Math.abs(sum-req) > 0.5) errs.push(`strips total ${sum}mm ≠ required ${req}mm (${p.width} − ${allow}×${strips.length-1} seam gap)`);
+    strips.forEach((w,i)=>{ if(w<floor) errs.push(`strip ${i+1} below ${floor}mm minimum`); if(w>sheetWidth) errs.push(`strip ${i+1} exceeds ${sheetWidth}mm sheet`); });
+    return errs;
+  };
   const splitIssues = (p) => {
     const floor=spliceCfg.minSegmentMm||1500, allow=spliceCfg.jointAllowanceMm||3;
     const segs=splitFor(p); const req=(p.length||0)-allow*(segs.length-1);
@@ -6694,14 +6727,33 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       // Split-before-nest: over-length joints-allowed parts become segments (2A -> 2A/S1 + 2A/S2)
       const splitMap = {};
       const partsFinal = [];
+      // widest sheet available this run — the target a width-splice must fit
+      const widestSheet = Math.max(0, ...rawMaterials.map(r=>{
+        const rs=r.RectangularShape||{}; return Math.min(+rs.Length||0,+rs.Width||0);
+      }), ...trialSizes.map(t=>Math.min(+t.length||0,+t.width||0)));
       parts.forEach(p=>{
         const over = overParts.find(o=>o.markNo===p.markNo && o.jointsAllowed);
+        // width-splice only when the plate fits NO sheet whole AND joints are allowed
+        const needsWidthSplice = p.jointsAllowed && !over
+          && (+p.width||0) > widestSheet && widestSheet>0
+          && plateSeamIssues(p, widestSheet).length===0;
         if (over) {
           const segs = splitFor(over);
           segs.forEach((len,i)=>{
             const segName = `${p.markNo}/S${i+1}`;
-            splitMap[segName] = { parent:p.markNo, segLen:len, segIndex:i+1, segCount:segs.length, jointAllowanceMm:spliceCfg.jointAllowanceMm||3 };
+            splitMap[segName] = { parent:p.markNo, segLen:len, segIndex:i+1, segCount:segs.length, axis:"length", jointAllowanceMm:spliceCfg.jointAllowanceMm||3 };
             partsFinal.push({ ...p, markNo:segName, length:len });
+          });
+        } else if (needsWidthSplice) {
+          const strips = plateSeamFor(p, widestSheet);
+          strips.forEach((w,i)=>{
+            const segName = `${p.markNo}/S${i+1}`;
+            // axis:"width" — every downstream reader treats segLen as the SPLIT
+            // dimension; here that is width, and length is unchanged. buildSplitIndex
+            // prorates on segLen either way, which is correct because the OTHER
+            // dimension is shared, so segLen alone ranks the area shares.
+            splitMap[segName] = { parent:p.markNo, segLen:w, segIndex:i+1, segCount:strips.length, axis:"width", jointAllowanceMm:spliceCfg.jointAllowanceMm||3 };
+            partsFinal.push({ ...p, markNo:segName, width:w });
           });
         } else partsFinal.push(p);
       });
@@ -6826,8 +6878,38 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
         if(!parentAgg[key]) parentAgg[key] = { expected:p.Quantity||0, placed:placed };
         else parentAgg[key].placed = Math.min(parentAgg[key].placed, placed);
       });
+      // The API tells us WHAT didn't place; work out WHY, per part, against the
+      // trial sheets. "longer than the bar" was the only reason the message named —
+      // but a plate too WIDE for every sheet fails the same way and was never said.
+      const trialMaxLen = Math.max(0, ...trialSizes.map(t=>+t.length||0));
+      const trialMaxWid = Math.max(0, ...trialSizes.map(t=>+t.width||0));
+      const diagnoseUnplaced = (mark) => {
+        const src = markAgg.find(m=>m.markNo===mark) || {};
+        const L = +src.length||0, W = +src.width||0;
+        // a part fits a sheet if it fits in either orientation
+        const fitsAny = trialSizes.some(t=>{
+          const tl=+t.length||0, tw=+t.width||0;
+          return (L<=tl && W<=tw) || (L<=tw && W<=tl);
+        });
+        if(fitsAny) return { reason:"quantity", text:"trial sheet quantity was too low — add more of a sheet it fits on" };
+        const longSide = Math.max(L,W), shortSide = Math.min(L,W);
+        const sheetLong = Math.max(trialMaxLen,trialMaxWid), sheetShort = Math.min(trialMaxLen,trialMaxWid);
+        if(shortSide > sheetShort){
+          const base = `is ${shortSide}mm on its shorter side, wider than every trial sheet (${sheetShort}mm)`;
+          return src.jointsAllowed
+            ? { reason:"too_wide_splice", text:`${base}. Joints are allowed — it can be spliced across its width; confirm the seam below.` }
+            : { reason:"too_wide", text:`${base}, and joints are not allowed on it. Add a wider trial sheet.` };
+        }
+        if(longSide > sheetLong){
+          const base = `is ${longSide}mm long, longer than every trial sheet (${sheetLong}mm)`;
+          return src.jointsAllowed
+            ? { reason:"too_long_splice", text:`${base}. Joints are allowed — add a longer sheet or let it splice by length.` }
+            : { reason:"too_long", text:`${base}, and joints are not allowed. Add a longer trial sheet.` };
+        }
+        return { reason:"unknown", text:"did not place — check the drawing dimensions and trial sizes" };
+      };
       const unplaced = Object.entries(parentAgg).filter(([k,v])=>v.placed<v.expected)
-        .map(([k,v])=>({ mark:k, expected:v.expected, placed:v.placed }));
+        .map(([k,v])=>({ mark:k, expected:v.expected, placed:v.placed, ...diagnoseUnplaced(k) }));
       const inputPieces  = Object.values(parentAgg).reduce((s,v)=>s+v.expected,0);
       const placedPieces = Object.values(parentAgg).reduce((s,v)=>s+Math.min(v.placed,v.expected),0);
       const avgUtilSheets = sheets.length ? +(sheets.reduce((s,sh)=>s+(sh.utilisPct||0),0)/sheets.length).toFixed(1) : 0;
@@ -7001,6 +7083,61 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           </table>
           <button onClick={addTrialSize} style={{...css.btn.ghost,marginTop:6,fontSize:12}}>+ Add size</button>
         </div>
+
+        {/* ── Plate width-splice: propose a seam, operator confirms/adjusts ─────── */}
+        {(() => {
+          const widest = Math.max(0, ...trialSizes.map(t=>Math.min(+t.length||0,+t.width||0)));
+          if(widest<=0) return null;
+          const wide = markAgg.filter(m => m.jointsAllowed
+            && (+m.width||0) > widest
+            && (Math.min(+m.length||0,+m.width||0) > widest));   // fits no sheet whole
+          if(wide.length===0) return null;
+          return (
+            <div style={{marginTop:12,border:`1px solid ${T.amber}`,background:T.amberBg,borderRadius:8,padding:"10px 14px"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#92400E",marginBottom:6}}>
+                {"✂"} {wide.length} plate(s) too wide for the sheet — joints allowed, so they'll be spliced across the width
+              </div>
+              <div style={{fontSize:11,color:"#92400E",marginBottom:8}}>
+                The seam is proposed to make every strip fit {widest}mm. Adjust any strip and the rest follow; confirm before nesting.
+              </div>
+              {wide.map(m=>{
+                const strips = plateSeamFor(m, widest);
+                const issues = plateSeamIssues(m, widest);
+                return (
+                  <div key={m.markNo} style={{padding:"6px 0",borderTop:`1px solid ${T.amber}44`}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span style={{fontFamily:T.fontMono,fontSize:11,fontWeight:700}}>{m.markNo}</span>
+                      <span style={{fontSize:10,color:"#92400E"}}>{m.length}×{m.width}mm → {strips.length} strips</span>
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
+                      {strips.map((w,i)=>(
+                        <input key={i} type="number" value={w}
+                          onChange={e=>{
+                            const v=parseFloat(e.target.value)||0;
+                            const next=[...strips]; next[i]=v;
+                            // keep the LAST strip as the balancing remainder unless the
+                            // user is editing it directly
+                            if(i!==strips.length-1){
+                              const allow=spliceCfg.jointAllowanceMm||3;
+                              const req=(+m.width||0)-allow*(strips.length-1);
+                              const others=next.slice(0,-1).reduce((a,b)=>a+(+b||0),0);
+                              next[strips.length-1]=Math.round((req-others)*100)/100;
+                            }
+                            setPlateSeams(ps=>({...ps,[m.markNo]:next}));
+                          }}
+                          style={{...css.input,width:90,fontSize:11,padding:"3px 6px"}} />
+                      ))}
+                      <button onClick={()=>setPlateSeams(ps=>{const n={...ps};delete n[m.markNo];return n;})}
+                        style={{...css.btn.ghost,fontSize:10,padding:"2px 8px"}}>Reset</button>
+                    </div>
+                    {issues.length>0&&<div style={{fontSize:10,color:T.red,marginTop:3}}>{issues.join(" · ")}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
         {/* Kerf gap settings */}
         <div style={{display:"flex",gap:16,alignItems:"center",padding:"8px 0",borderTop:`1px solid ${T.border}`}}>
           <span style={{fontSize:11,fontWeight:700,color:T.textMid,textTransform:"uppercase",letterSpacing:"0.05em"}}>Kerf Gaps</span>
@@ -7060,8 +7197,16 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                     {"⚠"} NESTING INCOMPLETE {"—"} placed {nestPrResult.placedPieces} of {nestPrResult.inputPieces} pieces
                   </div>
                   <div style={{fontSize:11,color:"#991B1B"}}>
-                    Not placed: {nestPrResult.unplaced.map(u=>`${u.mark} ×${u.expected-u.placed}`).join(", ")}.
-                    Likely causes: part longer than available bars, or trial quantity insufficient. The sheets below cover only the placed pieces {"—"} a PR raised now will NOT procure material for the unplaced parts.
+                    {/* per-part reason, computed against the trial sheets, instead of one vague catch-all */}
+                    {nestPrResult.unplaced.map((u,i)=>(
+                      <div key={i} style={{marginTop:i?3:0}}>
+                        <b>{u.mark} ×{u.expected-u.placed}</b> {"—"} {u.text||"did not place"}
+                      </div>
+                    ))}
+                    <div style={{marginTop:6,fontStyle:"italic"}}>
+                      The sheets below cover only the placed pieces {"—"} a PR raised now will NOT
+                      procure material for the unplaced parts.
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -7073,7 +7218,8 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                 <div style={{fontSize:11,color:T.textMid,marginBottom:8,background:T.bgInput,borderRadius:6,padding:"6px 10px"}}>
                   {"✂"} Splice splits: {[...new Set(Object.values(nestPrResult.splitMap).map(s=>s.parent))].map(par=>{
                     const segs = Object.entries(nestPrResult.splitMap).filter(([n,s])=>s.parent===par).sort((a,b)=>a[1].segIndex-b[1].segIndex);
-                    return `${par} → ${segs.map(([n,s])=>s.segLen+"mm").join(" + ")} (${segs.length-1} joint${segs.length>2?"s":""})`;
+                    const axis = segs[0] && segs[0][1].axis==="width" ? "width" : "length";
+                    return `${par} → ${segs.map(([n,s])=>s.segLen+"mm").join(" + ")} (${segs.length-1} ${axis} joint${segs.length>2?"s":""})`;
                   }).join(" · ")}
                 </div>
               )}
