@@ -7204,6 +7204,10 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
 };
 
 const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards }) => {
+  // Material Requirements section filter. MUST live with the other hooks, before
+  // any of MRPModule's early returns (nest_export / nestExportMatCode) — a hook
+  // after a conditional return changes the hook count and throws React #300.
+  const [matSecFilter, setMatSecFilter] = useState([]);
   const [view, setView] = useState("overview");
   const [expand, setExpand] = useState({});
   const [nestModal, setNestModal] = useState(null);
@@ -7609,10 +7613,6 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       productionStandards={productionStandards}
     />
   );
-  // Material Requirements section filter — drives both the table and the
-  // summary box above it (the box follows the filter, so it always answers
-  // "what am I looking at right now").
-  const [matSecFilter, setMatSecFilter] = useState([]);
   const fabAgg = {};
   filtOrders.forEach(o => {
     const recvDrgMap = {};
