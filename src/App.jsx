@@ -1924,7 +1924,18 @@ const nextGrnId = (pos) => {
   const next = String(thisYear.length + 1).padStart(3, '0');
   return `GRN-${year}-${next}`;
 };
-const buildStockLots = (grnForm, po, grnId, ts) => {
+const buildStockLots = (grnForm, po, grnId, ts, purchaseReqs=[]) => {
+  // Resolve which client order a PO line was procured for. The order link lives on
+  // the source PR (manual PR: top-level orderId; nesting PR: on the lot). A PO line
+  // always carries prId, so we trace back through it. Empty = general/free stock.
+  const orderIdForPoLine = (poLine) => {
+    if(poLine.orderId) return poLine.orderId;
+    const pr = (purchaseReqs||[]).find(r=>r.id===poLine.prId);
+    if(!pr) return "";
+    if(pr.orderId) return pr.orderId;
+    const lot = (pr.lots||[]).find(l=>l.matCode===poLine.matCode);
+    return (lot && (lot.orderId || (lot.orderIds||[])[0])) || pr.orderId || "";
+  };
   const baseLots = (grnForm.lines||[]).filter(l=>(l.wtReceived||0)>0).map((l,idx) => {
     const poLine = po.lines?.find(pl=>pl.id===l.poLineId)||{};
     const mtc = (grnForm.mtcs||[]).find(m=>m.id===l.mtcId);
@@ -1948,7 +1959,14 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
       status:"qc_hold", bayId:l.bayId||grnForm.bayId||"",
       rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:grnForm.date||today(),
       isOffcut:false, parentLotId:"",
-      allocations:[], reservations:[], qcHoldReason:"",
+      // PHASE A: carry the client-order link onto the lot. A PO line procured for a
+      // specific order stamps the lot; general-stock lines leave it "" (free stock).
+      // reservations[] seeds from it so the nesting screen's reserved-lot default and
+      // the "reserved for order X" note work with no further wiring.
+      originalOrderId: orderIdForPoLine(poLine),
+      allocations:[],
+      reservations: orderIdForPoLine(poLine) ? [{ orderId:orderIdForPoLine(poLine), wt:(l.actualWt||l.wtReceived||0), at:grnForm.date||today(), by:"grn" }] : [],
+      qcHoldReason:"",
       qtyReceived: l.qtyReceived||0,
       unit: poLine.unit||"MT",
       sheetLength: poLine.sheetLength||poLine.length||null,
@@ -1992,7 +2010,11 @@ const buildStockLots = (grnForm, po, grnId, ts) => {
         status:"qc_hold", bayId:grnLine.bayId||grnForm.bayId||"",
         rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:grnForm.date||today(),
         isOffcut:false, parentLotId:"",
-        allocations:[], reservations:[], qcHoldReason:"",
+        // PHASE A: heat-split lots inherit the same order link as the base lot.
+        originalOrderId: orderIdForPoLine(poLine),
+        allocations:[],
+        reservations: orderIdForPoLine(poLine) ? [{ orderId:orderIdForPoLine(poLine), wt:(hs.wt||0), at:grnForm.date||today(), by:"grn" }] : [],
+        qcHoldReason:"",
         qtyReceived:hs.qty||0,
         unit:poLine.unit||"MT",
         length:poLine.length||null, width:poLine.width||null,
@@ -7466,6 +7488,10 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       matCode: l.matCode,
       sheetCount: l.sheets.length,
       parts: l.parts,
+      // Order link travels with the lot from here on: PR → PO line → GRN → stock lot.
+      // Single-order batch: exact. Multi-order: primary now, per-line split in Phase D.
+      orderId: batch.orderId || (batch.orderIds||[])[0] || "",
+      orderIds: batch.orderIds || (batch.orderId?[batch.orderId]:[]),
       lines: Object.values(l.sheets.reduce((acc,sh)=>{
         const k = sh.sheetDim||"?";
         if (!acc[k]) acc[k]={ sheetDim:k, qty:0 };
@@ -10496,7 +10522,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       return { ...p, grns:[...p.grns, newGrn], lines:updatedLines, status:allFull?"fully_received":anyRec?"partially_received":"pending" };
     }));
     if (po && setStock) {
-      const rawLots = buildStockLots(newGrn, po, grnId, ts);
+      const rawLots = buildStockLots(newGrn, po, grnId, ts, purchaseReqs);
       if (rawLots.length>0) setStock(prev=>{
         const numberedLots = [];
         rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots])}));
@@ -12233,7 +12259,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       return {...p, grns:[...p.grns,newGrn], lines:updLines, status:allF?"fully_received":anyR?"partially_received":"pending"};
     }));
     if (setStock) {
-      const rawLots = buildStockLots(newGrn, po, grnId, ts);
+      const rawLots = buildStockLots(newGrn, po, grnId, ts, purchaseReqs);
       if (rawLots.length>0) setStock(prev=>{
         const numberedLots = [];
         rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots])}));
