@@ -6551,9 +6551,21 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   const regularLots = stockLots.filter(s=>!s.isOffcut&&s.lotType!=="offcut");
 
   // State
+  // Which orders are in scope for THIS nest — a lot tied to a different order is
+  // "borrowed" and must be opted in, not consumed by default.
+  const nestOrderIds = new Set((orders||[]).map(o=>o.id));
+  const lotReservedElsewhere = (l) => {
+    // reserved for a specific order that is not one we're nesting for
+    const own = l.originalOrderId || "";
+    if(own && !nestOrderIds.has(own)) return own;
+    const resv = (l.reservations||[]).find(r=>r && r.orderId && !nestOrderIds.has(r.orderId));
+    return resv ? resv.orderId : "";
+  };
   const [selLots, setSelLots] = useState(()=>{
     const m = {};
-    stockLots.forEach(l=>{ m[l.id]=true; }); // all selected by default
+    // free stock is on by default; material earmarked for another order is OFF
+    // by default so it is never consumed without a deliberate tick.
+    stockLots.forEach(l=>{ m[l.id] = !lotReservedElsewhere(l); });
     return m;
   });
   const [trialSizes, setTrialSizes] = useState([
@@ -7044,6 +7056,15 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                   {!isOfc && <span style={{fontSize:12,color:T.textMid,marginLeft:8}}>{dims}</span>}
                   <span style={{fontSize:12,color:T.textMid,marginLeft:8}}>{(l.wtAvailable||0).toFixed(1)} kg avail</span>
                   {l.vendorName&&<span style={{fontSize:11,color:T.textLow,marginLeft:8}}>{l.vendorName}</span>}
+                  {(() => {
+                    const other = lotReservedElsewhere(l);
+                    if(!other) return null;
+                    const on = (orders||[]).find(o=>o.id===other);
+                    return <span style={{fontSize:10,color:"#92400E",marginLeft:8,background:T.amberBg,border:`1px solid ${T.amber}55`,borderRadius:4,padding:"1px 6px"}}
+                      title="Procured for another order — borrowing it here will consume that order's material">
+                      reserved · {on?.orderNo || other} — tick to borrow
+                    </span>;
+                  })()}
                 </div>
                 {isOfc&&<Badge color="amber">Offcut</Badge>}
               </label>
@@ -8536,7 +8557,23 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                 // Support both batch.lots[] (new) and batch.sheets[] (legacy flat format)
                 const batchLots = batch.lots?.length > 0 ? batch.lots : (batch.sheets?.length > 0 ? [{ lotId:batch.id, matCode:batch.matCode||"", sheets:batch.sheets, parts:batch.parts||[] }] : []);
                 const totalSheets = batchLots.reduce((s,l)=>s+(l.sheets||[]).length,0);
-                const totalParts  = batchLots.reduce((s,l)=>s+(l.parts||[]).length,0);
+                // A splice segment (2A/S1) is not a separate part — it's a slice of
+                // its parent. Count DISTINCT PARENT MARKS and TOTAL PIECES, so the
+                // figures reconcile with the order and with each other.
+                const _sm = batch.splitMap || {};
+                const _parentOf = (mk) => (_sm[mk] && _sm[mk].parent) || mk;
+                // pieces are counted PER PARENT MARK — a mark spliced into 2 strips
+                // is still ONE physical piece, so we take the parent's qty once (max
+                // across its segment rows) rather than summing the strip rows.
+                const _pcByParent = {};
+                batchLots.forEach(l=>(l.parts||[]).forEach(pt=>{
+                  const par=_parentOf(pt.markNo);
+                  const q=(pt.qtyPerDrg||0)*(pt.drgQty||1)||0;
+                  _pcByParent[par]=Math.max(_pcByParent[par]||0, q);
+                }));
+                const totalMarks  = Object.keys(_pcByParent).length;
+                const totalPieces = Object.values(_pcByParent).reduce((a,b)=>a+b,0);
+                const totalParts  = batchLots.reduce((s,l)=>s+(l.parts||[]).length,0); // kept for any legacy ref
                 const ordNos = batchOrderNos(batchLots);
                 const rmWt   = batchRmWeight(batchLots);
                 const utilVals = batchLots.flatMap(l=>(l.sheets||[]).map(sh=>sh.utilisPct).filter(u=>u>0));
@@ -8560,7 +8597,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                       {!isDiscarded && po && <Badge color="green">{po.id} raised</Badge>}
                       {ordNos.length>0 && <Badge color="teal">{ordNos.length>1?`${ordNos.length} orders: `:""}{ordNos.join(", ")}</Badge>}
                       <span style={{ fontSize:12, color:T.textLow, marginLeft:"auto" }}>
-                        {(batch.lots||[]).length} lots · {totalSheets} sheets · {totalParts} parts
+                        {(batch.lots||[]).length} lots · {totalSheets} sheets · {totalMarks} marks · {totalPieces} pcs
                         {rmWt.kg>0 && <> · <b style={{color:T.textMid}}>≈ {(rmWt.kg/1000).toFixed(2)} T RM</b>{rmWt.missing>0 && <span title={`${rmWt.missing} sheet(s) could not be weighed — material not found in library or dims unreadable`}> ⚠</span>}</>}
                         {avgUtil>0 && <> · avg util {avgUtil.toFixed(1)}%</>}
                       </span>
@@ -8602,7 +8639,12 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                                 <span style={{ fontSize:11, color:T.gold }}>{isExpLot?"▼":"▶"}</span>
                                 <span style={{ fontFamily:T.fontMono, fontSize:12, color:T.text, minWidth:260 }}>{lot.matCode}</span>
                                 <span style={{ fontSize:11, color:T.textMid }}>{lot.sheets.length} sheets</span>
-                                <span style={{ fontSize:11, color:T.textMid }}>{lot.parts.length} parts</span>
+                                <span style={{ fontSize:11, color:T.textMid }}>{(() => {
+                                  const sm=batch.splitMap||{}; const par=mk=>(sm[mk]&&sm[mk].parent)||mk;
+                                  const byPar={};
+                                  (lot.parts||[]).forEach(pt=>{ const P=par(pt.markNo); byPar[P]=Math.max(byPar[P]||0,(pt.qtyPerDrg||0)*(pt.drgQty||1)||0); });
+                                  return `${Object.keys(byPar).length} marks · ${Object.values(byPar).reduce((a,b)=>a+b,0)} pcs`;
+                                })()}</span>
                                 <span style={{ fontSize:11, color:T.textLow }}>avg util: {avgUtil}%</span>
                               </div>
                               {/* Lot drill-down: Sheets grouped by dimension */}
@@ -8808,7 +8850,12 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
             {(createPrModal.lots||[]).map(l=>(
               <div key={l.lotId||l.matCode} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${T.border}`, fontSize:12 }}>
                 <span style={{ fontFamily:T.fontMono, color:T.text }}>{l.matCode}</span>
-                <span style={{ color:T.textMid }}>{l.sheets?.length||0} sheets · {l.parts?.length||0} parts</span>
+                <span style={{ color:T.textMid }}>{l.sheets?.length||0} sheets · {(() => {
+                  const sm=batch.splitMap||{}; const par=mk=>(sm[mk]&&sm[mk].parent)||mk;
+                  const byPar={};
+                  (l.parts||[]).forEach(pt=>{ const P=par(pt.markNo); byPar[P]=Math.max(byPar[P]||0,(pt.qtyPerDrg||0)*(pt.drgQty||1)||0); });
+                  return `${Object.keys(byPar).length} marks · ${Object.values(byPar).reduce((a,b)=>a+b,0)} pcs`;
+                })()}</span>
               </div>
             ))}
           </div>
