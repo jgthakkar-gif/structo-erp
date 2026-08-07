@@ -6617,13 +6617,19 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   };
   const plateSeamFor = (p, sheetWidth) => plateSeams[p.markNo] || proposePlateSeam(+p.width||0, sheetWidth);
   const plateSeamIssues = (p, sheetWidth) => {
-    const floor = spliceCfg.minSegmentMm || 1500, allow = spliceCfg.jointAllowanceMm || 3;
+    const allow = spliceCfg.jointAllowanceMm || 3;
     const strips = plateSeamFor(p, sheetWidth);
     const req = (+p.width||0) - allow*(strips.length-1);
     const sum = strips.reduce((a,b)=>a+(parseFloat(b)||0),0);
     const errs = [];
+    // A plate strip has no minimum-length floor (that was a section-splice rule — a
+    // narrow plate strip is perfectly cuttable). The only real constraints: the
+    // strips must reconstruct the width, each must fit the sheet, and none be ≤0.
     if(Math.abs(sum-req) > 0.5) errs.push(`strips total ${sum}mm ≠ required ${req}mm (${p.width} − ${allow}×${strips.length-1} seam gap)`);
-    strips.forEach((w,i)=>{ if(w<floor) errs.push(`strip ${i+1} below ${floor}mm minimum`); if(w>sheetWidth) errs.push(`strip ${i+1} exceeds ${sheetWidth}mm sheet`); });
+    strips.forEach((w,i)=>{
+      if((parseFloat(w)||0) <= 0) errs.push(`strip ${i+1} must be more than 0`);
+      if(w > sheetWidth) errs.push(`strip ${i+1} (${w}mm) exceeds the ${sheetWidth}mm sheet`);
+    });
     return errs;
   };
   const splitIssues = (p) => {
