@@ -5096,6 +5096,32 @@ const genCISNo = (issues, fy) => {
   const next = String(existing.length + 1).padStart(3,"0");
   return `CIS-${yr}-${next}`;
 };
+// ─── PURCHASE GST (Phase C) ───────────────────────────────────────────────────
+// Indian GST on a purchase: intra-state (vendor and plant in the SAME state) splits
+// into CGST + SGST at half the rate each; inter-state is a single IGST at the full
+// rate. State is compared by the first two digits of the GSTIN (the state code), with
+// a name fallback. Rate defaults to 18% (steel), per-line HSN carried for the invoice.
+const gstStateCode = (gstin, stateName, stateCode) => {
+  if (stateCode) return String(stateCode);
+  if (gstin && /^\d{2}/.test(gstin)) return gstin.slice(0,2);
+  return String(stateName||"").trim().toLowerCase();  // last-ditch name compare
+};
+const computeGst = ({ taxable = 0, ratePct = 18, vendorGstin, vendorState, vendorStateCode, plantGstin, plantState, plantStateCode }) => {
+  const v = gstStateCode(vendorGstin, vendorState, vendorStateCode);
+  const pl = gstStateCode(plantGstin, plantState, plantStateCode);
+  const intra = v && pl && v === pl;             // same state → CGST+SGST
+  const rate = +ratePct || 0;
+  const base = +taxable || 0;
+  if (intra) {
+    const half = +(base * rate / 200).toFixed(2);   // rate/2 each, /100 for pct
+    return { intra:true, ratePct:rate, cgst:half, sgst:half, igst:0,
+             tax:+(half*2).toFixed(2), total:+(base + half*2).toFixed(2) };
+  }
+  const igst = +(base * rate / 100).toFixed(2);
+  return { intra:false, ratePct:rate, cgst:0, sgst:0, igst,
+           tax:igst, total:+(base + igst).toFixed(2) };
+};
+
 // ─── DOCUMENT NUMBERING (Phase: doc numbers) ──────────────────────────────────
 // Human-facing numbers for PR / PO / GRN / nesting-run, DISPLAY ONLY. The record's
 // internal `id` never changes (it is the key referenced in dozens of places); we add
@@ -10741,7 +10767,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
     setGrnForm({lines:[]});
   };
 
-  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} company={company} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} />;
+  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} company={company} vendors={vendors} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} />;
 
   return (
     <div>
@@ -12382,7 +12408,7 @@ const resolvePoLineWtPS = (pl) =>
   pl.wtPerSheet || sheetWt(pl.matCode, pl.sheetDim||pl.description||"");
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
-const PODetail = ({ po, onBack, user, company={}, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
+const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
   const [tab, setTab] = useState("lines");
   const [unloadGrn, setUnloadGrn] = useState(null);   // GRN record for the printable unloading sheet
   const [grnModal, setGrnModal] = useState(false);
@@ -12631,6 +12657,43 @@ const PODetail = ({ po, onBack, user, company={}, pos, setPos, stock, setStock, 
         <StatCard label="Wt Received" value={`${fmt.num(totalWtRec)} kg`} sub={totalWtOrd>0?`${Math.round(totalWtRec/totalWtOrd*100)}%`:""} color={totalWtRec>0?T.green:T.textLow} />
         <StatCard label="GRNs" value={po.grns?.length||0} color={T.textMid} />
       </div>
+
+      {/* PHASE C — GST breakdown (intra: CGST+SGST · inter: IGST) */}
+      {(() => {
+        const vendor = (vendors||[]).find(v=>v.id===po.vendorId) || {};
+        const rate = po.gstRate ?? 18;
+        const g = computeGst({ taxable:totalVal, ratePct:rate,
+          vendorGstin:vendor.gstin, vendorState:vendor.state, vendorStateCode:vendor.stateCode,
+          plantGstin:company.gstin, plantState:company.state, plantStateCode:company.stateCode });
+        const canEditPo = ["super_admin","purchase_admin","planning_admin"].includes(user.role);
+        return (
+          <div style={{ ...css.card, marginBottom:16, padding:"12px 16px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:T.text }}>
+                GST <span style={{ fontSize:11, fontWeight:400, color:T.textMid }}>· {g.intra?"Intra-state (CGST + SGST)":"Inter-state (IGST)"}</span>
+              </div>
+              <label style={{ fontSize:12, color:T.textMid, display:"flex", alignItems:"center", gap:6 }}>
+                Rate
+                <select value={rate} disabled={!canEditPo}
+                  onChange={e=>setPos(prev=>prev.map(x=>x.id===po.id?{...x,gstRate:+e.target.value}:x))}
+                  style={{ ...css.input, width:"auto", fontSize:12, padding:"2px 6px" }}>
+                  {[0,5,12,18,28].map(r=><option key={r} value={r}>{r}%</option>)}
+                </select>
+              </label>
+            </div>
+            <div style={{ display:"flex", gap:24, flexWrap:"wrap", fontSize:13 }}>
+              <span style={{ color:T.textMid }}>Taxable <b style={{ color:T.text, fontFamily:T.fontMono }}>{fmt.currency(totalVal)}</b></span>
+              {g.intra ? (<>
+                <span style={{ color:T.textMid }}>CGST {rate/2}% <b style={{ color:T.text, fontFamily:T.fontMono }}>{fmt.currency(g.cgst)}</b></span>
+                <span style={{ color:T.textMid }}>SGST {rate/2}% <b style={{ color:T.text, fontFamily:T.fontMono }}>{fmt.currency(g.sgst)}</b></span>
+              </>) : (
+                <span style={{ color:T.textMid }}>IGST {rate}% <b style={{ color:T.text, fontFamily:T.fontMono }}>{fmt.currency(g.igst)}</b></span>
+              )}
+              <span style={{ marginLeft:"auto", fontWeight:700, color:T.green }}>Total incl. GST <b style={{ fontFamily:T.fontMono }}>{fmt.currency(g.total)}</b></span>
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{ display:"flex", gap:8, marginBottom:16 }}>
         {unloadGrn && (()=>{
@@ -12943,6 +13006,25 @@ const PODetail = ({ po, onBack, user, company={}, pos, setPos, stock, setStock, 
                   );
                 })()}
               </table>
+              {/* PHASE C — GRN GST, inheriting the PO's rate and intra/inter status */}
+              {(() => {
+                const gv = (grn.lines||[]).reduce((s,l)=>s+(l.lineValue||0),0);
+                if(gv<=0) return null;
+                const vendor = (vendors||[]).find(v=>v.id===po.vendorId) || {};
+                const rate = po.gstRate ?? 18;
+                const g = computeGst({ taxable:gv, ratePct:rate,
+                  vendorGstin:vendor.gstin, vendorState:vendor.state, vendorStateCode:vendor.stateCode,
+                  plantGstin:company.gstin, plantState:company.state, plantStateCode:company.stateCode });
+                return (
+                  <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:11, color:T.textMid, marginTop:6, paddingTop:6, borderTop:`1px solid ${T.border}` }}>
+                    <span>GST {g.intra?"(CGST+SGST)":"(IGST)"} @ {rate}%</span>
+                    {g.intra
+                      ? <><span>CGST <b style={{color:T.text,fontFamily:T.fontMono}}>{fmt.currency(g.cgst)}</b></span><span>SGST <b style={{color:T.text,fontFamily:T.fontMono}}>{fmt.currency(g.sgst)}</b></span></>
+                      : <span>IGST <b style={{color:T.text,fontFamily:T.fontMono}}>{fmt.currency(g.igst)}</b></span>}
+                    <span style={{ marginLeft:"auto", fontWeight:700, color:T.green }}>Incl. GST <b style={{fontFamily:T.fontMono}}>{fmt.currency(g.total)}</b></span>
+                  </div>
+                );
+              })()}
               {/* MTCs */}
               {(grn.mtcs||[]).length>0 && (
                 <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
