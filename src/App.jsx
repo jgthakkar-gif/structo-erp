@@ -71,8 +71,19 @@ async function supaSet(key, value) {
     if (!res.ok) {
       const txt = await res.text();
       console.warn("supaSet error:", res.status, txt);
+      // Surface the failure to the UI — a silent failed save can lose work.
+      try {
+        const isTimeout = txt.includes("57014") || txt.includes("statement timeout");
+        window.dispatchEvent(new CustomEvent("structo:saveFailed", { detail:{ key, status:res.status, timeout:isTimeout } }));
+      } catch(_) {}
+      return false;
     }
-  } catch(e) { console.warn("supaSet error:", e); }
+    return true;
+  } catch(e) {
+    console.warn("supaSet error:", e);
+    try { window.dispatchEvent(new CustomEvent("structo:saveFailed", { detail:{ key, status:0, timeout:false, network:true } })); } catch(_) {}
+    return false;
+  }
 }
 
 // Load all keys at once (one round trip)
@@ -21114,6 +21125,7 @@ export default function App() {
   }, []);
   const [dbLoaded, setDbLoaded] = useState(false);
   const [dbError, setDbError] = useState(false);
+  const [saveFailure, setSaveFailure] = useState(null); // {key,status,timeout,network,at} — last failed save
 
   // Always start empty — Supabase (prod) or localStorage (dev) fills after mount
   const initVal = (localKey, seedData) => {
@@ -21342,6 +21354,13 @@ export default function App() {
     };
     window.addEventListener('structo:addMaterials', handler);
     return () => window.removeEventListener('structo:addMaterials', handler);
+  }, []);
+
+  // Save-failure warning — a failed write to Supabase must never be silent.
+  useEffect(() => {
+    const onFail = (e) => setSaveFailure({ ...(e.detail||{}), at:Date.now() });
+    window.addEventListener('structo:saveFailed', onFail);
+    return () => window.removeEventListener('structo:saveFailed', onFail);
   }, []);
   // Global Review-New-Material queue: an import dispatches unmatched materials;
   // we upsert them (dedup on section|canon(size)|canon(grade)), tallying count
@@ -23199,6 +23218,25 @@ export default function App() {
   return (
     <div style={{ display:"flex", height:"100vh", background:T.bg, fontFamily:T.font, color:T.text, fontSize:14 }}>
       <SessionMonitor onSignOut={()=>{clearSession();setUser(null);}} />
+      {/* SAVE-FAILURE WARNING — a failed write must never be silent (data-loss guard) */}
+      {saveFailure && (
+        <div style={{ position:"fixed", top:0, left:0, right:0, zIndex:9999,
+          background:"#7F1D1D", color:"#fff", padding:"10px 20px",
+          display:"flex", alignItems:"center", gap:14, boxShadow:"0 2px 12px #0006", fontSize:13 }}>
+          <span style={{ fontSize:18 }}>⚠</span>
+          <div style={{ flex:1 }}>
+            <b>A save did not reach the server{saveFailure.timeout?" (timed out)":saveFailure.network?" (no connection)":""}.</b>
+            {" "}Your recent change to <b>{(saveFailure.key||"").replace("structo_","")}</b> is held on this device but not yet saved to the database.
+            {" "}Don't close this tab — {saveFailure.timeout
+              ? "the record may be too large; keep this open and tell your developer."
+              : "check your connection; it will retry as you keep working."}
+          </div>
+          <button onClick={()=>setSaveFailure(null)}
+            style={{ background:"transparent", border:"1px solid #ffffff66", color:"#fff", borderRadius:5, padding:"3px 12px", cursor:"pointer", fontSize:12 }}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {showPwChange&&<PasswordChangeModal user={user} appUsers={appUsers} setAppUsers={setAppUsers} onClose={()=>setShowPwChange(false)} />}
       {/* Sidebar */}
       <div style={{ width:sidebar?216:52, minWidth:sidebar?216:52, background:T.bgSidebar, borderRight:"none", display:"flex", flexDirection:"column", transition:"width 0.2s", overflow:"hidden" }}>
