@@ -6636,7 +6636,7 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
   );
 };
 
-const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nestingBatches, setNestingBatches, user, purchaseReqs, setPurchaseReqs, productionStandards, company={} }) => {
+const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, materials, nestingBatches, setNestingBatches, user, purchaseReqs, setPurchaseReqs, productionStandards, company={} }) => {
   const isPlate = (row.section||"").toUpperCase()==="PLATE"||(row.section||"").toUpperCase().includes("PLATE");
 
   // Parts for this matCode across all filtered orders
@@ -7061,7 +7061,34 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
           && b.runNo.startsWith(_base + "-"));
       const _supersedeOf = (_discardedPrior && !_hasLiveSuccessor) ? _discardedPrior.runNo : "";
       const _runNo = makeNestRunNo({ existing:nestingBatches||[], orderNo:_ordForRun?.orderNo||"", matCode:row.matCode, supersedesRunNo:_supersedeOf });
-      const batch = {id:batchId,runNo:_runNo,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,contoursMap:dxfContours,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
+      // PHASE B — borrow soft-flag. Any SELECTED lot reserved for an order NOT in this
+      // nest's scope is being borrowed; record it on the batch and flag the source order
+      // so its Material Requirement shows "re-nest required" (soft — never blocks).
+      const _borrowedLots = stockLots.filter(l=>selLots[l.id] && lotReservedElsewhere(l))
+        .map(l=>({ lotId:l.id, lotNo:l.lotNo||l.id, fromOrderId:lotReservedElsewhere(l),
+                   matCode:l.matCode, wt:l.wtAvailable||0 }));
+      // Clear any re-nest flag on THIS order for THIS material — creating this nest is
+      // the re-nest the flag was asking for.
+      if(typeof setOrders==="function"){
+        const _thisOrderIds = new Set(row.orders||[]);
+        setOrders(prev=>(prev||[]).map(o=>{
+          if(!_thisOrderIds.has(o.id) || !(o.renestFlags||[]).some(f=>!f.cleared && f.matCode===row.matCode)) return o;
+          return { ...o, renestFlags:(o.renestFlags||[]).map(f=>
+            (f.matCode===row.matCode && !f.cleared) ? { ...f, cleared:true, clearedAt:new Date().toISOString(), clearedByRun:_runNo } : f) };
+        }));
+      }
+      if(_borrowedLots.length>0 && typeof setOrders==="function"){
+        const _srcIds = new Set(_borrowedLots.map(b=>b.fromOrderId));
+        setOrders(prev=>(prev||[]).map(o=>{
+          if(!_srcIds.has(o.id)) return o;
+          const mine = _borrowedLots.filter(b=>b.fromOrderId===o.id);
+          return { ...o, renestFlags:[...(o.renestFlags||[]).filter(f=>!mine.some(m=>m.lotId===f.lotId)),
+            ...mine.map(m=>({ lotId:m.lotId, lotNo:m.lotNo, matCode:m.matCode, wt:m.wt,
+              borrowedBy:batchId, borrowedByRun:_runNo, borrowedForOrder:(orders||[])[0]?.orderNo||"",
+              at:new Date().toISOString(), by:user?.username||"unknown", cleared:false }))] };
+        }));
+      }
+      const batch = {id:batchId,runNo:_runNo,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,borrowedLots:_borrowedLots,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,contoursMap:dxfContours,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
       setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:avgUtilSheets,sheets,parts:allParts,unplaced,inputPieces,placedPieces,splitMap,dxfUsed:Object.keys(dxfMap).length,dxfFailed});
@@ -7187,9 +7214,13 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                     const other = lotReservedElsewhere(l);
                     if(!other) return null;
                     const on = (orders||[]).find(o=>o.id===other);
-                    return <span style={{fontSize:10,color:"#92400E",marginLeft:8,background:T.amberBg,border:`1px solid ${T.amber}55`,borderRadius:4,padding:"1px 6px"}}
-                      title="Procured for another order — borrowing it here will consume that order's material">
-                      reserved · {on?.orderNo || other} — tick to borrow
+                    const isBorrowed = !!selLots[l.id];
+                    return <span style={{fontSize:10,color:isBorrowed?"#B91C1C":"#92400E",marginLeft:8,
+                      background:isBorrowed?T.redBg:T.amberBg,border:`1px solid ${isBorrowed?T.redLo:T.amber+"55"}`,borderRadius:4,padding:"1px 6px",fontWeight:isBorrowed?700:400}}
+                      title={isBorrowed
+                        ? `BORROWING from ${on?.orderNo||other} — that order's nest will be flagged for re-nesting`
+                        : "Procured for another order — borrowing it here will consume that order's material"}>
+                      {isBorrowed ? `⚠ borrowing from ${on?.orderNo||other}` : `reserved · ${on?.orderNo||other} — tick to borrow`}
                     </span>;
                   })()}
                 </div>
@@ -7503,7 +7534,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   );
 };
 
-const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards }) => {
+const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, setOrders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards }) => {
   // Material Requirements section filter. MUST live with the other hooks, before
   // any of MRPModule's early returns (nest_export / nestExportMatCode) — a hook
   // after a conditional return changes the hook count and throws React #300.
@@ -7924,7 +7955,7 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
   if (nestExportMatCode) return (
     <NestExportModal
       row={nestExportMatCode} onClose={()=>setNestExportMatCode(null)}
-      stock={stock} setStock={setStock} orders={filtOrders} materials={materials}
+      stock={stock} setStock={setStock} orders={filtOrders} setOrders={setOrders} materials={materials}
       nestingBatches={nestingBatches} setNestingBatches={setNestingBatches}
       user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs}
       productionStandards={productionStandards} company={company}
@@ -8501,6 +8532,28 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
               {matSecFilter.length>0 ? `${fabList.length} of ${fabListAll.length}` : fabListAll.length} material types · {boList.length} bought-out items · {csParts.length} client supply parts
             </div>
           </div>
+
+          {/* PHASE B — borrow warning: material of THIS order (or all, when unfiltered)
+              was borrowed by another order's nest, so this order needs re-nesting. */}
+          {(() => {
+            const scope = matReqFilter==="all" ? orders : orders.filter(o=>o.id===matReqFilter);
+            const flagged = scope.map(o=>({ o, flags:(o.renestFlags||[]).filter(f=>!f.cleared) }))
+              .filter(x=>x.flags.length>0);
+            if(flagged.length===0) return null;
+            return (
+              <div style={{ marginBottom:16, border:`1px solid ${T.red}`, background:T.redBg, borderRadius:8, padding:"10px 14px" }}>
+                <div style={{ fontSize:13, fontWeight:800, color:T.red, marginBottom:4 }}>
+                  {"⚠"} Re-nest required — material reserved for {flagged.length===1?"this order":"these orders"} was borrowed
+                </div>
+                {flagged.map(({o,flags})=>(
+                  <div key={o.id} style={{ fontSize:11, color:"#991B1B", marginTop:3 }}>
+                    <b>{o.orderNo||o.id}</b>: {flags.map(f=>`${f.matCode} (lot ${f.lotNo}, ${Math.round(f.wt)}kg → ${f.borrowedForOrder||"another order"})`).join(" · ")}
+                    {" — this order's nest for that material is now short; re-nest it."}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           {/* Group summary — follows the section filter */}
           {fabListAll.length>0 && (
@@ -22646,7 +22699,7 @@ export default function App() {
     if (user.role==="planning_admin")      return mod==="dashboard" ? <PlanningAdminDashboard /> : null;
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
-      case "mrp":       return <MRPModule user={user} company={company} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
+      case "mrp":       return <MRPModule user={user} company={company} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} setOrders={setOrders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
       case "purchase":  return <PurchaseModule user={user} company={company} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} orders={orders} />;
