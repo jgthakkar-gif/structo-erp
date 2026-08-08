@@ -10767,7 +10767,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
     setGrnForm({lines:[]});
   };
 
-  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} company={company} vendors={vendors} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} />;
+  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} company={company} vendors={vendors} orders={orders} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} />;
 
   return (
     <div>
@@ -12408,7 +12408,7 @@ const resolvePoLineWtPS = (pl) =>
   pl.wtPerSheet || sheetWt(pl.matCode, pl.sheetDim||pl.description||"");
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
-const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
+const PODetail = ({ po, onBack, user, company={}, vendors=[], orders=[], pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
   const [tab, setTab] = useState("lines");
   const [unloadGrn, setUnloadGrn] = useState(null);   // GRN record for the printable unloading sheet
   const [grnModal, setGrnModal] = useState(false);
@@ -12417,6 +12417,11 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock
   const [inspModal, setInspModal] = useState(null);
   const [groupRates, setGroupRates] = useState({}); // {[matCode]: ratePerKg} for nesting POs
   const [poGroupMode, setPoGroupMode] = useState("material"); // "material" | "order" (Phase D)
+  const [poDocMode, setPoDocMode] = useState(null); // null | "vendor" | "internal" (Phase E — PO print/mail)
+  const [amendModal, setAmendModal] = useState(false); // Phase D2 — PO amendment
+  const [amendDropPrs, setAmendDropPrs] = useState([]); // prIds to remove
+  const [amendFreeLine, setAmendFreeLine] = useState({ matCode:"", dim:"", qty:"", unit:"Sheets", wtPerUnit:"", rate:"", asFreeStock:true });
+  const [amendReason, setAmendReason] = useState("");
   const [poImpModal, setPoImpModal] = useState(false);
   const [poImpRows,  setPoImpRows]  = useState([]);
   const [poImpErr,   setPoImpErr]   = useState("");
@@ -12770,6 +12775,11 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock
         )}
         {user.role==="super_admin" && po.status!=="cancelled" && !((po.grns||[]).length===0 && po.status==="pending") && (
           <button onClick={()=>{ setCancelReason(""); setCancelModal(true); }} style={{ ...css.btn.ghost, color:T.red, border:`1px solid ${T.red}` }}>Cancel PO</button>
+        )}
+        <button onClick={()=>setPoDocMode("vendor")} style={{ ...css.btn.secondary }}>🖨 PO Document</button>
+        {["super_admin","purchase_admin"].includes(user.role) && po.status!=="cancelled" && (
+          <button onClick={()=>{ setAmendDropPrs([]); setAmendFreeLine({ matCode:"", dim:"", qty:"", unit:"Sheets", wtPerUnit:"", rate:"", asFreeStock:true }); setAmendReason(""); setAmendModal(true); }}
+            style={{ ...css.btn.secondary, color:T.amber, borderColor:T.amber }}>✎ Amend PO</button>
         )}
         {canEdit && tab==="grns" && po.status!=="cancelled" && <button onClick={()=>{
           const yr=new Date().getFullYear();
@@ -13424,6 +13434,270 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock
       )}
 
       {/* Cancel PO Modal */}
+      {/* PHASE D2 — PO amendment. Removes an absent PR's lines, optionally adds a free
+          line (e.g. rough-estimate free stock when drawings changed), versions the PO
+          (Rev A/B) and logs the change. The PO number/id is unchanged. */}
+      {amendModal && (()=>{
+        const nextRev = String.fromCharCode(64 + ((po.rev? po.rev.charCodeAt(0)-64 : 0) + 1)); // A, B, C…
+        const srcPrs = (po.prIds||[]).map(id=>(purchaseReqs||[]).find(r=>r.id===id)).filter(Boolean);
+        const fl = amendFreeLine;
+        const freeWt = (parseFloat(fl.qty)||0) * (parseFloat(fl.wtPerUnit)||0);
+        const doAmend = () => {
+          // 1) drop lines whose sourcePrId is in amendDropPrs
+          const keptLines = (po.lines||[]).filter(l=>!amendDropPrs.includes(l.sourcePrId||l.prId));
+          // 2) build the optional free line
+          const addLines = [];
+          if(fl.matCode && (parseFloat(fl.qty)||0)>0){
+            const q = parseFloat(fl.qty)||0;
+            const rate = parseFloat(fl.rate)||0;
+            const wtPer = parseFloat(fl.wtPerUnit)||0;
+            const perUnit = fl.unit!=="Sheets" && fl.unit!=="kg";
+            addLines.push({
+              id:`POL-AMD-${Date.now()}`, matCode:fl.matCode, sheetDim:fl.dim||"",
+              orderMode:"ByUnits", qty:q, qtyOrdered:q, unit:fl.unit||"Sheets",
+              pricingMethod: perUnit?"PerUnit":"PerKg", unitPrice:rate,
+              wtPerSheet:wtPer, wtOrdered:Math.round(wtPer*q*100)/100, wtRequired:Math.round(wtPer*q*100)/100,
+              totalPrice: perUnit ? Math.round(q*rate*100)/100 : Math.round(Math.round(wtPer*q*100)/100*rate*100)/100,
+              wtReceived:0, qtyReceived:0, status:"pending",
+              sourceType:"amendment", sourcePrId:null,
+              // free stock has NO order allocation → stays free at GRN
+              orderAllocations: fl.asFreeStock ? [] : [],
+              itemCode: fl.matCode + (fl.dim?"/"+fl.dim:""),
+              addedByAmendment:nextRev,
+            });
+          }
+          const newLines = [...keptLines, ...addLines];
+          const amendEntry = {
+            rev:nextRev, at:new Date().toISOString(), by:user.username||user.name,
+            reason:amendReason||"", droppedPrs:[...amendDropPrs],
+            addedFree: fl.matCode?`${fl.matCode} ${fl.dim||""} ×${fl.qty}`:"",
+          };
+          setPos(prev=>prev.map(x=>x.id!==po.id?x:{
+            ...x, rev:nextRev, lines:newLines,
+            totalValue:newLines.reduce((s,l)=>s+(l.totalPrice||0),0),
+            prIds:(x.prIds||[]).filter(id=>!amendDropPrs.includes(id)),
+            coveredOrders:[...new Set(newLines.flatMap(l=>(l.orderAllocations||[]).map(a=>a.orderId)))],
+            amendments:[...(x.amendments||[]), amendEntry],
+          }));
+          // release the dropped PRs back to pending (their material is no longer on this PO)
+          if(amendDropPrs.length>0){
+            setPurchaseReqs(prev=>(prev||[]).map(r=>{
+              if(!amendDropPrs.includes(r.id)) return r;
+              return { ...r, poIds:(r.poIds||[]).filter(pid=>pid!==po.id),
+                poId:(r.poId===po.id?null:r.poId),
+                status:"pending", convertedLines:{},
+                amendNote:`Removed from ${po.docNo||po.id} at Rev ${nextRev}` };
+            }));
+          }
+          showToast(`${po.docNo||po.id} amended → Rev ${nextRev}`);
+          setAmendModal(false);
+        };
+        return (
+          <Modal title={`Amend ${po.docNo||po.id} → Rev ${nextRev}`} onClose={()=>setAmendModal(false)} width={620}>
+            <InfoBanner color="amber">Amending re-versions this PO (Rev {nextRev}). Removed requisitions return to pending so they can be re-ordered. The PO number stays the same.</InfoBanner>
+            {srcPrs.length>0 && (
+              <div style={{ marginTop:12 }}>
+                <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:6 }}>Remove a requisition from this PO</div>
+                {srcPrs.map(pr=>(
+                  <label key={pr.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0", fontSize:12 }}>
+                    <input type="checkbox" checked={amendDropPrs.includes(pr.id)}
+                      onChange={e=>setAmendDropPrs(prev=>e.target.checked?[...prev,pr.id]:prev.filter(x=>x!==pr.id))} />
+                    <span style={{ fontFamily:T.fontMono }}>{pr.docNo||pr.id}</span>
+                    <span style={{ color:T.textMid }}>{(pr.lots||[]).map(l=>l.matCode).join(", ")}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop:16, borderTop:`1px solid ${T.border}`, paddingTop:12 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:T.text, marginBottom:6 }}>Add a free line (optional) <span style={{ fontWeight:400, color:T.textMid }}>— e.g. a rough estimate ordered as free stock when drawings aren't ready</span></div>
+              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1fr", gap:8 }}>
+                <input placeholder="Material code" value={fl.matCode} onChange={e=>setAmendFreeLine(f=>({...f,matCode:e.target.value}))} style={{ ...css.input, fontSize:12 }} />
+                <input placeholder="Dimension" value={fl.dim} onChange={e=>setAmendFreeLine(f=>({...f,dim:e.target.value}))} style={{ ...css.input, fontSize:12 }} />
+                <input placeholder="Qty" type="number" value={fl.qty} onChange={e=>setAmendFreeLine(f=>({...f,qty:e.target.value}))} style={{ ...css.input, fontSize:12 }} />
+                <select value={fl.unit} onChange={e=>setAmendFreeLine(f=>({...f,unit:e.target.value}))} style={{ ...css.input, fontSize:12 }}>
+                  <option>Sheets</option><option>Nos</option><option>kg</option><option>MT</option>
+                </select>
+                <input placeholder="Wt per unit (kg)" type="number" value={fl.wtPerUnit} onChange={e=>setAmendFreeLine(f=>({...f,wtPerUnit:e.target.value}))} style={{ ...css.input, fontSize:12 }} />
+                <input placeholder="Rate ₹" type="number" value={fl.rate} onChange={e=>setAmendFreeLine(f=>({...f,rate:e.target.value}))} style={{ ...css.input, fontSize:12 }} />
+                <div style={{ gridColumn:"span 2", fontSize:11, color:T.textMid, alignSelf:"center" }}>
+                  ≈ {fmt.num(Math.round(freeWt))} kg {fl.rate?`· ${fmt.currency((parseFloat(fl.rate)||0)*(fl.unit==="kg"||fl.unit==="MT"?freeWt:(parseFloat(fl.qty)||0)))}`:""}
+                </div>
+              </div>
+              <label style={{ display:"flex", alignItems:"center", gap:8, marginTop:8, fontSize:12, color:T.textMid }}>
+                <input type="checkbox" checked={fl.asFreeStock} onChange={e=>setAmendFreeLine(f=>({...f,asFreeStock:e.target.checked}))} />
+                Order as free stock (no order reservation)
+              </label>
+            </div>
+            <div style={{ marginTop:14 }}>
+              <label style={css.label}>Reason for amendment</label>
+              <input value={amendReason} onChange={e=>setAmendReason(e.target.value)} placeholder="e.g. drawings revised, XYZ requisition withdrawn" style={{ ...css.input, fontSize:12 }} />
+            </div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:16 }}>
+              <button onClick={()=>setAmendModal(false)} style={css.btn.ghost}>Cancel</button>
+              <button disabled={amendDropPrs.length===0 && !fl.matCode}
+                onClick={doAmend}
+                style={{ ...css.btn.primary, opacity:(amendDropPrs.length===0 && !fl.matCode)?0.4:1 }}>
+                Amend → Rev {nextRev}
+              </button>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* PHASE E — PO document (print + mail). Vendor copy is FLAT; internal copy groups by order. */}
+      {poDocMode && (()=>{
+        const vendor = (vendors||[]).find(v=>v.id===po.vendorId) || {};
+        const rate = po.gstRate ?? 18;
+        const taxable = (po.lines||[]).reduce((s,l)=>s+(l.totalPrice||0),0);
+        const g = computeGst({ taxable, ratePct:rate,
+          vendorGstin:vendor.gstin, vendorState:vendor.state, vendorStateCode:vendor.stateCode,
+          plantGstin:company.gstin, plantState:company.state, plantStateCode:company.stateCode });
+        const orderName = (oid)=>(orders.find(o=>o.id===oid)?.orderNo)||oid;
+        const isInternal = poDocMode==="internal";
+        const multiOrder = (po.coveredOrders||[]).length>1;
+        // build the vendor's mailto
+        const mailBody = [
+          `Dear ${vendor.name||"Supplier"},`, ``,
+          `Please find our Purchase Order ${po.docNo||po.id} dated ${fmt.date(po.poDate)}.`, ``,
+          ...(po.lines||[]).map(l=>`- ${l.matCode}${l.sheetDim?` (${l.sheetDim})`:""} : ${fmt.num(l.wtOrdered||0)} kg`),
+          ``, `Taxable: ${fmt.currency(taxable)}`,
+          g.intra?`CGST ${rate/2}%: ${fmt.currency(g.cgst)}   SGST ${rate/2}%: ${fmt.currency(g.sgst)}`:`IGST ${rate}%: ${fmt.currency(g.igst)}`,
+          `Total incl. GST: ${fmt.currency(g.total)}`, ``,
+          `Regards,`, company.name||"Structo Fabricators",
+        ].join("\n");
+        const mailto = `mailto:${vendor.email||""}?subject=${encodeURIComponent(`Purchase Order ${po.docNo||po.id}`)}&body=${encodeURIComponent(mailBody)}`;
+        // grouped lines for the internal copy
+        const byOrd = {};
+        (po.lines||[]).forEach(l=>{
+          const allocs=(l.orderAllocations||[]);
+          if(allocs.length===0){(byOrd["__none__"]=byOrd["__none__"]||[]).push({l,kg:l.wtOrdered||0});return;}
+          allocs.forEach(a=>{(byOrd[a.orderId]=byOrd[a.orderId]||[]).push({l,kg:a.kg||0});});
+        });
+        const ordKeys = Object.keys(byOrd).sort((a,b)=>a==="__none__"?1:b==="__none__"?-1:orderName(a).localeCompare(orderName(b)));
+        return (
+          <div style={{ position:"fixed", inset:0, background:"#0008", zIndex:1000, overflow:"auto" }}>
+            <style>{`@media print { .no-print{display:none!important} body{background:#fff!important} } @page { size: A4 portrait; margin: 12mm; }`}</style>
+            <div className="no-print" style={{ position:"sticky", top:0, zIndex:10, background:T.bgSidebar, padding:"10px 20px", display:"flex", gap:12, alignItems:"center" }}>
+              <button onClick={()=>setPoDocMode(null)} style={{ ...css.btn.secondary, color:"#fff", borderColor:"#ffffff55" }}>← Close</button>
+              <div style={{ color:"#fff", fontWeight:700, fontSize:14 }}>PO Document — {po.docNo||po.id}</div>
+              {multiOrder && (
+                <div style={{ display:"flex", gap:4, marginLeft:16 }}>
+                  {[["vendor","Vendor copy (flat)"],["internal","Internal (by order)"]].map(([m,lbl])=>(
+                    <button key={m} onClick={()=>setPoDocMode(m)}
+                      style={{ ...css.btn.sm, background:poDocMode===m?T.accent:"transparent", color:"#fff", border:`1px solid ${poDocMode===m?T.accent:"#ffffff55"}`, fontSize:11 }}>{lbl}</button>
+                  ))}
+                </div>
+              )}
+              <div style={{ flex:1 }} />
+              {vendor.email && <a href={mailto} style={{ ...css.btn.secondary, color:"#fff", borderColor:"#ffffff55", textDecoration:"none" }}>✉ Mail to vendor</a>}
+              <button onClick={()=>window.print()} style={{ ...css.btn.primary }}>🖨 Print</button>
+            </div>
+            <div style={{ width:820, margin:"20px auto", background:"#fff", boxShadow:"0 2px 12px #0003", padding:32, fontFamily:T.font, color:"#0F172A" }}>
+              {/* header */}
+              <div style={{ display:"flex", justifyContent:"space-between", borderBottom:"2px solid #0F172A", paddingBottom:12, marginBottom:16 }}>
+                <div>
+                  <div style={{ fontSize:20, fontWeight:800 }}>{company.name||"Structo Fabricators"}</div>
+                  <div style={{ fontSize:11, color:"#475569", whiteSpace:"pre-line", marginTop:4 }}>{company.address||company.worksAddress||""}</div>
+                  <div style={{ fontSize:11, color:"#475569" }}>{company.gstin?`GSTIN: ${company.gstin}`:""}{company.phone?`  ·  ${company.phone}`:""}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontSize:16, fontWeight:800 }}>PURCHASE ORDER</div>
+                  <div style={{ fontSize:13, fontFamily:T.fontMono, marginTop:4 }}>{po.docNo||po.id}{po.rev?` · Rev ${po.rev}`:""}</div>
+                  <div style={{ fontSize:11, color:"#475569" }}>Date: {fmt.date(po.poDate)}</div>
+                  {po.expectedDelivery && <div style={{ fontSize:11, color:"#475569" }}>Expected: {fmt.date(po.expectedDelivery)}</div>}
+                </div>
+              </div>
+              {/* vendor block */}
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
+                <div style={{ fontSize:12 }}>
+                  <div style={{ fontWeight:700, color:"#475569", fontSize:10, textTransform:"uppercase" }}>Supplier</div>
+                  <div style={{ fontWeight:700 }}>{vendor.name||po.vendorName}</div>
+                  <div style={{ color:"#475569", whiteSpace:"pre-line" }}>{vendor.address||""}</div>
+                  <div style={{ color:"#475569" }}>{vendor.gstin?`GSTIN: ${vendor.gstin}`:""}{vendor.state?`  ·  ${vendor.state}`:""}</div>
+                </div>
+                <div style={{ fontSize:12, textAlign:"right" }}>
+                  <div style={{ fontWeight:700, color:"#475569", fontSize:10, textTransform:"uppercase" }}>Deliver to</div>
+                  <div>{company.worksAddress||company.address||""}</div>
+                </div>
+              </div>
+              {/* lines */}
+              {isInternal && multiOrder ? (
+                ordKeys.map(oid=>(
+                  <div key={oid} style={{ marginBottom:14 }}>
+                    <div style={{ fontWeight:700, fontSize:12, background:"#F1F5F9", padding:"4px 8px" }}>
+                      {oid==="__none__"?"Free stock (no order)":orderName(oid)}
+                    </div>
+                    <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                      <thead><tr style={{ borderBottom:"1px solid #CBD5E1", color:"#475569" }}>
+                        <th style={{ textAlign:"left", padding:"4px 8px" }}>Material</th>
+                        <th style={{ textAlign:"left", padding:"4px 8px" }}>Dimension</th>
+                        <th style={{ textAlign:"right", padding:"4px 8px" }}>Qty</th>
+                        <th style={{ textAlign:"right", padding:"4px 8px" }}>Wt (kg)</th>
+                      </tr></thead>
+                      <tbody>{byOrd[oid].map((r,ri)=>(
+                        <tr key={ri} style={{ borderBottom:"1px solid #E2E8F0" }}>
+                          <td style={{ padding:"4px 8px", fontFamily:T.fontMono }}>{r.l.matCode}</td>
+                          <td style={{ padding:"4px 8px" }}>{r.l.sheetDim||"—"}</td>
+                          <td style={{ padding:"4px 8px", textAlign:"right" }}>{r.l.qty||r.l.qtyOrdered||"—"}</td>
+                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono }}>{fmt.num(Math.round(r.kg))}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                ))
+              ) : (
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11, marginBottom:16 }}>
+                  <thead><tr style={{ borderBottom:"1px solid #CBD5E1", color:"#475569" }}>
+                    <th style={{ textAlign:"left", padding:"5px 8px" }}>#</th>
+                    <th style={{ textAlign:"left", padding:"5px 8px" }}>Material</th>
+                    <th style={{ textAlign:"left", padding:"5px 8px" }}>Dimension</th>
+                    <th style={{ textAlign:"right", padding:"5px 8px" }}>Qty</th>
+                    <th style={{ textAlign:"right", padding:"5px 8px" }}>Wt (kg)</th>
+                    <th style={{ textAlign:"right", padding:"5px 8px" }}>Rate</th>
+                    <th style={{ textAlign:"right", padding:"5px 8px" }}>Amount</th>
+                  </tr></thead>
+                  <tbody>{(po.lines||[]).map((l,li)=>(
+                    <tr key={li} style={{ borderBottom:"1px solid #E2E8F0" }}>
+                      <td style={{ padding:"5px 8px" }}>{li+1}</td>
+                      <td style={{ padding:"5px 8px", fontFamily:T.fontMono }}>{l.matCode}</td>
+                      <td style={{ padding:"5px 8px" }}>{l.sheetDim||"—"}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right" }}>{l.qty||l.qtyOrdered||"—"} {l.unit||""}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right", fontFamily:T.fontMono }}>{fmt.num(l.wtOrdered||0)}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right", fontFamily:T.fontMono }}>{l.unitPrice?fmt.currency(l.unitPrice):"—"}</td>
+                      <td style={{ padding:"5px 8px", textAlign:"right", fontFamily:T.fontMono }}>{fmt.currency(l.totalPrice||0)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              )}
+              {/* totals with GST */}
+              <div style={{ marginLeft:"auto", width:280, fontSize:12 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"3px 0" }}><span style={{ color:"#475569" }}>Taxable</span><span style={{ fontFamily:T.fontMono }}>{fmt.currency(taxable)}</span></div>
+                {g.intra ? (<>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"3px 0" }}><span style={{ color:"#475569" }}>CGST {rate/2}%</span><span style={{ fontFamily:T.fontMono }}>{fmt.currency(g.cgst)}</span></div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"3px 0" }}><span style={{ color:"#475569" }}>SGST {rate/2}%</span><span style={{ fontFamily:T.fontMono }}>{fmt.currency(g.sgst)}</span></div>
+                </>) : (
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"3px 0" }}><span style={{ color:"#475569" }}>IGST {rate}%</span><span style={{ fontFamily:T.fontMono }}>{fmt.currency(g.igst)}</span></div>
+                )}
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderTop:"1px solid #0F172A", fontWeight:800, marginTop:4 }}><span>Total</span><span style={{ fontFamily:T.fontMono }}>{fmt.currency(g.total)}</span></div>
+              </div>
+              {/* terms + footer */}
+              {(po.paymentTerms||[]).length>0 && (
+                <div style={{ marginTop:20, fontSize:11, color:"#475569" }}>
+                  <b>Payment terms:</b> {(po.paymentTerms||[]).map(t=>typeof t==="string"?t:t.label||t.term).filter(Boolean).join(" · ")}
+                </div>
+              )}
+              {po.remarks && <div style={{ marginTop:8, fontSize:11, color:"#475569" }}><b>Remarks:</b> {po.remarks}</div>}
+              <div style={{ marginTop:40, display:"flex", justifyContent:"flex-end", fontSize:12 }}>
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ borderTop:"1px solid #0F172A", paddingTop:4, minWidth:180 }}>For {company.name||"Structo Fabricators"}</div>
+                </div>
+              </div>
+              {isInternal && <div className="no-print" style={{ marginTop:16, fontSize:10, color:"#94A3B8", fontStyle:"italic" }}>Internal copy — order breakdown shown. The vendor copy hides this.</div>}
+            </div>
+          </div>
+        );
+      })()}
+
       {cancelModal && (
         <Modal title={`Cancel ${po.id}`} onClose={()=>setCancelModal(false)} width={480}>
           {(po.grns||[]).some(g=>g.status==="received")
