@@ -12416,6 +12416,7 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock
   const [grnGroupRates, setGrnGroupRates] = useState({}); // {[matCode]: groupRate} for GRN bulk-fill
   const [inspModal, setInspModal] = useState(null);
   const [groupRates, setGroupRates] = useState({}); // {[matCode]: ratePerKg} for nesting POs
+  const [poGroupMode, setPoGroupMode] = useState("material"); // "material" | "order" (Phase D)
   const [poImpModal, setPoImpModal] = useState(false);
   const [poImpRows,  setPoImpRows]  = useState([]);
   const [poImpErr,   setPoImpErr]   = useState("");
@@ -12811,6 +12812,73 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock
           {po.lines?.some(l=>l.wtSource==="manual") && (
             <InfoBanner color="amber">One or more lines have manually entered weights — verify with vendor before raising GRN.</InfoBanner>
           )}
+          {/* PHASE D — group-by-order toggle (multi-order POs only) */}
+          {(() => {
+            const covered = po.coveredOrders && po.coveredOrders.length>1;
+            if(!covered) return null;
+            return (
+              <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:12 }}>
+                <span style={{ fontSize:11, color:T.textMid }}>This PO covers {po.coveredOrders.length} orders · view by</span>
+                {[["material","Material"],["order","Order"]].map(([m,lbl])=>(
+                  <button key={m} onClick={()=>setPoGroupMode(m)}
+                    style={{ ...css.btn.sm, background:poGroupMode===m?T.accent:T.bgInput,
+                      color:poGroupMode===m?"#fff":T.textMid, border:`1px solid ${poGroupMode===m?T.accent:T.border}`, fontSize:11 }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+          {/* PHASE D — order-grouped view */}
+          {poGroupMode==="order" && po.coveredOrders && po.coveredOrders.length>1 ? (()=>{
+            const orderName = (oid) => (orders.find(o=>o.id===oid)?.orderNo) || oid || "Unassigned";
+            // group each line under every order it allocates to; a line with no
+            // allocation lands under "Unassigned".
+            const byOrd = {};
+            (po.lines||[]).forEach(l=>{
+              const allocs = (l.orderAllocations||[]);
+              if(allocs.length===0){ (byOrd["__none__"]=byOrd["__none__"]||[]).push({l,kg:l.wtOrdered||0}); return; }
+              allocs.forEach(a=>{ (byOrd[a.orderId]=byOrd[a.orderId]||[]).push({l,kg:a.kg||0}); });
+            });
+            const keys = Object.keys(byOrd).sort((a,b)=> a==="__none__"?1:b==="__none__"?-1:orderName(a).localeCompare(orderName(b)));
+            return (
+              <div>
+                {keys.map(oid=>{
+                  const rows = byOrd[oid];
+                  const oWt = rows.reduce((s,r)=>s+(r.kg||0),0);
+                  const oVal = rows.reduce((s,r)=>{ const lw=r.l.wtOrdered||0; const frac=lw>0?(r.kg||0)/lw:1; return s+((r.l.totalPrice||0)*frac); },0);
+                  return (
+                    <div key={oid} style={{ marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+                      <div style={{ background:oid==="__none__"?T.bgInput:`${T.accent}11`, padding:"8px 12px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <span style={{ fontWeight:700, fontSize:13, color:oid==="__none__"?T.textMid:T.accentHi }}>
+                          {oid==="__none__"?"Unassigned (free stock)":orderName(oid)}
+                        </span>
+                        <span style={{ fontFamily:T.fontMono, fontSize:12, color:T.textMid }}>{fmt.num(Math.round(oWt))} kg · {fmt.currency(Math.round(oVal))}</span>
+                      </div>
+                      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                        <thead><tr style={{ background:T.bgInput, color:T.textMid, fontSize:11 }}>
+                          <th style={{ textAlign:"left", padding:"5px 10px" }}>Material</th>
+                          <th style={{ textAlign:"left", padding:"5px 10px" }}>Dimension</th>
+                          <th style={{ textAlign:"right", padding:"5px 10px" }}>Wt for this order (kg)</th>
+                        </tr></thead>
+                        <tbody>
+                          {rows.map((r,ri)=>(
+                            <tr key={ri} style={{ borderTop:`1px solid ${T.border}` }}>
+                              <td style={{ padding:"5px 10px", fontFamily:T.fontMono }}>{r.l.matCode}</td>
+                              <td style={{ padding:"5px 10px", fontFamily:T.fontMono, color:T.textMid }}>{r.l.sheetDim||"—"}</td>
+                              <td style={{ padding:"5px 10px", textAlign:"right", fontFamily:T.fontMono }}>{fmt.num(Math.round(r.kg))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize:11, color:T.textLow, fontStyle:"italic" }}>
+                  Order split is by weight allocation. This grouping is for internal reference — the vendor copy stays flat.
+                </div>
+              </div>
+          )})() : (<>
           {(po.sourceType==="nesting"||(po.lines||[]).some(l=>l.prId)) ? (()=>{
             // GROUP by matCode for nesting POs
             const grpMap = {};
@@ -12936,6 +13004,7 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], pos, setPos, stock
           </table>
           </div>
           )}
+          </>)}
         </div>
       )}
 
