@@ -3780,6 +3780,27 @@ const CompanyMaster = ({ user, company, setCompany }) => {
             </div>
           </Field>
         </div>
+
+        {/* Document numbers — PR / PO / GRN start numbers, per type, per financial year */}
+        <div style={{ marginTop:16 }}>
+          <InfoBanner color="blue">
+            Start numbers for purchase documents. Each restarts every financial year. Format:
+            {" "}{(form.orderPrefix||"FXL")}/PO/{getFinancialYear(new Date())}/{String((form.docStartNos&&form.docStartNos.po)||1).padStart(3,"0")}. The internal id is unchanged — this is the number shown, printed and mailed.
+          </InfoBanner>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginTop:10 }}>
+            {[["pr","PR"],["po","PO"],["grn","GRN"]].map(([k,label])=>(
+              <Field key={k} label={`${label} start number`}>
+                <Input type="number" min={1}
+                  value={(form.docStartNos&&form.docStartNos[k])||1}
+                  onChange={e=>upd("docStartNos",{ ...(form.docStartNos||{}), [k]:parseInt(e.target.value)||1 })}
+                  placeholder="1" />
+                <div style={{ fontFamily:T.fontMono, fontSize:11, color:T.textLow, marginTop:4 }}>
+                  {(form.orderPrefix||"FXL")}/{label}/{getFinancialYear(new Date())}/{String((form.docStartNos&&form.docStartNos[k])||1).padStart(3,"0")}
+                </div>
+              </Field>
+            ))}
+          </div>
+        </div>
       </div>
       {dirty && (
         <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
@@ -5075,6 +5096,70 @@ const genCISNo = (issues, fy) => {
   const next = String(existing.length + 1).padStart(3,"0");
   return `CIS-${yr}-${next}`;
 };
+// ─── DOCUMENT NUMBERING (Phase: doc numbers) ──────────────────────────────────
+// Human-facing numbers for PR / PO / GRN / nesting-run, DISPLAY ONLY. The record's
+// internal `id` never changes (it is the key referenced in dozens of places); we add
+// a `docNo` shown, printed and mailed. Format: PREFIX/TYPE/FY/SEQ e.g. FXL/PO/26-27/101.
+// Series is PER TYPE and PER FINANCIAL YEAR — each type restarts at the configured
+// start number every FY. getFinancialYear() rolls on 1 April.
+const DOC_TYPE_CODES = { pr:"PR", po:"PO", grn:"GRN", nest:"NEST" };
+const makeDocNo = (type, { existing = [], company = {}, fy, startNo, order, matCode } = {}) => {
+  const fyStr  = fy || getFinancialYear(new Date());
+  const code   = DOC_TYPE_CODES[type] || String(type||"DOC").toUpperCase();
+  const prefix = company.orderPrefix || "FXL";
+  // per-type configurable start number (company.docStartNos[type]), default 1
+  const start  = Number.isFinite(+startNo) ? +startNo
+               : ((company.docStartNos && +company.docStartNos[type]) || 1);
+  // count existing docNos of THIS type in THIS FY, so the sequence restarts each FY
+  const tag = `/${code}/${fyStr}/`;
+  let maxSeq = start - 1;
+  (existing||[]).forEach(d => {
+    const dn = typeof d === "string" ? d : (d && d.docNo);
+    if (!dn || !dn.includes(tag)) return;
+    const m = dn.slice(dn.indexOf(tag) + tag.length).match(/^(\d+)/);
+    if (m) maxSeq = Math.max(maxSeq, +m[1]);
+  });
+  const seq = String(maxSeq + 1).padStart(3, "0");
+  return `${prefix}/${code}/${fyStr}/${seq}`;
+};
+
+// A nesting run's number embeds the ORDER and MATERIAL and counts PER (order, material).
+// e.g. FXL26-27/0004/PLATE-10/01. Cancelled runs KEEP their number and leave a gap;
+// superseded (re-nested) runs VERSION the base (05 -> 05-A). Both rules honour history.
+const makeNestRunNo = ({ existing = [], orderNo = "", matCode = "", supersedesRunNo = "" } = {}) => {
+  const matTag = String(matCode||"MAT").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g,"").slice(0,20) || "MAT";
+  const base = `${orderNo}/${matTag}/`;
+  // SUPERSEDED: keep the base run number, add / bump a letter suffix.
+  if (supersedesRunNo) {
+    const mBase = supersedesRunNo.match(/\/(\d+)(?:-([A-Z]+))?$/);
+    const num = mBase ? mBase[1] : "01";
+    // find the highest existing letter for this base number
+    const stem = `${base}${num}-`;
+    let maxLetter = "";
+    (existing||[]).forEach(d => {
+      const dn = typeof d === "string" ? d : (d && d.runNo);
+      if (dn && dn.startsWith(stem)) {
+        const L = dn.slice(stem.length).match(/^([A-Z]+)/);
+        if (L && L[1] > maxLetter) maxLetter = L[1];
+      }
+    });
+    const nextLetter = maxLetter ? String.fromCharCode(maxLetter.charCodeAt(0) + 1) : "A";
+    return `${base}${num}-${nextLetter}`;
+  }
+  // NEW run: highest sequence for this (order, material) + 1. Cancelled numbers were
+  // never removed, so max+1 naturally LEAVES THE GAP (04 cancelled -> next is 05... wait:
+  // gap means we do NOT reuse 04, so a fresh run after a cancelled 04 is 05). Correct.
+  let maxSeq = 0;
+  (existing||[]).forEach(d => {
+    const dn = typeof d === "string" ? d : (d && d.runNo);
+    if (dn && dn.startsWith(base)) {
+      const m = dn.slice(base.length).match(/^(\d+)/);
+      if (m) maxSeq = Math.max(maxSeq, +m[1]);
+    }
+  });
+  return `${base}${String(maxSeq + 1).padStart(2, "0")}`;
+};
+
 const needsProdReview = (items) =>
   (items||[]).some(i => PROD_CATEGORIES.includes((i.subCategory||i.category||"").toLowerCase()));
 
@@ -6956,7 +7041,9 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       // PR dimMap only counts sheets that need to be PURCHASED (not from existing stock/offcuts)
       const dimMap = {}; sheets.filter(sh=>!sh.isFromStock).forEach(sh=>{ const k=sh.sheetDim||"?"; if(!dimMap[k]) dimMap[k]={sheetDim:k,qty:0}; dimMap[k].qty++; });
       const nestLots = [{ lotId:`${batchId}-${row.matCode.replace(/[^a-zA-Z0-9]/g,"-")}`, matCode:row.matCode, sheets, parts:allParts, npPct:avgUtilSheets, scrapPct:+(result?.Result?.Scrap??0).toFixed(1) }];
-      const batch = {id:batchId,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,contoursMap:dxfContours,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
+      const _ordForRun = (orders||[]).find(o=>o.id===((row.orders||[])[0]||(orders||[])[0]?.id));
+      const _runNo = makeNestRunNo({ existing:nestingBatches||[], orderNo:_ordForRun?.orderNo||"", matCode:row.matCode });
+      const batch = {id:batchId,runNo:_runNo,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,contoursMap:dxfContours,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
       setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:avgUtilSheets,sheets,parts:allParts,unplaced,inputPieces,placedPieces,splitMap,dxfUsed:Object.keys(dxfMap).length,dxfFailed});
@@ -7398,7 +7485,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
   );
 };
 
-const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards }) => {
+const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards }) => {
   // Material Requirements section filter. MUST live with the other hooks, before
   // any of MRPModule's early returns (nest_export / nestExportMatCode) — a hook
   // after a conditional return changes the hook count and throws React #300.
@@ -7500,6 +7587,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
       },{})),
     }));
     const newPr = { id:prId, type:"nesting", nestingBatchId:batch.id,
+      docNo: makeDocNo("pr", { existing:purchaseReqs||[], company }),
       createdAt:today(), createdBy:user.name, status:"pending",
       lots, poId:null, cancelledAt:null, cancelReason:null };
     setPurchaseReqs(prev=>[...(prev||[]), newPr]);
@@ -8966,7 +9054,7 @@ const MRPModule = ({ user, purchaseReqs, setPurchaseReqs, pos, setPos, stock, se
                 const poId = `PO-${yr}-${String(max+1).padStart(3,"0")}`;
                 const vendor = (vendors||[]).find(v=>v.id===convertPoVendor);
                 const newPO = {
-                  id:poId, vendorId:convertPoVendor, vendorCode:vendor?.vendorCode||"", vendorName:vendor?.name||convertPoVendor,
+                  id:poId, docNo:makeDocNo("po",{existing:pos||[],company}), vendorId:convertPoVendor, vendorCode:vendor?.vendorCode||"", vendorName:vendor?.name||convertPoVendor,
                   poDate:today(), expectedDelivery:"", status:"pending", sourceType:"nesting",
                   servedOrders:[], coveredOrders:[], includesStock:false, remarks:`From ${pr.id} — ${pr.nestingBatchId}`,
                   prId:pr.id,
@@ -10090,7 +10178,7 @@ const matchMaterial = (section, size, grade, materials) => {
 // quantity-split convert flow in Purchase (one code path — see issues log #16).
 let pendingPrPreselect = null;
 
-const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, setVendors, materials, setMaterials, paint, consumables, setMod, nestingBatches }) => {
+const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurchaseReqs, stock, setStock, orders, vendors, setVendors, materials, setMaterials, paint, consumables, setMod, nestingBatches }) => {
   const [purTab, setPurTab] = useState(pendingPrPreselect ? "requisitions" : "pos"); // "pos" | "requisitions"
   useEffect(()=>{
     if (pendingPrPreselect) {
@@ -10186,6 +10274,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       const newPO = {
         ...form,
         id: newPoId,
+        docNo: makeDocNo("po",{existing:pos||[],company}),
         vendorCode: v?.vendorCode||"",
         status:"pending",
         grns:[],
@@ -10394,7 +10483,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       );
     if (allLines.length===0) { showToast("Nothing to convert — all quantities are 0"); return; }
     const newPO = {
-      id:newPoId, vendorId:combineForm.vendorId, vendorCode:v?.vendorCode||"",
+      id:newPoId, docNo:makeDocNo("po",{existing:pos||[],company}), vendorId:combineForm.vendorId, vendorCode:v?.vendorCode||"",
       vendorName:v?.name||combineForm.vendorName||"", poDate:combineForm.poDate||today(),
       expectedDelivery:combineForm.expectedDelivery||"", remarks:combineForm.notes||"",
       status:"pending", sourceType:"nesting",
@@ -10457,7 +10546,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
       })
     );
     const newPO = {
-      id:newPoId, vendorId:csf.vendorId, vendorCode:v?.vendorCode||"",
+      id:newPoId, docNo:makeDocNo("po",{existing:pos||[],company}), vendorId:csf.vendorId, vendorCode:v?.vendorCode||"",
       vendorName:v?.name||"", poDate:csf.poDate||today(),
       expectedDelivery:csf.expectedDelivery||"", remarks:csf.notes||"",
       status:"pending", sourceType:"nesting", prId:pr.id,
@@ -10507,7 +10596,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     const yr = new Date().getFullYear();
     const grnId = nextGrnId(pos);
     const batchNoGrn = po?.vendorCode ? genBatchNo(po.vendorCode, pos, yr) : "";
-    const newGrn = { ...grnForm, id:grnId, batchNo:batchNoGrn, date:today(), createdBy:user.name, lines:(grnForm.lines||[]) };
+    const newGrn = { ...grnForm, id:grnId, docNo:makeDocNo("grn",{existing:(pos||[]).flatMap(p=>p.grns||[]),company}), batchNo:batchNoGrn, date:today(), createdBy:user.name, lines:(grnForm.lines||[]) };
     setPos(prev => prev.map(p => {
       if (p.id!==poId) return p;
       const updatedLines = p.lines.map(pl => {
@@ -10544,7 +10633,7 @@ const PurchaseModule = ({ user, pos, setPos, purchaseReqs, setPurchaseReqs, stoc
     setGrnForm({lines:[]});
   };
 
-  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} />;
+  if (selected) return <PODetail po={pos.find(p=>p.id===selected)||{}} onBack={()=>setSelected(null)} user={user} company={company} pos={pos} setPos={setPos} stock={stock} setStock={setStock} showToast={showToast} materials={materials} editGrnModal={editGrnModal} setEditGrnModal={setEditGrnModal} editGrnForm={editGrnForm} setEditGrnForm={setEditGrnForm} saveEditGRN={saveEditGRN} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} />;
 
   return (
     <div>
@@ -12183,7 +12272,7 @@ const resolvePoLineWtPS = (pl) =>
   pl.wtPerSheet || sheetWt(pl.matCode, pl.sheetDim||pl.description||"");
 
 // ─── PO DETAIL VIEW ───────────────────────────────────────────────────────────
-const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
+const PODetail = ({ po, onBack, user, company={}, pos, setPos, stock, setStock, showToast, materials, editGrnModal, setEditGrnModal, editGrnForm, setEditGrnForm, saveEditGRN, correctionsLog, setCorrectionsLog, purchaseReqs, setPurchaseReqs }) => {
   const [tab, setTab] = useState("lines");
   const [unloadGrn, setUnloadGrn] = useState(null);   // GRN record for the printable unloading sheet
   const [grnModal, setGrnModal] = useState(false);
@@ -12243,7 +12332,7 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
     const grnId = nextGrnId(pos);
     const batchNo = po.vendorCode ? genBatchNo(po.vendorCode, pos, yr) : "";
     const grnDate = grnForm.date||today();
-    const newGrn = { ...grnForm, id:grnId, batchNo, date:grnDate, createdBy:user.name, lines:checkedLines, status:"received",
+    const newGrn = { ...grnForm, id:grnId, docNo:makeDocNo("grn",{existing:(pos||[]).flatMap(p=>p.grns||[]),company}), batchNo, date:grnDate, createdBy:user.name, lines:checkedLines, status:"received",
       totalActualWt: checkedLines.reduce((s,l)=>s+(l.actualWt||l.wtReceived||0),0) };
     setPos(prev => prev.map(p => {
       if (p.id!==po.id) return p;
@@ -12419,7 +12508,8 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
       <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
         <button onClick={onBack} style={{ ...css.btn.ghost, color:T.accent }}>← Purchase Orders</button>
         <span style={{ color:T.textLow }}>/</span>
-        <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:14, fontWeight:700 }}>{po.id}</span>
+        <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:14, fontWeight:700 }}>{po.docNo||po.id}</span>
+        {po.docNo && <span style={{ fontFamily:T.fontMono, color:T.textLow, fontSize:11 }}>({po.id})</span>}
         <Badge color={poStatusBadge[po.status]||"gray"}>{po.status?.replace("_"," ")}</Badge>
       </div>
       <div style={{ fontSize:18, fontWeight:800, color:T.text, marginBottom:2 }}>{po.vendorName}</div>
@@ -12685,7 +12775,8 @@ const PODetail = ({ po, onBack, user, pos, setPos, stock, setStock, showToast, m
               <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
                 <div>
                   <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
-                    <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{grn.id}</span>
+                    <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{grn.docNo||grn.id}</span>
+                    {grn.docNo && <span style={{ fontFamily:T.fontMono, color:T.textLow, fontSize:10 }}>({grn.id})</span>}
                     <Badge color={grn.status==="reversed"?"red":"green"}>{grn.status==="reversed"?"Reversed":"Received"}</Badge>
                   </div>
                   <div style={{ fontSize:12, color:T.textMid }}>Date: {fmt.date(grn.date)} · Vehicle: {grn.vehicleNo} · Challan: {grn.challanNo} · By: {grn.createdBy}</div>
@@ -20610,7 +20701,7 @@ export default function App() {
     ]
   });
   const [company, setCompany]           = useState(() => {
-    const defaults = { name:"Structo Fabricators", tradingName:"STRUCTO", gstin:"", pan:"", state:"Maharashtra", stateCode:"27", address:"", worksAddress:"", phone:"", email:"", bankName:"", bankAccount:"", ifsc:"", logoUrl:"", orderPrefix:"FXL", orderNextNo:1 };
+    const defaults = { name:"Structo Fabricators", tradingName:"STRUCTO", gstin:"", pan:"", state:"Maharashtra", stateCode:"27", address:"", worksAddress:"", phone:"", email:"", bankName:"", bankAccount:"", ifsc:"", logoUrl:"", orderPrefix:"FXL", orderNextNo:1, docStartNos:{ pr:1, po:1, grn:1 } };
     try { const s=localStorage.getItem('structo_company'); return s?JSON.parse(s):defaults; } catch { return defaults; }
   });
 
@@ -22492,14 +22583,14 @@ export default function App() {
     if (user.role==="qc_admin"||user.role==="qc_user") return mod==="qc_ops" ? <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} /> : <QcAdminDashboard />;
     if (user.role==="store_admin") {
       if (mod==="stock") return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
-      if (mod==="purchase") return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
+      if (mod==="purchase") return <PurchaseModule user={user} company={company} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       return <StoreAdminDashboard />;
     }
     if (user.role==="planning_admin")      return mod==="dashboard" ? <PlanningAdminDashboard /> : null;
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
-      case "mrp":       return <MRPModule user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
-      case "purchase":  return <PurchaseModule user={user} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
+      case "mrp":       return <MRPModule user={user} company={company} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
+      case "purchase":  return <PurchaseModule user={user} company={company} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} orders={orders} />;
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} />;
