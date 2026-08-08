@@ -6636,7 +6636,7 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
   );
 };
 
-const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nestingBatches, setNestingBatches, user, purchaseReqs, setPurchaseReqs, productionStandards }) => {
+const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nestingBatches, setNestingBatches, user, purchaseReqs, setPurchaseReqs, productionStandards, company={} }) => {
   const isPlate = (row.section||"").toUpperCase()==="PLATE"||(row.section||"").toUpperCase().includes("PLATE");
 
   // Parts for this matCode across all filtered orders
@@ -7431,7 +7431,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
                 }
                 const lots = [{ matCode:row.matCode, sheetCount:nestPrResult.totalSheets, parts:(nestPrResult.parts||[]), lines:Object.values(dimMap) }];
                 const newPrId = `PR-NEST-${Date.now()}`;
-                setPurchaseReqs(prev=>[...(prev||[]).map(r=>supersedeIds.includes(r.id)?{...r,status:"cancelled",cancelledAt:today(),cancelReason:`Superseded by ${newPrId} (re-nest)`}:r),{id:newPrId,type:"nesting",nestingBatchId:nestPrResult.batchId,matCode:row.matCode,section:row.section,matType:row.matType||"MS",grade:row.grade,size:row.size,sheetsRequired:nestPrResult.totalSheets,wtRequired:0,status:"pending",createdAt:today(),createdBy:user.username,remarks:`From nesting ${nestPrResult.batchId} · ${nestPrResult.stockSheetsUsed||0} sheet(s) from stock reserved`,approvedMakes:"",lots}]);
+                setPurchaseReqs(prev=>[...(prev||[]).map(r=>supersedeIds.includes(r.id)?{...r,status:"cancelled",cancelledAt:today(),cancelReason:`Superseded by ${newPrId} (re-nest)`}:r),{id:newPrId,docNo:makeDocNo("pr",{existing:purchaseReqs||[],company}),type:"nesting",nestingBatchId:nestPrResult.batchId,matCode:row.matCode,section:row.section,matType:row.matType||"MS",grade:row.grade,size:row.size,sheetsRequired:nestPrResult.totalSheets,wtRequired:0,status:"pending",createdAt:today(),createdBy:user.username,remarks:`From nesting ${nestPrResult.batchId} · ${nestPrResult.stockSheetsUsed||0} sheet(s) from stock reserved`,approvedMakes:"",lots}]);
                 onClose();
               }} style={css.btn.primary}>📋 Raise PR & Close</button>
             ) : (
@@ -7897,7 +7897,7 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
       stock={stock} setStock={setStock} orders={filtOrders} materials={materials}
       nestingBatches={nestingBatches} setNestingBatches={setNestingBatches}
       user={user} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs}
-      productionStandards={productionStandards}
+      productionStandards={productionStandards} company={company}
     />
   );
   const fabAgg = {};
@@ -8036,6 +8036,7 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
         const parts = lot.matCode.split("/");
         return {
           id: `PR-NEST-${Date.now()}-${lot.matCode.replace(/[^a-zA-Z0-9]/g,"")}`,
+          docNo: makeDocNo("pr",{existing:purchaseReqs||[],company}),
           type: "nesting",
           nestingBatchId: batchId,
           orderId: filtOrders[0]?.id||"",
@@ -8701,7 +8702,8 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                     <div onClick={()=>setExpandedBatch(isExpBatch?null:batch.id)}
                       style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:isExpBatch?T.bgHover:bi%2===0?"transparent":T.bg, cursor:"pointer", borderRadius:6, borderLeft:`3px solid ${isDiscarded?T.textLow:T.accent}` }}>
                       <span style={{ fontSize:12, color:T.accent }}>{isExpBatch?"▼":"▶"}</span>
-                      <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.text, fontSize:13, minWidth:180 }}>{batch.id}</span>
+                      <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.text, fontSize:13, minWidth:180 }}>{batch.runNo||batch.id}</span>
+                      {batch.runNo && <span style={{ fontFamily:T.fontMono, color:T.textLow, fontSize:10 }}>({batch.id})</span>}
                       <span style={{ fontSize:12, color:T.textMid }}>{fmt.date(batch.createdAt)}</span>
                       <span style={{ fontSize:12, color:T.textMid }}>by {batch.createdBy}</span>
                       <Badge color={isDiscarded?"gray":batch.status==="Planned"?"amber":"green"}>{isDiscarded?"Discarded":batch.status}</Badge>
@@ -11072,7 +11074,8 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
                       )}
                     <div>
                       <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
-                        <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{pr.id}</span>
+                        <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{pr.docNo||pr.id}</span>
+                        {pr.docNo && <span style={{ fontFamily:T.fontMono, color:T.textLow, fontSize:10 }}>({pr.id})</span>}
                         <Badge color={prStatusBadge[pr.status]||"gray"}>{pr.status}</Badge>
                         {prOrderNos(pr).map(on=><Badge key={on} color="teal">{on}</Badge>)}
                       </div>
