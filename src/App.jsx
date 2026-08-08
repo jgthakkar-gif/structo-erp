@@ -7042,7 +7042,25 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, materials, nes
       const dimMap = {}; sheets.filter(sh=>!sh.isFromStock).forEach(sh=>{ const k=sh.sheetDim||"?"; if(!dimMap[k]) dimMap[k]={sheetDim:k,qty:0}; dimMap[k].qty++; });
       const nestLots = [{ lotId:`${batchId}-${row.matCode.replace(/[^a-zA-Z0-9]/g,"-")}`, matCode:row.matCode, sheets, parts:allParts, npPct:avgUtilSheets, scrapPct:+(result?.Result?.Scrap??0).toFixed(1) }];
       const _ordForRun = (orders||[]).find(o=>o.id===((row.orders||[])[0]||(orders||[])[0]?.id));
-      const _runNo = makeNestRunNo({ existing:nestingBatches||[], orderNo:_ordForRun?.orderNo||"", matCode:row.matCode });
+      // If a DISCARDED run for this same (order, material) exists and has not already
+      // been versioned over, this new run is its RETRY → version it (01 → 01-A) rather
+      // than take a fresh number. A discard-and-redo is a supersede, not a dead gap.
+      const _sameOM = (b) => b && b.runNo && b.matCode===row.matCode
+        && (b.orderIds||[]).some(oid=>(row.orders||[]).includes(oid));
+      // the most recently discarded run for this (order, material)
+      const _discardedPrior = (nestingBatches||[])
+        .filter(b => b.status==="discarded" && _sameOM(b))
+        .sort((a,b)=>String(b.discardedAt||"").localeCompare(String(a.discardedAt||"")))[0];
+      // Guard against re-superseding: block only if a NON-discarded (live) run already
+      // versions off this base — that means someone already redid it, so this is a
+      // genuinely new run, not a retry. A base whose only successors are ALSO discarded
+      // is still an open lineage → keep versioning (01 → 01-A → 01-B on repeat redo).
+      const _base = _discardedPrior && _discardedPrior.runNo.replace(/-[A-Z]+$/,"");
+      const _hasLiveSuccessor = _discardedPrior && (nestingBatches||[])
+        .some(b => b.runNo && b.status!=="discarded"
+          && b.runNo.startsWith(_base + "-"));
+      const _supersedeOf = (_discardedPrior && !_hasLiveSuccessor) ? _discardedPrior.runNo : "";
+      const _runNo = makeNestRunNo({ existing:nestingBatches||[], orderNo:_ordForRun?.orderNo||"", matCode:row.matCode, supersedesRunNo:_supersedeOf });
       const batch = {id:batchId,runNo:_runNo,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,contoursMap:dxfContours,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
       setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
