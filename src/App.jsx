@@ -7531,6 +7531,18 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
   const [expandedLot, setExpandedLot] = useState(null); // lotId
   // Batch procurement / discard state
   const [showDiscardedBatches, setShowDiscardedBatches] = useState(false);
+  const [runFilterOrder, setRunFilterOrder] = useState("");   // order id
+  const [runFilterMat, setRunFilterMat]     = useState("");   // material code (contains)
+  const [runFilterType, setRunFilterType]   = useState("");   // section / material type
+  // Nesting-run filter predicate: order (by id in the batch's orderIds), material code
+  // (case-insensitive contains), and material type (section). Empty filter = match all.
+  const runMatchesBatch = (b) => {
+    if (!b) return false;
+    if (runFilterOrder && !((b.orderIds||[]).includes(runFilterOrder) || b.orderId===runFilterOrder)) return false;
+    if (runFilterMat && !String(b.matCode||"").toLowerCase().includes(runFilterMat.toLowerCase())) return false;
+    if (runFilterType && String(b.section||"") !== runFilterType) return false;
+    return true;
+  };
   const [discardModal, setDiscardModal] = useState(null); // { batch, pr, po }
   const [discardReason, setDiscardReason] = useState("");
   const [createPrModal, setCreatePrModal] = useState(null); // batch
@@ -8683,9 +8695,32 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
             <div style={{ fontSize:11, color:T.textLow, marginBottom:12, borderBottom:`1px solid ${T.border}`, paddingBottom:8 }}>
               Import a CSV file from Nesting Center, DeepNest, or other nesting software to create a planning batch.
             </div>
-            {(nestingBatches||[]).filter(b=>showDiscardedBatches||b.status!=="discarded").length===0
+
+            {/* Filters: order / material code / material type */}
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:12 }}>
+              <select value={runFilterOrder} onChange={e=>setRunFilterOrder(e.target.value)}
+                style={{ ...css.input, width:"auto", minWidth:180, fontSize:12, padding:"4px 8px" }}>
+                <option value="">All orders</option>
+                {(orders||[]).map(o=>(<option key={o.id} value={o.id}>{o.orderNo||o.id}</option>))}
+              </select>
+              <input value={runFilterMat} onChange={e=>setRunFilterMat(e.target.value)}
+                placeholder="Material code…"
+                style={{ ...css.input, width:"auto", minWidth:180, fontSize:12, padding:"4px 8px" }} />
+              <select value={runFilterType} onChange={e=>setRunFilterType(e.target.value)}
+                style={{ ...css.input, width:"auto", minWidth:150, fontSize:12, padding:"4px 8px" }}>
+                <option value="">All types</option>
+                {[...new Set((nestingBatches||[]).map(b=>b.section).filter(Boolean))].sort().map(sec=>(
+                  <option key={sec} value={sec}>{sec}</option>
+                ))}
+              </select>
+              {(runFilterOrder||runFilterMat||runFilterType) && (
+                <button onClick={()=>{setRunFilterOrder("");setRunFilterMat("");setRunFilterType("");}}
+                  style={{ ...css.btn.ghost, fontSize:11, padding:"4px 10px" }}>Clear filters</button>
+              )}
+            </div>
+            {(nestingBatches||[]).filter(b=>(showDiscardedBatches||b.status!=="discarded")&&runMatchesBatch(b)).length===0
               ? <div style={{ color:T.textLow, fontSize:12, padding:12 }}>No planning batches yet. Use "Import Nesting Results" to create one.</div>
-              : (nestingBatches||[]).filter(b=>showDiscardedBatches||b.status!=="discarded").map((batch,bi)=>{
+              : (nestingBatches||[]).filter(b=>(showDiscardedBatches||b.status!=="discarded")&&runMatchesBatch(b)).map((batch,bi)=>{
                 const isExpBatch = expandedBatch===batch.id;
                 // Support both batch.lots[] (new) and batch.sheets[] (legacy flat format)
                 const batchLots = batch.lots?.length > 0 ? batch.lots : (batch.sheets?.length > 0 ? [{ lotId:batch.id, matCode:batch.matCode||"", sheets:batch.sheets, parts:batch.parts||[] }] : []);
@@ -8727,8 +8762,8 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                       <Badge color={isDiscarded?"gray":batch.status==="Planned"?"amber":"green"}>{isDiscarded?"Discarded":batch.status}</Badge>
                       {/* Procurement status badge */}
                       {!isDiscarded && !po && !pr && <Badge color="amber">No PR raised</Badge>}
-                      {!isDiscarded && pr && !po && <Badge color="blue">{pr.id} raised</Badge>}
-                      {!isDiscarded && po && <Badge color="green">{po.id} raised</Badge>}
+                      {!isDiscarded && pr && !po && <Badge color="blue">{pr.docNo||pr.id} raised</Badge>}
+                      {!isDiscarded && po && <Badge color="green">{po.docNo||po.id} raised</Badge>}
                       {ordNos.length>0 && <Badge color="teal">{ordNos.length>1?`${ordNos.length} orders: `:""}{ordNos.join(", ")}</Badge>}
                       <span style={{ fontSize:12, color:T.textLow, marginLeft:"auto" }}>
                         {(batch.lots||[]).length} lots · {totalSheets} sheets · {totalMarks} marks · {totalPieces} pcs
@@ -8746,7 +8781,7 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                           <button onClick={e=>{e.stopPropagation();pendingPrPreselect=pr.id;setMod("purchase");}} style={{ ...css.btn.sm, background:T.accent, color:T.bg }}>Convert to PO →</button>
                         )}
                         {po && (
-                          <button onClick={e=>{e.stopPropagation();}} style={{ ...css.btn.sm, background:T.greenBg, color:T.green, border:`1px solid ${T.green}` }}>{po.id} — {po.vendorName||"No vendor"}</button>
+                          <button onClick={e=>{e.stopPropagation();}} style={{ ...css.btn.sm, background:T.greenBg, color:T.green, border:`1px solid ${T.green}` }}>{po.docNo||po.id} — {po.vendorName||"No vendor"}</button>
                         )}
                         {(batch.lots||[]).some(l=>(l.sheets||[]).some(sh=>(sh.placements||[]).length>0)) && (
                           <button onClick={e=>{e.stopPropagation();setPlanBatch(batch);}} style={{ ...css.btn.sm, background:T.bgInput, color:T.accent, border:`1px solid ${T.accent}` }}>🖨 Cutting Plan</button>
@@ -9009,13 +9044,13 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
           <Modal title={`Discard ${batch.id}?`} onClose={()=>setDiscardModal(null)} width={500}>
             {hasPoWarning && (
               <div style={{ background:T.amberBg, border:`1px solid ${T.amber}`, borderRadius:6, padding:"10px 14px", fontSize:13, color:T.amber, marginBottom:12 }}>
-                ⚠ {po.id} has already been raised for this nesting run.<br/>
+                ⚠ {po.docNo||po.id} has already been raised for this nesting run.<br/>
                 Please contact the vendor before discarding. The PO will NOT be automatically cancelled.
               </div>
             )}
             {hasPrCancel && (
               <div style={{ background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, padding:"10px 14px", fontSize:13, color:T.textMid, marginBottom:12 }}>
-                Purchase Requisition {pr.id} will also be cancelled.
+                Purchase Requisition {pr.docNo||pr.id} will also be cancelled.
               </div>
             )}
             {!hasPoWarning && !hasPrCancel && (
@@ -9043,9 +9078,9 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
       {convertPoModal && (()=>{
         const pr = convertPoModal;
         return (
-          <Modal title={`Convert ${pr.id} to Purchase Order`} onClose={()=>setConvertPoModal(null)} width={520}>
+          <Modal title={`Convert ${pr.docNo||pr.id} to Purchase Order`} onClose={()=>setConvertPoModal(null)} width={520}>
             <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
-              Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
+              Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{(nestingBatches||[]).find(b=>b.id===pr.nestingBatchId)?.runNo || pr.nestingBatchId}</span>
             </div>
             <Field label="Vendor" required>
               <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -10707,7 +10742,8 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 }}>
               <div>
                 <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4 }}>
-                  <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{po.id}</span>
+                  <span style={{ fontFamily:T.fontMono, color:T.accentHi, fontSize:13, fontWeight:700 }}>{po.docNo||po.id}</span>
+                  {po.docNo && <span style={{ fontFamily:T.fontMono, color:T.textLow, fontSize:10 }}>({po.id})</span>}
                   <Badge color={poStatusBadge[po.status]||"gray"}>{po.status.replace("_"," ")}</Badge>
                   {po.grns?.length>0 && <Badge color="teal">{po.grns.length} GRN(s)</Badge>}
                 </div>
@@ -11103,7 +11139,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
                       <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>
                         {pr.type==="store"
                           ? <>Store requisition{pr.orderId ? <> · Order: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{(orders||[]).find(o=>o.id===pr.orderId)?.orderNo||pr.orderId}</span></> : " · General stock"}{pr.neededBy?` · Needed by ${fmt.date(pr.neededBy)}`:""}</>
-                          : <>Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span></>}
+                          : <>Source: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{(nestingBatches||[]).find(b=>b.id===pr.nestingBatchId)?.runNo || pr.nestingBatchId}</span></>}
                       </div>
                       {pr.cancelReason && (
                         <div style={{ fontSize:11, color:T.textLow, marginTop:4 }}>Cancel reason: {pr.cancelReason}</div>
@@ -11576,7 +11612,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
         return (
           <Modal title={`Convert ${pr.id} to Purchase Order`} onClose={()=>setConvertSingleModal(null)} width={640}>
             <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
-              Source batch: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{pr.nestingBatchId}</span>
+              Source batch: <span style={{ fontFamily:T.fontMono, color:T.accent }}>{(nestingBatches||[]).find(b=>b.id===pr.nestingBatchId)?.runNo || pr.nestingBatchId}</span>
             </div>
             <G2>
               <Field label="Vendor" required>
