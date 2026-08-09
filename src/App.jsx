@@ -21637,8 +21637,18 @@ export default function App() {
       (() => {
         const _legacyInst = data["structo_instances"];          // old flat array, if still present
         const _instIndex  = data["structo_instancesIndex"] ?? null;
+        // Legacy flat array — prefer the server copy, else this browser's localStorage.
+        // Used as a per-group fallback (filtered by orderId) when a per-order row is absent.
+        let _flatAll = Array.isArray(_legacyInst) ? _legacyInst : null;
+        if (!_flatAll) { try { const r = localStorage.getItem("structo_instances"); if(r){ const a=JSON.parse(r); if(Array.isArray(a)) _flatAll = a; } } catch(e){} }
         const _localInst = (oid) => {
           try { const r = localStorage.getItem("structo_instances__" + oid); if(r){ const a=JSON.parse(r); if(Array.isArray(a)) return a; } } catch(e){}
+          // fall back to the legacy flat array, taking just this group's instances.
+          // If the flat array is present at all, its filtered result is authoritative for
+          // this group — an empty result means the group is genuinely empty, not missing.
+          if (Array.isArray(_flatAll)) {
+            return _flatAll.filter(di => ((di && di.orderId) ? di.orderId : "__noorder__") === oid);
+          }
           return null;
         };
         if (Array.isArray(_legacyInst) && _legacyInst.length >= 0 && !_instIndex) {
