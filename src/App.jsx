@@ -21143,7 +21143,26 @@ export default function App() {
   });
   const [nestingRuns, setNestingRuns]       = useState(() => initVal('structo_nestingRuns', INIT_NESTING_RUNS));
   const [nestingBatches, setNestingBatches] = useState(() => { try { const s=localStorage.getItem('structo_nestingBatches'); if(s){ const p=JSON.parse(s); return Array.isArray(p)?p:[]; } return []; } catch { return []; } });
-  const [instances, setInstances]       = useState(() => initVal('structo_instances', INIT_INSTANCES));
+  const [instances, setInstances]       = useState(() => {
+    // OPTION A (instances): prefer per-order localStorage rows (via the index); fall back
+    // to the legacy flat structo_instances key.
+    try {
+      const idxRaw = localStorage.getItem('structo_instancesIndex');
+      if (idxRaw) {
+        const ids = JSON.parse(idxRaw);
+        if (Array.isArray(ids) && ids.length) {
+          const all = [];
+          let ok = true;
+          ids.forEach(oid => {
+            try { const r = localStorage.getItem('structo_instances__' + oid); if(r){ const a=JSON.parse(r); if(Array.isArray(a)){ all.push(...a); return; } } } catch(e){}
+            ok = false;
+          });
+          if (ok) return all;
+        }
+      }
+    } catch(e){}
+    return initVal('structo_instances', INIT_INSTANCES);
+  });
   const [dprs, setDprs] = useState(() => {
     try { const s=localStorage.getItem('structo_dprs'); return s?JSON.parse(s):[]; } catch { return []; }
   });
@@ -21298,7 +21317,18 @@ export default function App() {
   useEffect(() => { syncToSupa('structo_company',           company);           }, [company]);
   useEffect(() => { syncToSupa('structo_nestingBatches',    nestingBatches);    }, [nestingBatches]);
   useEffect(() => { syncToSupa('structo_nestingRuns',       nestingRuns);       }, [nestingRuns]);
-  useEffect(() => { syncToSupa('structo_instances',         instances);         }, [instances]);
+  // OPTION A (instances) — same per-owner split: instances grouped by orderId into
+  // structo_instances__<orderId> rows so no single row is large. Index lists the ids.
+  useEffect(() => {
+    const byOrder = {};
+    (instances||[]).forEach(di => {
+      const oid = (di && di.orderId) ? di.orderId : "__noorder__";
+      (byOrder[oid] = byOrder[oid] || []).push(di);
+    });
+    const ids = Object.keys(byOrder);
+    ids.forEach(oid => syncToSupa('structo_instances__' + oid, byOrder[oid]));
+    syncToSupa('structo_instancesIndex', ids);
+  }, [instances, dbLoaded]);
   useEffect(() => { syncToSupa('structo_dprs',              dprs);              }, [dprs]);
   useEffect(() => { syncToSupa('structo_releases',          releases);          }, [releases]);
   useEffect(() => { syncToSupa('structo_qcRules',           qcRules);           }, [qcRules]);
@@ -21430,7 +21460,7 @@ export default function App() {
     const KEYS = [
       "structo_orders","structo_orderParts","structo_orderPartsIndex","structo_clients","structo_vendors","structo_pos",
       "structo_stock","structo_purchaseReqs","structo_company",
-      "structo_nestingBatches","structo_nestingRuns","structo_instances",
+      "structo_nestingBatches","structo_nestingRuns","structo_instances","structo_instancesIndex",
       "structo_dprs","structo_releases","structo_qcRules","structo_overrideLog",
       "structo_issueRequests","structo_tpiTemplates","structo_productionEngineers",
       "structo_challans","structo_welders","structo_contractors","structo_machines",
@@ -21465,6 +21495,9 @@ export default function App() {
           return Array.isArray(fromStore) ? { ...o, parts: fromStore } : { ...o, parts: (o.parts||[]) };
         });
         setOrders(_stitched);
+        // Retire the stale legacy combined key from THIS browser once orders are stitched
+        // (its data is now in per-order rows). Local-only; harmless if absent.
+        try { localStorage.removeItem("structo_orderParts"); } catch(e){}
       };
 
       // Fast paths: nothing needs the store (all old-inline or no orders) → stitch empty.
@@ -21515,7 +21548,48 @@ export default function App() {
       setPurchaseReqs(        data["structo_purchaseReqs"]        ?? []);
       setNestingBatches(      data["structo_nestingBatches"]      ?? []);
       setNestingRuns(         data["structo_nestingRuns"]         ?? []);
-      setInstances(           data["structo_instances"]           ?? []);
+      // OPTION A (instances): reassemble from per-order rows, with legacy + localStorage
+      // fallback and a missing-row guard — mirrors the orders parts loader.
+      (() => {
+        const _legacyInst = data["structo_instances"];          // old flat array, if still present
+        const _instIndex  = data["structo_instancesIndex"] ?? null;
+        const _localInst = (oid) => {
+          try { const r = localStorage.getItem("structo_instances__" + oid); if(r){ const a=JSON.parse(r); if(Array.isArray(a)) return a; } } catch(e){}
+          return null;
+        };
+        if (Array.isArray(_legacyInst) && _legacyInst.length >= 0 && !_instIndex) {
+          // Old format (flat array) still on server → use it; next save splits it.
+          setInstances(_legacyInst);
+          return;
+        }
+        const ids = Array.isArray(_instIndex) ? _instIndex : [];
+        if (ids.length === 0) {
+          // No index and no legacy → check localStorage legacy flat array, else empty.
+          let localFlat = [];
+          try { const r = localStorage.getItem("structo_instances"); if(r){ const a=JSON.parse(r); if(Array.isArray(a)) localFlat = a; } } catch(e){}
+          setInstances(localFlat);
+          return;
+        }
+        const finishInst = (byId) => {
+          const all = [];
+          ids.forEach(oid => { const rows = byId[oid]; if (Array.isArray(rows)) all.push(...rows); });
+          setInstances(all);
+        };
+        const resolveInst = (byId) => {
+          const missing = [];
+          ids.forEach(oid => { if (Array.isArray(byId[oid])) return; const lp=_localInst(oid); if(Array.isArray(lp)) byId[oid]=lp; else missing.push(oid); });
+          if (missing.length > 0) {
+            console.error("OPTION A: instances for " + missing.length + " group(s) not found on server or in this browser — refusing to load to avoid wiping instances. Reload to retry.");
+            setDbError(true); return;
+          }
+          finishInst(byId);
+        };
+        supaLoadAll(ids.map(oid => "structo_instances__" + oid)).then(instData => {
+          const byId = {};
+          ids.forEach(oid => { const rows = instData["structo_instances__" + oid]; if (Array.isArray(rows)) byId[oid] = rows; });
+          resolveInst(byId);
+        }).catch(() => resolveInst({}));
+      })();
       setDprs(                data["structo_dprs"]                ?? []);
       setReleases(            data["structo_releases"]            ?? []);
       setQcRules(             data["structo_qcRules"]             ?? []);
