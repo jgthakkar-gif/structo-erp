@@ -21152,7 +21152,12 @@ export default function App() {
       const s = localStorage.getItem('structo_orders');
       if (!s) return SEED_ORDERS;
       const loaded = JSON.parse(s);
-      return loaded.map(o => {
+      // OPTION A: stitch parts from the local structo_orderParts store (shells have none inline)
+      let _lpParts = {};
+      try { _lpParts = JSON.parse(localStorage.getItem('structo_orderParts')||'{}') || {}; } catch(e) { _lpParts = {}; }
+      return loaded.map(o0 => {
+        const o = (o0 && (!Array.isArray(o0.parts) || o0.parts.length===0) && Array.isArray(_lpParts[o0.id]))
+          ? { ...o0, parts:_lpParts[o0.id] } : o0;
         const base = { drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, transport:{transportScope:'per_dispatch',preferredTransporter:'',vehicleType:'',distanceKm:0,freightEstimate:0,insurance:false,odc:false,nightRestriction:false,policeEscort:false,specialReqs:'',freightBilling:'dispatch_line',clientTransporter:'',clientVehicleContact:'',loadingInstructions:''}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o };
         // Migrate drawings missing poLineItem / assemblyGroup
         base.drawings = (base.drawings||[]).map(d => ({
@@ -21266,7 +21271,15 @@ export default function App() {
     _syncTimers.current[key] = setTimeout(() => { supaSet(key, value); }, 800);
   }, [dbLoaded, dbError]);
 
-  useEffect(() => { syncToSupa('structo_orders',            orders);            }, [orders]);
+  // OPTION A — parts live in their own store on the wire (orders row stays small).
+  // Split at the sync layer only: memory keeps order.parts intact everywhere.
+  useEffect(() => {
+    const shells = (orders||[]).map(o => { const { parts, ...rest } = o; return rest; });
+    const partsMap = {};
+    (orders||[]).forEach(o => { if(o && o.id) partsMap[o.id] = o.parts || []; });
+    syncToSupa('structo_orders',     shells);
+    syncToSupa('structo_orderParts', partsMap);
+  }, [orders]);
   useEffect(() => { syncToSupa('structo_clients',           clients);           }, [clients]);
   useEffect(() => { syncToSupa('structo_vendors',           vendors);           }, [vendors]);
   useEffect(() => { syncToSupa('structo_pos',               pos);               }, [pos]);
@@ -21405,7 +21418,7 @@ export default function App() {
   useEffect(() => {
     if (!IS_PROD) { setDbLoaded(true); return; } // localhost: skip, use localStorage
     const KEYS = [
-      "structo_orders","structo_clients","structo_vendors","structo_pos",
+      "structo_orders","structo_orderParts","structo_clients","structo_vendors","structo_pos",
       "structo_stock","structo_purchaseReqs","structo_company",
       "structo_nestingBatches","structo_nestingRuns","structo_instances",
       "structo_dprs","structo_releases","structo_qcRules","structo_overrideLog",
@@ -21424,7 +21437,30 @@ export default function App() {
       const get = (key, fallback=[]) => key in data ? (data[key] ?? fallback) : fallback;
       const getObj = (key, fallback={}) => key in data ? (data[key] ?? fallback) : fallback;
 
-      setOrders(              data["structo_orders"]              ?? []);
+      // OPTION A stitch: reattach parts from structo_orderParts. Orders saved BEFORE
+      // this change still have parts inline — those are kept as-is (migration is lazy:
+      // they get split on the next save). An order shell with no inline parts gets its
+      // parts from the store. Either way the app receives complete orders.
+      const _orderShells = data["structo_orders"] ?? [];
+      const _partsStore  = data["structo_orderParts"] ?? {};
+      // SAFETY GUARD: if orders came back as SHELLS (no inline parts) but the parts
+      // store did not load at all (key absent, not merely empty), we'd be about to
+      // load empty-parts orders and the next save would PERSIST that emptiness — wiping
+      // parts. Detect that exact danger and refuse to load rather than risk data loss.
+      const _shellsNeedStore = (_orderShells||[]).some(o => o && typeof o==="object" && (!Array.isArray(o.parts) || o.parts.length===0) && o.id);
+      const _partsKeyLoaded = ("structo_orderParts" in data);
+      if (_shellsNeedStore && !_partsKeyLoaded) {
+        console.error("OPTION A: order shells loaded but structo_orderParts missing — refusing to load to avoid wiping parts.");
+        setDbError(true);
+        return;
+      }
+      const _stitched = (_orderShells||[]).map(o => {
+        if (!o || typeof o !== "object") return o;
+        if (Array.isArray(o.parts) && o.parts.length > 0) return o;      // old format — keep inline
+        const fromStore = _partsStore[o.id];
+        return Array.isArray(fromStore) ? { ...o, parts: fromStore } : { ...o, parts: (o.parts||[]) };
+      });
+      setOrders(_stitched);
       setClients(             data["structo_clients"]             ?? []);
       setVendors(             data["structo_vendors"]             ?? []);
       setPos(                 data["structo_pos"]                 ?? []);
