@@ -21152,12 +21152,17 @@ export default function App() {
       const s = localStorage.getItem('structo_orders');
       if (!s) return SEED_ORDERS;
       const loaded = JSON.parse(s);
-      // OPTION A: stitch parts from the local structo_orderParts store (shells have none inline)
-      let _lpParts = {};
-      try { _lpParts = JSON.parse(localStorage.getItem('structo_orderParts')||'{}') || {}; } catch(e) { _lpParts = {}; }
+      // OPTION A: stitch parts from local storage. Per-order rows (structo_orderParts__<id>)
+      // are preferred; the legacy single structo_orderParts object is a fallback.
+      let _legacy = {};
+      try { _legacy = JSON.parse(localStorage.getItem('structo_orderParts')||'{}') || {}; } catch(e) { _legacy = {}; }
+      const _lpFor = (id) => {
+        try { const r = localStorage.getItem('structo_orderParts__' + id); if(r){ const a=JSON.parse(r); if(Array.isArray(a)) return a; } } catch(e){}
+        return Array.isArray(_legacy[id]) ? _legacy[id] : null;
+      };
       return loaded.map(o0 => {
-        const o = (o0 && (!Array.isArray(o0.parts) || o0.parts.length===0) && Array.isArray(_lpParts[o0.id]))
-          ? { ...o0, parts:_lpParts[o0.id] } : o0;
+        const _pp = (o0 && (!Array.isArray(o0.parts) || o0.parts.length===0) && o0.id) ? _lpFor(o0.id) : null;
+        const o = Array.isArray(_pp) ? { ...o0, parts:_pp } : o0;
         const base = { drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}, transport:{transportScope:'per_dispatch',preferredTransporter:'',vehicleType:'',distanceKm:0,freightEstimate:0,insurance:false,odc:false,nightRestriction:false,policeEscort:false,specialReqs:'',freightBilling:'dispatch_line',clientTransporter:'',clientVehicleContact:'',loadingInstructions:''}, projectDesc:'', clientPoNo:'', id:'', status:'active', clientId:'', ...o };
         // Migrate drawings missing poLineItem / assemblyGroup
         base.drawings = (base.drawings||[]).map(d => ({
@@ -21275,10 +21280,15 @@ export default function App() {
   // Split at the sync layer only: memory keeps order.parts intact everywhere.
   useEffect(() => {
     const shells = (orders||[]).map(o => { const { parts, ...rest } = o; return rest; });
-    const partsMap = {};
-    (orders||[]).forEach(o => { if(o && o.id) partsMap[o.id] = o.parts || []; });
-    syncToSupa('structo_orders',     shells);
-    syncToSupa('structo_orderParts', partsMap);
+    syncToSupa('structo_orders', shells);
+    // Each order's parts are their OWN small row (structo_orderParts__<id>) so no single
+    // write is ever large. A tiny index lists which order ids have a parts row, so the
+    // loader knows what to fetch.
+    const ids = [];
+    (orders||[]).forEach(o => {
+      if(o && o.id){ ids.push(o.id); syncToSupa('structo_orderParts__' + o.id, o.parts || []); }
+    });
+    syncToSupa('structo_orderPartsIndex', ids);
   }, [orders]);
   useEffect(() => { syncToSupa('structo_clients',           clients);           }, [clients]);
   useEffect(() => { syncToSupa('structo_vendors',           vendors);           }, [vendors]);
@@ -21418,7 +21428,7 @@ export default function App() {
   useEffect(() => {
     if (!IS_PROD) { setDbLoaded(true); return; } // localhost: skip, use localStorage
     const KEYS = [
-      "structo_orders","structo_orderParts","structo_clients","structo_vendors","structo_pos",
+      "structo_orders","structo_orderParts","structo_orderPartsIndex","structo_clients","structo_vendors","structo_pos",
       "structo_stock","structo_purchaseReqs","structo_company",
       "structo_nestingBatches","structo_nestingRuns","structo_instances",
       "structo_dprs","structo_releases","structo_qcRules","structo_overrideLog",
@@ -21437,30 +21447,55 @@ export default function App() {
       const get = (key, fallback=[]) => key in data ? (data[key] ?? fallback) : fallback;
       const getObj = (key, fallback={}) => key in data ? (data[key] ?? fallback) : fallback;
 
-      // OPTION A stitch: reattach parts from structo_orderParts. Orders saved BEFORE
-      // this change still have parts inline — those are kept as-is (migration is lazy:
-      // they get split on the next save). An order shell with no inline parts gets its
-      // parts from the store. Either way the app receives complete orders.
+      // OPTION A: parts live in PER-ORDER rows (structo_orderParts__<id>), each small.
+      // supaLoadAll already returned the order shells + the index of which ids have a
+      // parts row. Fetch those rows (small, so they never time out), then stitch.
       const _orderShells = data["structo_orders"] ?? [];
-      const _partsStore  = data["structo_orderParts"] ?? {};
-      // SAFETY GUARD: if orders came back as SHELLS (no inline parts) but the parts
-      // store did not load at all (key absent, not merely empty), we'd be about to
-      // load empty-parts orders and the next save would PERSIST that emptiness — wiping
-      // parts. Detect that exact danger and refuse to load rather than risk data loss.
-      const _shellsNeedStore = (_orderShells||[]).some(o => o && typeof o==="object" && (!Array.isArray(o.parts) || o.parts.length===0) && o.id);
-      const _partsKeyLoaded = ("structo_orderParts" in data);
-      if (_shellsNeedStore && !_partsKeyLoaded) {
-        console.error("OPTION A: order shells loaded but structo_orderParts missing — refusing to load to avoid wiping parts.");
-        setDbError(true);
-        return;
+      const _partsIndex  = data["structo_orderPartsIndex"] ?? null; // [orderId,...] or null if never split
+      // Which shells actually need parts from the store (empty inline parts)?
+      const _shellsNeedStore = (_orderShells||[]).filter(o => o && typeof o==="object" && (!Array.isArray(o.parts) || o.parts.length===0) && o.id);
+      // Legacy single-key store (from the first, flawed A build) — use if present.
+      const _legacyStore = data["structo_orderParts"] ?? null;
+
+      const _finishOrders = (partsById) => {
+        const _stitched = (_orderShells||[]).map(o => {
+          if (!o || typeof o !== "object") return o;
+          if (Array.isArray(o.parts) && o.parts.length > 0) return o;       // old inline — keep
+          const fromStore = partsById[o.id];
+          return Array.isArray(fromStore) ? { ...o, parts: fromStore } : { ...o, parts: (o.parts||[]) };
+        });
+        setOrders(_stitched);
+      };
+
+      // Fast paths: nothing needs the store (all old-inline or no orders) → stitch empty.
+      if (_shellsNeedStore.length === 0) {
+        _finishOrders({});
+      } else if (_legacyStore && typeof _legacyStore === "object") {
+        // Data written by the first A build lives in one structo_orderParts object.
+        _finishOrders(_legacyStore);
+      } else {
+        // Per-order rows: fetch each needed structo_orderParts__<id>.
+        const _needIds = _shellsNeedStore.map(o=>o.id);
+        supaLoadAll(_needIds.map(id => "structo_orderParts__" + id)).then(partData => {
+          const partsById = {};
+          let _missing = 0;
+          _needIds.forEach(id => {
+            const row = partData["structo_orderParts__" + id];
+            if (Array.isArray(row)) partsById[id] = row; else _missing++;
+          });
+          // SAFETY GUARD: if a shell needs parts but its row did not load, refuse rather
+          // than load empty-parts orders and let a save wipe them.
+          if (_missing > 0) {
+            console.error("OPTION A: " + _missing + " order parts row(s) did not load — refusing to load to avoid wiping parts. Reload to retry.");
+            setDbError(true);
+            return;
+          }
+          _finishOrders(partsById);
+        }).catch(err => {
+          console.error("OPTION A: parts load failed — refusing to load.", err);
+          setDbError(true);
+        });
       }
-      const _stitched = (_orderShells||[]).map(o => {
-        if (!o || typeof o !== "object") return o;
-        if (Array.isArray(o.parts) && o.parts.length > 0) return o;      // old format — keep inline
-        const fromStore = _partsStore[o.id];
-        return Array.isArray(fromStore) ? { ...o, parts: fromStore } : { ...o, parts: (o.parts||[]) };
-      });
-      setOrders(_stitched);
       setClients(             data["structo_clients"]             ?? []);
       setVendors(             data["structo_vendors"]             ?? []);
       setPos(                 data["structo_pos"]                 ?? []);
