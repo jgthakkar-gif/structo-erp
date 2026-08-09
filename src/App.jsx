@@ -21289,7 +21289,7 @@ export default function App() {
       if(o && o.id){ ids.push(o.id); syncToSupa('structo_orderParts__' + o.id, o.parts || []); }
     });
     syncToSupa('structo_orderPartsIndex', ids);
-  }, [orders]);
+  }, [orders, dbLoaded]);
   useEffect(() => { syncToSupa('structo_clients',           clients);           }, [clients]);
   useEffect(() => { syncToSupa('structo_vendors',           vendors);           }, [vendors]);
   useEffect(() => { syncToSupa('structo_pos',               pos);               }, [pos]);
@@ -21474,26 +21474,38 @@ export default function App() {
         // Data written by the first A build lives in one structo_orderParts object.
         _finishOrders(_legacyStore);
       } else {
-        // Per-order rows: fetch each needed structo_orderParts__<id>.
+        // Read parts from LOCALSTORAGE first — per-order rows, then the legacy single
+        // object. This covers the recovery case where a prior split-write reached the
+        // browser but not the server (its big single-row write timed out).
         const _needIds = _shellsNeedStore.map(o=>o.id);
-        supaLoadAll(_needIds.map(id => "structo_orderParts__" + id)).then(partData => {
-          const partsById = {};
-          let _missing = 0;
+        const _localParts = (id) => {
+          try { const r = localStorage.getItem("structo_orderParts__" + id); if(r){ const a=JSON.parse(r); if(Array.isArray(a)) return a; } } catch(e){}
+          try { const lg = JSON.parse(localStorage.getItem("structo_orderParts")||"null"); if(lg && Array.isArray(lg[id])) return lg[id]; } catch(e){}
+          return null;
+        };
+        const _resolve = (partsById) => {
+          // Fill any still-missing ids from localStorage.
+          const stillMissing = [];
           _needIds.forEach(id => {
-            const row = partData["structo_orderParts__" + id];
-            if (Array.isArray(row)) partsById[id] = row; else _missing++;
+            if (Array.isArray(partsById[id])) return;
+            const lp = _localParts(id);
+            if (Array.isArray(lp)) partsById[id] = lp; else stillMissing.push(id);
           });
-          // SAFETY GUARD: if a shell needs parts but its row did not load, refuse rather
-          // than load empty-parts orders and let a save wipe them.
-          if (_missing > 0) {
-            console.error("OPTION A: " + _missing + " order parts row(s) did not load — refusing to load to avoid wiping parts. Reload to retry.");
+          if (stillMissing.length > 0) {
+            console.error("OPTION A: parts for " + stillMissing.length + " order(s) not found on server or in this browser — refusing to load to avoid wiping parts. Reload to retry.");
             setDbError(true);
             return;
           }
-          _finishOrders(partsById);
-        }).catch(err => {
-          console.error("OPTION A: parts load failed — refusing to load.", err);
-          setDbError(true);
+          _finishOrders(partsById);   // stitched; the next save re-writes per-order rows to the server
+        };
+        // Try the server per-order rows; on any failure, resolve purely from localStorage.
+        supaLoadAll(_needIds.map(id => "structo_orderParts__" + id)).then(partData => {
+          const partsById = {};
+          _needIds.forEach(id => { const row = partData["structo_orderParts__" + id]; if (Array.isArray(row)) partsById[id] = row; });
+          _resolve(partsById);
+        }).catch(() => {
+          // server fetch failed (e.g. empty-store guard) — fall back to localStorage entirely
+          _resolve({});
         });
       }
       setClients(             data["structo_clients"]             ?? []);
