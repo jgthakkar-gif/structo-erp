@@ -42,7 +42,27 @@ const IS_PROD = typeof window !== "undefined" &&
   !window.location.hostname.includes("localhost") &&
   !window.location.hostname.includes("127.0.0.1");
 
-// Read a key from Supabase
+// Reassemble a chunked value from its manifest. Returns the parsed value, or null on
+// any gap (a missing chunk must NEVER silently become partial data).
+async function supaReadChunked(key, manifest) {
+  const n = manifest.n;
+  const parts = new Array(n);
+  // fetch all chunk rows for this key in one query
+  const like = encodeURIComponent(`${key}::chunk::%`);
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/structo_store?key=like.${like}&select=key,value`, { headers: SUPA_HEADERS });
+  if (!res.ok) return null;
+  const rows = await res.json();
+  for (const r of rows) {
+    const idx = parseInt(String(r.key).split("::chunk::")[1], 10);
+    if (Number.isFinite(idx) && idx >= 0 && idx < n) parts[idx] = r.value;
+  }
+  for (let i = 0; i < n; i++) { if (typeof parts[i] !== "string") return null; } // gap → fail safe
+  const joined = parts.join("");
+  if (manifest.len && joined.length !== manifest.len) return null; // length mismatch → fail safe
+  try { return JSON.parse(joined); } catch(e) { return null; }
+}
+
+// Read a key from Supabase (transparently reassembles chunked values)
 async function supaGet(key) {
   if (!IS_PROD) return null; // localhost: skip Supabase
   try {
@@ -52,13 +72,16 @@ async function supaGet(key) {
     );
     if (!res.ok) return null;
     const rows = await res.json();
-    return rows.length > 0 ? rows[0].value : null;
+    if (rows.length === 0) return null;
+    const v = rows[0].value;
+    if (v && typeof v === "object" && v.__chunked) return await supaReadChunked(key, v);
+    return v;
   } catch(e) { console.warn("supaGet error:", e); return null; }
 }
 
-// Write a key to Supabase (upsert)
-async function supaSet(key, value) {
-  if (!IS_PROD) return; // localhost: skip Supabase, localStorage already written
+// Write ONE row to Supabase (upsert). Raw — no chunking. Returns true/false.
+async function supaSetRaw(key, value) {
+  if (!IS_PROD) return true; // localhost: skip Supabase, localStorage already written
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/structo_store`,
@@ -71,7 +94,6 @@ async function supaSet(key, value) {
     if (!res.ok) {
       const txt = await res.text();
       console.warn("supaSet error:", res.status, txt);
-      // Surface the failure to the UI — a silent failed save can lose work.
       try {
         const isTimeout = txt.includes("57014") || txt.includes("statement timeout");
         window.dispatchEvent(new CustomEvent("structo:saveFailed", { detail:{ key, status:res.status, timeout:isTimeout } }));
@@ -84,6 +106,56 @@ async function supaSet(key, value) {
     try { window.dispatchEvent(new CustomEvent("structo:saveFailed", { detail:{ key, status:0, timeout:false, network:true } })); } catch(_) {}
     return false;
   }
+}
+
+// A value serialising to more than this many bytes is written as CHUNKS: N rows at
+// <key>::chunk::<i> holding slices of the JSON string, plus a small manifest at <key>
+// of the form {__chunked:true, n:N, len:L}. Any smaller value writes as one plain row.
+// This is transparent — callers use supaSet/supaGet exactly as before, and it works for
+// ANY key regardless of its data shape, so no single row ever hits the statement timeout.
+const CHUNK_LIMIT = 400 * 1024;   // start chunking above ~400KB
+const CHUNK_SIZE  = 300 * 1024;   // ~300KB per chunk (well under the timeout)
+
+async function supaSet(key, value) {
+  if (!IS_PROD) return true;
+  let str;
+  try { str = JSON.stringify(value); } catch(e) { str = null; }
+  // Small value → one plain row. Also clear any stale chunks from a previous large write.
+  if (str == null || str.length <= CHUNK_LIMIT) {
+    const ok = await supaSetRaw(key, value);
+    // best-effort cleanup of old chunk rows (if this key was previously chunked)
+    try { await supaClearChunks(key); } catch(_) {}
+    return ok;
+  }
+  // Large value → write chunks then the manifest LAST (so a reader never sees a manifest
+  // whose chunks aren't all written yet).
+  const n = Math.ceil(str.length / CHUNK_SIZE);
+  for (let i = 0; i < n; i++) {
+    const piece = str.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    const ok = await supaSetRaw(`${key}::chunk::${i}`, piece);
+    if (!ok) return false;   // a chunk failed — abort; manifest not written, old data stays readable
+  }
+  // clear any extra leftover chunks beyond n (from a previously larger write)
+  try { await supaClearChunks(key, n); } catch(_) {}
+  return await supaSetRaw(key, { __chunked:true, n, len:str.length });
+}
+
+// Delete chunk rows for a key. If keepFrom is given, only delete chunks with index >= keepFrom.
+async function supaClearChunks(key, keepFrom = 0) {
+  if (!IS_PROD) return;
+  try {
+    // fetch existing chunk keys for this base key
+    const like = encodeURIComponent(`${key}::chunk::%`);
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/structo_store?key=like.${like}&select=key`, { headers: SUPA_HEADERS });
+    if (!res.ok) return;
+    const rows = await res.json();
+    for (const r of rows) {
+      const idx = parseInt(String(r.key).split("::chunk::")[1], 10);
+      if (Number.isFinite(idx) && idx >= keepFrom) {
+        await fetch(`${SUPABASE_URL}/rest/v1/structo_store?key=eq.${encodeURIComponent(r.key)}`, { method:"DELETE", headers: SUPA_HEADERS });
+      }
+    }
+  } catch(_) {}
 }
 
 // Load all keys at once (one round trip)
@@ -107,6 +179,18 @@ async function supaLoadAll(keys) {
     }
     const out = {};
     rows.forEach(r => { out[r.key] = r.value; });
+    // Reassemble any chunked values (their manifest is {__chunked, n, len}). The chunk
+    // rows aren't in `keys`, so fetch+join them for each chunked key.
+    const chunkedKeys = Object.keys(out).filter(k => out[k] && typeof out[k] === "object" && out[k].__chunked);
+    for (const k of chunkedKeys) {
+      const val = await supaReadChunked(k, out[k]);
+      if (val === null) {
+        // A chunked value could not be fully reassembled — treat as a load failure so
+        // the caller's guard refuses rather than proceeding with partial/lost data.
+        throw new Error(`Chunked key ${k} could not be reassembled (missing/mismatched chunks)`);
+      }
+      out[k] = val;
+    }
     return out;
   } catch(e) { console.warn("supaLoadAll error:", e); throw e; }
 }
