@@ -10849,9 +10849,30 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
           if (!coveredOrders.length) return lot;
           const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
           const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
-          const reservations = allocs.length
-            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; let left=lot.wtReceived; return allocs.map(a=>{ const k=Math.min(left, Math.round((a.kg/totKg)*lot.wtReceived*10)/10); left=Math.max(0,left-k); return {orderId:a.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}; }); })()
-            : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          // PHASE F — receiver override: if the GRN line for this lot carries an orderSplit, use those
+          // kg (scaled to THIS lot's wt if a heat-split made several lots from one line); else the
+          // existing auto-proportional split. Surplus (Σreservations < wtReceived) stays free on the lot.
+          const grnLine = (newGrn.lines||[]).find(x=>x.poLineId===lot.poLineId) || {};
+          const override = (grnLine.orderSplit||[]).filter(o=>o.orderId && coveredOrders.includes(o.orderId));
+          let reservations;
+          if (override.length) {
+            const ovSum = override.reduce((s,o)=>s+(o.kg||0),0) || 1;
+            const lineWt = grnLine.actualWt || grnLine.wtReceived || ovSum;
+            const scale = lineWt>0 ? (lot.wtReceived/lineWt) : 1;
+            let left = lot.wtReceived;
+            reservations = override.map((o)=>{
+              // reserve exactly the receiver's kg (scaled if the line split into several lots),
+              // capped at what's left on this lot. The remainder stays FREE on the lot.
+              const k = Math.min(Math.round((o.kg||0)*scale*10)/10, Math.round(left*10)/10);
+              left = Math.max(0, Math.round((left-k)*10)/10);
+              return {orderId:o.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_manual',grnId,poId:po.id};
+            }).filter(r=>r.kg>0);
+          } else if (allocs.length) {
+            const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; let left=lot.wtReceived;
+            reservations = allocs.map(a=>{ const k=Math.min(left, Math.round((a.kg/totKg)*lot.wtReceived*10)/10); left=Math.max(0,left-k); return {orderId:a.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}; });
+          } else {
+            reservations = coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          }
           return {...lot, reservations};
         });
         return [...prev, ...finalLots];
@@ -12594,9 +12615,30 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], orders=[], pos, se
           if (!coveredOrders.length) return lot;
           const poLine = (po.lines||[]).find(pl=>pl.id===lot.poLineId)||{};
           const allocs = (poLine.orderAllocations||[]).filter(a=>coveredOrders.includes(a.orderId));
-          const reservations = allocs.length
-            ? (() => { const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; let left=lot.wtReceived; return allocs.map(a=>{ const k=Math.min(left, Math.round((a.kg/totKg)*lot.wtReceived*10)/10); left=Math.max(0,left-k); return {orderId:a.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}; }); })()
-            : coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          // PHASE F — receiver override: if the GRN line for this lot carries an orderSplit, use those
+          // kg (scaled to THIS lot's wt if a heat-split made several lots from one line); else the
+          // existing auto-proportional split. Surplus (Σreservations < wtReceived) stays free on the lot.
+          const grnLine = (newGrn.lines||[]).find(x=>x.poLineId===lot.poLineId) || {};
+          const override = (grnLine.orderSplit||[]).filter(o=>o.orderId && coveredOrders.includes(o.orderId));
+          let reservations;
+          if (override.length) {
+            const ovSum = override.reduce((s,o)=>s+(o.kg||0),0) || 1;
+            const lineWt = grnLine.actualWt || grnLine.wtReceived || ovSum;
+            const scale = lineWt>0 ? (lot.wtReceived/lineWt) : 1;
+            let left = lot.wtReceived;
+            reservations = override.map((o)=>{
+              // reserve exactly the receiver's kg (scaled if the line split into several lots),
+              // capped at what's left on this lot. The remainder stays FREE on the lot.
+              const k = Math.min(Math.round((o.kg||0)*scale*10)/10, Math.round(left*10)/10);
+              left = Math.max(0, Math.round((left-k)*10)/10);
+              return {orderId:o.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_manual',grnId,poId:po.id};
+            }).filter(r=>r.kg>0);
+          } else if (allocs.length) {
+            const totKg=allocs.reduce((s,a)=>s+(a.kg||0),0)||1; let left=lot.wtReceived;
+            reservations = allocs.map(a=>{ const k=Math.min(left, Math.round((a.kg/totKg)*lot.wtReceived*10)/10); left=Math.max(0,left-k); return {orderId:a.orderId,kg:k,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}; });
+          } else {
+            reservations = coveredOrders.map(oid=>({orderId:oid,kg:Math.round(lot.wtReceived/coveredOrders.length*10)/10,reservedAt:today(),reservedBy:user.name,source:'grn_auto',grnId,poId:po.id}));
+          }
           return {...lot, reservations};
         });
         return [...prev, ...finalLots];
@@ -13432,6 +13474,61 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], orders=[], pos, se
                           </td>
                           <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:(l.lineValue||0)>0?T.green:T.textLow, fontWeight:(l.lineValue||0)>0?700:400 }}>
                             {(l.lineValue||0)>0?fmt.currency(l.lineValue):"—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {/* PHASE F — per-order split sub-rows: only for lines whose PO line covers >1 order.
+                        Auto-proportional split is pre-filled; receiver can override per order. */}
+                    {groupItems.map(({l,i})=>{
+                      const pl = po.lines?.find(x=>x.id===l.poLineId)||{};
+                      const allocs = (pl.orderAllocations||[]).filter(a=>a.orderId);
+                      if (allocs.length < 2) return null;               // single/no order → no split UI
+                      if (l.checked===false) return null;
+                      const aw = l.actualWt||0;
+                      const totOrdered = allocs.reduce((s,a)=>s+(a.kg||0),0)||1;
+                      // current split: receiver's override if present, else auto-proportional of actualWt
+                      const curSplit = (oid) => {
+                        const ov = (l.orderSplit||[]).find(x=>x.orderId===oid);
+                        if (ov && ov.kg!=null) return ov.kg;
+                        const a = allocs.find(x=>x.orderId===oid)||{};
+                        return Math.round((a.kg||0)/totOrdered*aw*10)/10;
+                      };
+                      const splitSum = allocs.reduce((s,a)=>s+curSplit(a.orderId),0);
+                      const setSplit = (oid,kg) => updLine(i,{ orderSplit: (()=>{
+                        const base = allocs.map(a=>({orderId:a.orderId, kg:curSplit(a.orderId)}));
+                        return base.map(x=>x.orderId===oid?{...x,kg:kg}:x);
+                      })() });
+                      const resetSplit = () => updLine(i,{orderSplit:null});
+                      return (
+                        <tr key={`os-${i}`} style={{ background:`${T.accent}06`, borderBottom:`1px solid ${T.border}` }}>
+                          <td></td>
+                          <td colSpan={9} style={{ padding:"6px 8px" }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                              <span style={{ fontSize:10, fontWeight:700, color:T.accent, letterSpacing:"0.04em" }}>ORDER SPLIT</span>
+                              {allocs.map(a=>{
+                                const o = (orders||[]).find(x=>x.id===a.orderId)||{};
+                                const oNo = o.orderNo||a.orderId;
+                                const val = curSplit(a.orderId);
+                                const over = val > (a.kg||0)+0.05;
+                                return (
+                                  <span key={a.orderId} style={{ display:"inline-flex", alignItems:"center", gap:4, border:`1px solid ${over?T.amber:T.border}`, borderRadius:6, padding:"2px 6px", background:T.bgInput }}>
+                                    <span style={{ fontSize:10, color:T.textMid, fontFamily:T.fontMono }}>{oNo}</span>
+                                    <span style={{ fontSize:9, color:T.textLow }}>ord {fmt.num(Math.round(a.kg||0))}</span>
+                                    <input type="number" min={0} value={val}
+                                      onChange={e=>setSplit(a.orderId, Math.max(0, +e.target.value))}
+                                      style={{ width:64, background:T.bgCard, border:`1px solid ${over?T.amber:T.border}`, borderRadius:4, padding:"1px 4px", color:over?T.amber:T.text, fontFamily:T.fontMono, fontSize:11, textAlign:"right" }} />
+                                    <span style={{ fontSize:9, color:T.textLow }}>kg</span>
+                                    {over && <span style={{ fontSize:9, color:T.amber, fontWeight:700 }}>▲ over</span>}
+                                  </span>
+                                );
+                              })}
+                              {(l.orderSplit||[]).length>0 && <button onClick={resetSplit} style={{ ...css.btn.ghost, fontSize:10, color:T.textMid, padding:"1px 6px" }}>⟳ auto</button>}
+                              <span style={{ fontSize:10, color: Math.abs(splitSum-aw)>0.5 ? T.amber : T.textLow, marginLeft:"auto" }}>
+                                split {fmt.num(Math.round(splitSum))} / recd {fmt.num(Math.round(aw))} kg
+                                {aw-splitSum>0.5 && <span style={{ color:T.green }}>  · {fmt.num(Math.round(aw-splitSum))} free</span>}
+                              </span>
+                            </div>
                           </td>
                         </tr>
                       );
