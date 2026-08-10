@@ -10569,6 +10569,8 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
   const [repFrom, setRepFrom] = useState("");
   const [repTo, setRepTo] = useState("");
   const [repPoView, setRepPoView] = useState("outstanding");
+  const [repPrStatus, setRepPrStatus] = useState("all");   // all | pending | converted | cancelled
+  const [repGrnStatus, setRepGrnStatus] = useState("all");  // all | full | partial | none
   const [repChart, setRepChart] = useState(false);
   const [sprForm, setSprForm] = useState({ orderId:"", neededBy:"", remarks:"", lines:[] });
   const blankSprLine = () => ({ itemType:"rm", itemKey:"", desc:"", qty:"", unit:"kg", make:"", category:"", dim:"" });
@@ -11002,6 +11004,13 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
           .filter(r=> repItemType==="all" || (repItemType==="rm" ? prIsRm(r) : !prIsRm(r)))
           .filter(r=> !repOrder || (r.type==="store" ? r.orderId===repOrder : prOrderNos(r).includes((orders||[]).find(o=>o.id===repOrder)?.orderNo||repOrder)))
           .filter(r=> inDate(r.createdAt))
+          .filter(r=> {   // PR status filter: grouped Pending (any open) / Converted / Cancelled
+            if (repPrStatus==="all") return true;
+            if (repPrStatus==="pending")   return openPrStatuses.includes(r.status);
+            if (repPrStatus==="converted") return r.status==="converted";
+            if (repPrStatus==="cancelled") return r.status==="cancelled" || r.status==="stale";
+            return true;
+          })
           .sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
         const prRows = prRowsAll.map(pr=>{
           const qw = prQtyWt(pr);
@@ -11024,6 +11033,12 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
             const ordered = perUnit ? (ln.qtyOrdered||ln.qty||0) : (ln.wtOrdered||0);
             const received = perUnit ? (ln.qtyReceived||0) : (ln.wtReceived||0);
             const bal = Math.max(0, ordered-received);
+            // GRN status filter (line level): none = nothing received, full = received >= ordered,
+            // partial = some but not all.
+            if (repGrnStatus!=="all") {
+              const grnState = received<=0.01 ? "none" : (received>=ordered-0.01 ? "full" : "partial");
+              if (grnState!==repGrnStatus) return;
+            }
             if (repPoView==="outstanding" && bal<=0.01) return;
             if (repPoView==="outstanding" && ln.shortClosed) return;
             poRowsAll.push({ _po:p, _ln:ln, "PO No":p.id, "Vendor":p.vendorName||"", "PO Date":p.poDate||"",
@@ -11189,9 +11204,25 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
               <input type="date" value={repFrom} onChange={e=>setRepFrom(e.target.value)} style={{ ...css.input, width:135 }} />
               <span style={{ fontSize:11, color:T.textMid }}>To</span>
               <input type="date" value={repTo} onChange={e=>setRepTo(e.target.value)} style={{ ...css.input, width:135 }} />
+              {repTab==="pr" && (
+                <Sel value={repPrStatus} onChange={e=>setRepPrStatus(e.target.value)} style={{ width:140 }}>
+                  <option value="all">All statuses</option>
+                  <option value="pending">Pending</option>
+                  <option value="converted">Converted</option>
+                  <option value="cancelled">Cancelled</option>
+                </Sel>
+              )}
               {repTab==="po" && (
                 <Sel value={repPoView} onChange={e=>setRepPoView(e.target.value)} style={{ width:150 }}>
                   <option value="outstanding">GRN outstanding</option><option value="all">All PO lines</option>
+                </Sel>
+              )}
+              {repTab==="po" && (
+                <Sel value={repGrnStatus} onChange={e=>setRepGrnStatus(e.target.value)} style={{ width:140 }}>
+                  <option value="all">Any GRN status</option>
+                  <option value="none">No GRN</option>
+                  <option value="partial">Partial GRN</option>
+                  <option value="full">Full GRN</option>
                 </Sel>
               )}
               <label style={{ fontSize:11, color:T.textMid, display:"flex", alignItems:"center", gap:4, cursor:"pointer" }}>
