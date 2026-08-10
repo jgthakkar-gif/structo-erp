@@ -11036,6 +11036,73 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
         const poRows = repOrder ? poRowsAll : poRowsAll;   // POs are multi-order; order filter applies to PRs
         const poTotBalKg = poRows.filter(r=>r.Unit==="kg").reduce((s,r)=>s+(r.Balance||0),0);
         const poTotBalUnits = poRows.filter(r=>r.Unit!=="kg").reduce((s,r)=>s+(r.Balance||0),0);
+        // ── PHASE G — PURCHASE BY ORDER rollup ──
+        // One row per work order: PO count, ordered/received qty+wt, and value (taxable + incl GST).
+        // A PO line is attributed to an order by its weight fraction in orderAllocations. A line with
+        // no allocation is "free stock" and rolls into a synthetic "— Free stock —" bucket.
+        const plantGst = { plantGstin:company.gstin, plantState:company.state, plantStateCode:company.stateCode };
+        const orderAgg = {};   // key: orderId (or "__free__") → totals
+        const bumpOrder = (oid, patch) => {
+          const k = oid || "__free__";
+          if (!orderAgg[k]) orderAgg[k] = { poIds:new Set(), ordWt:0, rcvWt:0, ordQty:0, rcvQty:0, taxable:0, tax:0 };
+          const a = orderAgg[k];
+          if (patch.poId) a.poIds.add(patch.poId);
+          a.ordWt+=patch.ordWt||0; a.rcvWt+=patch.rcvWt||0; a.ordQty+=patch.ordQty||0; a.rcvQty+=patch.rcvQty||0;
+          a.taxable+=patch.taxable||0; a.tax+=patch.tax||0;
+        };
+        (pos||[]).filter(p=>p.status!=="cancelled").filter(p=>inDate(p.poDate)).forEach(p=>{
+          const rate = p.gstRate ?? 18;
+          const vend = (vendors||[]).find(v=>v.id===p.vendorId) || {};
+          (p.lines||[]).forEach(ln=>{
+            const perUnit = ln.pricingMethod==="PerUnit";
+            const lnOrdWt = ln.wtOrdered||ln.wtRequired||0;
+            const lnRcvWt = ln.wtReceived||0;
+            const lnOrdQty = ln.qtyOrdered||ln.qty||0;
+            const lnRcvQty = ln.qtyReceived||0;
+            const lnVal = ln.totalPrice||0;
+            const allocs = (ln.orderAllocations||[]).filter(a=>a.orderId);
+            const totAllocKg = allocs.reduce((s,a)=>s+(a.kg||0),0);
+            // GST for this line's taxable value
+            const g = computeGst({ taxable:lnVal, ratePct:rate, vendorGstin:vend.gstin, vendorState:vend.state, vendorStateCode:vend.stateCode, ...plantGst });
+            if (!allocs.length || totAllocKg<=0) {
+              bumpOrder("__free__", { poId:p.id, ordWt:lnOrdWt, rcvWt:lnRcvWt, ordQty:lnOrdQty, rcvQty:lnRcvQty, taxable:lnVal, tax:g.tax });
+            } else {
+              allocs.forEach(a=>{
+                const frac = (a.kg||0)/totAllocKg;
+                bumpOrder(a.orderId, {
+                  poId:p.id,
+                  ordWt: lnOrdWt*frac, rcvWt: lnRcvWt*frac,
+                  ordQty: lnOrdQty*frac, rcvQty: lnRcvQty*frac,
+                  taxable: lnVal*frac, tax: g.tax*frac,
+                });
+              });
+            }
+          });
+        });
+        const orderRows = Object.entries(orderAgg)
+          .filter(([oid])=> !repOrder || oid===repOrder)   // honor the order filter
+          .map(([oid,a])=>{
+            const o = (orders||[]).find(x=>x.id===oid);
+            const taxable = Math.round(a.taxable*100)/100;
+            const tax = Math.round(a.tax*100)/100;
+            return {
+              _oid:oid,
+              "Order": oid==="__free__" ? "\u2014 Free stock \u2014" : (o?.orderNo||oid),
+              "Client": oid==="__free__" ? "" : (o?.clientName||o?.client||""),
+              "POs": a.poIds.size,
+              "Ord Wt (kg)": Math.round(a.ordWt),
+              "Recd Wt (kg)": Math.round(a.rcvWt),
+              "Recd %": a.ordWt>0 ? Math.round(a.rcvWt/a.ordWt*100) : 0,
+              "Taxable \u20b9": Math.round(taxable),
+              "GST \u20b9": Math.round(tax),
+              "Incl GST \u20b9": Math.round(taxable+tax),
+            };
+          })
+          .sort((x,y)=> (y["Incl GST \u20b9"]||0) - (x["Incl GST \u20b9"]||0));
+        const ordTot = orderRows.reduce((t,r)=>({
+          pos:t.pos+(r.POs||0), ordWt:t.ordWt+(r["Ord Wt (kg)"]||0), rcvWt:t.rcvWt+(r["Recd Wt (kg)"]||0),
+          taxable:t.taxable+(r["Taxable \u20b9"]||0), tax:t.tax+(r["GST \u20b9"]||0), incl:t.incl+(r["Incl GST \u20b9"]||0),
+        }), {pos:0,ordWt:0,rcvWt:0,taxable:0,tax:0,incl:0});
         const exportXlsx = (rows, name) => {
           if (!rows.length) { showToast("Nothing to export"); return; }
           const clean = rows.map(({_pr,_po,...r})=>r);
@@ -11106,7 +11173,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
         return (
           <div>
             <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap", marginBottom:12 }}>
-              {[["pr","PR Register"],["po","PO Register"]].map(([t,l])=>(
+              {[["order","By Order"],["pr","PR Register"],["po","PO Register"]].map(([t,l])=>(
                 <button key={t} onClick={()=>setRepTab(t)} style={{ ...css.btn.sm,
                   background:repTab===t?T.accent:T.bgInput, color:repTab===t?T.bg:T.textMid, fontWeight:700 }}>{l}</button>
               ))}
@@ -11131,10 +11198,17 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
                 <input type="checkbox" checked={repChart} onChange={e=>setRepChart(e.target.checked)} /> Chart
               </label>
               <div style={{ marginLeft:"auto" }}>
-                <button onClick={()=>exportXlsx(repTab==="pr"?prRows:poRows, repTab==="pr"?"PR Register":"PO Register")} style={css.btn.secondary}>⬇ Export XLSX</button>
+                <button onClick={()=>exportXlsx(repTab==="order"?orderRows:repTab==="pr"?prRows:poRows, repTab==="order"?"Purchase by Order":repTab==="pr"?"PR Register":"PO Register")} style={css.btn.secondary}>⬇ Export XLSX</button>
               </div>
             </div>
-            {repTab==="pr" ? (
+            {repTab==="order" ? (
+              <>
+                <div style={{ fontSize:12, color:T.textMid, marginBottom:6 }}>
+                  <b style={{ color:T.text }}>{orderRows.length}</b> order{orderRows.length!==1?"s":""} with purchases · total <b style={{ fontFamily:T.fontMono, color:T.text }}>{fmt.currency(ordTot.incl)}</b> incl GST
+                </div>
+                {renderTable(orderRows, null, ["TOTAL", "", String(ordTot.pos), fmt.num(ordTot.ordWt), fmt.num(ordTot.rcvWt), ordTot.ordWt>0?Math.round(ordTot.rcvWt/ordTot.ordWt*100)+"%":"\u2014", fmt.num(ordTot.taxable), fmt.num(ordTot.tax), fmt.num(ordTot.incl)])}
+              </>
+            ) : repTab==="pr" ? (
               <>
                 <div style={{ fontSize:12, color:T.textMid, marginBottom:6 }}>
                   <b style={{ color:T.text }}>{prRows.length}</b> PRs ({prOpenCnt} open) · total RM weight <b style={{ fontFamily:T.fontMono, color:T.text }}>{fmt.num(Math.round(prTotWt))} kg</b>
