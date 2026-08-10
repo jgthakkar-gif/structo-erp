@@ -2537,8 +2537,6 @@ const ClientsMaster = ({ user, clients, setClients, orders, setOrders }) => {
         </Modal>
       )}
 
-    )}
-
     </div>
   );
 };
