@@ -8429,6 +8429,7 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
   const [chal, setChal]       = useState({});   // dispatch key -> vendor challan no for THIS batch
   const [extra, setExtra]     = useState({});   // dispatch key -> unlisted lines being added
   const [toast, setToast]     = useState("");
+  const [badKeys, setBadKeys] = useState([]);   // rows a refused receive is complaining about
 
   // the nest is where the offcut size was computed at nesting time
   const rcEffB = buildEffectiveNestSource(nestingBatches, productionNests);
@@ -8441,11 +8442,19 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
   const lk = (l)=>outboundLineKey(l);
 
   // same maths the in-house offcut path uses
+  // A single number is a complete offcut for a SECTION — length is all that matters,
+  // the width in the nesting output is a placeholder. For a PLATE it is not: width
+  // would silently default to length and invent a square.
+  const isPlateMat = (matCode) => (matCode||"").toUpperCase().includes("PLT")
+                               || (matCode||"").toUpperCase().includes("PLATE");
+  const dimNeedsWidth = (dim, matCode) =>
+    isPlateMat(matCode) && !!String(dim||"").trim() && !/[X×]/.test(String(dim));
+
   const offcutWt = (dim, matCode) => {
     if(!dim||!dim.trim()) return 0;
     const parts = dim.trim().toUpperCase().split(/[X×]/);
     const l = parseFloat(parts[0])||0, w = parseFloat(parts[1])||l;
-    const isPlate = (matCode||"").toUpperCase().includes("PLT")||(matCode||"").toUpperCase().includes("PLATE");
+    const isPlate = isPlateMat(matCode);
     if(isPlate){
       const m = (matCode||"").match(/(\d+(?:\.\d+)?)\s*MM/i);
       const thk = m?parseFloat(m[1]):0;
@@ -8471,16 +8480,33 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
       if(n<=0) return [];
       return allocateRiderQty(pg.bars, n).map(a=>({ alloc:a, pg }));
     });
-    if(taking.length===0 && riderTaking.length===0){ setToast("Nothing entered on this batch."); return; }
+    if(taking.length===0 && riderTaking.length===0){
+      setBadKeys([]); setToast("Nothing entered on this batch."); return; }
     // An offcut without dimensions would close its balance and never reach stock, with
     // no way to add them afterwards. Refuse rather than lose the material silently.
+    // "Receive all outstanding" fills EVERY offcut row, including sheets whose nesting
+    // run produced no usable offcut — so this is the normal way to hit it.
     const ocNoDim = taking.filter(x=>x.r.role==="offcut" && x.n>0 && !x.dim);
     if(ocNoDim.length>0){
-      setToast(`${ocNoDim.length} offcut line(s) have a quantity but no dimensions. `
-        + `Enter the dimensions, or set the quantity back to 0 and receive them in a later batch — `
-        + `an offcut received without dimensions never enters stock and cannot be corrected afterwards.`);
+      setBadKeys(ocNoDim.map(x=>lk(x.r)));
+      setToast(`${ocNoDim.length} offcut line(s) have a quantity but no dimensions — marked in red below. `
+        + `Enter the dimensions, or use "Skip the blank offcuts" to set those rows to 0 and receive `
+        + `everything else now. An offcut received without dimensions never enters stock and cannot be `
+        + `corrected afterwards.`);
       return;
     }
+    // A bare number on a PLATE would default width to length and invent a square. For a
+    // section it is correct — length is the whole story — so only plate is refused.
+    const ocBadDim = taking.filter(x=>x.r.role==="offcut" && x.n>0
+      && dimNeedsWidth(x.dim, (g.units.find(u=>u.rmUnitId===x.r.rmUnitId)||{}).matCode));
+    if(ocBadDim.length>0){
+      setBadKeys(ocBadDim.map(x=>lk(x.r)));
+      setToast(`${ocBadDim.length} PLATE offcut line(s) have only one dimension — marked in red below. `
+        + `A plate needs length × width (e.g. 831X100); with one number the width is assumed equal to `
+        + `the length and the weight would be wrong. Sections are fine with a single length.`);
+      return;
+    }
+    setBadKeys([]);
 
     const unlisted = (extra[g.key]||[]).filter(u=>u&&u.markNo&&(+u.qty||0)>0);
     const batch = {
@@ -8807,7 +8833,8 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
                               return (
                                 <React.Fragment key={k+i}>
                                   <tr style={{borderBottom:`1px solid ${T.border}33`,
-                                    background:r.balance<=0?`${T.green}0A`:"transparent"}}>
+                                    background:badKeys.includes(k)?`${T.red}1A`
+                                      :r.balance<=0?`${T.green}0A`:"transparent"}}>
                                     {sec.role==="assembly"&&<>
                                       <td style={{padding:"3px 8px",fontSize:10}}>{r.drawingNo}</td>
                                       <td style={{padding:"3px 8px",fontSize:10}}>{r.instanceNo||r.instanceId}</td>
@@ -8845,6 +8872,7 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
                                           title={r.expectedDim?`Nesting expected ${r.expectedDim} — adjust to what was actually measured`:"Enter the measured offcut"}
                                           onChange={e=>setDims(pv=>({...pv,[k]:e.target.value}))}
                                           style={{...css.input,fontSize:11,padding:"2px 5px",width:110,
+                                                  borderColor:badKeys.includes(k)?T.red:undefined,
                                                   color:(dims[k]===undefined&&r.expectedDim)?T.textMid:T.text}} />
                                       </td>}
                                   </tr>
@@ -8906,6 +8934,33 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
                 {g.receipts.length>0&&(
                   <div style={{fontSize:10,color:T.textLow,marginTop:6}}>
                     Batches so far: {g.receipts.map(rc=>`${rc.receiptNo} (${(rc.lines||[]).length} lines, ${String(rc.at).slice(0,10)})`).join(" · ")}
+                  </div>
+                )}
+                {/* The result of pressing Receive has to appear WHERE THE BUTTON IS.
+                    It used to render only at the top of the page, so a refused receive
+                    looked exactly like a dead button. */}
+                {toast&&(
+                  <div style={{marginTop:12,padding:"10px 14px",borderRadius:6,fontSize:12,
+                    background:badKeys.length?T.redBg:T.greenBg,
+                    border:`1px solid ${badKeys.length?T.red:T.green}`,
+                    color:badKeys.length?"#991B1B":"#065F46"}}>
+                    {toast}
+                    {badKeys.length>0&&(
+                      <div style={{marginTop:8,display:"flex",gap:8,flexWrap:"wrap"}}>
+                        <button
+                          onClick={()=>{
+                            // Set just the flagged rows to 0 so the rest of the batch can be
+                            // received now. Their balance stays open for a later batch.
+                            setQty(pv=>{ const nx={...pv}; badKeys.forEach(k=>{ nx[k]="0"; }); return nx; });
+                            setBadKeys([]); setToast("Those rows are set to 0 — press Receive batch again.");
+                          }}
+                          style={{...css.btn.secondary,fontSize:11}}>
+                          Skip the blank offcuts ({badKeys.length})
+                        </button>
+                        <button onClick={()=>{setBadKeys([]);setToast("");}}
+                          style={{...css.btn.ghost,fontSize:11,color:T.textMid}}>Dismiss</button>
+                      </div>
+                    )}
                   </div>
                 )}
                 <div style={{display:"flex",gap:8,marginTop:12,justifyContent:"flex-end"}}>
