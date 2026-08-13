@@ -6364,9 +6364,13 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const usingProductionNest = effBatches.some(b=>b.productionNestId);
 
   // ── buildProductionSteps ──
-  const buildProductionSteps = (drawing, order, contAsgnSnap, confirmedOpsSnap, rmUnitAsgnSnap) => {
+  // Contractor assignment is keyed by the DRAWING INSTANCE. Keying it by the drawing
+  // is why two instances of one drawing could never take two contractors.
+  const asgnKeyOf = (row) => (row && (row.diId || row.drawingId)) || "";
+
+  const buildProductionSteps = (drawing, order, contAsgnSnap, confirmedOpsSnap, rmUnitAsgnSnap, asgnKey) => {
     const allCoats = getPaintCoats(order.quality);
-    const ca = contAsgnSnap[drawing.id] || {};
+    const ca = contAsgnSnap[asgnKey || drawing.id] || {};
     const contractorId         = ca.contractorId         || "";
     const blastingContractorId = "";
     const paintingContractorId = "";
@@ -6680,7 +6684,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       const updatedDrawings=(ord.drawings||[]).map(drg=>{
         const sel=affected.find(s=>s.drawingId===drg.id);
         if(!sel) return drg;
-        const steps=buildProductionSteps(drg,ord,contAsgnSnap,confirmedOpsSnap,rmUnitAsgnSnap);
+        const steps=buildProductionSteps(drg,ord,contAsgnSnap,confirmedOpsSnap,rmUnitAsgnSnap,asgnKeyOf(sel));
         return {...drg,productionSteps:steps};
       });
       return {...ord,parts:updatedParts,drawings:updatedDrawings};
@@ -6704,8 +6708,9 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           reservations:[...(lot.reservations||[]),{orderId,reservedAt:today(),source:'release_wizard',releaseId:id}]};
       }));
 
-    const drawingsPayload=selDrawings.map(({drawing,order,tier,score})=>{
-      const ca=contAsgnSnap[drawing.id]||{};
+    const drawingsPayload=selDrawings.map((row)=>{
+      const {drawing,order,tier,score}=row;
+      const ca=contAsgnSnap[asgnKeyOf(row)]||{};
       return {
         drawingId:drawing.id,drawingNo:drawing.drawingNo,orderId:order.id,orderNo:order.id,
         contractorId:ca.contractorId||"",
@@ -6793,7 +6798,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     const claimedRecIds=[]; // S3 — cut records claimed by the instances created below
     const nowIso=new Date().toISOString();
     selDrawings.forEach(({drawing,order,unitsToRelease,diId,instanceNo,totalInstances,uniqueId:diUniqueId,processSteps:dwgSteps})=>{
-      const ca=contAsgnSnap[drawing.id]||{};
+      const ca=contAsgnSnap[diId||drawing.id]||{};
       const contractorName=(contractors||[]).find(c=>c.id===ca.contractorId)?.name||"";
       const qty=unitsToRelease??(drawing.qty||1);
       const fabParts=(order.parts||[]).filter(p=>p.drawingId===drawing.id&&(p.fabType||"").toLowerCase()==="fabricate");
@@ -6900,49 +6905,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         : cr));
     }
 
-    // Create Drawing Production Records (DPRs) — one per drawing
+    // DPRs are created ONCE, per DRAWING INSTANCE, below (diDprs). There used to be a
+    // SECOND per-drawing DPR built here as well, and both were pushed into `dprs` — so
+    // every instance had two records that drifted apart (one carried the contractor and
+    // no pipeline, the other the pipeline and no contractor). The DPR-level QC panels
+    // filter on currentStage, so one instance appeared twice in a QC bin and approving
+    // one left its twin behind forever. That block is gone; its fields moved onto the
+    // instance DPR.
     const dprTs=Date.now();
-    const newDprs=selDrawings.map(({drawing,order,unitsToRelease},dprIdx)=>{
-      const ca=contAsgnSnap[drawing.id]||{};
-      const fitupContractorId=ca.fitupContractorId||ca.contractorId||"";
-      const weldContractorId=ca.contractorId||ca.fitupContractorId||"";
-      const fitupContractorName=(contractors||[]).find(c=>c.id===fitupContractorId)?.name||"";
-      const weldContractorName=(contractors||[]).find(c=>c.id===weldContractorId)?.name||"";
-      const qty=unitsToRelease??(drawing.qty||1);
-      const drgParts=(order.parts||[]).filter(p=>p.drawingId===drawing.id&&p.fabType==="Fabricate");
-      const drgRmUnits=[...new Set(newInstances.filter(i=>i.drawingId===drawing.id&&i.orderId===order.id).map(i=>i.rmUnitId).filter(Boolean))];
-      return {
-        id:`DPR-${dprTs}-${dprIdx}`,
-        releaseId:id,
-        orderId:order.id,
-        orderNo:order.orderNo||order.id,
-        drawingId:drawing.id,
-        drawingNo:drawing.drawingNo||"",
-        drawingTitle:drawing.title||"",
-        qty,
-        totalWt:drawing.totalWt||0,
-        totalParts:drgParts.length,
-        rmUnitIds:drgRmUnits,
-        fitupContractorId,
-        fitupContractorName,
-        weldContractorId,
-        weldContractorName,
-        pinnedEngineerId:ca.pinnedEngineerId||"",
-        tpiStages:ca.tpiStages||[],
-        currentStage:"pending", // pending → fitup → fitup_qc → welding → weld_qc → complete
-        currentStatus:"awaiting_parts", // awaiting_parts → ready → in_progress → pending_qc → complete
-        stageHistory:[],
-        fitupStartedAt:null,
-        fitupCompleteAt:null,
-        fitupQcApprovedAt:null,
-        weldStartedAt:null,
-        weldCompleteAt:null,
-        weldQcApprovedAt:null,
-        createdAt:new Date().toISOString(),
-        createdBy:user.username,
-      };
-    });
-    if(newDprs.length>0) setDprs(prev=>[...prev,...newDprs]);
 
     // Collect all drawing instance IDs being released
     const releasedDIIds = selDrawings.map(s=>s.diId).filter(Boolean);
@@ -6967,8 +6937,16 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       ));
     }
 
-    // Create one DPR per drawing instance — pipeline drives the stage flow
+    // Create one DPR per drawing instance — pipeline drives the stage flow. This is now
+    // the ONLY DPR: it carries the pipeline AND the contractor, TPI stages and engineer.
     const diDprs = selDrawings.filter(s=>s.diId).map(s=>{
+      const ca = contAsgnSnap[s.diId] || contAsgnSnap[s.drawingId] || {};
+      // One control assigns fit-up and welding to the same contractor, but BOTH fields
+      // are written: the contractor queue, the DPR view and several progress readers
+      // filter on these two names, so collapsing them to one field would break readers
+      // for no benefit.
+      const fabContractorId = ca.contractorId || ca.fitupContractorId || "";
+      const fabContractorName = (contractors||[]).find(c=>c.id===fabContractorId)?.name || "";
       const existingDpr = (dprs||[]).find(d=>d.drawingId===s.drawingId&&d.orderId===s.orderId&&d.drawingInstanceId===s.diId);
       if (existingDpr) return null;
       const pipeline = s.processSteps||DEFAULT_PIPELINE_STEPS;
@@ -6981,7 +6959,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         .map(p=>({markNo:p.markNo,steps:p.processSteps.filter(ps=>ps.type==="outbound")}));
       const hasOutboundSteps = pipeline.some(p=>p.type==="outbound");
       return {
-        id:`DPR-${s.diId}-${Date.now()}`,
+        id:`DPR-${s.diId}-${dprTs}`,
         drawingId:s.drawingId, drawingNo:s.drawingNo,
         orderId:s.orderId, releaseId:id,
         drawingInstanceId:s.diId,
@@ -6991,7 +6969,32 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         currentStatus:"in_progress",
         hasOutboundSteps,                   // flag for quick checks
         partOutboundSteps,                  // part-level outbound steps
-        totalParts:drawingParts.length, totalWt:0,
+        totalParts:drawingParts.length,
+        // Weight of ONE drawing instance. drawing.totalWt spans every instance, so using
+        // it here would multiply the order spine by the instance count.
+        totalWt:(()=>{ const d=(order?.drawings||[]).find(x=>x.id===s.drawingId);
+                       return +(d?.unitWt||0)||0; })(),
+        qty:1,                              // a DPR is exactly one drawing instance
+        // ── moved off the deleted legacy DPR ──
+        orderNo:(order?.orderNo)||s.orderId,
+        drawingTitle:((order?.drawings||[]).find(x=>x.id===s.drawingId)?.title)||"",
+        rmUnitIds:[...new Set(newInstances.filter(i=>i.drawingInstanceId===s.diId)
+                   .map(i=>i.rmUnitId).filter(Boolean))],
+        fitupContractorId:fabContractorId, fitupContractorName:fabContractorName,
+        weldContractorId:fabContractorId,  weldContractorName:fabContractorName,
+        blastContractorId:"", blastContractorName:"",
+        paintContractorId:"", paintContractorName:"",
+        pinnedEngineerId:ca.pinnedEngineerId||"",
+        tpiStages:ca.tpiStages||[],
+        fitupStartedAt:null, fitupCompleteAt:null, fitupQcApprovedAt:null,
+        weldStartedAt:null,  weldCompleteAt:null,  weldQcApprovedAt:null,
+        createdAt:new Date().toISOString(), createdBy:user.username,
+        assignmentHistory: fabContractorId ? [{
+          at:new Date().toISOString(), by:user.username, group:"fab",
+          fromContractorId:"", fromContractorName:"",
+          toContractorId:fabContractorId, toContractorName:fabContractorName,
+          atStage:firstStage.step, instanceWt:0, reason:"Assigned at release",
+        }] : [],
         stageHistory:[], auditLog:[{action:"dpr-created",by:user.username,date:today(),
           reason:`Pipeline: ${pipeline.map(p=>p.label||p.step).join("→")}`}]
       };
@@ -7842,7 +7845,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
   const Step5 = () => {
     const ownedOf=(row)=>outboundOwnedStages(row&&row.processSteps);
     const missingContractor=selDrawings.some((row)=>{
-      const ca=contAsgn[row.drawingId]||{};
+      const ca=contAsgn[asgnKeyOf(row)]||{};
       const owned=ownedOf(row);
       // only in-house stages can be missing a contractor
       const need=(ca.stages||[]).filter(s=>['fitup','welding'].includes(s)&&!owned.has(s));
@@ -7852,51 +7855,55 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       <div>
         <div style={{fontSize:15,fontWeight:700,color:T.text,marginBottom:4}}>Step 5 — Welding & Contractor Assignment</div>
         <div style={{fontSize:12,color:T.textMid,marginBottom:8}}>
-          Assign fit-up and welding contractors per drawing. Stages a vendor owns are not assigned here —
-          TPI hold points on them still apply and are satisfied when the work comes back.
+          Assign the fit-up and welding contractor per DRAWING INSTANCE — instances of the same drawing
+          can go to different contractors. Stages a vendor owns are not assigned here — TPI hold points
+          on them still apply and are satisfied when the work comes back.
         </div>
         <div style={{marginBottom:14,display:"flex",gap:8,flexWrap:"wrap"}}>
-          <button onClick={()=>selDrawings.forEach(({drawingId})=>{
-            const ca=contAsgn[drawingId]||{};
-            if(ca.fitupContractorId) updCont(drawingId,"contractorId",ca.fitupContractorId);
+          <button onClick={()=>selDrawings.forEach((row)=>{
+            const k=asgnKeyOf(row);
+            const ca=contAsgn[k]||{};
+            if(ca.fitupContractorId) updCont(k,"contractorId",ca.fitupContractorId);
           })} style={{...css.btn.ghost,fontSize:11}}>Copy all fit-up → welding</button>
         </div>
         {selDrawings.map((row)=>{
-          const {drawingId,orderId,drawing,order}=row;
-          const ca=contAsgn[drawingId]||{};
+          const {drawingId,orderId,drawing,order,instanceNo,totalInstances}=row;
+          const ck=asgnKeyOf(row);
+          const ca=contAsgn[ck]||{};
           const owned=ownedOf(row);
           const obStep=outboundStepOwning(row.processSteps,"welding")||outboundStepOwning(row.processSteps,"fitup");
           const fitupOwned=owned.has("fitup"), weldOwned=owned.has("welding");
           const stages=ca.stages||[];
           const tpiStages=ca.tpiStages!==undefined?ca.tpiStages:(order.quality?.tpiHoldPoints||[]);
-          const toggleStage=s=>updCont(drawingId,"stages",stages.includes(s)?stages.filter(x=>x!==s):[...stages,s]);
-          const toggleTpi=s=>updCont(drawingId,"tpiStages",tpiStages.includes(s)?tpiStages.filter(x=>x!==s):[...tpiStages,s]);
+          const toggleStage=s=>updCont(ck,"stages",stages.includes(s)?stages.filter(x=>x!==s):[...stages,s]);
+          const toggleTpi=s=>updCont(ck,"tpiStages",tpiStages.includes(s)?tpiStages.filter(x=>x!==s):[...tpiStages,s]);
           return (
-            <div key={drawingId+orderId} style={{...css.card,marginBottom:12}}>
+            <div key={ck+orderId} style={{...css.card,marginBottom:12}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                 <div>
                   <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi}}>{drawing.drawingNo}</span>
+                  {instanceNo&&<span style={{marginLeft:8,background:T.bgInput,border:`1px solid ${T.borderHi}`,
+                    borderRadius:4,padding:"1px 6px",fontSize:11,fontFamily:T.fontMono,color:T.text}}>
+                    {instanceNo}/{totalInstances}</span>}
                   <span style={{color:T.textMid,fontSize:11,marginLeft:8}}>{orderId}</span>
                 </div>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:10}}>
-                {!fitupOwned&&<div>
-                  <label style={css.label}>Fit-Up Contractor</label>
-                  <select value={ca.fitupContractorId||ca.contractorId||""} onChange={e=>{
-                    updCont(drawingId,"fitupContractorId",e.target.value);
-                    if(!ca.weldContractorId) updCont(drawingId,"contractorId",e.target.value);
-                  }} style={css.input}>
-                    <option value="">Select contractor...</option>
-                    {(contractors||[]).filter(c=>(c.type||[]).some(t=>['fit_up','welding'].includes(t))).map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
-                  </select>
-                </div>}
-                {!weldOwned&&<div>
+                {/* ONE control for fit-up and welding — they always go to the same
+                    contractor. Both fields are still written, because the contractor
+                    queue and several progress readers filter on both names. */}
+                {(!fitupOwned||!weldOwned)&&<div style={{gridColumn:"span 2"}}>
                   <label style={css.label}>
-                    Welding Contractor
-                    <button onClick={()=>updCont(drawingId,"contractorId",ca.fitupContractorId||ca.contractorId||"")} style={{...css.btn.ghost,fontSize:9,padding:"1px 6px",marginLeft:8}}>= Same as fit-up</button>
+                    Fit-Up &amp; Welding Contractor
+                    <span style={{fontWeight:400,color:T.textLow,marginLeft:6,fontSize:10}}>
+                      optional — leave blank to assign later on the Allotment screen
+                    </span>
                   </label>
-                  <select value={ca.contractorId||ca.fitupContractorId||""} onChange={e=>updCont(drawingId,"contractorId",e.target.value)} style={css.input}>
-                    <option value="">Select contractor...</option>
+                  <select value={ca.contractorId||ca.fitupContractorId||""} onChange={e=>{
+                    updCont(ck,"contractorId",e.target.value);
+                    updCont(ck,"fitupContractorId",e.target.value);
+                  }} style={css.input}>
+                    <option value="">Not assigned yet</option>
                     {(contractors||[]).filter(c=>(c.type||[]).some(t=>['fit_up','welding'].includes(t))).map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
                   </select>
                 </div>}
@@ -7914,7 +7921,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                 )}
                 <div>
                   <label style={css.label}>Pin to Engineer (optional)</label>
-                  <select value={ca.pinnedEngineerId||""} onChange={e=>updCont(drawingId,"pinnedEngineerId",e.target.value)} style={css.input}>
+                  <select value={ca.pinnedEngineerId||""} onChange={e=>updCont(ck,"pinnedEngineerId",e.target.value)} style={css.input}>
                     <option value="">No pin — shared queue</option>
                     {productionEngineers.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
                   </select>
@@ -13536,6 +13543,93 @@ const DPR_STAGE_META = {
   mdcc:       { label:"MDCC Dossier",  color:"#6D28D9",  bg:"#EDE9FE" },
   complete:   { label:"Complete",      color:"#059669",  bg:"#D1FAE5" },
 };
+
+// ── DPR CONSOLIDATION / MIGRATION (Aug 2026) ─────────────────────────────────
+// Until now confirm() created TWO DPRs per drawing instance and pushed both into
+// `dprs`: a legacy per-drawing record carrying the contractor but no pipeline, and an
+// instance record carrying the pipeline but no contractor. The DPR-level QC panels
+// filter on currentStage, so one instance showed up TWICE in a bin and approving one
+// left its twin behind at the old stage. These helpers merge the pairs.
+
+// The merge ladder. DPR_STAGES_ORDER starts at "pending" and omits the pre-fit-up
+// stages, but a DPR can legitimately sit at cutting or awaiting_collection.
+const DPR_MERGE_LADDER = ["pending","awaiting_parts","cutting","cutting_qc","awaiting_collection",
+  "fitup","fitup_qc","tpi_fitup","welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast",
+  "painting","paint_qc","tpi_paint","mdcc","dispatch","complete"];
+// An UNRECOGNISED stage ranks LEAST advanced, never most — the opposite of the
+// indexOf(-1) trap that makes getPartsReadiness treat unknown stages as finished.
+const dprStageRank = (s) => {
+  const i = DPR_MERGE_LADDER.indexOf(String(s||""));
+  return i < 0 ? -1 : i;
+};
+const moreAdvancedStage = (a, b) => dprStageRank(a) >= dprStageRank(b) ? a : b;
+
+// Pair up legacy and instance DPRs. Grouped by release+drawing+order: where a release
+// covers two instances of one drawing there are two legacy twins and nothing maps twin
+// to instance — but contAsgn was keyed by DRAWING, so both twins carry the SAME
+// contractor. Copy it to every instance DPR in the group and take the most advanced
+// stage found across the whole legacy group.
+const findDprMerges = (dprs) => {
+  const groups = {};
+  (dprs||[]).forEach(d => {
+    if (!d) return;
+    const k = `${d.releaseId||""}|${d.drawingId||""}|${d.orderId||""}`;
+    (groups[k] = groups[k] || { legacy: [], inst: [] })[d.drawingInstanceId ? "inst" : "legacy"].push(d);
+  });
+  const merges = [], orphans = [];
+  Object.keys(groups).forEach(k => {
+    const g = groups[k];
+    if (g.legacy.length === 0) return;                 // already clean
+    if (g.inst.length === 0) { orphans.push(...g.legacy); return; }  // never auto-deleted
+    const bestLegacyStage = g.legacy.reduce((s, d) => moreAdvancedStage(s, d.currentStage), g.legacy[0].currentStage);
+    const donor = g.legacy.find(d => d.fitupContractorId || d.weldContractorId) || g.legacy[0];
+    g.inst.forEach(target => {
+      const toStage = moreAdvancedStage(target.currentStage, bestLegacyStage);
+      merges.push({
+        keepId: target.id, deleteIds: g.legacy.map(d => d.id),
+        drawingNo: target.drawingNo || donor.drawingNo || "",
+        orderId: target.orderId, releaseId: target.releaseId,
+        instanceNo: target.instanceNo, totalInstances: target.totalInstances,
+        fromStage: target.currentStage, toStage,
+        stageChanged: toStage !== target.currentStage,
+        donorId: donor.id,
+      });
+    });
+  });
+  return { merges, orphans, total: merges.length };
+};
+
+// Apply. Never overwrites a value the instance DPR already has — the legacy twin only
+// fills blanks. Idempotent: once the legacy records are gone a rescan finds nothing.
+const applyDprMerges = (dprs, merges, user, ts) => {
+  const byId = {}; (dprs||[]).forEach(d => { if (d) byId[d.id] = d; });
+  const drop = new Set();
+  const patched = {};
+  (merges||[]).forEach(m => {
+    const target = patched[m.keepId] || byId[m.keepId];
+    const donor = byId[m.donorId] || {};
+    if (!target) return;
+    m.deleteIds.forEach(id => drop.add(id));
+    const take = (field) => (target[field] ? target[field] : (donor[field] || ""));
+    patched[m.keepId] = {
+      ...target,
+      currentStage: m.toStage,
+      fitupContractorId: take("fitupContractorId"), fitupContractorName: take("fitupContractorName"),
+      weldContractorId:  take("weldContractorId"),  weldContractorName:  take("weldContractorName"),
+      blastContractorId: take("blastContractorId"), blastContractorName: take("blastContractorName"),
+      paintContractorId: take("paintContractorId"), paintContractorName: take("paintContractorName"),
+      pinnedEngineerId:  take("pinnedEngineerId"),
+      tpiStages: (target.tpiStages && target.tpiStages.length) ? target.tpiStages : (donor.tpiStages || []),
+      mergedFrom: m.deleteIds,
+      auditLog: [...(target.auditLog || []), {
+        action: "dpr-merged", by: (user && user.username) || "system", date: ts,
+        reason: `Merged legacy DPR ${m.deleteIds.join(", ")}; stage ${m.fromStage} → ${m.toStage}`,
+      }],
+    };
+  });
+  return (dprs || []).filter(d => d && !drop.has(d.id)).map(d => patched[d.id] || d);
+};
+
 const DPR_STAGES_ORDER = ["pending","fitup","fitup_qc","tpi_fitup","welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast","painting","paint_qc","tpi_paint","mdcc","complete"];
 
 const ProductionEngineerScreen = ({ user, dprs, orders, instances, contractors, onBack,
@@ -15782,6 +15876,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
   const [selStatusDrawing, setSelStatusDrawing] = useState(null); // {drawingId, orderId}
   const [selProgressOrderId, setSelProgressOrderId] = useState("");
   const [assignForm, setAssignForm] = useState({}); // blast/paint contractor assignment form
+  const [dprMergeOpen, setDprMergeOpen] = useState(false); // DPR merge review card
 
   // Contractor → own work queue only (after hooks)
   if (user.role === "contractor") {
@@ -16435,6 +16530,78 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
                   <Badge color="green">{c.count} pcs pending collection</Badge>
                 </div>
               ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── DPR MERGE — one-time migration, review before anything moves ──
+          Releases made before Aug 2026 wrote TWO DPRs per drawing instance. This finds
+          the pairs, shows exactly what will change, and only merges when you press
+          Apply. Idempotent — once run, it stops appearing. */}
+      {(user.role==="super_admin"||user.role==="production_admin") && (()=>{
+        const scan = findDprMerges(dprs);
+        if (scan.total===0 && scan.orphans.length===0) return null;
+        return (
+          <div style={{ ...css.card,border:`1px solid ${T.amber}`,background:T.amberBg,marginBottom:20 }}>
+            <div style={{ fontSize:12,fontWeight:800,color:T.amber,marginBottom:6 }}>
+              ⚙ {scan.total} DRAWING INSTANCE{scan.total===1?"":"S"} HAVE A DUPLICATE DPR
+            </div>
+            <div style={{ fontSize:12,color:"#92400E",marginBottom:10,maxWidth:900 }}>
+              Older releases created two production records per drawing instance — one holding the
+              contractor, the other the pipeline. Because the QC screens list records by stage, one
+              instance can appear twice in a bin and approving one leaves the other behind. Merging
+              keeps the instance record, copies the contractor across, takes the more advanced stage
+              of the two, and deletes the duplicate.
+            </div>
+            {dprMergeOpen&&(
+              <div style={{ background:T.bgCard,border:`1px solid ${T.border}`,borderRadius:6,padding:10,marginBottom:10,maxHeight:340,overflowY:"auto" }}>
+                <table style={{ width:"100%",borderCollapse:"collapse",fontSize:11 }}>
+                  <thead><tr>{["Release","Drawing","Inst","Keep","Delete","Stage"].map(h=>
+                    <th key={h} style={{ textAlign:"left",padding:"4px 6px",color:T.textMid,borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {scan.merges.map((m,i)=>(
+                      <tr key={i} style={{ borderBottom:`1px solid ${T.border}33` }}>
+                        <td style={{ padding:"4px 6px",fontFamily:T.fontMono }}>{m.releaseId}</td>
+                        <td style={{ padding:"4px 6px" }}>{m.drawingNo}</td>
+                        <td style={{ padding:"4px 6px",fontFamily:T.fontMono }}>{m.instanceNo}/{m.totalInstances}</td>
+                        <td style={{ padding:"4px 6px",fontFamily:T.fontMono,fontSize:10,color:T.green }}>{m.keepId}</td>
+                        <td style={{ padding:"4px 6px",fontFamily:T.fontMono,fontSize:10,color:T.red }}>{m.deleteIds.join(", ")}</td>
+                        <td style={{ padding:"4px 6px" }}>
+                          {m.stageChanged
+                            ? <span><span style={{color:T.textLow}}>{m.fromStage}</span> → <b style={{color:T.green}}>{m.toStage}</b></span>
+                            : <span style={{color:T.textLow}}>{m.toStage} (unchanged)</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {scan.orphans.length>0&&(
+                  <div style={{ marginTop:10,paddingTop:8,borderTop:`1px solid ${T.border}` }}>
+                    <div style={{ fontSize:11,fontWeight:700,color:T.textMid,marginBottom:4 }}>
+                      NOT TOUCHED — {scan.orphans.length} old record{scan.orphans.length>1?"s":""} with no instance twin
+                    </div>
+                    <div style={{ fontSize:10,color:T.textLow,marginBottom:6 }}>
+                      These may be the only record of their release, so they are never deleted automatically.
+                    </div>
+                    {scan.orphans.map(o=>(
+                      <div key={o.id} style={{ fontSize:10,fontFamily:T.fontMono,color:T.textMid }}>
+                        {o.releaseId} · {o.drawingNo||o.drawingId} · {o.currentStage}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ display:"flex",gap:8 }}>
+              <button onClick={()=>setDprMergeOpen(!dprMergeOpen)} style={{ ...css.btn.secondary,fontSize:11 }}>
+                {dprMergeOpen?"Hide":"Review"} {scan.total>0?`(${scan.total})`:""}
+              </button>
+              {scan.total>0&&(
+                <button onClick={()=>{
+                  setDprs(prev=>applyDprMerges(prev, findDprMerges(prev).merges, user, today()));
+                }} style={{ ...css.btn.primary,fontSize:11 }}>Apply merge ({scan.total})</button>
+              )}
             </div>
           </div>
         );
