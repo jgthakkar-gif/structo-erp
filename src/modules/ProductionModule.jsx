@@ -3313,12 +3313,15 @@ const SUPERVISOR_STAGES = {
   production_engineer: ["cutting_qc","fitup","welding","assembly","blasting"],
   blasting_engineer:   ["blasting"],
   painting_engineer:   ["painting"],
-  qc_admin:            ["cutting_qc","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
+  // qc_admin gained "fitup" and "welding" (Aug 2026): they previously held only
+  // cutting_qc and the TPI hold points, so a QC admin could not see Weld QC at all.
+  // This means QC admin now signs off the WORK, not just the TPI gates.
+  qc_admin:            ["cutting_qc","fitup","welding","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
   qc_user:             ["cutting_qc","tpi_fitup","tpi_weld","tpi_blast","painting","tpi_paint","mdcc"],
   dispatch_admin:      ["dispatch"],
 };
 
-const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, releases, machines, welders, productionStandards, onBack, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue }) => {
+const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, releases, machines, welders, productionStandards, onBack, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue, drawingInstances=[] }) => {
   const [selGroup, setSelGroup]   = useState(null);
   const [checks, setChecks]       = useState({});
   const [dft, setDft]             = useState("");
@@ -3335,6 +3338,7 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
   const [cuttingMeasurements, setCuttingMeasurements] = useState({}); // {[markNo]: {actualL:"", actualW:"", failReason:""}}
   const [dftReadings, setDftReadings] = useState([]); // [{value:"", location:""}]
   const [now, setNow] = useState(Date.now());
+  const [stageTab, setStageTab] = useState("");   // "" = all stages
 
   const myStages = SUPERVISOR_STAGES[user.role] || [];
 
@@ -3343,13 +3347,23 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
     i.currentStatus === "pending_supervisor" && myStages.includes(i.currentStage)
   );
 
-  // Group by markNo+drawingId+orderId
+  // Group by DRAWING INSTANCE + STAGE + mark.
+  // The old key was markNo/drawingId/orderId — no instance and no stage. That meant all
+  // three instances of a mark collapsed into one card, AND, because a super admin's
+  // stages include both cutting_qc and welding, pieces at two different stages could
+  // share a card whose `stage` came from whichever instance happened to be first in the
+  // array. Approving then applied the wrong checklist and moved both.
   const groups = {};
   myQueue.forEach(i => {
-    const k = `${i.markNo}/${i.drawingId}/${i.orderId}`;
+    const di = i.drawingInstanceId || i.drawingId;
+    const k = `${di}/${i.currentStage}/${i.markNo}`;
     if (!groups[k]) {
       const ord = orders.find(o => o.id === i.orderId);
+      const dInst = (drawingInstances||[]).find(d => d.id === i.drawingInstanceId);
       groups[k] = { key:k, markNo:i.markNo, desc:i.desc, drawingId:i.drawingId, drawingNo:i.drawingNo,
+        drawingInstanceId:i.drawingInstanceId||"", instanceNo:dInst?.instanceNo||null,
+        totalInstances:dInst?.totalInstances||((ord?.drawings||[]).find(d=>d.id===i.drawingId)?.qty||null),
+        instKey:`${di}/${i.currentStage}`,
         orderId:i.orderId, clientId:ord?.clientId||"", stage:i.currentStage,
         contractorName:i.assignedContractorName||"Unknown",
         pinnedEngineerId:i.pinnedEngineerId||null, isPinned:!!i.pinnedEngineerId,
@@ -3547,7 +3561,27 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
   };
 
   // ── Detail / checklist view ──
-  const selGD = selGroup ? groups[selGroup] : null;
+  // selGroup is either one key, or an ARRAY of keys when "Approve all N marks together"
+  // was used. A batch is always one instance at one stage — the button lives on that
+  // header — so the marks can be merged into a single synthetic group and run through
+  // exactly the same checklist and approve path. One checklist for the lot, per Jai.
+  const selGD = (()=>{
+    if (!selGroup) return null;
+    if (!Array.isArray(selGroup)) return groups[selGroup] || null;
+    const gs = selGroup.map(k=>groups[k]).filter(Boolean);
+    if (gs.length===0) return null;
+    if (gs.length===1) return gs[0];
+    return {
+      ...gs[0],
+      key: selGroup,
+      batchKeys: selGroup,
+      markNo: `${gs.length} marks`,
+      desc: gs.map(g=>g.markNo).join(", "),
+      batchMarks: gs.map(g=>({ markNo:g.markNo, pcs:g.insts.length })),
+      insts: gs.flatMap(g=>g.insts),
+      rejCount: gs.reduce((m,g)=>Math.max(m,g.rejCount||0),0),
+    };
+  })();
   if (selGD) {
     const stage = selGD.stage;
     const isTpi  = TPI_STAGES.includes(stage);
@@ -3615,7 +3649,15 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
         {/* Instance info */}
         <div style={{ ...css.card,marginBottom:14 }}>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,fontSize:12 }}>
-            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>MARK NO</div><div style={{color:T.text,fontFamily:T.fontMono,fontWeight:800,fontSize:15}}>{selGD.markNo}</div></div>
+            <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>MARK NO</div>
+              <div style={{color:T.text,fontFamily:T.fontMono,fontWeight:800,fontSize:15}}>{selGD.markNo}</div>
+              {selGD.instanceNo&&<div style={{color:T.textMid,fontSize:11,marginTop:2}}>
+                instance {selGD.instanceNo}/{selGD.totalInstances}</div>}
+              {/* A batch approval must say exactly what it covers before it is signed. */}
+              {selGD.batchMarks&&<div style={{color:T.amber,fontSize:11,marginTop:4,maxWidth:420}}>
+                approving together: {selGD.batchMarks.map(m=>`${m.markNo}×${m.pcs}`).join(", ")}
+              </div>}
+            </div>
             <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>STAGE</div><div><Badge color="blue">{STAGE_SEQ_LABELS[stage]}</Badge></div></div>
             <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>DESCRIPTION</div><div style={{color:T.text}}>{selGD.desc}</div></div>
             <div><div style={{color:T.textMid,fontSize:10,fontWeight:700,marginBottom:2}}>QTY</div><div style={{color:T.text,fontWeight:700}}>{selGD.insts.length} pcs</div></div>
@@ -4447,6 +4489,31 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
         <div style={{ fontSize:18,fontWeight:800,color:T.text }}>My Approval Queue</div>
         {sortedGroups.length>0&&<div style={{ background:T.amber,color:"#000",fontSize:11,fontWeight:800,borderRadius:10,padding:"2px 8px" }}>{sortedGroups.length}</div>}
       </div>
+      {/* Stage tabs — one bin per stage, so cut QC and weld QC are never mixed. */}
+      {(()=>{
+        const counts = {};
+        sortedGroups.forEach(g=>{ counts[g.stage]=(counts[g.stage]||0)+1; });
+        const present = myStages.filter(s=>counts[s]>0);
+        if (present.length<=1) return null;
+        return (
+          <div style={{ display:"flex",gap:2,borderBottom:`1px solid ${T.border}`,marginBottom:16,overflowX:"auto" }}>
+            <button onClick={()=>setStageTab("")}
+              style={{ padding:"8px 14px",fontSize:12,fontWeight:stageTab===""?700:500,
+                color:stageTab===""?T.accent:T.textMid,background:"transparent",border:"none",
+                borderBottom:stageTab===""?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer",whiteSpace:"nowrap" }}>
+              All <span style={{color:T.textLow}}>{sortedGroups.length}</span>
+            </button>
+            {present.map(s=>(
+              <button key={s} onClick={()=>setStageTab(s)}
+                style={{ padding:"8px 14px",fontSize:12,fontWeight:stageTab===s?700:500,
+                  color:stageTab===s?T.accent:T.textMid,background:"transparent",border:"none",
+                  borderBottom:stageTab===s?`2px solid ${T.accent}`:"2px solid transparent",cursor:"pointer",whiteSpace:"nowrap" }}>
+                {STAGE_SEQ_LABELS[s]||s} <span style={{color:T.textLow}}>{counts[s]}</span>
+              </button>
+            ))}
+          </div>
+        );
+      })()}
       {sortedGroups.length===0&&(
         <div style={{ textAlign:"center",padding:48,color:T.textLow }}>
           <div style={{ fontSize:32,marginBottom:10 }}>✓</div>
@@ -4454,8 +4521,34 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
           <div style={{ fontSize:12,marginTop:4 }}>Items will appear here when contractors mark work as done at {myStages.map(s=>STAGE_SEQ_LABELS[s]).join(", ")} stage{myStages.length>1?"s":""}.</div>
         </div>
       )}
-      <div style={{ display:"flex",flexDirection:"column",gap:8 }}>
-        {sortedGroups.map(g=>(
+      {/* Grouped by DRAWING INSTANCE at ONE stage. The returned assembly is one header,
+          not 507 piece rows, and "Approve all" can never span two instances or two
+          stages because the header itself is per instance per stage. */}
+      <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
+        {(()=>{
+          const shown = stageTab ? sortedGroups.filter(g=>g.stage===stageTab) : sortedGroups;
+          const byInst = {};
+          shown.forEach(g=>{ (byInst[g.instKey] = byInst[g.instKey] || []).push(g); });
+          return Object.entries(byInst).map(([ik, gs])=>{
+            const h = gs[0];
+            const pcs = gs.reduce((s,g)=>s+g.insts.length,0);
+            return (
+              <div key={ik}>
+                <div style={{ display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",
+                  padding:"8px 10px",background:T.bgInput,borderRadius:6,marginBottom:6 }}>
+                  <span style={{ fontFamily:T.fontMono,fontWeight:800,fontSize:13,color:T.accentHi }}>{h.drawingNo}</span>
+                  {h.instanceNo&&<span style={{ background:T.bgCard,border:`1px solid ${T.borderHi}`,borderRadius:4,
+                    padding:"1px 6px",fontSize:11,fontFamily:T.fontMono,color:T.text }}>{h.instanceNo}/{h.totalInstances}</span>}
+                  <Badge color="amber">{STAGE_SEQ_LABELS[h.stage]||h.stage}</Badge>
+                  <span style={{ fontSize:11,color:T.textMid }}>{h.orderId} · {gs.length} mark{gs.length>1?"s":""} · {pcs} pcs</span>
+                  <div style={{ flex:1 }} />
+                  <button onClick={()=>{ resetApproval(); setSelGroup(gs.map(g=>g.key)); }}
+                    style={{ ...css.btn.secondary,fontSize:11 }}>
+                    Approve all {gs.length} mark{gs.length>1?"s":""} together
+                  </button>
+                </div>
+                <div style={{ display:"flex",flexDirection:"column",gap:8,paddingLeft:10 }}>
+                  {gs.map(g=>(
           <div key={g.key} onClick={()=>{resetApproval();setSelGroup(g.key);}}
             style={{ ...css.card,cursor:"pointer",border:`1px solid ${g.rejCount>=2?T.red:g.isPinned?T.gold:T.border}` }}
             onMouseEnter={e=>e.currentTarget.style.borderColor=g.rejCount>=2?T.red:g.isPinned?T.gold:T.borderHi}
@@ -4477,7 +4570,12 @@ const SupervisorQueue = ({ user, instances, setInstances, orders, tpiAgencies, r
               <div style={{ fontSize:22,color:T.textLow,alignSelf:"center" }}>›</div>
             </div>
           </div>
-        ))}
+                  ))}
+                </div>
+              </div>
+            );
+          });
+        })()}
       </div>
     </div>
   );
@@ -15934,7 +16032,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
     <SupervisorQueue user={user} instances={instances} setInstances={setInstances}
       orders={orders} tpiAgencies={tpiAgencies||[]} releases={releases||[]} machines={machines||[]} welders={welders||[]} productionStandards={productionStandards} onBack={()=>setView("dashboard")}
       ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications}
-      correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} />
+      correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue}
+      drawingInstances={drawingInstances||[]} />
   );
 
   // ── Outbound processing view ──
