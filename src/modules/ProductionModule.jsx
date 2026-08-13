@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { T, css } from "../theme.js";
 import { fmt, today, normMatCode, buildDIId, getFinancialYear, calcSheetWt,
+  approvedMakesFor, makeApprovalState, lotMake,
   getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
   parseCSVText, can, USERS, computePaintableArea, getPaintCoats } from "../helpers.js";
@@ -5111,11 +5112,15 @@ const groupOutboundUnitsByMaterial = (units) => {
     g.totalWt += (+u.sheetWt||0);
     const sz = u.dimensions||u.sheetDim||"—";
     g.sizes[sz] = (g.sizes[sz]||0) + 1;
+    const lot = u.stockLotNo||"";
+    if(lot){ g.lots = g.lots||{}; g.lots[lot] = (g.lots[lot]||0) + 1; }
   });
   return Object.values(by)
     .map(g=>({ ...g, totalWt:+g.totalWt.toFixed(1),
                sizeList:Object.entries(g.sizes).map(([size,qty])=>({size,qty}))
-                 .sort((a,b)=>b.qty-a.qty || String(a.size).localeCompare(String(b.size))) }))
+                 .sort((a,b)=>b.qty-a.qty || String(a.size).localeCompare(String(b.size))),
+               lotList:Object.entries(g.lots||{}).map(([lotNo,qty])=>({lotNo,qty}))
+                 .sort((a,b)=>b.qty-a.qty || String(a.lotNo).localeCompare(String(b.lotNo))) }))
     .sort((a,b)=>String(a.matCode).localeCompare(String(b.matCode)));
 };
 
@@ -5945,6 +5950,168 @@ const currentMrpBatches = (nestingBatches, scope) => {
   }).filter(Boolean);
 };
 
+// ── RM UNIT ↔ STOCK LOT JOIN (Aug 2026) ──────────────────────────────────────
+// A nest RM unit carries matCode + sheetDim. A stock lot carries the same pair
+// plus sheetCount and sheetWt. That is the whole join: a nest sheet of
+// PLATE/MS/E250/16MM at 2500X1250 can only be cut from a lot of that material at
+// that size. The nest's own numbering (…/1-1, …/1-5) is INDICATIVE — it means
+// "some sheet of the nine", never the fifth physical sheet — so nothing here ever
+// has to decide WHICH sheet, only HOW MANY and FROM WHICH LOT.
+const normSheetDim = (d) => String(d||"").toUpperCase().replace(/\s+/g,"").replace(/[*×]/g,"X");
+
+// Weight of one sheet in a lot. Prefer the lot's own stored figure — it comes
+// from the GRN and is correct even where calcSheetWt is not (flats).
+const lotSheetWt = (lot) => {
+  const w = +(lot?.sheetWt||0);
+  if (w > 0) return w;
+  const n = +(lot?.sheetCount||0);
+  const rec = +(lot?.wtReceived||0);
+  return (n > 0 && rec > 0) ? rec/n : 0;
+};
+const lotSheetCount = (lot) => {
+  const n = +(lot?.sheetCount||0);
+  if (n > 0) return n;
+  const sw = lotSheetWt(lot);
+  return sw > 0 ? Math.round((+(lot?.wtReceived||0))/sw) : 0;
+};
+// Sheets from a weight. ALWAYS rounds UP so availability is never over-promised.
+// The epsilon absorbs float noise so 3×392.5 reads 3 sheets, not 4.
+const kgToSheets = (kg, sheetWt) => {
+  const k = +kg||0, w = +sheetWt||0;
+  if (w <= 0 || k <= 0) return 0;
+  return Math.ceil(k/w - 1e-6);
+};
+
+// Lots that could supply this material.
+// A lot with a matCode matches on the normalised matCode. Older lots carry no
+// matCode at all — only sectionType + size + grade — so those match on the full
+// triple, never on section alone: matching on section would offer a 10 mm lot to
+// an 8 mm nest sheet, which is how the wrong steel gets cut.
+const matCodeParts = (mc) => {
+  const p = String(mc||"").split("/");
+  return { section: p[0]||"", grade: p[2]||"", size: p[3]||"" };
+};
+const sameToken = (a,b) => {
+  const n = (x) => String(x||"").toUpperCase().replace(/[^A-Z0-9.]/g,"");
+  return !!n(a) && n(a) === n(b);
+};
+const lotsForMaterial = (stock, matCode, section) => {
+  const want = matCodeParts(matCode);
+  const rNorm = normMatCode(matCode||"");
+  return (stock||[]).filter(s => {
+    if (s.isOffcut) return false;
+    if (["rejected","returned","written_off"].includes(s.status)) return false;
+    const sNorm = normMatCode(s.matCode||"");
+    if (sNorm && rNorm) return sNorm === rNorm;
+    if (s.matCode) return false;
+    const secMatch = sameToken(s.sectionType||s.section, section||want.section);
+    return secMatch && sameToken(s.size, want.size) && sameToken(s.grade, want.grade);
+  });
+};
+
+// Sheets of a lot already spoken for, split by cause. Deducted AT RELEASE, not at
+// cut: an uncancelled release means those sheets are allocated even though nobody
+// has switched a torch on yet. Cut is a later fact about the same sheets.
+const lotCommittedSheets = ({ lot, orderId, orderIds, releases }) => {
+  const sw = lotSheetWt(lot);
+  // A release can cover more than one order, so "mine" is a SET. A reservation
+  // held for any order in this release is not competing with it.
+  const mine = new Set([...(orderIds||[]), ...(orderId?[orderId]:[])].filter(Boolean));
+  let reservedOther = 0;
+  (lot?.reservations||[]).forEach(r => {
+    if (!r) return;
+    if (mine.size && mine.has(r.orderId)) return;
+    reservedOther += kgToSheets(r.kg, sw);
+  });
+  let allocated = 0;
+  (releases||[]).forEach(rel => {
+    if (!rel || rel.status === "cancelled") return;
+    const la = (rel.lotAllocations||[]).filter(a => a && a.lotId === lot.id);
+    if (la.length) { la.forEach(a => { allocated += (+a.sheets||0); }); return; }
+    // Legacy release (written before lotAllocations existed): fall back to the
+    // per-RM-unit stockLotId. That field was set by a first-match guess, so this
+    // is a best effort — never a silent claim of accuracy.
+    const n = (rel.rmUnitAssignments||[]).filter(u => u && u.stockLotId === lot.id).length;
+    allocated += n;
+  });
+  return { reservedOther, allocated };
+};
+
+// One row per lot for a given material + sheet size, with what is genuinely free
+// to THIS order. `suggested` fills oldest-lot-first up to what is needed; it is a
+// starting point, always editable.
+const buildLotRowsForDim = ({ stock, matCode, section, sheetDim, sheetsNeeded, orderId, orderIds, releases }) => {
+  const want = normSheetDim(sheetDim);
+  const lots = lotsForMaterial(stock, matCode, section)
+    .filter(l => !want || normSheetDim(l.sheetDim) === want)
+    .sort((a,b) => String(a.receivedDate||"").localeCompare(String(b.receivedDate||"")) ||
+                   String(a.lotNo||"").localeCompare(String(b.lotNo||"")));
+  let remaining = +sheetsNeeded||0;
+  const rows = lots.map(l => {
+    const sw = lotSheetWt(l);
+    const total = lotSheetCount(l);
+    const { reservedOther, allocated } = lotCommittedSheets({ lot:l, orderId, orderIds, releases });
+    const free = Math.max(0, total - reservedOther - allocated);
+    const take = Math.min(free, remaining);
+    remaining -= take;
+    return {
+      lotId: l.id, lotNo: l.lotNo||l.id, sheetDim: l.sheetDim||"", bayId: l.bayId||"",
+      make: lotMake(l), sheetWt: sw, totalSheets: total,
+      reservedOther, allocated, freeSheets: free, suggested: take,
+      freeKg: +(free*sw).toFixed(1),
+    };
+  });
+  return { rows, shortBy: Math.max(0, remaining), sheetsNeeded: +sheetsNeeded||0 };
+};
+
+// Group this material's RM units by sheet size, then attach the lots that can
+// supply each size. A material can legitimately span sizes — PLATE/MS/E250/8MM
+// nests on both 2500X1250 and 6000X1500 — and a 2500 sheet can never come out of
+// a 6000 lot, so the grouping is physical, not cosmetic.
+const buildLotAllocation = ({ units, stock, matCode, section, orderId, orderIds, releases }) => {
+  const byDim = {};
+  // The RM picture calls this sheet size `sheetDim`; the confirm-time unit calls the
+  // same value `dimensions`. Read both rather than silently collapsing every size
+  // into one bucket.
+  (units||[]).forEach(u => {
+    const dim = u.sheetDim || u.dimensions || "";
+    const k = normSheetDim(dim);
+    if (!byDim[k]) byDim[k] = { sheetDim: dim, units: [] };
+    byDim[k].units.push(u);
+  });
+  const groups = Object.values(byDim).map(g => {
+    const res = buildLotRowsForDim({
+      stock, matCode, section, sheetDim: g.sheetDim,
+      sheetsNeeded: g.units.length, orderId, orderIds, releases,
+    });
+    return { ...g, ...res, unitIds: g.units.map(u=>u.rmUnitId) };
+  });
+  const totalShort = groups.reduce((s,g)=>s+g.shortBy, 0);
+  return { groups, totalShort };
+};
+
+// Turn the planner's typed split into per-RM-unit lot stamps. Units of a size are
+// handed to the lots in listed order, filling each lot's typed count before moving
+// on — which is exactly what "1 from A013, 1 from A014" means on the floor.
+const assignUnitsToLots = (groups, picks) => {
+  const map = {};          // rmUnitId -> {lotId, lotNo}
+  const allocations = [];  // release-level record
+  (groups||[]).forEach(g => {
+    const ids = [...(g.unitIds||[])];
+    (g.rows||[]).forEach(r => {
+      const n = Math.max(0, +(picks?.[r.lotId] ?? r.suggested) || 0);
+      if (n <= 0) return;
+      const taken = ids.splice(0, n);
+      taken.forEach(id => { map[id] = { lotId: r.lotId, lotNo: r.lotNo }; });
+      if (taken.length) allocations.push({
+        lotId: r.lotId, lotNo: r.lotNo, sheetDim: g.sheetDim,
+        sheets: taken.length, kg: +(taken.length * (r.sheetWt||0)).toFixed(1),
+      });
+    });
+  });
+  return { map, allocations };
+};
+
 const buildEffectiveNestSource = (nestingBatches, productionNests) => {
   const frozen = (productionNests||[]).filter(n=>n && n.status==="frozen");
   if(frozen.length===0) return nestingBatches||[];   // untouched legacy path
@@ -6476,6 +6643,27 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 
   const updCont=(drawingId,field,val)=>setContAsgn(prev=>({...prev,[drawingId]:{...prev[drawingId],[field]:val}}));
 
+  // ── Lot resolution, shared by Step 3 and the confirm payload ───────────────
+  // Groups units by material and size, applies the planner's Step 2 split (or the
+  // suggested one where nothing was typed), and returns rmUnitId -> {lotId,lotNo}.
+  const resolveLotsForUnits = (units) => {
+    const out={};
+    const byMat={};
+    (units||[]).forEach(u=>{ (byMat[u.matCode]=byMat[u.matCode]||[]).push(u); });
+    const relOrderIds=[...new Set(selDrawings.map(s=>s.orderId).filter(Boolean))];
+    Object.keys(byMat).forEach(mc=>{
+      const section=String(mc||"").split("/")[0]||"";
+      const alloc=buildLotAllocation({units:byMat[mc],stock,matCode:mc,section,orderIds:relOrderIds,releases});
+      const picks={};
+      alloc.groups.forEach(g=>(g.rows||[]).forEach(lr=>{
+        const st=rmUnitAsgn[`lotpick::${mc}::${lr.lotId}`];
+        picks[lr.lotId]=st===undefined?lr.suggested:(+st.sheets||0);
+      }));
+      Object.assign(out, assignUnitsToLots(alloc.groups,picks).map);
+    });
+    return out;
+  };
+
   // ── Confirm ──
   const confirm = () => {
     const seq=releases.length+1;
@@ -6532,12 +6720,39 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       };
     });
 
+    // ── Lot allocation (Aug 2026) ────────────────────────────────────────────
+    // Step 2 now allocates SHEETS FROM NAMED LOTS per material and sheet size.
+    // Resolve that here into a lot per RM unit, plus a release-level record of how
+    // many sheets each lot gave. Replaces the old first-matching-lot guess, which
+    // stamped every unit of a material with the same (often wrong) lot.
+    const lotByRmUnit={}; const lotAllocations=[];
+    (()=>{
+      const byMat={};
+      rmUnits.forEach(ru=>{ (byMat[ru.matCode]=byMat[ru.matCode]||[]).push(ru); });
+      Object.keys(byMat).forEach(mc=>{
+        const units=byMat[mc];
+        const relOrderIds=[...new Set(selDrawings.map(s=>s.orderId).filter(Boolean))];
+        const section=String(mc||"").split("/")[0]||"";
+        const alloc=buildLotAllocation({units,stock,matCode:mc,section,orderIds:relOrderIds,releases});
+        const picks={};
+        alloc.groups.forEach(g=>(g.rows||[]).forEach(lr=>{
+          const st=rmUnitAsgnSnap[`lotpick::${mc}::${lr.lotId}`];
+          picks[lr.lotId]=st===undefined?lr.suggested:(+st.sheets||0);
+        }));
+        const res=assignUnitsToLots(alloc.groups,picks);
+        Object.assign(lotByRmUnit,res.map);
+        res.allocations.forEach(a=>lotAllocations.push({...a,matCode:mc}));
+      });
+    })();
+
     const rmUnitPayload=rmUnits.map(ru=>{
       const a=rmUnitAsgnSnap[ru.rmUnitId]||{};
-      // Get the stock lot allocated for this matCode in Step 2
-      // This applies to ALL rmUnits of the same matCode
+      // The lot this specific sheet comes from, per the Step 2 allocation.
+      // Falls back to the old material-wide guess ONLY when nothing was allocated,
+      // so a release made without touching Step 2 behaves as it always did.
+      const picked=lotByRmUnit[ru.rmUnitId]||null;
       const allocEntry=rmUnitAsgnSnap[`alloc::${ru.matCode}`]||{};
-      const stockLotId=allocEntry.lotId||"";
+      const stockLotId=(picked&&picked.lotId)||allocEntry.lotId||"";
       const stockLot=(stock||[]).find(s=>s.id===stockLotId)||
         (stock||[]).find(s=>normMatCode(s.matCode)===normMatCode(ru.matCode)&&
           ['available','reserved','partially_reserved'].includes(s.status))||{};
@@ -6736,6 +6951,10 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       id,releaseDate:today(),createdBy:user.username,status:"in_progress",
       drawings:drawingsPayload,rmUnitAssignments:rmUnitPayload,
       drawingInstanceIds:releasedDIIds,
+      // How many sheets this release took from each lot. Written so a later release
+      // can deduct them WITHOUT re-deriving from RM units — an uncancelled release
+      // means those sheets are allocated, whether or not anyone has cut them yet.
+      lotAllocations,
       rmPicture:rmPicture.map(r=>({matCode:r.matCode,requiredKg:r.requiredKg,availableKg:r.availableKg,status:r.status,lots:r.lots.map(l=>l.id)})),
     }]);
 
@@ -7118,36 +7337,80 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:`1px solid ${T.border}`}}>
                     {(()=>{
-                      const pending=(r.rmUnitsForMat||[]).filter(u=>u.cuttingStatus!=="done");
-                      if((r.rmUnitsForMat||[]).length===0) return <span style={{fontSize:11,color:T.textLow}}>No RM units in nesting</span>;
+                      const allUnits=(r.rmUnitsForMat||[]);
+                      const pending=allUnits.filter(u=>u.cuttingStatus!=="done");
+                      if(allUnits.length===0) return <span style={{fontSize:11,color:T.textLow}}>No RM units in nesting</span>;
                       if(pending.length===0) return <span style={{fontSize:11,color:T.green}}>✓ All sheets already cut</span>;
+                      const rowOrderIds=[...new Set((r.drawings||[]).map(d=>d.orderId).filter(Boolean))];
+                      const rowOrder=(orders||[]).find(o=>o.id===rowOrderIds[0]);
+                      const okMakes=approvedMakesFor(rowOrder,r.section);
+                      const alloc=buildLotAllocation({units:pending,stock,matCode:r.matCode,section:r.section,orderIds:rowOrderIds,releases});
                       return (
-                        <select
-                          value={rmUnitAsgn[`alloc::${r.matCode}`]?.rmUnitId||""}
-                          onChange={e=>{
-                            const ru=(r.rmUnitsForMat||[]).find(x=>x.rmUnitId===e.target.value);
-                            const stockLot=(stock||[]).find(s=>
-                              normMatCode(s.matCode)===normMatCode(r.matCode)&&
-                              ['available','reserved','partially_reserved'].includes(s.status)
-                            )||{};
-                            setRmUnitAsgn(prev=>({...prev,[`alloc::${r.matCode}`]:{
-                              rmUnitId:e.target.value,
-                              sheetDim:ru?.sheetDim||"",
-                              batchId:ru?.batchId||"",
-                              matCode:r.matCode,
-                              lotId:stockLot.id||"",
-                              lotNo:stockLot.lotNo||"",
-                            }}));
-                          }}
-                          style={{...css.input,fontSize:11,padding:"3px 6px",minWidth:180}}
-                        >
-                          <option value="">— Select RM unit —</option>
-                          {pending.map(ru=>(
-                            <option key={ru.rmUnitId} value={ru.rmUnitId}>
-                              {ru.rmUnitId} — {ru.selPartCount}/{ru.totalPartCount} parts{ru.cuttingStatus==="partial"?" (partial)":""}{ru.utilisPct>0?` — ${ru.utilisPct.toFixed(0)}% util`:""}
-                            </option>
-                          ))}
-                        </select>
+                        <div style={{minWidth:300}}>
+                          {alloc.groups.map((g,gi)=>{
+                            const picked=g.rows.reduce((s,x)=>{
+                              const v=rmUnitAsgn[`lotpick::${r.matCode}::${x.lotId}`];
+                              return s+(v===undefined?x.suggested:(+v.sheets||0));
+                            },0);
+                            return (
+                            <div key={gi} style={{marginBottom:gi<alloc.groups.length-1?8:0}}>
+                              <div style={{fontSize:10,fontWeight:700,color:T.textMid,letterSpacing:"0.03em"}}>
+                                {g.sheetDim||"—"} · needs {g.sheetsNeeded} sheet{g.sheetsNeeded!==1?"s":""}
+                              </div>
+                              {g.rows.length===0&&(
+                                <div style={{fontSize:11,color:T.red,marginTop:3}}>No lot in stock at this size</div>
+                              )}
+                              {g.rows.map(lr=>{
+                                const key=`lotpick::${r.matCode}::${lr.lotId}`;
+                                const st=rmUnitAsgn[key];
+                                const cur=st===undefined?lr.suggested:(+st.sheets||0);
+                                const mkState=makeApprovalState(rowOrder,r.section,lr.make);
+                                return (
+                                  <div key={lr.lotId} style={{display:"flex",alignItems:"center",gap:8,marginTop:3,padding:"3px 6px",background:T.bgInput,borderRadius:4}}>
+                                    <div style={{flex:1,minWidth:0}}>
+                                      <div style={{fontSize:11}}>
+                                        <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi}}>{lr.lotNo}</span>
+                                        <span style={{color:T.textMid}}> · {lr.totalSheets} sheet{lr.totalSheets!==1?"s":""} · {fmt.num(Math.round(lr.totalSheets*lr.sheetWt))} kg</span>
+                                        {lr.bayId&&<span style={{color:T.textLow}}> · {lr.bayId}</span>}
+                                      </div>
+                                      <div style={{fontSize:10,color:lr.freeSheets>0?T.textLow:T.red}}>
+                                        free to this order: {lr.freeSheets} sheet{lr.freeSheets!==1?"s":""} ({fmt.num(Math.round(lr.freeKg))} kg)
+                                        {lr.reservedOther>0&&<span> · {lr.reservedOther} reserved elsewhere</span>}
+                                        {lr.allocated>0&&<span> · {lr.allocated} already released</span>}
+                                      </div>
+                                      {mkState===false&&(
+                                        <div style={{fontSize:10,color:T.red}} title={`Approved: ${okMakes.join(", ")}`}>
+                                          ⚠ make: {lr.make} — not approved for this order
+                                        </div>
+                                      )}
+                                      {okMakes.length>0&&!lr.make&&(
+                                        <div style={{fontSize:10,color:T.textLow}}>make not recorded</div>
+                                      )}
+                                    </div>
+                                    <input type="number" min={0} value={cur}
+                                      onChange={e=>{
+                                        const n=Math.max(0,parseInt(e.target.value,10)||0);
+                                        setRmUnitAsgn(prev=>({...prev,[key]:{sheets:n,lotId:lr.lotId,lotNo:lr.lotNo,matCode:r.matCode,sheetDim:g.sheetDim}}));
+                                      }}
+                                      style={{...css.input,fontSize:11,padding:"2px 4px",width:52,textAlign:"right",
+                                        borderColor:cur>lr.freeSheets?T.red:undefined}} />
+                                  </div>
+                                );
+                              })}
+                              {picked!==g.sheetsNeeded&&(
+                                <div style={{fontSize:10,color:picked<g.sheetsNeeded?T.amber:T.red,marginTop:2}}>
+                                  allocated {picked} of {g.sheetsNeeded} needed
+                                </div>
+                              )}
+                              {g.shortBy>0&&(
+                                <div style={{fontSize:10,color:T.amber,marginTop:2}}>
+                                  ⚠ Not enough reserved material — short {g.shortBy} sheet{g.shortBy!==1?"s":""}
+                                </div>
+                              )}
+                            </div>
+                            );
+                          })}
+                        </div>
                       );
                     })()}
                   </td>
@@ -7253,6 +7516,10 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
     // a contractor; a vendor-cut bar takes an outbound vendor. Same screen, same act.
     const rmUnits=getRmUnitsForRelease();
     const vendorUnits=rmUnits.filter(ru=>ru.vendorCut);
+    // Which lot each bar comes from, using the Step 2 allocation. Shown instead of
+    // the raw PRELIM/... id: the id is a nesting label, the lot is what the store
+    // and the vendor's gate actually handle.
+    const lotOfUnit=resolveLotsForUnits(rmUnits);
     const cuttingContractors=(contractors||[]).filter(c=>c.active!==false&&(c.type||[]).includes('cutting'));
     // Outbound vendors are their own master (OV-…), not the RM/paint/transport
     // supplier list. Narrow further to vendors who actually do this process type.
@@ -7344,7 +7611,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             <table style={{width:"100%",borderCollapse:"collapse",background:T.bgCard,borderRadius:8,fontSize:12}}>
               <thead>
                 <tr style={{background:T.bgInput}}>
-                  {["","RM Unit ID","Mat Code","Dimensions","Parts","Nesting File","Contractor","Start Date","End Date","Status"].map(h=>(
+                  {["","Lot / RM Unit","Mat Code","Dimensions","Parts","Nesting File","Contractor","Start Date","End Date","Status"].map(h=>(
                     <th key={h} style={{padding:"8px 10px",fontSize:11,color:T.textMid,fontWeight:700,textAlign:"left",borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap"}}>{h}</th>
                   ))}
                 </tr>
@@ -7361,9 +7628,12 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`}}>
                           <button onClick={()=>setExpandedMat(p=>({...p,[`ru::${ru.rmUnitId}`]:!p[`ru::${ru.rmUnitId}`]}))} style={{...css.btn.ghost,padding:"2px 6px",fontSize:11}}>{expanded?"▼":"▶"}</button>
                         </td>
-                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontFamily:T.fontMono,fontSize:11,color:T.accentHi}}>
+                        <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11}}>
                           {ru.vendorCut&&<span title={`Goes out under "${ru.vendorCutStep?.label||"outbound"}" — back at ${ru.vendorCutStep?.reEntryStep||"?"}`} style={{color:T.amber,fontWeight:700,marginRight:4}}>⬆</span>}
-                          {ru.rmUnitId}
+                          {lotOfUnit[ru.rmUnitId]
+                            ? <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi}}>{lotOfUnit[ru.rmUnitId].lotNo}</span>
+                            : <span style={{color:T.textLow}}>no lot allocated</span>}
+                          <div style={{fontSize:9,color:T.textLow,fontFamily:T.fontMono,marginTop:1}}>{ru.rmUnitId}</div>
                         </td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11}}>{ru.matCode}</td>
                         <td style={{padding:"8px 10px",borderBottom:`1px solid ${T.border}`,fontSize:11,fontFamily:T.fontMono}}>{ru.dimensions}</td>
@@ -7891,18 +8161,22 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
 
   const doPrint = (g) => {
     const list = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, sheetOf:sheetForRmUnit, drawingInstances, user });
+    const lotNoOfUnit = {}; (g.units||[]).forEach(u=>{ if(u.stockLotNo) lotNoOfUnit[u.rmUnitId]=u.stockLotNo; });
     const esc = (x)=>String(x==null?"":x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
     // MAIN TABLE — one line per material + SIZE. That is what gets loaded.
+    // One line per material + SIZE + LOT. The lot is what the store picks from the
+    // bay and what the vendor's gate signs for, so it belongs on the paper.
     const bySize = {};
     g.units.forEach(u=>{
-      const k = `${u.matCode||"—"}||${u.dimensions||u.sheetDim||"—"}`;
-      const r = bySize[k] || (bySize[k] = { matCode:u.matCode||"—", size:u.dimensions||u.sheetDim||"—", qty:0, wt:0 });
+      const lotNo = u.stockLotNo||"—";
+      const k = `${u.matCode||"—"}||${u.dimensions||u.sheetDim||"—"}||${lotNo}`;
+      const r = bySize[k] || (bySize[k] = { matCode:u.matCode||"—", size:u.dimensions||u.sheetDim||"—", lotNo, qty:0, wt:0 });
       r.qty += 1; r.wt += (+u.sheetWt||0);
     });
     const goRows = Object.values(bySize)
-      .sort((x,y)=>String(x.matCode).localeCompare(String(y.matCode))||String(x.size).localeCompare(String(y.size)))
-      .map(r=>`<tr><td>${esc(r.matCode)}</td><td>${esc(r.size)}</td>`
+      .sort((x,y)=>String(x.matCode).localeCompare(String(y.matCode))||String(x.size).localeCompare(String(y.size))||String(x.lotNo).localeCompare(String(y.lotNo)))
+      .map(r=>`<tr><td>${esc(r.matCode)}</td><td>${esc(r.size)}</td><td>${esc(r.lotNo)}</td>`
         +`<td class="r">${r.qty}</td><td class="r">${r.wt.toFixed(1)}</td></tr>`).join("");
     const goTot = Object.values(bySize).reduce((a,r)=>a+r.wt,0);
 
@@ -7922,10 +8196,10 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
     // ANNEXURE — mark numbers, only if there are riders to list
     const annex = rid.length===0 ? "" :
       `<h2>Annexure — cut parts returning, by RM unit</h2>
-       <table><thead><tr><th>RM unit</th><th>Drawing</th><th>Mark</th><th>Dimensions</th>
+       <table><thead><tr><th>Lot</th><th>RM unit</th><th>Drawing</th><th>Mark</th><th>Dimensions</th>
        <th class="r">Qty</th><th class="r">Kg</th></tr></thead><tbody>`
       + rid.sort((x,y)=>String(x.rmUnitId).localeCompare(String(y.rmUnitId)))
-          .map(l=>`<tr><td>${esc(l.rmUnitId)}</td><td>${esc(l.drawingNo)}</td><td>${esc(l.markNo)}</td>`
+          .map(l=>`<tr><td>${esc(lotNoOfUnit[l.rmUnitId]||"—")}</td><td>${esc(l.rmUnitId)}</td><td>${esc(l.drawingNo)}</td><td>${esc(l.markNo)}</td>`
             +`<td>${esc(l.dimensions)}</td><td class="r">${esc(l.qty)}</td><td class="r">${esc(l.totalWt)}</td></tr>`).join("")
       + `</tbody></table>`;
 
@@ -7950,9 +8224,9 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
         &nbsp; Expected back: ${esc(f("expectedReturn",""))}</div>
 
       <h2>Material issued</h2>
-      <table><thead><tr><th>Material</th><th>Size</th><th class="r">Nos</th><th class="r">Kg</th></tr></thead>
+      <table><thead><tr><th>Material</th><th>Size</th><th>Lot</th><th class="r">Nos</th><th class="r">Kg</th></tr></thead>
         <tbody>${goRows}</tbody>
-        <tfoot><tr><td colspan="2">Total</td><td class="r">${g.units.length}</td>
+        <tfoot><tr><td colspan="3">Total</td><td class="r">${g.units.length}</td>
           <td class="r">${goTot.toFixed(1)}</td></tr></tfoot></table>
 
       <h2>To be returned</h2>
@@ -8051,6 +8325,8 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
                                 <span style={{fontSize:11,color:T.textMid}}>
                                   <b style={{color:T.text}}>{m.units.length}</b> nos ·{" "}
                                   {m.sizeList.map(x=>`${x.size} ×${x.qty}`).join(" · ")} · {m.totalWt} kg
+                                  {m.lotList.length>0&&<span style={{color:T.accentHi,fontFamily:T.fontMono}}>
+                                    {" · "}{m.lotList.map(x=>`${x.lotNo} ×${x.qty}`).join(" · ")}</span>}
                                 </span>
                               </div>
                               {mOpen&&m.units.map(ru=>{
@@ -8061,8 +8337,11 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
                                     <div onClick={()=>setBarOpen(p=>({...p,[ru.rmUnitId]:!bOpen}))}
                                       style={{display:"flex",justifyContent:"space-between",alignItems:"center",
                                               padding:"4px 8px 4px 26px",cursor:"pointer"}}>
-                                      <span style={{fontFamily:T.fontMono,fontSize:11}}>
-                                        <span style={{color:T.textLow,marginRight:6}}>{bOpen?"▼":"▶"}</span>{ru.rmUnitId}
+                                      <span style={{fontSize:11}}>
+                                        <span style={{color:T.textLow,marginRight:6}}>{bOpen?"▼":"▶"}</span>
+                                        <span style={{fontFamily:T.fontMono,fontWeight:700,color:T.accentHi}}>
+                                          {ru.stockLotNo||"no lot"}</span>
+                                        <span style={{fontFamily:T.fontMono,color:T.textLow,fontSize:10}}> · {ru.rmUnitId}</span>
                                       </span>
                                       <span style={{fontSize:10,color:T.textLow}}>
                                         {ru.dimensions||ru.sheetDim||""} · {ru.sheetWt||0} kg ·

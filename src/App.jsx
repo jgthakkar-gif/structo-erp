@@ -6,6 +6,7 @@ import { fmt, today, getFinancialYear, genOrderId, normMatCode, normSize, buildM
   calcSheetWt, buildDIId, getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
   parseCSVLine, parseCSVText, can, ROLE_DEFAULT_PERMS, USERS,
+  approvedMakesFor, orderSpecifiesMakes, makeApprovalState, sameMake, makeSuggestions, lotMake,
   computePaintableArea, getPaintCoats } from "./helpers.js";
 import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
@@ -2049,6 +2050,13 @@ const buildStockLots = (grnForm, po, grnId, ts, purchaseReqs=[]) => {
       mtcDoc: mtc?.driveLink || "",
       mtcUploaded: !!(mtc?.driveLink),
       qtyRcv:l.rcvgQty||0, millMake:l.millMake||grnForm.millMake||"",
+      // Make: what the receiver confirmed on this line, else what the PO ordered,
+      // else the GRN header's mill field. makeSource records which, so a later
+      // dispute can tell an MTC-verified make from an assumed one.
+      make: (l.make||"").trim() || (poLine.make||"").trim() || (grnForm.millMake||"").trim() || "",
+      makeSource: (l.make||"").trim() ? "grn" : ((poLine.make||"").trim() ? "po" : ((grnForm.millMake||"").trim() ? "grn" : "")),
+      makeMismatch: !!((l.make||"").trim() && (poLine.make||"").trim() && !sameMake(l.make, poLine.make)),
+      makeRemark: (l.makeRemark||"").trim(),
       wtReceived:l.actualWt||l.wtReceived, wtAvailable:l.actualWt||l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
       unitPrice:l.rate||0, lineValue:l.lineValue||Math.round((l.actualWt||l.wtReceived||0)*(l.rate||0)*100)/100,
       status:"qc_hold", bayId:l.bayId||grnForm.bayId||"",
@@ -2099,6 +2107,13 @@ const buildStockLots = (grnForm, po, grnId, ts, purchaseReqs=[]) => {
         mtcNo:hs.mtcNo||"",
         mtcDoc:"", mtcUploaded:false,
         qtyRcv:hs.qty||0, millMake:grnLine.millMake||grnForm.millMake||"",
+        // Heat splits inherit the LINE's make. If a single PO line ever arrives from
+        // two different mills, that needs a per-lot make at GRN — not built, and Jai
+        // should be asked before assuming it.
+        make: (grnLine.make||"").trim() || (poLine.make||"").trim() || (grnForm.millMake||"").trim() || "",
+        makeSource: (grnLine.make||"").trim() ? "grn" : ((poLine.make||"").trim() ? "po" : ((grnForm.millMake||"").trim() ? "grn" : "")),
+        makeMismatch: !!((grnLine.make||"").trim() && (poLine.make||"").trim() && !sameMake(grnLine.make, poLine.make)),
+        makeRemark: (grnLine.makeRemark||"").trim(),
         wtReceived:hs.wt, wtAvailable:hs.wt, wtAllocated:0, wtIssued:0, wtConsumed:0,
         unitPrice:grnLine.rate||0,
         lineValue:Math.round(hs.wt*(grnLine.rate||0)*100)/100,
@@ -8150,7 +8165,27 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
     });
     const latestNest = nestBatches[nestBatches.length-1];
     const nestSheets = latestNest ? (latestNest.lots||[]).filter(l=>normMatCode(l.matCode)===rowKey).reduce((s,l)=>s+(l.sheets||[]).length,0) : 0;
+    // ── ON ORDER ────────────────────────────────────────────────────────────
+    // Bought but not yet received. Without this the bar has only two states, so a
+    // material you ordered last week looks exactly like one you forgot to buy.
+    const onOrderKg = (pos||[]).filter(p=>p.status!=="cancelled").reduce((s,p)=>
+      s + (p.lines||[]).filter(l=>{
+        if (normMatCode(l.matCode)===rowKey) return true;
+        return l.sectionType===row.section && l.size===row.size && l.grade===row.grade;
+      }).reduce((ls,l)=>{
+        const ord = (+l.wtOrdered||0), rec = (+l.wtReceived||0);
+        return ls + Math.max(0, ord - rec);
+      },0), 0);
+    // Unplaced parts from the latest nest — the shortfall that "raise PR for the
+    // PLACED pieces only" would otherwise make invisible.
+    // The batch stores this as `unplacedParts` (shape: {mark, expected, placed,
+    // reason, text}). Reading the wrong field name is how a display goes silently
+    // empty — check what the record actually stores, not what it is called elsewhere.
+    const unplaced = latestNest ? (latestNest.unplacedParts||latestNest.unplaced||[]) : [];
     return { ...row, stockAvail, netToProcure, prStatus: pr?.status||"none",
+             onOrderKg: Math.round(onOrderKg),
+             stillShortKg: Math.max(0, Math.round(netToProcure - onOrderKg)),
+             unplaced,
              nested: !!latestNest, nestBatchId: latestNest?.id||"", nestSheets };
   });
   // fabListAll = every requirement row for the chosen order(s); fabList (below)
@@ -8766,17 +8801,49 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                             <TD right mono color={T.green}>{fmt.num(Math.round(row.stockAvail))}</TD>
                             <TD right mono bold color={netColor}>{fmt.num(Math.round(row.netToProcure))}</TD>
                             <TD>
-                              <div style={{ width:80, height:6, background:T.border, borderRadius:3, overflow:"hidden" }}>
-                                <div style={{ height:"100%", width:`${covPct}%`, background:covPct>=100?T.green:covPct>50?T.amber:T.red, borderRadius:3 }} />
-                              </div>
-                              <div style={{ fontSize:10, color:T.textLow, marginTop:2 }}>{covPct.toFixed(0)}%</div>
+                              {(()=>{
+                                const req = row.wtRequired||0;
+                                const inStock = req>0 ? Math.min(100,(row.stockAvail/req)*100) : 100;
+                                const onOrd   = req>0 ? Math.min(100-inStock,((row.onOrderKg||0)/req)*100) : 0;
+                                const short   = Math.max(0, 100-inStock-onOrd);
+                                return (
+                                  <>
+                                    <div title={`In stock ${Math.round(row.stockAvail)} kg · on order ${row.onOrderKg||0} kg · short ${row.stillShortKg||0} kg`}
+                                      style={{ width:80, height:6, background:T.border, borderRadius:3, overflow:"hidden", display:"flex" }}>
+                                      <div style={{ height:"100%", width:`${inStock}%`, background:T.green }} />
+                                      <div style={{ height:"100%", width:`${onOrd}%`, background:T.accent }} />
+                                      <div style={{ height:"100%", width:`${short}%`, background:T.red }} />
+                                    </div>
+                                    <div style={{ fontSize:10, color:T.textLow, marginTop:2 }}>
+                                      {inStock.toFixed(0)}%
+                                      {onOrd>0.5&&<span style={{color:T.accent}}> +{onOrd.toFixed(0)}% on order</span>}
+                                      {short>0.5&&<span style={{color:T.red}}> · {row.stillShortKg} kg short</span>}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                             </TD>
                             <TD><Badge color={prBadge}>{row.prStatus==="none"?"no PR":row.prStatus}</Badge></TD>
                             <TD>
                               {row.nested ? (
                                 <div>
-                                  <Badge color="green">✓ Nested · {row.nestSheets} sheet{row.nestSheets!==1?"s":""}</Badge>
+                                  {(row.unplaced||[]).length>0
+                                    ? <Badge color="amber">⚠ Nested · {row.nestSheets} sheet{row.nestSheets!==1?"s":""} · {row.unplaced.length} mark(s) unplaced</Badge>
+                                    : <Badge color="green">✓ Nested · {row.nestSheets} sheet{row.nestSheets!==1?"s":""}</Badge>}
                                   <div style={{ fontSize:9, color:T.textLow, fontFamily:T.fontMono, marginTop:2 }}>{row.nestBatchId}</div>
+                                  {/* An incomplete nest must not go quiet. "Raise PR for the PLACED
+                                      pieces only" leaves these parts with no material on order, and
+                                      coverage cannot show it because coverage is stock-based. */}
+                                  {(row.unplaced||[]).length>0&&(
+                                    <div style={{ fontSize:9, color:T.amber, marginTop:2, maxWidth:220 }}>
+                                      {row.unplaced.slice(0,4).map((u,ui)=>(
+                                        <div key={ui}>{u.mark}{u.expected>0?` ×${Math.max(0,(u.expected||0)-(u.placed||0))}`:""}
+                                          {u.reason?<span style={{color:T.textLow}}> — {String(u.reason).replace(/_/g," ")}</span>:null}</div>
+                                      ))}
+                                      {row.unplaced.length>4&&<div style={{color:T.textLow}}>+{row.unplaced.length-4} more</div>}
+                                      <div style={{ color:T.textLow, fontStyle:"italic" }}>no material ordered for these</div>
+                                    </div>
+                                  )}
                                   <button onClick={()=>setNestExportMatCode(row)}
                                     style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",marginTop:2}}>↻ Re-nest</button>
                                 </div>
@@ -10705,12 +10772,37 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
               sourceType:"nesting", sourcePrId:pr.id,
               orderAllocations: (()=>{ const oids = prOrderIdsFor(pr); const wt = Math.round(wtPerSheet*qty*100)/100;
                 return (oids.length===1 && wt>0) ? [{ orderId:oids[0], kg:wt }] : []; })(),
+              // Make is chosen per line on the PO screen. Captured on EVERY line —
+              // even where the order specifies nothing — so every lot ends up tagged
+              // with who made the steel. makeApproved: true / false / null(=nothing
+              // was specified, so nothing is being deviated from).
+              make: (combineForm.makes?.[prLineKey(pr.id, l.matCode, ln.sheetDim||ln.dims)] || "").trim(),
+              makeApproved: null, makeRemark: (combineForm.makeRemarks?.[prLineKey(pr.id, l.matCode, ln.sheetDim||ln.dims)] || "").trim(),
               itemCode: l.matCode + ((ln.sheetDim||ln.dims) ? "/"+(ln.sheetDim||ln.dims) : ""),
+              _prOrderIds: prOrderIdsFor(pr),
             };
           }).filter(Boolean)
         )
       );
     if (allLines.length===0) { showToast("Nothing to convert — all quantities are 0"); return; }
+    // Resolve each line's make against the approving order(s). A line serving two
+    // orders must satisfy BOTH: a make one order approves and the other does not is
+    // still a deviation and still needs a remark.
+    {
+      const missing = [];
+      allLines.forEach(l => {
+        const oids = l._prOrderIds || [];
+        const verdicts = oids.map(oid => makeApprovalState((orders||[]).find(o=>o.id===oid), l.sectionType, l.make))
+                             .filter(v => v !== null);
+        l.makeApproved = verdicts.length === 0 ? null : verdicts.every(Boolean);
+        delete l._prOrderIds;
+        if (l.makeApproved === false && !l.makeRemark) missing.push(`${l.matCode} — ${l.make||"(no make)"}`);
+      });
+      if (missing.length) {
+        showToast("A non-approved make needs a reason: " + [...new Set(missing)].join("; "), "amber");
+        return;
+      }
+    }
     const newPO = {
       id:newPoId, docNo:makeDocNo("po",{existing:pos||[],company}), vendorId:combineForm.vendorId, vendorCode:v?.vendorCode||"",
       vendorName:v?.name||combineForm.vendorName||"", poDate:combineForm.poDate||today(),
@@ -11767,7 +11859,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
             <div style={{ fontWeight:700, color:T.textMid, marginBottom:6 }}>{selectedPrs.length>1?`Combining ${selectedPrs.length} requisitions`:"Converting 1 requisition"} — adjust quantities to split across POs; the remainder stays open on the PR:</div>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
               <thead><tr>
-                {["PR","Material","Dim","Remaining","Qty to this PO","Wt (kg)"].map(h=><th key={h} style={{ textAlign:"left", padding:"3px 6px", color:T.textMid, fontWeight:600, borderBottom:`1px solid ${T.border}` }}>{h}</th>)}
+                {["PR","Material","Dim","Remaining","Qty to this PO","Wt (kg)","Make"].map(h=><th key={h} style={{ textAlign:"left", padding:"3px 6px", color:T.textMid, fontWeight:600, borderBottom:`1px solid ${T.border}` }}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {(purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).flatMap(pr=>
@@ -11790,12 +11882,99 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
                             style={{ ...css.input, width:70, padding:"3px 6px", fontSize:11 }} />
                         </td>
                         <td style={{ padding:"3px 6px", fontFamily:T.fontMono, textAlign:"right" }}>{fmt.num(Math.round(sheetWt(l.matCode,dim)*q))}</td>
+                        <td style={{ padding:"3px 6px" }}>
+                          {(()=>{
+                            // The ORDER's approved list is the only source. Sections the
+                            // order specifies get a closed dropdown (plus Other, which
+                            // requires a reason). Sections it says nothing about get free
+                            // text with suggestions from what was typed before.
+                            const section = parseNestingMatCode(l.matCode).sectionType;
+                            const oids = pr.type==="store" ? (pr.orderId?[pr.orderId]:[])
+                                       : ((nestingBatches||[]).find(x=>x.id===pr.nestingBatchId)?.orderIds||[]);
+                            const ords = oids.map(oid=>(orders||[]).find(o=>o.id===oid)).filter(Boolean);
+                            const specified = ords.filter(o=>orderSpecifiesMakes(o,section));
+                            // Several orders on one line: only makes ALL of them approve
+                            // are offered without a flag.
+                            const common = specified.length===0 ? [] :
+                              specified.map(o=>approvedMakesFor(o,section))
+                                .reduce((a,b)=>a.filter(m=>b.some(x=>sameMake(x,m))));
+                            const cur = combineForm.makes?.[k] ?? "";
+                            const isOther = combineForm.makeOther?.[k];
+                            const setMake=(v)=>setCombineForm(f=>({...f, makes:{...(f.makes||{}), [k]:v}}));
+                            if (specified.length===0) {
+                              return (
+                                <>
+                                  <input list={`mk-${k}`} value={cur} onChange={e=>setMake(e.target.value)}
+                                    placeholder="make" style={{ ...css.input, width:130, padding:"3px 6px", fontSize:11 }} />
+                                  <datalist id={`mk-${k}`}>
+                                    {makeSuggestions(pos, section).map(m=><option key={m} value={m} />)}
+                                  </datalist>
+                                </>
+                              );
+                            }
+                            const notApproved = !!cur && !common.some(m=>sameMake(m,cur));
+                            return (
+                              <>
+                                <select value={isOther?"__other__":cur}
+                                  onChange={e=>{
+                                    if(e.target.value==="__other__"){ setCombineForm(f=>({...f, makeOther:{...(f.makeOther||{}), [k]:true}, makes:{...(f.makes||{}), [k]:""}})); }
+                                    else { setCombineForm(f=>({...f, makeOther:{...(f.makeOther||{}), [k]:false}, makes:{...(f.makes||{}), [k]:e.target.value}})); }
+                                  }}
+                                  style={{ ...css.input, width:130, padding:"3px 6px", fontSize:11,
+                                    borderColor:notApproved?T.amber:undefined }}>
+                                  <option value="">— select make —</option>
+                                  {common.map(m=><option key={m} value={m}>{m}</option>)}
+                                  <option value="__other__">Other…</option>
+                                </select>
+                                {isOther&&(
+                                  <input value={cur} onChange={e=>setMake(e.target.value)} placeholder="make"
+                                    style={{ ...css.input, width:130, padding:"3px 6px", fontSize:11, marginTop:2 }} />
+                                )}
+                                {notApproved&&(
+                                  <input value={combineForm.makeRemarks?.[k]||""}
+                                    onChange={e=>setCombineForm(f=>({...f, makeRemarks:{...(f.makeRemarks||{}), [k]:e.target.value}}))}
+                                    placeholder="reason (required)"
+                                    style={{ ...css.input, width:130, padding:"3px 6px", fontSize:10, marginTop:2,
+                                      borderColor:(combineForm.makeRemarks?.[k]||"").trim()?undefined:T.red }} />
+                                )}
+                              </>
+                            );
+                          })()}
+                        </td>
                       </tr>
                     );
                   })).filter(Boolean)
                 )}
               </tbody>
             </table>
+            {/* One make for the whole PO, applied only where each line's own order
+                actually approves it — a blanket set that lands an unapproved make is
+                precisely what the flag exists to prevent. */}
+            <div style={{ marginTop:8, display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+              <input value={combineForm.bulkMake||""} onChange={e=>setCombineForm(f=>({...f,bulkMake:e.target.value}))}
+                placeholder="Apply one make to all lines…" style={{ ...css.input, width:200, padding:"3px 6px", fontSize:11 }} />
+              <button onClick={()=>{
+                const mk=(combineForm.bulkMake||"").trim();
+                if(!mk) return;
+                const next={...(combineForm.makes||{})}; const skipped=[];
+                (purchaseReqs||[]).filter(r=>selectedPrs.includes(r.id)).forEach(pr=>
+                  (pr.lots||[]).filter(l=>!l.fulfilledFromStock).forEach(l=>(l.lines||[]).forEach(ln=>{
+                    const dim=ln.sheetDim||ln.dims||"";
+                    if(prLineRemaining(pr,l,ln)<=0) return;
+                    const kk=prLineKey(pr.id,l.matCode,dim);
+                    const section=parseNestingMatCode(l.matCode).sectionType;
+                    const oids = pr.type==="store" ? (pr.orderId?[pr.orderId]:[])
+                               : ((nestingBatches||[]).find(x=>x.id===pr.nestingBatchId)?.orderIds||[]);
+                    const ords=oids.map(oid=>(orders||[]).find(o=>o.id===oid)).filter(Boolean);
+                    const specified=ords.filter(o=>orderSpecifiesMakes(o,section));
+                    const allow = specified.length===0 || specified.every(o=>makeApprovalState(o,section,mk)===true);
+                    if(allow) next[kk]=mk; else skipped.push(l.matCode);
+                  })));
+                setCombineForm(f=>({...f, makes:next}));
+                if(skipped.length) showToast(`Applied. Skipped ${[...new Set(skipped)].join(", ")} — ${mk} is not approved there.`,"amber");
+                else showToast("Make applied to all lines");
+              }} style={{ ...css.btn.secondary, fontSize:11 }}>Apply to all</button>
+            </div>
           </div>
           <G2>
             <Field label="Vendor" required>
@@ -13581,6 +13760,46 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], orders=[], pos, se
                         </tr>
                       );
                     })}
+                    {/* MAKE sub-row — prefilled from the PO line, editable at receipt.
+                        The PO records what was ORDERED; the MTC records what ARRIVED, and
+                        the MTC is the real evidence of who made the steel. A change is
+                        recorded as a mismatch with a reason, never accepted silently. */}
+                    {groupItems.map(({l,i})=>{
+                      const pl = po.lines?.find(x=>x.id===l.poLineId)||{};
+                      if (l.checked===false) return null;
+                      const poMake = (pl.make||"").trim();
+                      const cur = l.make===undefined ? poMake : (l.make||"");
+                      const mismatch = !!poMake && !!cur && !sameMake(poMake, cur);
+                      if (!poMake && !cur && !(grnForm.millMake||"").trim()) return null;
+                      return (
+                        <tr key={`mk-${i}`} style={{ background:`${T.amber}06`, borderBottom:`1px solid ${T.border}` }}>
+                          <td></td>
+                          <td colSpan={9} style={{ padding:"6px 8px" }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                              <span style={{ fontSize:10, fontWeight:700, color:T.amber, letterSpacing:"0.04em" }}>MAKE</span>
+                              <input value={cur} onChange={e=>updLine(i,{make:e.target.value})}
+                                placeholder={poMake||"mill / make"}
+                                style={{ ...css.input, width:170, padding:"3px 6px", fontSize:11,
+                                  borderColor:mismatch?T.amber:undefined }} />
+                              {poMake&&(
+                                <span style={{ fontSize:10, color:T.textLow }}>
+                                  PO says <b style={{color:T.textMid}}>{poMake}</b>
+                                  {pl.makeApproved===false&&<span style={{color:T.red}}> · flagged on the PO</span>}
+                                </span>
+                              )}
+                              {mismatch&&(
+                                <>
+                                  <span style={{ fontSize:10, color:T.amber, fontWeight:700 }}>⚠ differs from the PO</span>
+                                  <input value={l.makeRemark||""} onChange={e=>updLine(i,{makeRemark:e.target.value})}
+                                    placeholder="reason (per MTC)"
+                                    style={{ ...css.input, width:200, padding:"3px 6px", fontSize:10 }} />
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {/* PHASE F — per-order split sub-rows: only for lines whose PO line covers >1 order.
                         Auto-proportional split is pre-filled; receiver can override per order. */}
                     {groupItems.map(({l,i})=>{
@@ -14819,6 +15038,10 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
   const [resRelIdx, setResRelIdx] = useState(-1);
   const [returnModal, setReturnModal] = useState(null); // lot for Return to Vendor
   const [returnForm, setReturnForm] = useState({});
+  const [orderFilter, setOrderFilter] = useState([]);   // orderIds — reserved-for filter
+  const [makeLot, setMakeLot] = useState(null);         // lot whose make is being entered
+  const [makeForm, setMakeForm] = useState({});
+  const [resPop, setResPop] = useState("");             // lotId whose reservation list is open
 
   const yr = new Date().getFullYear();
   const showToast = (msg,color="green") => { setToast({msg,color}); setTimeout(()=>setToast(null),3000); };
@@ -14833,10 +15056,27 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
     consumed:  stock.reduce((s,x)=>s+(x.wtConsumed||0),0),
   };
 
+  // Sheets from a reservation's kg. Rounded UP so a part-sheet reservation is never
+  // shown as fewer sheets than it actually ties up.
+  const resSheets = (lot, kg) => {
+    const sw = +(lot?.sheetWt||0) || ((+lot?.sheetCount||0)>0 ? (+lot?.wtReceived||0)/(+lot.sheetCount) : 0);
+    return sw>0 && kg>0 ? Math.ceil(kg/sw - 1e-6) : 0;
+  };
+  // Who is this lot held for, and how much. One place, so the badge, the popover and
+  // the order filter can never disagree.
+  const lotReservations = (s) => (s.reservations||[]).filter(r=>r&&r.orderId).map(r=>({
+    orderId:r.orderId,
+    orderNo:(orders||[]).find(o=>o.id===r.orderId)?.orderNo || r.orderId,
+    kg:+r.kg||0, sheets:resSheets(s, +r.kg||0),
+  }));
+
   const filtered = stock.filter(s => {
     const ms = filter==="all" || (filter==="offcuts"?s.isOffcut:filter==="reserved"?(s.reservations||[]).length>0:s.status===filter);
-    const mq = !search || [s.lotNo,s.batchNo,s.matCode,(s.sectionType||s.section),s.size,s.grade,s.vendorName,s.heatNo].some(v=>(v||"").toLowerCase().includes(search.toLowerCase()));
-    return ms && mq;
+    const mq = !search || [s.lotNo,s.batchNo,s.matCode,(s.sectionType||s.section),s.size,s.grade,s.vendorName,s.heatNo,lotMake(s)].some(v=>(v||"").toLowerCase().includes(search.toLowerCase()));
+    // Order filter is a UNION: pick two orders and you see everything held for
+    // either, which is the question being asked ("what is sitting for these jobs").
+    const mo = orderFilter.length===0 || (s.reservations||[]).some(r=>r&&orderFilter.includes(r.orderId));
+    return ms && mq && mo;
   });
 
   const stCol = { available:"green", allocated:"blue", issued:"purple", consumed:"gray", qc_hold:"amber", written_off:"red", pending_offcut_verification:"amber", reserved:"amber", partially_reserved:"amber", rejected:"red", returned:"gray" };
@@ -16134,6 +16374,43 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
         </button>
       </div>
 
+      {/* Reserved-for-order filter — answers "what have I actually got sitting for
+          this job", which the tonnage tiles never do. */}
+      {filter!=="issue_requests" && (() => {
+        const resOrderIds = [...new Set(stock.flatMap(s=>(s.reservations||[]).map(r=>r&&r.orderId).filter(Boolean)))];
+        if (resOrderIds.length===0) return null;
+        const sel = new Set(orderFilter);
+        const shown = filtered.filter(s=>(s.reservations||[]).length>0);
+        const selKg = shown.reduce((a,s)=>a+lotReservations(s).filter(r=>sel.size===0||sel.has(r.orderId)).reduce((b,r)=>b+r.kg,0),0);
+        const selSheets = shown.reduce((a,s)=>a+lotReservations(s).filter(r=>sel.size===0||sel.has(r.orderId)).reduce((b,r)=>b+r.sheets,0),0);
+        return (
+          <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:12, flexWrap:"wrap" }}>
+            <span style={{ fontSize:11, color:T.textMid, fontWeight:700 }}>RESERVED FOR:</span>
+            {resOrderIds.map(oid=>{
+              const on = sel.has(oid);
+              const ord = (orders||[]).find(o=>o.id===oid);
+              return (
+                <button key={oid}
+                  onClick={()=>setOrderFilter(prev=>prev.includes(oid)?prev.filter(x=>x!==oid):[...prev,oid])}
+                  style={{ ...css.btn.secondary, fontSize:11,
+                    ...(on?{background:`${T.amber}22`,color:T.amber,borderColor:T.amber}:{}) }}>
+                  {ord?.orderNo||oid}
+                </button>
+              );
+            })}
+            {orderFilter.length>0&&(
+              <>
+                <button onClick={()=>setOrderFilter([])} style={{ ...css.btn.ghost, fontSize:11, color:T.textMid }}>clear</button>
+                <span style={{ fontSize:11, color:T.textMid }}>
+                  {shown.length} lot{shown.length!==1?"s":""} · {fmt.num(Math.round(selKg))} kg
+                  {selSheets>0?` · ${selSheets} sheets`:""}
+                </span>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Off-cuts Pending Verification */}
       {(user.role==="store_admin"||user.role==="super_admin"||user.role==="planning_admin") && (() => {
         const pendingOc = stock.filter(s=>s.status==="pending_offcut_verification");
@@ -16324,7 +16601,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
                         <thead>
                           <tr style={{ background:T.bgInput }}>
                             <th style={{ width:24 }}></th>
-                            {["Lot No","Dimensions","Sheets","Wt/Sheet","Vendor","Bay","Avail (T)","Alloc (T)","Issued (T)","Heat No","MTC","RM QC","Status","Actions"].map(h=>(
+                            {["Lot No","Dimensions","Sheets","Wt/Sheet","Vendor","Make","Bay","Avail (T)","Alloc (T)","Issued (T)","Heat No","MTC","RM QC","Status","Actions"].map(h=>(
                               <th key={h} style={{ padding:"6px 10px", textAlign:"left", fontSize:10, fontWeight:700, color:T.textMid, textTransform:"uppercase", letterSpacing:"0.04em", borderBottom:`1px solid ${T.border}`, whiteSpace:"nowrap" }}>{h}</th>
                             ))}
                           </tr>
@@ -16360,6 +16637,15 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
                                     {s.sheetWt>0?`${fmt.num(s.sheetWt)} kg`:"—"}
                                   </td>
                                   <td style={{ padding:"6px 10px", fontSize:11, color:T.text }}>{s.vendorName||"—"}</td>
+                                  <td style={{ padding:"6px 10px", fontSize:11 }} onClick={e=>e.stopPropagation()}>
+                                    {lotMake(s)
+                                      ? <span style={{ color:T.text }}>{lotMake(s)}
+                                          {s.makeMismatch&&<span title="Differs from the PO — see the GRN remark" style={{ color:T.amber, marginLeft:3 }}>⚠</span>}
+                                        </span>
+                                      : <button onClick={()=>{ setMakeLot(s); setMakeForm({ make:"", mtcNo:s.mtcNo||"" }); }}
+                                          style={{ ...css.btn.sm, fontSize:10, background:"transparent", color:T.accent, border:`1px dashed ${T.borderHi}` }}>
+                                          + make</button>}
+                                  </td>
                                   <td style={{ padding:"6px 10px" }}>{s.bayId?<Badge color="teal">{s.bayId}</Badge>:"—"}</td>
                                   <td style={{ padding:"6px 10px", fontFamily:T.fontMono, fontSize:12, fontWeight:700, color:T.green, textAlign:"right" }}>
                                     {fmt.wtT(s.wtAvailable)}
@@ -16379,8 +16665,43 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
                                   <td style={{ padding:"6px 10px" }}>
                                     <Badge color={qcStatusBadge[s.rmQcStatus]||"gray"}>{s.rmQcStatus}</Badge>
                                   </td>
-                                  <td style={{ padding:"6px 10px" }}>
-                                    <Badge color={stCol[s.status]||"gray"}>{s.status?.replace(/_/g," ")}</Badge>
+                                  <td style={{ padding:"6px 10px", position:"relative" }} onClick={e=>e.stopPropagation()}>
+                                    {(() => {
+                                      const res = lotReservations(s);
+                                      if (res.length===0) return <Badge color={stCol[s.status]||"gray"}>{s.status?.replace(/_/g," ")}</Badge>;
+                                      const open = resPop===s.id;
+                                      return (
+                                        <>
+                                          <button onClick={()=>setResPop(open?"":s.id)}
+                                            title={res.map(r=>`${r.orderNo} · ${r.sheets} sheet(s) · ${Math.round(r.kg)} kg`).join("\n")}
+                                            style={{ background:T.amberBg, color:T.amber, border:`1px solid ${T.amber}`, borderRadius:4,
+                                              padding:"2px 7px", fontSize:11, fontWeight:700, cursor:"pointer", letterSpacing:"0.03em" }}>
+                                            R{res.length>1?`×${res.length}`:""}
+                                          </button>
+                                          {res.length===1&&(
+                                            <div style={{ fontSize:10, color:T.textMid, marginTop:2 }}>
+                                              {res[0].orderNo}{res[0].sheets>0?` · ${res[0].sheets} sh`:""}
+                                            </div>
+                                          )}
+                                          {open&&(
+                                            <div style={{ position:"absolute", zIndex:20, top:"100%", left:0, minWidth:210,
+                                              background:T.bgCard, border:`1px solid ${T.borderHi}`, borderRadius:6, padding:8,
+                                              boxShadow:"0 6px 20px rgba(0,0,0,0.25)" }}>
+                                              <div style={{ fontSize:10, color:T.textMid, fontWeight:700, marginBottom:4 }}>RESERVED FOR</div>
+                                              {res.map((r,ri)=>(
+                                                <div key={ri} style={{ display:"flex", justifyContent:"space-between", gap:10, fontSize:11, padding:"2px 0" }}>
+                                                  <span style={{ color:T.accentHi }}>{r.orderNo}</span>
+                                                  <span style={{ color:T.textMid, fontFamily:T.fontMono }}>
+                                                    {r.sheets>0?`${r.sheets} sh · `:""}{fmt.num(Math.round(r.kg))} kg
+                                                  </span>
+                                                </div>
+                                              ))}
+                                              <button onClick={()=>setResPop("")} style={{ ...css.btn.ghost, fontSize:10, marginTop:4, color:T.textMid }}>close</button>
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
                                   </td>
                                   <td style={{ padding:"6px 10px" }} onClick={e=>e.stopPropagation()}>
                                     <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
@@ -16551,6 +16872,44 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
           </div>
         );
       })()}
+
+      {/* Record the make on a lot received before makes were captured, or when the
+          MTC turns up later. The MTC is the real evidence of who made the steel —
+          the PO only records who was asked. */}
+      {makeLot && (
+        <Modal title={`Record make — ${makeLot.lotNo||makeLot.id}`} onClose={()=>{setMakeLot(null);setMakeForm({});}} width={460}>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:12 }}>
+            {makeLot.matCode||makeLot.sectionType} · {makeLot.sheetDim||makeLot.size||""}
+            {makeLot.vendorName?` · supplied by ${makeLot.vendorName}`:""}
+          </div>
+          <Field label="Make (mill)" required>
+            <Input list="stock-make-suggestions" value={makeForm.make||""} autoFocus
+              onChange={e=>setMakeForm(f=>({...f,make:e.target.value}))} placeholder="e.g. JSW Steel Limited" />
+            <datalist id="stock-make-suggestions">
+              {[...new Set(stock.map(x=>lotMake(x)).filter(Boolean))].sort().map(m=><option key={m} value={m} />)}
+            </datalist>
+          </Field>
+          <Field label="MTC no (optional)">
+            <Input value={makeForm.mtcNo||""} onChange={e=>setMakeForm(f=>({...f,mtcNo:e.target.value}))} />
+          </Field>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
+            <button onClick={()=>{setMakeLot(null);setMakeForm({});}} style={css.btn.secondary}>Cancel</button>
+            <button
+              onClick={()=>{
+                const mk=(makeForm.make||"").trim();
+                if(!mk) return showToast("Enter the make","amber");
+                setStock(prev=>prev.map(s=>s.id!==makeLot.id?s:{
+                  ...s, make:mk, makeSource:"manual", makeBy:user.name, makeAt:today(),
+                  ...(makeForm.mtcNo?{mtcNo:makeForm.mtcNo}:{}),
+                  auditLog:[...(s.auditLog||[]),{action:"make-recorded",by:user.name,date:today(),reason:`Make set to ${mk}${makeForm.mtcNo?` (MTC ${makeForm.mtcNo})`:""}`}],
+                }));
+                showToast("Make recorded");
+                setMakeLot(null); setMakeForm({});
+              }}
+              style={css.btn.primary}>Save</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

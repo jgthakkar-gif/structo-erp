@@ -69,6 +69,65 @@ export const calcSheetWt = (rmUnitId) => {
   return Math.round(w * l * t * 7850 * 100) / 100;
 };
 
+// ── Approved Makes ─────────────────────────────────────────────────────────────
+// One vocabulary, shared by App.jsx (PR / PO / GRN) and ProductionModule.jsx (the
+// release-time check), so the two can never drift apart.
+// The vocabulary is the material library's SECTION TYPE. The order stores it as
+// order.quality.approvedMakes = [{matType, makes}] where matType is a section type
+// (sometimes with stray whitespace — "PLATE ") and makes is a COMMA STRING.
+export const normSectionKey = (s) => String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+
+// Makes the order approves for a section type. [] means the order specified nothing
+// for that section — which is meaningful (free choice), not missing data.
+export const approvedMakesFor = (order, section) => {
+  const key = normSectionKey(section);
+  if (!key) return [];
+  const rows = (order && order.quality && order.quality.approvedMakes) || [];
+  const hit = rows.find(r => normSectionKey(r && (r.matType || r.materialType || r.section)) === key);
+  if (!hit) return [];
+  const raw = hit.makes;
+  const list = Array.isArray(raw) ? raw : String(raw||"").split(",");
+  return list.map(m => String(m||"").trim()).filter(Boolean);
+};
+
+// Does the order specify makes for this section at all?
+export const orderSpecifiesMakes = (order, section) => approvedMakesFor(order, section).length > 0;
+
+// Loose comparison so "JSW Steel Limited" and "jsw steel limited " agree, while
+// "JSW Steel" and "JSW Steel Limited" stay DIFFERENT — deliberately: silently
+// treating them as the same make is how a wrong mill gets accepted.
+export const sameMake = (a, b) =>
+  String(a||"").trim().toUpperCase().replace(/\s+/g," ") ===
+  String(b||"").trim().toUpperCase().replace(/\s+/g," ");
+
+// null  = the order specified nothing, so nothing is being deviated from
+// true  = the make is on the order's approved list
+// false = a deliberate deviation; the caller must capture a remark and flag it
+export const makeApprovalState = (order, section, make) => {
+  const list = approvedMakesFor(order, section);
+  if (list.length === 0) return null;
+  if (!String(make||"").trim()) return null;
+  return list.some(m => sameMake(m, make));
+};
+
+// A lot's make. `make` is what this build writes; `millMake` is the older GRN
+// header field ("mill, if the vendor is a trader") and still holds real data, so it
+// is read as a fallback rather than being stranded.
+export const lotMake = (lot) => String((lot && (lot.make || lot.millMake)) || "").trim();
+
+// Makes typed before against this section type, for the free-text suggestion list.
+// Derived, never stored — the same pattern the PR register's make filter uses.
+export const makeSuggestions = (pos, section) => {
+  const key = normSectionKey(section);
+  const out = new Set();
+  (pos||[]).forEach(po => (po.lines||[]).forEach(l => {
+    if (!l || !l.make) return;
+    if (key && normSectionKey(l.sectionType || l.section) !== key) return;
+    out.add(String(l.make).trim());
+  }));
+  return [...out].filter(Boolean).sort();
+};
+
 // ── Unique ID Helpers ──────────────────────────────────────────────────────────
 export const buildDIId = (drawingId, instanceNo) => `DI-${drawingId}-${instanceNo}`;
 
