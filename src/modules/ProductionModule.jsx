@@ -6418,19 +6418,39 @@ const uncutBarsForDrawing = ({ batches, drawingId, marksShort, splitIdx }) => {
 
 // Per drawing instance: how complete are its parts, and what is holding it up.
 const buildInstanceStatus = ({ drawingInstance, order, drawing, dpr, cutRecords,
-                               instances, batches, splitIdx, stock, releases }) => {
+                               instances, batches, splitIdx, stock, releases,
+                               vendorWelded = false, poolIdx = null }) => {
   const parts = partsNeededForDrawing(order, drawing.id);
   const cutBy = cutQtyByMark(cutRecords, drawing.id);
+  // Marks that appear on NO nest at all. This is the only PROVABLE shortfall: no
+  // material was ever planned for them. It is what happens when an oversized part is
+  // silently dropped from a run because joints were not allowed — and unlike a missing
+  // cut record it means the same thing whoever did the cutting.
+  const nested = new Set();
+  (batches||[]).forEach(b=>(b.lots||[]).forEach(l=>(l.sheets||[]).forEach(sh=>
+    (sh.parts||[]).forEach(pt=>{
+      nested.add(splitIdx ? parentMark(splitIdx, pt.markNo) : (pt.markNo||""));
+    }))));
+  // If NO nest is visible at all, that is absence of evidence, not evidence of a
+  // shortfall — a failed load would otherwise flag every mark in the works.
+  const unnestedMarks = nested.size === 0 ? [] : parts.filter(p=>!nested.has(p.markNo)).map(p=>p.markNo);
+  // A drawing instance the vendor welded comes back as ONE assembly. Its parts were
+  // cut at the vendor's works and nothing recorded them per mark — correctly, because
+  // we never handled them. So do NOT infer a shortfall from missing cut records here,
+  // and do NOT let this instance consume records that belong to the ones we cut for
+  // ourselves. It is reported as an assembly with its mark and piece counts.
+  const pieceCount = parts.reduce((a,p)=>a+(+p.qtyPerDrg||+p.qty||1),0);
   // Cut records are not instance-specific — a mark cut 6 times covers 2 instances of
-  // qty 3. Spread them across instances in instance order rather than crediting all
-  // of them to the first, which would show 1/3 complete and 2/3 untouched.
-  const idx = Math.max(0, (+drawingInstance.instanceNo || 1) - 1);
+  // qty 3. Spread them across the instances WE cut for, in order.
+  const idx = vendorWelded ? 0
+    : Math.max(0, poolIdx !== null ? poolIdx : ((+drawingInstance.instanceNo || 1) - 1));
   let cutMarks = 0, shortMarks = 0, cutWt = 0, totalWt = 0;
   const marksShort = {};
   parts.forEach(p => {
     const per = +p.qtyPerDrg || +p.qty || 1;
     const wt = (+p.clientUnitWt || +p.unitWt || 0) * per;
     totalWt += wt;
+    if (vendorWelded) { cutMarks++; cutWt += wt; return; }
     const have = Math.max(0, (cutBy[p.markNo] || 0) - idx * per);
     if (have >= per) { cutMarks++; cutWt += wt; }
     else { shortMarks++; marksShort[p.markNo] = per - have; }
@@ -6477,8 +6497,12 @@ const buildInstanceStatus = ({ drawingInstance, order, drawing, dpr, cutRecords,
     totalWt: +instanceWt.toFixed(1),
     pctWt: totalWt > 0 ? Math.round((cutWt / totalWt) * 100) : 0,
     marksShort, barsToCut, bays: [...bays],
+    vendorWelded, pieceCount,
+    unnestedMarks, unnestedCount: unnestedMarks.length,
     partsComplete: parts.length > 0 && shortMarks === 0,
-    shortWhileAdvanced: pastFitup && shortMarks > 0,
+    // The alarm now rests on evidence, not on absence: a mark with no nest anywhere has
+    // no material, whoever was going to cut it.
+    shortWhileAdvanced: pastFitup && unnestedMarks.length > 0,
   };
 };
 
@@ -12319,7 +12343,7 @@ const OutboundQcPanel = ({ user, instances, setInstances, orders }) => {
   );
 };
 
-const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue, stock, cutRecords=[], setCutRecords }) => {
+const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue, stock, cutRecords=[], setCutRecords, nestingBatches=[], productionNests=[] }) => {
   const isAdmin = ["super_admin","qc_admin"].includes(user.role);
   const [tab, setTab] = useState("cutting_qc");
   const [corrModal, setCorrModal] = useState(null);
@@ -12511,8 +12535,30 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
       }));
     };
 
+    // HARD GATE at WELD QC. Fit-up may legitimately start on a subset — the contractor
+    // works with what is there — but a welded assembly with members that have no
+    // material is not recoverable, and blocking at blasting would be too late.
+    // The test is PROVABLE: marks on no nest at all. A missing cut record is not used,
+    // because an outbound-welded assembly has none by design.
+    const weldGate = (() => {
+      if (!selDpr || dprStage !== "weld_qc") return null;
+      const order = (orders||[]).find(o=>o.id===selDpr.orderId);
+      const drawing = ((order&&order.drawings)||[]).find(d=>d.id===selDpr.drawingId);
+      if (!order || !drawing) return null;
+      const eff = buildEffectiveNestSource(nestingBatches, productionNests);
+      const splitIdx = buildSplitIndex(nestingBatches);
+      const nested = new Set();
+      (eff||[]).forEach(b=>(b.lots||[]).forEach(l=>(l.sheets||[]).forEach(sh=>
+        (sh.parts||[]).forEach(pt=>nested.add(parentMark(splitIdx, pt.markNo))))));
+      if (nested.size === 0) return null;          // nothing loaded — not evidence
+      const missing = partsNeededForDrawing(order, drawing.id)
+        .filter(p=>!nested.has(p.markNo)).map(p=>p.markNo);
+      return missing.length ? missing : null;
+    })();
+
     const doApprove = () => {
       if (!selDpr) return;
+      if (weldGate) return;                         // blocked; the panel explains why
       const ts = new Date().toISOString();
       const resolvedNext     = getNextDprStage(selDpr);
       const resolvedInstNext = getNextInstStage(selDpr);
@@ -12611,12 +12657,27 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
               {CHECKLIST.filter(c=>checks[c]).length} / {CHECKLIST.length} items checked
             </div>
           </div>
+          {weldGate&&(
+            <InfoBanner color="red">
+              <b>Cannot pass Weld QC — {weldGate.length} mark(s) of this drawing are on no nest at all.</b>
+              <div style={{ marginTop:4 }}>
+                No material has ever been planned for {weldGate.slice(0,15).join(", ")}
+                {weldGate.length>15?` and ${weldGate.length-15} more`:""}, so the assembly cannot be complete.
+                Re-nest that material with joints allowed, top up the PR/PO for the shortfall, and cut the
+                missing marks before this instance goes to blasting.
+              </div>
+            </InfoBanner>
+          )}
           {!rejectMode ? (
             <div style={{ display:"flex", gap:10 }}>
-              <button onClick={doApprove} disabled={!allChecked}
-                style={{ ...css.btn.green, flex:1, padding:"10px 0", fontSize:13, opacity:allChecked?1:0.45 }}>
+              <button onClick={doApprove} disabled={!allChecked||!!weldGate}
+                style={{ ...css.btn.green, flex:1, padding:"10px 0", fontSize:13,
+                  opacity:(allChecked&&!weldGate)?1:0.45,
+                  cursor:(allChecked&&!weldGate)?"pointer":"not-allowed" }}>
                 ✓ Approve {label} QC — Advance to {isFitup?"Welding":isBlast?"Painting":"Blasting/Complete"}
-                {!allChecked && <span style={{ fontSize:11, marginLeft:6 }}>({CHECKLIST.filter(c=>!checks[c]).length} remaining)</span>}
+                {weldGate
+                  ? <span style={{ fontSize:11, marginLeft:6 }}>(blocked — {weldGate.length} mark(s) unnested)</span>
+                  : !allChecked && <span style={{ fontSize:11, marginLeft:6 }}>({CHECKLIST.filter(c=>!checks[c]).length} remaining)</span>}
               </button>
               <button onClick={() => setRejectMode(true)} style={{ ...css.btn.ghost, color:T.red, padding:"10px 16px" }}>✕ Reject</button>
             </div>
@@ -16464,11 +16525,20 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
       const dis = (drawingInstances||[]).filter(di=>di.orderId===order.id && di.drawingId===drawing.id);
       const list = dis.length ? dis : [{ id:buildDIId(drawing.id,1), orderId:order.id,
         drawingId:drawing.id, instanceNo:1, totalInstances:drawing.qty||1, status:"unreleased" }];
+      // Instances the VENDOR welded do not draw on our cut records — the vendor cut
+      // their parts and nothing recorded it per mark. Counting them against the pool
+      // would credit an assembly with records that belong to the instances we cut for
+      // ourselves, and short those instances by exactly as much.
+      let pool = 0;
       list.forEach(di=>{
         const dpr = (dprs||[]).find(d=>d && d.drawingInstanceId===di.id)
                  || (dprs||[]).find(d=>d && !d.drawingInstanceId && d.drawingId===drawing.id && d.orderId===order.id);
+        const steps = di.processSteps || (dpr && dpr.processSteps) || null;
+        const vendorWelded = outboundOwnedStages(steps).has("welding");
         rows.push(buildInstanceStatus({ drawingInstance:{...di, totalInstances:di.totalInstances||drawing.qty||1},
-          order, drawing, dpr, cutRecords, instances, batches:effBatches, splitIdx, stock, releases }));
+          order, drawing, dpr, cutRecords, instances, batches:effBatches, splitIdx, stock, releases,
+          vendorWelded, poolIdx: vendorWelded ? null : pool }));
+        if (!vendorWelded) pool++;
       });
     });
   });
@@ -16507,13 +16577,15 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
         {tile("Needs allotment", shown.filter(r=>{const b=instanceBlocker(r);return b&&/contractor/.test(b.code);}).length, T.amber)}
         {tile("Still to cut", shown.filter(r=>r.shortMarks>0).length, T.amber)}
         {tile("Bars to cut", ranked.length)}
+        {tile("Marks not nested", shown.reduce((a,r)=>a+r.unnestedCount,0),
+              shown.some(r=>r.unnestedCount>0)?T.red:T.green)}
       </div>
 
       {alarms.length>0&&(
         <InfoBanner color="red">
-          <b>{alarms.length} instance(s) have moved past fit-up with parts never cut.</b>{" "}
-          {alarms.map(a=>`${a.drawingNo} ${a.instanceNo}/${a.totalInstances} (${a.shortMarks} mark${a.shortMarks>1?"s":""} at ${a.stage})`).join(" · ")}
-          {" "}— someone has fitted or welded around missing pieces.
+          <b>{alarms.length} instance(s) are past fit-up with marks that are on NO nest.</b>{" "}
+          {alarms.map(a=>`${a.drawingNo} ${a.instanceNo}/${a.totalInstances} (${a.unnestedCount} mark${a.unnestedCount>1?"s":""} at ${a.stage})`).join(" · ")}
+          {" "}— no material was ever planned for them, so they cannot have been made.
         </InfoBanner>
       )}
 
@@ -16606,7 +16678,13 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
                         color:(r.daysAtStage!==null&&r.daysAtStage>=7)?T.amber:T.textMid }}>
                         {r.daysAtStage===null?"—":`${r.daysAtStage}d`}
                       </td>
-                      <td style={{ padding:"8px 10px", fontFamily:T.fontMono }}>{r.cutMarks}/{r.totalMarks}</td>
+                      <td style={{ padding:"8px 10px", fontFamily:T.fontMono }}>
+                        {r.vendorWelded
+                          ? <span style={{ fontFamily:T.font, fontSize:11, color:T.textMid }}>
+                              assembly · {r.totalMarks} marks · {r.pieceCount} pcs
+                            </span>
+                          : `${r.cutMarks}/${r.totalMarks}`}
+                      </td>
                       <td style={{ padding:"8px 10px", minWidth:130 }}>
                         <div style={{ height:6, background:T.border, borderRadius:3, overflow:"hidden" }}>
                           <div style={{ height:"100%", width:`${r.pctWt}%`,
@@ -16627,7 +16705,13 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
                     </tr>
                     {open&&(
                       <tr><td colSpan={10} style={{ padding:"10px 14px", background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
-                        {r.shortMarks===0
+                        {r.vendorWelded
+                          ? <div style={{ fontSize:12, color:T.textMid }}>
+                              Welded by the outbound vendor and received as one assembly —{" "}
+                              <b>{r.totalMarks} marks · {r.pieceCount} pieces</b>. Their cutting happened at the
+                              vendor's works, so there are no per-mark cut records for this instance.
+                            </div>
+                          : r.shortMarks===0
                           ? <div style={{ fontSize:12, color:T.green }}>✓ Every mark of this instance is cut.</div>
                           : (
                             <>
@@ -16649,6 +16733,16 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
                                   ))}
                             </>
                           )}
+                        {r.unnestedCount>0&&(
+                          <div style={{ fontSize:11, color:T.red, marginTop:8 }}>
+                            <b>{r.unnestedCount} mark(s) are on no nest at all</b> — no material has been
+                            planned for them: {r.unnestedMarks.slice(0,15).join(", ")}
+                            {r.unnestedMarks.length>15?` +${r.unnestedMarks.length-15} more`:""}
+                            <div style={{ color:T.textLow }}>
+                              Re-nest this material with joints allowed, then top up the PR/PO for the shortfall.
+                            </div>
+                          </div>
+                        )}
                         {r.bays.length>0&&(
                           <div style={{ fontSize:11, color:T.textMid, marginTop:8 }}>
                             Cut parts located in: {r.bays.map(x=><Badge key={x} color="teal">{x}</Badge>)}
