@@ -16258,7 +16258,14 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
                               <label key={di.id} style={{ fontSize:11, fontFamily:T.fontMono, display:"flex", gap:4, alignItems:"center", cursor: r.status==="blocked"?"not-allowed":"pointer", color:T.textMid }}>
                                 <input type="checkbox" checked={!!selInstIds[di.id]} disabled={r.status==="blocked"}
                                   onChange={e=>setSelInstIds(p=>{ const n={...p}; if(e.target.checked) n[di.id]=true; else delete n[di.id]; return n; })} />
-                                {di.id}
+                                {/* Show the instance NUMBER, not the internal id. The id is
+                                    DI-<drawingId>-<instanceNo>, and because a drawing id can itself
+                                    end in "-0" it reads as gibberish (…-0-2 simply means instance 2). */}
+                                {(()=>{
+                                  const no = di.instanceNo || (String(di.id).match(/-(\d+)$/)||[])[1] || "?";
+                                  const tot = di.totalInstances || r.drawing?.qty || r.dis.length || "?";
+                                  return <span title={di.id}><b style={{color:T.text}}>{no}/{tot}</b></span>;
+                                })()}
                               </label>
                             ))}
                           </div>
