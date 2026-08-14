@@ -3960,6 +3960,36 @@ const CompanyMaster = ({ user, company, setCompany }) => {
               </Field>
             ))}
           </div>
+
+          {/* Lot numbering. Lots are not per-financial-year documents — they run as a
+              continuous letter+number series (A101, A102 … A999, B001 …), so they get
+              their own setting rather than sharing docStartNos. I and O are skipped
+              throughout, to keep 1/I and 0/O apart on a printed lot tag. */}
+          <InfoBanner color="blue">
+            Stock lot numbering. A continuous series, not per financial year. The letters I and O
+            are skipped so a lot tag can never be misread. The next lot is the higher of this
+            setting and the last lot actually issued, so a number is never reused.
+          </InfoBanner>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginTop:10 }}>
+            <Field label="Lot letter">
+              <Sel value={(form.lotSeries&&form.lotSeries.alpha)||"A"}
+                onChange={e=>upd("lotSeries",{ ...(form.lotSeries||{}), alpha:e.target.value })}>
+                {"ABCDEFGHJKLMNPQRSTUVWXYZ".split("").map(c=><option key={c} value={c}>{c}</option>)}
+              </Sel>
+            </Field>
+            <Field label="Lot start number">
+              <Input type="number" min={1} max={999}
+                value={(form.lotSeries&&form.lotSeries.start)||1}
+                onChange={e=>upd("lotSeries",{ ...(form.lotSeries||{}), start:Math.min(999,Math.max(1,parseInt(e.target.value)||1)) })}
+                placeholder="1" />
+            </Field>
+            <Field label="Next lot will be">
+              <div style={{ fontFamily:T.fontMono, fontSize:15, fontWeight:700, color:T.accentHi, paddingTop:6 }}>
+                {((form.lotSeries&&form.lotSeries.alpha)||"A")}
+                {String((form.lotSeries&&form.lotSeries.start)||1).padStart(3,"0")}
+              </div>
+            </Field>
+          </div>
         </div>
       </div>
       {dirty && (
@@ -11078,7 +11108,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
       const rawLots = buildStockLots(newGrn, po, grnId, ts, purchaseReqs);
       if (rawLots.length>0) setStock(prev=>{
         const numberedLots = [];
-        rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots])}));
+        rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots], company)}));
         const coveredOrders = po.coveredOrders||[];
         const finalLots = numberedLots.map(lot => {
           if (!coveredOrders.length) return lot;
@@ -13034,7 +13064,7 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], orders=[], pos, se
       const rawLots = buildStockLots(newGrn, po, grnId, ts, purchaseReqs);
       if (rawLots.length>0) setStock(prev=>{
         const numberedLots = [];
-        rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots])}));
+        rawLots.forEach(lot=>numberedLots.push({...lot, lotNo:genLotNo([...prev, ...numberedLots], company)}));
         const coveredOrders = po.coveredOrders||[];
         const finalLots = numberedLots.map(lot => {
           if (!coveredOrders.length) return lot;
@@ -15161,7 +15191,7 @@ const MatCodePicker = ({ materials, setMaterials, onChange, label="", showToast 
 };
 
 
-const StockModule = ({ user, stock, setStock, orders, contractors, materials, setMaterials, issueRequests=[], setIssueRequests, correctionsLog, setCorrectionsLog, notifications, setNotifications, setPurchaseReqs, consumables }) => {
+const StockModule = ({ user, company={}, stock, setStock, orders, contractors, materials, setMaterials, issueRequests=[], setIssueRequests, correctionsLog, setCorrectionsLog, notifications, setNotifications, setPurchaseReqs, consumables }) => {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState(null);
@@ -15283,7 +15313,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
   const saveOffcut = () => {
     const offcutWt = +(mForm.offcutWt||0);
     if (offcutWt < 5) return showToast("Minimum off-cut weight is 5 kg","amber");
-    const newLotNo = genLotNo(stock);
+    const newLotNo = genLotNo(stock, company);
     const dim = (activeLot.sectionType||activeLot.section)==="PLATE" ? (mForm.offcutDim||"") : (mForm.offcutLength||"");
     const offcutRmUnitId = buildOffcutRmUnitId(activeLot.lotNo||"???", activeLot.sectionType||activeLot.section||"PLATE", activeLot.grade||"", activeLot.size||"", dim, stock);
     const newLot = { id:`OC-${Date.now()}`, lotNo:newLotNo, rmUnitId:offcutRmUnitId, sheetDim:dim, sheetWt:+(mForm.offcutWt||0), sheetCount:1, batchNo:activeLot.batchNo, itemCode:dim?`${activeLot.matCode}/${dim}`:activeLot.matCode, matCode:activeLot.matCode, matLibId:activeLot.matLibId||"", matType:activeLot.matType, grade:activeLot.grade, sectionType:activeLot.sectionType||activeLot.section||"", size:activeLot.size, vendorId:activeLot.vendorId, vendorCode:activeLot.vendorCode, vendorName:activeLot.vendorName, heatNo:activeLot.heatNo, wtReceived:offcutWt, wtAvailable:offcutWt, wtAllocated:0, wtIssued:0, wtConsumed:0, status:"pending_offcut_verification", bayId:activeLot.bayId, mtcUploaded:activeLot.mtcUploaded, mtcDoc:activeLot.mtcDoc, rmQcStatus:"approved", clientInspStatus:activeLot.clientInspStatus, receivedDate:today(), isOffcut:true, parentLotId:activeLot.id, parentBatchNo:activeLot.batchNo, offcutLength:mForm.offcutLength||null, offcutDimensions:dim, nestingRunId:"", allocations:[], reservations:[...(activeLot.reservations||[])], issues:[], auditLog:[], diversionLog:[], originalOrderId:"", qcHoldReason:"" };
@@ -15799,7 +15829,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
                     for(let i=0;i<row.sheets;i++){
                       newLots.push({
                         id:`STK-IMP-${Date.now()}-${newLots.length}`,
-                        lotNo:genLotNo([...stock,...newLots]),
+                        lotNo:genLotNo([...stock,...newLots], company),
                         matCode:row.matCode, sectionType:row.sec, matType:row.mat,
                         grade:row.grade, size:row.dim, isPlate:row.sec==="PLATE",
                         sheetDim:row.sheetDim, sheetWt:row.wtFinal, sheetCount:1,
@@ -15956,13 +15986,13 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
                 onClick={()=>{
                   const wt = parseFloat(mForm.wt)||0;
                   if (!wt) return showToast("Enter weight received","amber");
-                  const newLotNo = genLotNo(stock);
+                  const newLotNo = genLotNo(stock, company);
                   const isOffcut = mForm.lotType==="offcut";
                   const sheetCount = parseInt(mForm.sheetCount)||1;
                   const wtPerSheet = +(wt/sheetCount).toFixed(2);
                   // Create one lot per sheet (each sheet is a separate physical piece)
                   const newLots = Array.from({length:sheetCount},(_,i)=>{
-                    const lotNo = i===0 ? newLotNo : genLotNo([...stock,...Array(i).fill({lotNo:"ZZZ"})]);
+                    const lotNo = i===0 ? newLotNo : genLotNo([...stock,...Array(i).fill({lotNo:"ZZZ"})], company);
                     return {
                       id:`STK-MANUAL-${Date.now()}-${i}`,
                       lotNo, sheetNo:i+1, totalSheets:sheetCount,
@@ -16411,7 +16441,7 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
           const newLots = valid.map((p,i)=>{
             const dim = isPlate?`${p.length}X${p.width}`:`${p.length}`;
             const wt = calcPieceWt(p);
-            const newLotNo = genLotNo([...stock,...newLots.slice(0,i)]);
+            const newLotNo = genLotNo([...stock,...newLots.slice(0,i)], company);
             const rmId = buildOffcutRmUnitId(activeLot.lotNo||"???",activeLot.sectionType||activeLot.section||"PLATE",activeLot.grade||"",activeLot.size||"",dim,stock);
             return {id:`OC-${Date.now()}-${i}`,lotNo:newLotNo,rmUnitId:rmId,sheetDim:dim,sheetWt:wt,sheetCount:1,
               batchNo:activeLot.batchNo,itemCode:`${activeLot.matCode}/${dim}`,matCode:activeLot.matCode,
@@ -22090,7 +22120,7 @@ export default function App() {
     ]
   });
   const [company, setCompany]           = useState(() => {
-    const defaults = { name:"Structo Fabricators", tradingName:"STRUCTO", gstin:"", pan:"", state:"Maharashtra", stateCode:"27", address:"", worksAddress:"", phone:"", email:"", bankName:"", bankAccount:"", ifsc:"", logoUrl:"", orderPrefix:"FXL", orderNextNo:1, docStartNos:{ pr:1, po:1, grn:1 } };
+    const defaults = { name:"Structo Fabricators", tradingName:"STRUCTO", gstin:"", pan:"", state:"Maharashtra", stateCode:"27", address:"", worksAddress:"", phone:"", email:"", bankName:"", bankAccount:"", ifsc:"", logoUrl:"", orderPrefix:"FXL", orderNextNo:1, docStartNos:{ pr:1, po:1, grn:1 }, lotSeries:{ alpha:"A", start:1 } };
     try { const s=localStorage.getItem('structo_company'); return s?JSON.parse(s):defaults; } catch { return defaults; }
   });
 
@@ -24116,7 +24146,7 @@ export default function App() {
     if (user.role==="finance_admin")       return <FinanceAdminDashboard />;
     if (user.role==="qc_admin"||user.role==="qc_user") return mod==="qc_ops" ? <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]} bays={bays||[]} /> : <QcAdminDashboard />;
     if (user.role==="store_admin") {
-      if (mod==="stock") return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
+      if (mod==="stock") return <StockModule company={company} user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       if (mod==="purchase") return <PurchaseModule user={user} company={company} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       return <StoreAdminDashboard />;
     }
@@ -24130,7 +24160,7 @@ export default function App() {
       case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]} bays={bays||[]} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} setClients={setClients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} cutRecords={cutRecords||[]} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} />;
-      case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} ncrs={ncrs||[]} setNcrs={setNcrs} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} appUsers={appUsers||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} productionNests={productionNests||[]} setProductionNests={setProductionNests} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} nestingService={{ buildNestingInput, runNestingJob, getNestingToken, fetchDxfBase64, isPlateSection }} />;
+      case "production":return <ProductionModule company={company} user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} ncrs={ncrs||[]} setNcrs={setNcrs} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} appUsers={appUsers||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} productionNests={productionNests||[]} setProductionNests={setProductionNests} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} nestingService={{ buildNestingInput, runNestingJob, getNestingToken, fetchDxfBase64, isPlateSection }} />;
       case "finance":   return <Placeholder title="Finance" session="Session 5" icon="₹" desc="Milestone invoices, tranches, receipts, credit notes." />;
       case "notifications": return (
         <div>

@@ -5000,9 +5000,19 @@ const SECTION_PREFIX = {
 
 // Generate next lot number from existing stock lots
 // Returns { lotNo: "A342", nextAlpha: "A", nextNum: 343 }
-const genLotNo = (existingStock) => {
-  let bestAlpha = 0; // index into LOT_ALPHA_CHARS
-  let bestNum = 0;
+// The lot series is set in Masters → Company Details (company.lotSeries).
+// The next lot is the HIGHER of that floor and the last lot actually issued, so a
+// number can never be reused after records are deleted — the fault behind stock
+// issue notes pointing at a PR-2026-002 that no longer existed.
+// I and O are skipped throughout (LOT_ALPHA_CHARS), so 1/I and 0/O can never be
+// confused on a printed lot tag.
+const genLotNo = (existingStock, company) => {
+  const floor = (company && company.lotSeries) || {};
+  const fa = Math.max(0, LOT_ALPHA_CHARS.indexOf(String(floor.alpha||"A").toUpperCase()));
+  const fn = Math.min(999, Math.max(1, +floor.start || 1));
+  // Start one BELOW the floor so the first increment lands exactly on it.
+  let bestAlpha = fa;
+  let bestNum = fn - 1;
   (existingStock||[]).forEach(s => {
     const m = (s.lotNo||"").match(/^([A-HJ-NP-Z])(\d{3})$/);
     if (!m) return;
@@ -8953,7 +8963,7 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
 // ═══════════════════════════════════════════════════════════════════════════
 // OUTBOUND PRODUCTION RECEIPT (Phase 3) — batch tally + role routing.
 // ═══════════════════════════════════════════════════════════════════════════
-const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInstances,
+const OutboundReceiptScreen = ({ company={}, user, releases, setReleases, instances, setInstances,
                                  orders, stock, setStock, materials=[], setCutRecords,
                                  cutRecords=[], nestingBatches=[], productionNests=[],
                                  dprs=[], setDprs, onBack }) => {
@@ -9126,7 +9136,7 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
           const w=offcutWt(x.dim, ru.matCode);
           next.push({
             id:`STK-OFFCUT-OB-${Date.now()}-${next.length}`,
-            lotNo:genLotNo(next), parentLotId:parent.id||ru.stockLotId||"", parentRmUnitId:x.r.rmUnitId,
+            lotNo:genLotNo(next, company), parentLotId:parent.id||ru.stockLotId||"", parentRmUnitId:x.r.rmUnitId,
             matCode:ru.matCode||"", sectionType:parent.sectionType||"PLATE",
             grade:parent.grade||"", size:parent.size||"",
             rmUnitId:buildOffcutRmUnitId(parent.lotNo||"OB",parent.sectionType||"PLATE",parent.grade||"",parent.size||"",x.dim,next),
@@ -9513,7 +9523,7 @@ const OutboundReceiptScreen = ({ user, releases, setReleases, instances, setInst
   );
 };
 
-const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setIssueRequests, stock, setStock, materials, instances, setInstances, orders, nestingBatches, setCutRecords, productionNests=[] }) => {
+const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRequests, setIssueRequests, stock, setStock, materials, instances, setInstances, orders, nestingBatches, setCutRecords, productionNests=[] }) => {
   const today = () => new Date().toISOString().slice(0,10);
   const [tab, setTab] = useState("assignments");
   // S4d — the nested parts of an RM unit, read through the same resolver the
@@ -9648,7 +9658,7 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
         parentLotId:ru.stockLotId||ru.lotId, parentRmUnitId:ru.rmUnitId,
         matCode:ru.matCode, sectionType:lot.sectionType||"PLATE",
         grade:lot.grade||"", size:lot.size||"",
-        lotNo: genLotNo(stock),
+        lotNo: genLotNo(stock, company),
         rmUnitId: buildOffcutRmUnitId(lot.lotNo||"???", lot.sectionType||"PLATE", lot.grade||"", lot.size||"", offcutDim, stock),
         sheetDim: offcutDim||"",
         sheetLength: (offcutDim||"").split(/[Xx×]/)[0]||0,
@@ -10075,7 +10085,7 @@ const MachineOperatorQueue = ({ user, releases, setReleases, issueRequests, setI
         if (lib?.wtPerMetre && l>0) offWt = +(l/1000 * lib.wtPerMetre).toFixed(1);
       }
     }
-    const newLotNo = genLotNo(stock);
+    const newLotNo = genLotNo(stock, company);
     const newOc = {
       id:`STK-OFFCUT-RETRO-${Date.now()}`,
       lotNo:newLotNo, parentLotId:lot.id||"", parentRmUnitId:ru.rmUnitId,
@@ -17117,7 +17127,7 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
   );
 };
 
-const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
+const ProductionModule = ({ user, company={}, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders, pos, purchaseReqs,
                             dprs, setDprs, correctionsLog, setCorrectionsLog, notifications, setNotifications,
@@ -17148,7 +17158,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
     return <ContractorWorkQueue user={user} instances={instances} setInstances={setInstances} releases={releases||[]} stock={stock||[]} orders={orders||[]} nestingBatches={nestingBatches||[]} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} />;
   }
   // Machine operator → machine queue
-  if (user.role === "machine_operator") return <MachineOperatorQueue user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} setStock={setStock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} orders={orders||[]} nestingBatches={nestingBatches||[]} setCutRecords={setCutRecords} productionNests={productionNests||[]} />;
+  if (user.role === "machine_operator") return <MachineOperatorQueue company={company} user={user} releases={releases||[]} setReleases={setReleases} issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests} stock={stock} setStock={setStock} materials={materials||[]} instances={instances||[]} setInstances={setInstances} orders={orders||[]} nestingBatches={nestingBatches||[]} setCutRecords={setCutRecords} productionNests={productionNests||[]} />;
   // Stage workers (blasting/painting engineers) → stage-filtered work queue
   if (["blasting_engineer","painting_engineer"].includes(user.role)) return <StageWorkerQueue user={user} instances={instances} setInstances={setInstances} />;
 
@@ -17199,7 +17209,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
 
   // ── Outbound processing view ──
   if (view==="outbound_receipt") return (
-    <OutboundReceiptScreen user={user} releases={releases||[]} setReleases={setReleases}
+    <OutboundReceiptScreen company={company} user={user} releases={releases||[]} setReleases={setReleases}
       instances={instances||[]} setInstances={setInstances} orders={orders||[]}
       stock={stock||[]} setStock={setStock} materials={materials||[]}
       cutRecords={cutRecords||[]} setCutRecords={setCutRecords}
@@ -17581,7 +17591,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
 
   // ── Cutting Confirmation view ──
   if (view==="cutting") return (
-    <CuttingConfirmation user={user} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns}
+    <CuttingConfirmation company={company} user={user} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns}
       stock={stock} setStock={setStock} instances={instances} setInstances={setInstances}
       orders={orders} materials={materials} machines={machines} productionStandards={productionStandards}
       releases={releases||[]} onBack={()=>setView("dashboard")}
@@ -18049,7 +18059,7 @@ const migrateGRNLines = (pos, materials) => {
 // Also applies targeted overrides for specific known-bad lots.
 
 // ─── CUTTING CONFIRMATION ─────────────────────────────────────────────────────
-const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStock,
+const CuttingConfirmation = ({ company={}, user, nestingRuns, setNestingRuns, stock, setStock,
                                instances, setInstances, orders, materials, machines, productionStandards, releases, onBack,
                                drawingInstances, setDrawingInstances }) => {
   const [step, setStep]         = useState("runs"); // "runs" | "bars" | "barForm"
@@ -18330,7 +18340,7 @@ const CuttingConfirmation = ({ user, nestingRuns, setNestingRuns, stock, setStoc
         ? `${selRun.materialCode}/${barForm.offcutLength}X${barForm.offcutWidth}`
         : `${selRun.materialCode}/${barForm.offcutLength}`;
       setStock(prev=>[...prev,{
-        id:newOcId, lotNo:genLotNo(stock||[]),
+        id:newOcId, lotNo:genLotNo(stock||[], company),
         batchNo:barForm.batchNo, itemCode:ocItemCode,
         matCode:selRun.materialCode, matLibId:parentLot.matLibId||"",
         section:parentLot.section||"", size:parentLot.size||"",
