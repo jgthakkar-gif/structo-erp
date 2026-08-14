@@ -6458,10 +6458,20 @@ const findRiderRepairs = ({ cutRecords, instances, batches, splitIdx, orders }) 
   const units = [...new Set(riders.map(r => r.fromRmUnitId).filter(Boolean))];
   if (units.length === 0) return { rows: [], byMark: [], total: 0 };
 
-  // nested qty per (rmUnitId, parent mark), from the effective nest
+  // nested qty per (rmUnitId, parent mark) — from ONE batch per bar, NOT summed across
+  // batches. A bar is re-nested many times: on FXL26-27/0002 the same RM unit appears in
+  // EIGHT nesting batches, so adding them multiplied every quantity eight-fold. Take the
+  // LAST non-discarded batch that carries the bar, which is the plan actually in force.
+  const ownerIdx = {};
+  (batches||[]).forEach((b, bi) => {
+    if (b && b.status === "discarded") return;
+    (b.lots||[]).forEach(l => (l.sheets||[]).forEach(sh => {
+      if (sh.rmUnitId) ownerIdx[sh.rmUnitId] = bi;
+    }));
+  });
   const nested = {};
-  (batches||[]).forEach(b => (b.lots||[]).forEach(l => (l.sheets||[]).forEach(sh => {
-    if (!sh.rmUnitId) return;
+  (batches||[]).forEach((b, bi) => (b.lots||[]).forEach(l => (l.sheets||[]).forEach(sh => {
+    if (!sh.rmUnitId || ownerIdx[sh.rmUnitId] !== bi) return;   // only the owning batch
     (sh.parts||[]).forEach(pt => {
       const mn = splitIdx ? parentMark(splitIdx, pt.markNo) : (pt.markNo||"");
       if (!mn) return;
