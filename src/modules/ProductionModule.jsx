@@ -1901,7 +1901,10 @@ const OrderProgressTracker = ({ order, onChange, user, pos, stock, nestingBatche
 };
 
 // ─── TAB INSTANCES — top-level component to avoid useState-in-IIFE error ────
-const STAGE_SEQ_LABELS = { cutting:"Cutting", fitup:"Fit-Up", fit_up:"Fit-Up", welding:"Welding", tpi_weld:"TPI Weld", assembly:"Assembly", blasting:"Blasting", painting:"Painting", tpi_paint:"TPI Paint", mdcc:"MDCC", dispatch:"Dispatch" };
+const STAGE_SEQ_LABELS = {
+  cutting_qc:"Cut QC", fitup_qc:"Fit-Up QC", weld_qc:"Weld QC", blast_qc:"Blast QC",
+  paint_qc:"Paint QC", tpi_fitup:"TPI Fit-Up", tpi_blast:"TPI Blast",
+  awaiting_collection:"Awaiting Collection", outbound_qc_pending:"Outbound QC", cutting:"Cutting", fitup:"Fit-Up", fit_up:"Fit-Up", welding:"Welding", tpi_weld:"TPI Weld", assembly:"Assembly", blasting:"Blasting", painting:"Painting", tpi_paint:"TPI Paint", mdcc:"MDCC", dispatch:"Dispatch" };
 const SUBOPS_CUT    = ["Cut","Grind","Bevel","Drill"];
 const SUBOPS_WELD   = ["SMAW","GMAW","FCAW"];
 
@@ -5239,9 +5242,23 @@ const outboundLineKey = (l) => (l && (l.key || `${l.rmUnitId}|${l.markNo}`)) || 
 //   closed  → the dispatch is finished with
 const buildOutboundBarState = (releases) => {
   const st = {};
+  // Receipts are recorded against the bar a line was allocated to, but riders spread
+  // across bars — so a bar can hold no receipt while its dispatch is fully back.
+  // Roll the dispatch up first and report BOTH figures.
+  const disp = {};
+  (releases||[]).forEach(r=>(r.rmUnitAssignments||[]).forEach(ru=>{
+    if(!ru || !ru.outbound || !ru.outboundIssueId) return;
+    const d = disp[ru.outboundIssueId] = disp[ru.outboundIssueId] || { receiptNos:new Set(), declared:0, received:0 };
+    (ru.outboundReceipts||[]).forEach(rc=>{
+      if(rc && rc.receiptNo) d.receiptNos.add(rc.receiptNo);
+      (rc.lines||[]).forEach(l=>{ d.received += (+l.qty||0); });
+    });
+    (ru.returnList||[]).forEach(l=>{ d.declared += (+l.qty||0); });
+  }));
   (releases||[]).forEach(r=>{
     (r.rmUnitAssignments||[]).forEach(ru=>{
       if(!ru || !ru.outbound || !ru.outboundIssuedAt) return;
+      const d = disp[ru.outboundIssueId] || { receiptNos:new Set(), declared:0, received:0 };
       const received = (ru.outboundReceipts||[]).reduce((a,rc)=>a+((rc.lines||[]).length),0);
       st[ru.rmUnitId] = {
         state: ru.outboundClosedAt ? "closed" : "issued",
@@ -5250,6 +5267,9 @@ const buildOutboundBarState = (releases) => {
         expectedReturn: (ru.transport&&ru.transport.expectedReturn)||"",
         stepLabel: ru.outboundStepLabel||ru.outboundStepRef||"",
         batches: (ru.outboundReceipts||[]).length, receivedLines: received,
+        dispatchBatches: d.receiptNos.size,
+        dispatchDeclared: d.declared, dispatchReceived: d.received,
+        dispatchOutstanding: Math.max(0, d.declared - d.received),
         releaseNo: r.releaseNo||r.id,
       };
     });
@@ -6343,6 +6363,171 @@ const classifyRmUnitOutbound = (sheetParts, markNoMap, stage, splitIdx) => {
 //   · a proposal tied to an instance is dropped if that instance already has one
 //   · an unclaimed proposal is trimmed to the quantity not yet recorded
 // ═══════════════════════════════════════════════════════════════════════════
+// ── PRODUCTION STATUS — completeness, blockers, and what to cut next ─────────
+// Everything here is DERIVED from records the shop already creates (cut records,
+// DPR stages, stage history, nests, lots). Nothing asks anyone to type anything.
+// That is deliberate: drawing.productionSteps proved that a field only a manual
+// screen writes reads "pending" forever and the display quietly lies.
+
+// The PART ladder runs until a piece joins an assembly; the INSTANCE ladder takes
+// over from fit-up. Two units of work, changing hands at fit-up.
+// Stages at or past fit-up: the assembly has moved on from loose parts.
+const PAST_FITUP_STAGES = ["welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast",
+                           "painting","paint_qc","tpi_paint","mdcc","dispatch","complete"];
+
+const PART_LADDER = ["not_nested","nested","out_with_vendor","cut","cut_qc","collected"];
+const PART_LADDER_LABEL = {
+  not_nested:"Not nested", nested:"Nested", out_with_vendor:"Out with vendor",
+  cut:"Cut", cut_qc:"Cut QC passed", collected:"With fit-up contractor",
+};
+
+// Marks a drawing needs, at instance quantity.
+const partsNeededForDrawing = (order, drawingId) =>
+  ((order && order.parts) || []).filter(p =>
+    p.drawingId === drawingId &&
+    (p.fabType || "Fabricate") !== "Bought Out" &&
+    (p.source || "Procure") !== "Client Supply");
+
+// How many pieces of a mark are cut, from cut records (the physical fact — covers
+// in-house pre-cutting AND vendor returns, released or not).
+const cutQtyByMark = (cutRecords, drawingId) => {
+  const out = {};
+  (cutRecords||[]).forEach(r => {
+    if (!r || r.drawingId !== drawingId) return;
+    out[r.markNo] = (out[r.markNo] || 0) + (+r.qty || 1);
+  });
+  return out;
+};
+
+// Which RM units still hold uncut marks for this drawing, and which marks each holds.
+// This is what turns "11 marks short" into "cut these three bars".
+const uncutBarsForDrawing = ({ batches, drawingId, marksShort, splitIdx }) => {
+  const bars = {};
+  (batches||[]).forEach(b => (b.lots||[]).forEach(l => (l.sheets||[]).forEach(sh => {
+    (sh.parts||[]).forEach(pt => {
+      const mn = splitIdx ? parentMark(splitIdx, pt.markNo) : (pt.markNo||"");
+      if (!marksShort[mn]) return;
+      const id = sh.rmUnitId || "";
+      if (!id) return;
+      (bars[id] = bars[id] || { rmUnitId:id, matCode:l.matCode||"", sheetDim:sh.sheetDim||"", marks:new Set() }).marks.add(mn);
+    });
+  })));
+  return Object.values(bars).map(b => ({ ...b, marks:[...b.marks] }))
+    .sort((a,b) => b.marks.length - a.marks.length);
+};
+
+// Per drawing instance: how complete are its parts, and what is holding it up.
+const buildInstanceStatus = ({ drawingInstance, order, drawing, dpr, cutRecords,
+                               instances, batches, splitIdx, stock, releases }) => {
+  const parts = partsNeededForDrawing(order, drawing.id);
+  const cutBy = cutQtyByMark(cutRecords, drawing.id);
+  // Cut records are not instance-specific — a mark cut 6 times covers 2 instances of
+  // qty 3. Spread them across instances in instance order rather than crediting all
+  // of them to the first, which would show 1/3 complete and 2/3 untouched.
+  const idx = Math.max(0, (+drawingInstance.instanceNo || 1) - 1);
+  let cutMarks = 0, shortMarks = 0, cutWt = 0, totalWt = 0;
+  const marksShort = {};
+  parts.forEach(p => {
+    const per = +p.qtyPerDrg || +p.qty || 1;
+    const wt = (+p.clientUnitWt || +p.unitWt || 0) * per;
+    totalWt += wt;
+    const have = Math.max(0, (cutBy[p.markNo] || 0) - idx * per);
+    if (have >= per) { cutMarks++; cutWt += wt; }
+    else { shortMarks++; marksShort[p.markNo] = per - have; }
+  });
+  // TWO weights, deliberately kept apart:
+  //   fabWt      — only the parts WE cut. The honest denominator for cutting progress.
+  //   instanceWt — the whole assembly, including client-supplied and bought-out parts,
+  //                which we still fit up and weld. This is the order-spine figure.
+  // On FXL26-27/0002: 10,362 kg fabricated vs 10,727 kg total; 11 parts / 366 kg are
+  // client supply. Using one for the other would either overstate cutting or
+  // understate the order.
+  const instanceWt = +(drawing.unitWt || totalWt) || 0;
+  const barsToCut = shortMarks > 0
+    ? uncutBarsForDrawing({ batches, drawingId:drawing.id, marksShort, splitIdx })
+    : [];
+  // Where the cut parts physically are.
+  const bays = new Set();
+  (cutRecords||[]).forEach(r => {
+    if (!r || r.drawingId !== drawing.id) return;
+    if (r.bay) bays.add(r.bay);
+    const lot = (stock||[]).find(x => x && (x.id === r.fromLotId));
+    if (lot && lot.bayId) bays.add(lot.bayId);
+  });
+  const stage = dpr ? dpr.currentStage : (drawingInstance.status === "released" ? "pending" : "unreleased");
+  const released = drawingInstance.status === "released";
+  // Days at the current stage, from stage history — no configuration needed.
+  const last = ((dpr && dpr.stageHistory) || []).slice(-1)[0];
+  const since = (last && (last.at || last.date)) || (dpr && dpr.createdAt) || null;
+  const daysAtStage = since ? Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 86400000)) : null;
+  // Parts still uncut while the assembly has already moved on = welded around missing
+  // pieces. Nothing surfaces this today and it costs a week when it lands at blasting.
+  const pastFitup = PAST_FITUP_STAGES.includes(stage);
+  return {
+    diId: drawingInstance.id, instanceNo: drawingInstance.instanceNo,
+    totalInstances: drawingInstance.totalInstances, drawingId: drawing.id,
+    drawingNo: drawing.drawingNo || "", orderId: order.id, orderNo: order.orderNo || order.id,
+    released, stage, daysAtStage,
+    dprId: dpr ? dpr.id : "",
+    fabContractorId: (dpr && (dpr.fitupContractorId || dpr.weldContractorId)) || "",
+    fabContractorName: (dpr && (dpr.fitupContractorName || dpr.weldContractorName)) || "",
+    blastContractorId: (dpr && dpr.blastContractorId) || "",
+    totalMarks: parts.length, cutMarks, shortMarks,
+    fabWt: +totalWt.toFixed(1), cutWt: +cutWt.toFixed(1),
+    totalWt: +instanceWt.toFixed(1),
+    pctWt: totalWt > 0 ? Math.round((cutWt / totalWt) * 100) : 0,
+    marksShort, barsToCut, bays: [...bays],
+    partsComplete: parts.length > 0 && shortMarks === 0,
+    shortWhileAdvanced: pastFitup && shortMarks > 0,
+  };
+};
+
+// Rank uncut bars by what cutting them would RELEASE. A bar carrying the last three
+// marks of an assembly beats one carrying sixty marks spread over five half-done ones.
+const rankBarsToCut = (statuses) => {
+  const bars = {};
+  (statuses||[]).forEach(st => {
+    (st.barsToCut||[]).forEach(b => {
+      const e = bars[b.rmUnitId] = bars[b.rmUnitId] || {
+        rmUnitId:b.rmUnitId, matCode:b.matCode, sheetDim:b.sheetDim,
+        marks:new Set(), instances:new Set(), completes:new Set(), wtUnblocked:0 };
+      b.marks.forEach(m => e.marks.add(m));
+      e.instances.add(st.diId);
+      // Cutting THIS bar finishes the instance only if it holds every mark still short.
+      const shortNames = Object.keys(st.marksShort||{});
+      if (shortNames.length > 0 && shortNames.every(m => b.marks.includes(m))) {
+        e.completes.add(st.diId);
+        e.wtUnblocked += st.totalWt || 0;
+      }
+    });
+  });
+  return Object.values(bars).map(b => ({
+    rmUnitId:b.rmUnitId, matCode:b.matCode, sheetDim:b.sheetDim,
+    markCount:b.marks.size, instanceCount:b.instances.size,
+    completesCount:b.completes.size, wtUnblocked:+b.wtUnblocked.toFixed(1),
+  })).sort((a,b) => b.completesCount - a.completesCount
+                 || b.wtUnblocked - a.wtUnblocked
+                 || b.instanceCount - a.instanceCount
+                 || b.markCount - a.markCount);
+};
+
+// One reason per instance, ranked by what a foreman would chase first.
+const instanceBlocker = (st) => {
+  if (!st.released) return st.cutMarks > 0
+    ? { code:"unreleased_parts_ready", text:`${st.cutMarks} of ${st.totalMarks} marks already cut — not released yet` }
+    : { code:"unreleased", text:"Not released" };
+  if (st.shortWhileAdvanced) return { code:"short_while_advanced",
+    text:`At ${st.stage} but ${st.shortMarks} mark(s) were never cut` };
+  if (!st.fabContractorId && !PAST_FITUP_STAGES.includes(st.stage))
+    return { code:"no_fab_contractor", text:"No fit-up/weld contractor allotted" };
+  if (st.stage === "blasting" && !st.blastContractorId)
+    return { code:"no_blast_contractor", text:"No blast/paint contractor allotted" };
+  if (st.shortMarks > 0) return { code:"parts_short",
+    text:`${st.shortMarks} mark(s) still to cut` +
+      (st.barsToCut.length ? ` — on ${st.barsToCut.length} bar(s)` : "") };
+  return null;
+};
+
 const cutRecKey = (r) => `${r.drawingId}|${r.markNo}|${r.fromRmUnitId}`;
 
 // The single definition of what a cut record looks like. In-house cutting,
@@ -7654,7 +7839,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
           <InfoBanner color="amber">
             ⬆ <b>{awayUnits.length} RM unit{awayUnits.length!==1?"s":""} already out with a vendor</b> for cutting and not yet
             fully back ({[...new Set(awayUnits.map(u=>u.awayWith.vendorName).filter(Boolean))].join(", ")||"vendor"}).
-            Nothing to assign on those rows — their parts return already cut and enter at fit-up. Assign the
+            Nothing to assign on those rows — their parts return already cut and enter at <b>Cutting QC</b>. Assign the
             fit-up and welding contractor on step 5 as usual.
           </InfoBanner>
         )}
@@ -7748,8 +7933,11 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                               ⬆ Out with <b>{ru.awayWith.vendorName||"vendor"}</b> since {String(ru.awayWith.issuedAt).slice(0,10)}
                               {ru.awayWith.expectedReturn?` · expected back ${ru.awayWith.expectedReturn}`:""}
                               <div style={{color:T.textLow}}>
-                                {ru.awayWith.issueId} · {ru.awayWith.batches>0
-                                  ? `${ru.awayWith.batches} batch(es) received so far`
+                                {ru.awayWith.issueId} · {ru.awayWith.dispatchBatches>0
+                                  ? `${ru.awayWith.dispatchBatches} batch(es) received on this dispatch`
+                                    + (ru.awayWith.dispatchOutstanding>0
+                                        ? ` · ${ru.awayWith.dispatchOutstanding} line(s) still outstanding`
+                                        : " · everything declared is back")
                                   : "nothing back yet"} — these parts return already cut, so no cutting contractor is needed.
                               </div>
                             </div>
@@ -7942,6 +8130,16 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 
   const Step5 = () => {
     const ownedOf=(row)=>outboundOwnedStages(row&&row.processSteps);
+    // Contractor is OPTIONAL at release. This no longer blocks — it names the
+    // instances that will appear on the Allotment screen so deferring is deliberate
+    // rather than accidental. Vendor-owned stages stay excluded, as before.
+    const unassignedRows=selDrawings.filter((row)=>{
+      const ca=contAsgn[asgnKeyOf(row)]||{};
+      const owned=ownedOf(row);
+      const needFit=!owned.has("fitup"), needWeld=!owned.has("welding");
+      if(!needFit&&!needWeld) return false;
+      return !(ca.contractorId||ca.fitupContractorId);
+    });
     const missingContractor=selDrawings.some((row)=>{
       const ca=contAsgn[asgnKeyOf(row)]||{};
       const owned=ownedOf(row);
@@ -8052,7 +8250,14 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
             </div>
           );
         })}
-        {missingContractor&&<InfoBanner color="amber">Contractor required for fit-up/welding drawings before confirming.</InfoBanner>}
+        {unassignedRows.length>0&&<InfoBanner color="amber">
+          <b>{unassignedRows.length} drawing instance(s) will be released with no fit-up/weld contractor.</b>{" "}
+          They will appear on the <b>Allotment</b> screen for the production admin to assign — the release
+          itself is not held up.
+          <div style={{ marginTop:4, fontSize:11 }}>
+            {unassignedRows.map(r=>`${r.drawing.drawingNo}${r.instanceNo?` · ${r.instanceNo}/${r.totalInstances}`:""}`).join(" · ")}
+          </div>
+        </InfoBanner>}
         <div style={{marginTop:16,display:"flex",gap:8}}>
           <button onClick={()=>setStep(4)} style={css.btn.ghost}>← Back</button>
           <button onClick={()=>{
@@ -8067,7 +8272,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
                 .filter(Boolean);
               if(clash.length>0){ setDupWarn(clash); return; }
               confirm();
-            }} disabled={missingContractor} style={missingContractor?{...css.btn.green,opacity:0.45,cursor:"not-allowed"}:css.btn.green}>✓ Create Release</button>
+            }} style={css.btn.green}>✓ Create Release</button>
         </div>
       </div>
     );
@@ -13699,7 +13904,13 @@ const findDprMerges = (dprs) => {
 
 // Apply. Never overwrites a value the instance DPR already has — the legacy twin only
 // fills blanks. Idempotent: once the legacy records are gone a rescan finds nothing.
-const applyDprMerges = (dprs, merges, user, ts) => {
+const applyDprMerges = (dprs, merges, user, ts, orders) => {
+  const instanceWt = (d) => {
+    if (+d.totalWt > 0) return +d.totalWt;
+    const o = (orders||[]).find(x=>x.id===d.orderId);
+    const dr = ((o&&o.drawings)||[]).find(x=>x.id===d.drawingId);
+    return +(dr&&dr.unitWt)||0;
+  };
   const byId = {}; (dprs||[]).forEach(d => { if (d) byId[d.id] = d; });
   const drop = new Set();
   const patched = {};
@@ -13712,6 +13923,7 @@ const applyDprMerges = (dprs, merges, user, ts) => {
     patched[m.keepId] = {
       ...target,
       currentStage: m.toStage,
+      totalWt: instanceWt(target),
       fitupContractorId: take("fitupContractorId"), fitupContractorName: take("fitupContractorName"),
       weldContractorId:  take("weldContractorId"),  weldContractorName:  take("weldContractorName"),
       blastContractorId: take("blastContractorId"), blastContractorName: take("blastContractorName"),
@@ -15956,6 +16168,505 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
   );
 };
 
+// ── ALLOTMENT ────────────────────────────────────────────────────────────────
+// The home for work that is ready but has nobody assigned. Contractor choice is now
+// optional at release, so this is where the production admin picks it up later.
+// FAB   = fit-up + weld, always ONE contractor (both fields written, because the
+//         contractor queue and the progress readers filter on both names).
+// FINISH= blast + paint, allotted together.
+// No cutting row: cutting is allotted per RM unit on the release wizard, not per
+// instance. Replaces Blast & Paint Assignments — two screens writing the same field
+// would disagree within a week.
+const FAB_DONE_STAGES = ["welding","weld_qc","tpi_weld","blasting","blast_qc","tpi_blast",
+                         "painting","paint_qc","tpi_paint","mdcc","dispatch","complete"];
+const buildAllotmentRows = ({ dprs, orders, drawingInstances, instances }) => {
+  const out = [];
+  (dprs||[]).forEach(d=>{
+    if (!d || d.currentStage==="complete" || d.status==="cancelled") return;
+    const order = (orders||[]).find(o=>o.id===d.orderId);
+    const drawing = ((order&&order.drawings)||[]).find(x=>x.id===d.drawingId);
+    const di = (drawingInstances||[]).find(x=>x.id===d.drawingInstanceId);
+    const wt = +d.totalWt || +(drawing&&drawing.unitWt) || 0;
+    const fabId = d.fitupContractorId || d.weldContractorId || "";
+    // FAB is pending until someone is on it; once the work is past welding the
+    // question is moot even if the field was never filled.
+    const fabPending = !fabId && !FAB_DONE_STAGES.includes(d.currentStage);
+    // FINISH becomes pending the moment weld QC (and weld TPI, if required) is cleared.
+    const finishPending = !d.blastContractorId &&
+      ["blasting","blast_qc","tpi_blast"].includes(d.currentStage);
+    // Parts already waiting to be collected but nobody to collect them — the ordering
+    // trap in deferring the contractor. Surfaced as urgent rather than left to rot.
+    const urgent = fabPending && (d.currentStage==="awaiting_collection" ||
+      (instances||[]).some(i=>i && i.drawingInstanceId===d.drawingInstanceId && i.currentStage==="awaiting_collection"));
+    if (!fabPending && !finishPending && !fabId && !d.blastContractorId) return;
+    out.push({
+      dprId:d.id, diId:d.drawingInstanceId||"", orderId:d.orderId,
+      orderNo:d.orderNo||(order&&order.orderNo)||d.orderId,
+      drawingId:d.drawingId, drawingNo:d.drawingNo||(drawing&&drawing.drawingNo)||"",
+      instanceNo:(di&&di.instanceNo)||d.instanceNo||null,
+      totalInstances:(di&&di.totalInstances)||d.totalInstances||null,
+      stage:d.currentStage, wt,
+      fabId, fabName:d.fitupContractorName||d.weldContractorName||"",
+      blastId:d.blastContractorId||"", blastName:d.blastContractorName||"",
+      paintId:d.paintContractorId||"", paintName:d.paintContractorName||"",
+      fabPending, finishPending, urgent,
+      history:d.assignmentHistory||[],
+    });
+  });
+  return out;
+};
+
+// Apply an allotment or a RE-allotment. Completed stages are never reset — if fit-up
+// was finished and the contractor left during welding, the new one picks up at welding
+// and the history keeps the first man's work attributed to him. Payment is not built,
+// but the entry records the stage and the instance weight because a per-ton settlement
+// would need exactly those and they cannot be reconstructed later.
+const applyAllotment = (dprs, { dprIds, group, contractorId, contractorName, reason, user, ts }) => {
+  const ids = new Set(dprIds||[]);
+  return (dprs||[]).map(d=>{
+    if (!d || !ids.has(d.id)) return d;
+    const fromId = group==="fab" ? (d.fitupContractorId||d.weldContractorId||"")
+                                 : (d.blastContractorId||"");
+    const fromName = group==="fab" ? (d.fitupContractorName||d.weldContractorName||"")
+                                   : (d.blastContractorName||"");
+    const entry = { at:ts, by:(user&&user.username)||"system", group,
+      fromContractorId:fromId, fromContractorName:fromName,
+      toContractorId:contractorId, toContractorName:contractorName,
+      atStage:d.currentStage, instanceWt:+d.totalWt||0,
+      reason:reason||(fromId?"Re-assigned":"Assigned") };
+    const fields = group==="fab"
+      ? { fitupContractorId:contractorId, fitupContractorName:contractorName,
+          weldContractorId:contractorId,  weldContractorName:contractorName }
+      : { blastContractorId:contractorId, blastContractorName:contractorName,
+          paintContractorId:contractorId, paintContractorName:contractorName };
+    return { ...d, ...fields,
+      assignmentHistory:[...(d.assignmentHistory||[]), entry],
+      auditLog:[...(d.auditLog||[]), { action:group==="fab"?"fab-allotted":"finish-allotted",
+        by:entry.by, date:ts,
+        reason:`${fromName?`${fromName} → `:""}${contractorName} at ${d.currentStage}${reason?` — ${reason}`:""}` }] };
+  });
+};
+
+const AllotmentScreen = ({ user, dprs, setDprs, orders, drawingInstances, instances,
+                          contractors, onBack }) => {
+  const [tab, setTab]   = useState("pending");
+  const [sel, setSel]   = useState([]);
+  const [pick, setPick] = useState({});
+  const [reassign, setReassign] = useState(null);
+  const [rForm, setRForm] = useState({});
+  const [toast, setToast] = useState("");
+
+  const rows = buildAllotmentRows({ dprs, orders, drawingInstances, instances });
+  const pending = rows.filter(r=>r.fabPending||r.finishPending);
+  const assigned = rows.filter(r=>!r.fabPending&&!r.finishPending);
+  const hist = rows.filter(r=>(r.history||[]).length>0);
+  const fabCons  = (contractors||[]).filter(c=>c.active!==false&&(c.type||[]).some(t=>['fit_up','welding'].includes(t)));
+  const finCons  = (contractors||[]).filter(c=>c.active!==false&&(c.type||[]).some(t=>['blasting','painting'].includes(t)));
+
+  const doAllot = (ids, group, contractorId, reason) => {
+    const pool = group==="fab"?fabCons:finCons;
+    const c = pool.find(x=>x.id===contractorId);
+    if (!c) { setToast("Choose a contractor first."); return; }
+    setDprs(prev=>applyAllotment(prev, { dprIds:ids, group, contractorId,
+      contractorName:c.name, reason, user, ts:new Date().toISOString() }));
+    setSel([]); setPick({}); setReassign(null); setRForm({});
+    setToast(`${ids.length} instance(s) allotted to ${c.name}.`);
+  };
+
+  const groupOf = (r) => r.fabPending ? "fab" : "finish";
+  const selRows = pending.filter(r=>sel.includes(r.dprId));
+  const selGroup = selRows.length ? groupOf(selRows[0]) : "fab";
+  const selMixed = selRows.some(r=>groupOf(r)!==selGroup);
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Production</button>
+        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Allotment</div>
+        <span style={{ fontSize:12, color:T.textMid }}>
+          work that is ready but has nobody assigned — per drawing instance
+        </span>
+      </div>
+      {toast&&<InfoBanner color="green">{toast}</InfoBanner>}
+
+      <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${T.border}`, marginBottom:16 }}>
+        {[["pending",`Pending (${pending.length})`],["assigned",`Assigned (${assigned.length})`],["history",`History (${hist.length})`]].map(([v,l])=>(
+          <button key={v} onClick={()=>setTab(v)} style={{ padding:"8px 14px", fontSize:12,
+            fontWeight:tab===v?700:500, color:tab===v?T.accent:T.textMid, background:"transparent",
+            border:"none", borderBottom:tab===v?`2px solid ${T.accent}`:"2px solid transparent", cursor:"pointer" }}>{l}</button>
+        ))}
+      </div>
+
+      {tab==="pending"&&(
+        <>
+          {sel.length>0&&(
+            <div style={{ ...css.card, marginBottom:12, display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+              <b style={{ fontSize:12 }}>{sel.length} selected</b>
+              {selMixed
+                ? <span style={{ fontSize:12, color:T.amber }}>
+                    Mixed fit-up/weld and blast/paint rows — allot them separately.
+                  </span>
+                : <>
+                    <select value={pick.bulk||""} onChange={e=>setPick(p=>({...p,bulk:e.target.value}))}
+                      style={{ ...css.input, width:240 }}>
+                      <option value="">— {selGroup==="fab"?"fit-up & welding":"blast & paint"} contractor —</option>
+                      {(selGroup==="fab"?fabCons:finCons).map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
+                    </select>
+                    <button onClick={()=>doAllot(sel, selGroup, pick.bulk, "Allotted from the allotment screen")}
+                      style={css.btn.primary}>Allot {sel.length}</button>
+                  </>}
+              <button onClick={()=>setSel([])} style={{ ...css.btn.ghost, fontSize:11, color:T.textMid }}>clear</button>
+            </div>
+          )}
+          {pending.length===0&&(
+            <div style={{ textAlign:"center", padding:40, color:T.textLow }}>
+              <div style={{ fontSize:28 }}>✓</div>
+              <div style={{ fontSize:13, fontWeight:700, color:T.textMid, marginTop:6 }}>Everything ready has a contractor</div>
+            </div>
+          )}
+          {pending.map(r=>(
+            <div key={r.dprId} style={{ ...css.card, marginBottom:8,
+              borderLeft:`3px solid ${r.urgent?T.red:T.amber}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                <input type="checkbox" checked={sel.includes(r.dprId)}
+                  onChange={()=>setSel(p=>p.includes(r.dprId)?p.filter(x=>x!==r.dprId):[...p,r.dprId])} />
+                <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accentHi }}>{r.drawingNo}</span>
+                {r.instanceNo&&<span style={{ background:T.bgInput, border:`1px solid ${T.borderHi}`,
+                  borderRadius:4, padding:"1px 6px", fontSize:11, fontFamily:T.fontMono }}>{r.instanceNo}/{r.totalInstances}</span>}
+                <span style={{ fontSize:11, color:T.textMid }}>{r.orderNo}</span>
+                <Badge color={r.fabPending?"blue":"purple"}>{r.fabPending?"FIT-UP & WELD":"BLAST & PAINT"}</Badge>
+                <span style={{ fontSize:11, color:T.textMid }}>at {STAGE_SEQ_LABELS[r.stage]||r.stage.replace(/_/g," ")} · {fmt.num(Math.round(r.wt))} kg</span>
+                {r.urgent&&<Badge color="red">parts waiting to be collected</Badge>}
+                <div style={{ flex:1 }} />
+                <select value={pick[r.dprId]||""} onChange={e=>setPick(p=>({...p,[r.dprId]:e.target.value}))}
+                  style={{ ...css.input, width:210, fontSize:12 }}>
+                  <option value="">— contractor —</option>
+                  {(r.fabPending?fabCons:finCons).map(c=><option key={c.id} value={c.id}>{c.name}{c.isInHouse?" (In-House)":""}</option>)}
+                </select>
+                <button onClick={()=>doAllot([r.dprId], r.fabPending?"fab":"finish", pick[r.dprId], "Allotted from the allotment screen")}
+                  style={css.btn.primary}>Allot</button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {tab==="assigned"&&(
+        <div style={{ ...css.card, padding:0, overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead><tr>{["Drawing","Inst","Order","Stage","Weight","Fit-up & weld","Blast & paint",""].map(h=>
+              <th key={h} style={{ textAlign:"left", padding:"8px 10px", fontSize:10, fontWeight:700,
+                color:T.textMid, textTransform:"uppercase", background:T.bgInput, borderBottom:`2px solid ${T.borderHi}` }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {assigned.length===0&&<tr><td colSpan={8} style={{ padding:24, textAlign:"center", color:T.textLow }}>Nothing allotted yet.</td></tr>}
+              {assigned.map(r=>(
+                <tr key={r.dprId} style={{ borderBottom:`1px solid ${T.border}` }}>
+                  <td style={{ padding:"8px 10px", fontFamily:T.fontMono, color:T.accentHi }}>{r.drawingNo}</td>
+                  <td style={{ padding:"8px 10px", fontFamily:T.fontMono }}>{r.instanceNo?`${r.instanceNo}/${r.totalInstances}`:"—"}</td>
+                  <td style={{ padding:"8px 10px", color:T.textMid }}>{r.orderNo}</td>
+                  <td style={{ padding:"8px 10px" }}><Badge color="gray">{STAGE_SEQ_LABELS[r.stage]||r.stage.replace(/_/g," ")}</Badge></td>
+                  <td style={{ padding:"8px 10px", fontFamily:T.fontMono }}>{fmt.num(Math.round(r.wt))} kg</td>
+                  <td style={{ padding:"8px 10px" }}>{r.fabName||"—"}</td>
+                  <td style={{ padding:"8px 10px" }}>{r.blastName||"—"}</td>
+                  <td style={{ padding:"8px 10px" }}>
+                    <button onClick={()=>{setReassign(r);setRForm({group:r.fabName?"fab":"finish"});}}
+                      style={{ ...css.btn.secondary, fontSize:11 }}>Re-assign</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab==="history"&&(
+        <div style={{ ...css.card }}>
+          {hist.length===0&&<div style={{ color:T.textLow, fontSize:12 }}>No allotment history yet.</div>}
+          {hist.map(r=>(
+            <div key={r.dprId} style={{ marginBottom:12, paddingBottom:10, borderBottom:`1px solid ${T.border}` }}>
+              <div style={{ fontSize:12, fontWeight:700 }}>
+                <span style={{ fontFamily:T.fontMono, color:T.accentHi }}>{r.drawingNo}</span>
+                {r.instanceNo?` · ${r.instanceNo}/${r.totalInstances}`:""} · {r.orderNo}
+              </div>
+              {(r.history||[]).map((h,i)=>(
+                <div key={i} style={{ fontSize:11, color:T.textMid, marginTop:3 }}>
+                  {String(h.at).slice(0,10)} · <b>{h.group==="fab"?"fit-up & weld":"blast & paint"}</b> ·{" "}
+                  {h.fromContractorName?<span>{h.fromContractorName} → </span>:null}
+                  <b style={{ color:T.text }}>{h.toContractorName}</b>{" "}
+                  <span style={{ color:T.textLow }}>at {h.atStage} · {fmt.num(Math.round(h.instanceWt||0))} kg · {h.by}</span>
+                  {h.reason?<span style={{ color:T.textLow }}> — {h.reason}</span>:null}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {reassign&&(
+        <Modal title={`Re-assign — ${reassign.drawingNo}${reassign.instanceNo?` ${reassign.instanceNo}/${reassign.totalInstances}`:""}`}
+          onClose={()=>{setReassign(null);setRForm({});}} width={520}>
+          <InfoBanner color="blue">
+            Completed stages are not reset. Work already finished stays credited to the previous
+            contractor in the history.
+          </InfoBanner>
+          <Field label="Which work" required>
+            <Sel value={rForm.group||"fab"} onChange={e=>setRForm(f=>({...f,group:e.target.value}))}>
+              <option value="fab">Fit-up &amp; welding</option>
+              <option value="finish">Blast &amp; paint</option>
+            </Sel>
+          </Field>
+          <Field label="New contractor" required>
+            <Sel value={rForm.contractorId||""} onChange={e=>setRForm(f=>({...f,contractorId:e.target.value}))}>
+              <option value="">— select —</option>
+              {((rForm.group||"fab")==="fab"?fabCons:finCons).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+            </Sel>
+          </Field>
+          <Field label="Reason" required>
+            <Input value={rForm.reason||""} onChange={e=>setRForm(f=>({...f,reason:e.target.value}))}
+              placeholder="e.g. contractor left mid-way" />
+          </Field>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+            <button onClick={()=>{setReassign(null);setRForm({});}} style={css.btn.secondary}>Cancel</button>
+            <button onClick={()=>{
+              if(!rForm.contractorId) return setToast("Choose a contractor.");
+              if(!(rForm.reason||"").trim()) return setToast("A reason is required for a re-assignment.");
+              doAllot([reassign.dprId], rForm.group||"fab", rForm.contractorId, rForm.reason.trim());
+            }} style={css.btn.primary}>Re-assign</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ── PRODUCTION STATUS ────────────────────────────────────────────────────────
+// One row per DRAWING INSTANCE, every drawing at once, filtered by stage. Replaces
+// the DPR view and the old progress grid, and absorbs the "cut parts waiting in the
+// bay" list — an unreleased instance still appears, so 79 received marks are visible
+// the moment they land instead of only after a release.
+const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecords,
+                                  instances, nestingBatches, productionNests, stock,
+                                  releases, contractors, onBack }) => {
+  const [q, setQ]           = useState("");
+  const [orderF, setOrderF] = useState("");
+  const [stageF, setStageF] = useState("");
+  const [viewMode, setView] = useState("instances");   // instances | tocut
+  const [openRow, setOpenRow] = useState("");
+
+  const splitIdx = buildSplitIndex(nestingBatches);
+  const effBatches = buildEffectiveNestSource(nestingBatches, productionNests);
+
+  const rows = [];
+  (orders||[]).filter(o=>o.status==="active").forEach(order=>{
+    (order.drawings||[]).forEach(drawing=>{
+      if (!drawing || !drawing.drawingNo) return;      // skip blank register rows
+      const dis = (drawingInstances||[]).filter(di=>di.orderId===order.id && di.drawingId===drawing.id);
+      const list = dis.length ? dis : [{ id:buildDIId(drawing.id,1), orderId:order.id,
+        drawingId:drawing.id, instanceNo:1, totalInstances:drawing.qty||1, status:"unreleased" }];
+      list.forEach(di=>{
+        const dpr = (dprs||[]).find(d=>d && d.drawingInstanceId===di.id)
+                 || (dprs||[]).find(d=>d && !d.drawingInstanceId && d.drawingId===drawing.id && d.orderId===order.id);
+        rows.push(buildInstanceStatus({ drawingInstance:{...di, totalInstances:di.totalInstances||drawing.qty||1},
+          order, drawing, dpr, cutRecords, instances, batches:effBatches, splitIdx, stock, releases }));
+      });
+    });
+  });
+
+  const stageCounts = {};
+  rows.forEach(r=>{ stageCounts[r.stage]=(stageCounts[r.stage]||0)+1; });
+  const shown = rows.filter(r=>{
+    if (orderF && r.orderId!==orderF) return false;
+    if (stageF && r.stage!==stageF) return false;
+    if (q && !`${r.drawingNo} ${r.orderNo}`.toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  });
+
+  const ranked = rankBarsToCut(shown);
+  const alarms = shown.filter(r=>r.shortWhileAdvanced);
+  const tile = (label, val, color) => (
+    <div style={{ ...css.card, flex:1, minWidth:120 }}>
+      <div style={{ fontSize:10, color:T.textMid, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em" }}>{label}</div>
+      <div style={{ fontSize:22, fontWeight:800, color:color||T.text, fontFamily:T.fontMono, marginTop:4 }}>{val}</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+        <button onClick={onBack} style={css.btn.ghost}>← Production</button>
+        <div style={{ fontSize:18, fontWeight:800, color:T.text }}>Production Status</div>
+        <span style={{ fontSize:12, color:T.textMid }}>
+          every drawing instance · parts until fit-up, then the assembly
+        </span>
+      </div>
+
+      <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+        {tile("Instances", shown.length)}
+        {tile("Parts complete", shown.filter(r=>r.partsComplete).length, T.green)}
+        {tile("Needs allotment", shown.filter(r=>{const b=instanceBlocker(r);return b&&/contractor/.test(b.code);}).length, T.amber)}
+        {tile("Still to cut", shown.filter(r=>r.shortMarks>0).length, T.amber)}
+        {tile("Bars to cut", ranked.length)}
+      </div>
+
+      {alarms.length>0&&(
+        <InfoBanner color="red">
+          <b>{alarms.length} instance(s) have moved past fit-up with parts never cut.</b>{" "}
+          {alarms.map(a=>`${a.drawingNo} ${a.instanceNo}/${a.totalInstances} (${a.shortMarks} mark${a.shortMarks>1?"s":""} at ${a.stage})`).join(" · ")}
+          {" "}— someone has fitted or welded around missing pieces.
+        </InfoBanner>
+      )}
+
+      <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search drawing / order…"
+          style={{ ...css.input, width:230 }} />
+        <select value={orderF} onChange={e=>setOrderF(e.target.value)} style={{ ...css.input, width:210 }}>
+          <option value="">All orders</option>
+          {[...new Set(rows.map(r=>r.orderId))].map(id=>{
+            const o=(orders||[]).find(x=>x.id===id);
+            return <option key={id} value={id}>{(o&&o.orderNo)||id}</option>;
+          })}
+        </select>
+        <div style={{ flex:1 }} />
+        <button onClick={()=>setView(viewMode==="instances"?"tocut":"instances")}
+          style={{ ...css.btn.secondary, fontSize:12 }}>
+          {viewMode==="instances" ? `🔪 What to cut next (${ranked.length})` : "← Back to instances"}
+        </button>
+      </div>
+
+      {viewMode==="instances"&&(
+        <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${T.border}`, marginBottom:14, overflowX:"auto" }}>
+          {[["","All"],...Object.keys(stageCounts).sort((a,b)=>dprStageRank(a)-dprStageRank(b))
+              .map(st=>[st, STAGE_SEQ_LABELS[st]||st.replace(/_/g," ")])].map(([val,label])=>(
+            <button key={val||"all"} onClick={()=>setStageF(val)}
+              style={{ padding:"8px 13px", fontSize:12, fontWeight:stageF===val?700:500,
+                color:stageF===val?T.accent:T.textMid, background:"transparent", border:"none",
+                borderBottom:stageF===val?`2px solid ${T.accent}`:"2px solid transparent",
+                cursor:"pointer", whiteSpace:"nowrap" }}>
+              {label} <span style={{ color:T.textLow }}>{val?stageCounts[val]:rows.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {viewMode==="tocut" ? (
+        <div style={{ ...css.card }}>
+          <div style={{ fontSize:12, color:T.textMid, marginBottom:10 }}>
+            Uncut bars ranked by what cutting them RELEASES — a bar holding the last marks of an
+            assembly beats one holding more marks spread across several half-done ones.
+          </div>
+          {ranked.length===0&&<div style={{ color:T.textLow, fontSize:12 }}>Nothing outstanding to cut.</div>}
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <tbody>
+              {ranked.slice(0,40).map((b,i)=>(
+                <tr key={b.rmUnitId} style={{ borderBottom:`1px solid ${T.border}` }}>
+                  <td style={{ padding:"7px 8px", color:T.textLow, width:26 }}>{i+1}</td>
+                  <td style={{ padding:"7px 8px", fontFamily:T.fontMono, fontSize:11 }}>{b.rmUnitId}</td>
+                  <td style={{ padding:"7px 8px", color:T.textMid }}>{b.matCode} · {b.sheetDim}</td>
+                  <td style={{ padding:"7px 8px", color:T.textMid }}>{b.markCount} mark(s) · {b.instanceCount} instance(s)</td>
+                  <td style={{ padding:"7px 8px", textAlign:"right" }}>
+                    {b.completesCount>0
+                      ? <Badge color="green">completes {b.completesCount} · {fmt.num(Math.round(b.wtUnblocked))} kg</Badge>
+                      : <span style={{ color:T.textLow }}>partial</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div style={{ ...css.card, padding:0, overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+            <thead><tr>
+              {["Drawing","Inst","Order","Stage","Days","Parts cut","Weight cut","Blocker","Contractor",""].map(h=>
+                <th key={h} style={{ textAlign:"left", padding:"8px 10px", fontSize:10, fontWeight:700,
+                  color:T.textMid, textTransform:"uppercase", background:T.bgInput,
+                  borderBottom:`2px solid ${T.borderHi}`, whiteSpace:"nowrap" }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {shown.length===0&&<tr><td colSpan={10} style={{ padding:28, textAlign:"center", color:T.textLow }}>Nothing matches.</td></tr>}
+              {shown.map(r=>{
+                const b = instanceBlocker(r);
+                const open = openRow===r.diId;
+                return (
+                  <React.Fragment key={r.diId}>
+                    <tr onClick={()=>setOpenRow(open?"":r.diId)} style={{ cursor:"pointer",
+                      borderBottom:`1px solid ${T.border}`, background:r.shortWhileAdvanced?`${T.red}0C`:"transparent" }}>
+                      <td style={{ padding:"8px 10px", fontFamily:T.fontMono, fontWeight:700, color:T.accentHi }}>
+                        <span style={{ color:T.textLow, marginRight:6 }}>{open?"▼":"▶"}</span>{r.drawingNo}
+                      </td>
+                      <td style={{ padding:"8px 10px", fontFamily:T.fontMono }}>{r.instanceNo}/{r.totalInstances}</td>
+                      <td style={{ padding:"8px 10px", color:T.textMid }}>{r.orderNo}</td>
+                      <td style={{ padding:"8px 10px" }}>
+                        {r.released
+                          ? <Badge color={r.partsComplete?"green":"amber"}>{STAGE_SEQ_LABELS[r.stage]||r.stage.replace(/_/g," ")}</Badge>
+                          : <Badge color="gray">Not released</Badge>}
+                      </td>
+                      <td style={{ padding:"8px 10px", fontFamily:T.fontMono,
+                        color:(r.daysAtStage!==null&&r.daysAtStage>=7)?T.amber:T.textMid }}>
+                        {r.daysAtStage===null?"—":`${r.daysAtStage}d`}
+                      </td>
+                      <td style={{ padding:"8px 10px", fontFamily:T.fontMono }}>{r.cutMarks}/{r.totalMarks}</td>
+                      <td style={{ padding:"8px 10px", minWidth:130 }}>
+                        <div style={{ height:6, background:T.border, borderRadius:3, overflow:"hidden" }}>
+                          <div style={{ height:"100%", width:`${r.pctWt}%`,
+                            background:r.pctWt>=100?T.green:T.accent, borderRadius:3 }} />
+                        </div>
+                        <div style={{ fontSize:10, color:T.textLow, marginTop:2, fontFamily:T.fontMono }}>
+                          {fmt.num(Math.round(r.cutWt))} / {fmt.num(Math.round(r.fabWt))} kg
+                        </div>
+                      </td>
+                      <td style={{ padding:"8px 10px", fontSize:11,
+                        color:b?(b.code==="short_while_advanced"?T.red:T.amber):T.green }}>
+                        {b?b.text:"—"}
+                      </td>
+                      <td style={{ padding:"8px 10px", fontSize:11, color:T.textMid }}>{r.fabContractorName||"—"}</td>
+                      <td style={{ padding:"8px 10px", fontSize:10, color:T.textLow }}>
+                        {fmt.num(Math.round(r.totalWt))} kg
+                      </td>
+                    </tr>
+                    {open&&(
+                      <tr><td colSpan={10} style={{ padding:"10px 14px", background:T.bgInput, borderBottom:`1px solid ${T.border}` }}>
+                        {r.shortMarks===0
+                          ? <div style={{ fontSize:12, color:T.green }}>✓ Every mark of this instance is cut.</div>
+                          : (
+                            <>
+                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>
+                                {r.shortMarks} MARK(S) STILL TO CUT
+                                {r.barsToCut.length>0&&` — on ${r.barsToCut.length} bar(s)`}
+                              </div>
+                              {r.barsToCut.length===0
+                                ? <div style={{ fontSize:11, color:T.textLow }}>
+                                    Not on any nest yet: {Object.keys(r.marksShort).slice(0,12).join(", ")}
+                                    {Object.keys(r.marksShort).length>12?` +${Object.keys(r.marksShort).length-12} more`:""}
+                                  </div>
+                                : r.barsToCut.slice(0,10).map(bar=>(
+                                    <div key={bar.rmUnitId} style={{ fontSize:11, color:T.text, padding:"2px 0" }}>
+                                      <span style={{ fontFamily:T.fontMono, color:T.accentHi }}>{bar.rmUnitId}</span>
+                                      <span style={{ color:T.textMid }}> · {bar.matCode} {bar.sheetDim} · {bar.marks.length} mark(s): {bar.marks.slice(0,10).join(", ")}
+                                        {bar.marks.length>10?` +${bar.marks.length-10}`:""}</span>
+                                    </div>
+                                  ))}
+                            </>
+                          )}
+                        {r.bays.length>0&&(
+                          <div style={{ fontSize:11, color:T.textMid, marginTop:8 }}>
+                            Cut parts located in: {r.bays.map(x=><Badge key={x} color="teal">{x}</Badge>)}
+                          </div>
+                        )}
+                      </td></tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ProductionModule = ({ user, instances, setInstances, orders, setOrders, stock, setStock,
                             nestingRuns, setNestingRuns, nestingBatches, machines, contractors, materials, vendors, tpiAgencies,
                             releases, setReleases, productionStandards, issueRequests, setIssueRequests, welders, pos, purchaseReqs,
@@ -16220,6 +16931,20 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
       </div>
     );
   }
+
+  if (view==="prod_status") return (
+    <ProductionStatusScreen user={user} orders={orders||[]} drawingInstances={drawingInstances||[]}
+      dprs={dprs||[]} cutRecords={cutRecords||[]} instances={instances||[]}
+      nestingBatches={nestingBatches||[]} productionNests={productionNests||[]}
+      stock={stock||[]} releases={releases||[]} contractors={contractors||[]}
+      onBack={()=>setView("dashboard")} />
+  );
+
+  if (view==="allotment") return (
+    <AllotmentScreen user={user} dprs={dprs||[]} setDprs={setDprs} orders={orders||[]}
+      drawingInstances={drawingInstances||[]} instances={instances||[]}
+      contractors={contractors||[]} onBack={()=>setView("dashboard")} />
+  );
 
   if (view==="blast_paint") {
     const canManage=["super_admin","planning_admin","floor_planner","production_engineer"].includes(user.role);
@@ -16570,7 +17295,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
         )}
         <button onClick={()=>setView("cutting")} style={css.btn.primary}>✂ Cutting Confirmation</button>
         {canAssign&&<button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("assignments");}} style={css.btn.secondary}>📋 Assignment</button>}
-        <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={css.btn.secondary}>📊 Progress Grid</button>
+        <button onClick={()=>setView("prod_status")} style={css.btn.primary}>📊 Production Status</button>
+        <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={{...css.btn.ghost,fontSize:12}}>Old progress grid</button>
         {canAssign&&<button onClick={()=>setView("outbound")} style={css.btn.secondary}>🔄 Outbound</button>}
         {canAssign&&(()=>{
           const n=buildOutboundDispatches(releases||[]).length;
@@ -16594,7 +17320,12 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
               </span>
             )}
           </button>
-          <button onClick={()=>setView("blast_paint")} style={{...css.btn.ghost,fontSize:12}}>🎨 Blast & Paint</button>
+          <button onClick={()=>setView("allotment")} style={{...css.btn.amber,fontSize:12}}>
+            🧑‍🏭 Allotment
+            {(()=>{ const n=buildAllotmentRows({dprs,orders,drawingInstances,instances})
+                      .filter(r=>r.fabPending||r.finishPending).length;
+                    return n>0?<span style={{marginLeft:5,background:T.red,color:"#fff",borderRadius:10,fontSize:10,padding:"1px 5px"}}>{n}</span>:null; })()}
+          </button>
           </>
         )}
         <button onClick={()=>setView("register")} style={css.btn.secondary}>📋 Drawing Register</button>
@@ -16698,7 +17429,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
               </button>
               {scan.total>0&&(
                 <button onClick={()=>{
-                  setDprs(prev=>applyDprMerges(prev, findDprMerges(prev).merges, user, today()));
+                  setDprs(prev=>applyDprMerges(prev, findDprMerges(prev).merges, user, today(), orders));
                 }} style={{ ...css.btn.primary,fontSize:11 }}>Apply merge ({scan.total})</button>
               )}
             </div>
