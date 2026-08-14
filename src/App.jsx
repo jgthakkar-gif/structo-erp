@@ -7754,6 +7754,14 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
   const [runFilterType, setRunFilterType]   = useState("");   // section / material type
   // Nesting-run filter predicate: order (by id in the batch's orderIds), material code
   // (case-insensitive contains), and material type (section). Empty filter = match all.
+  // Runs actually in force — latest per material + order set, the same rule every
+  // reader uses. Computed rather than read from batch.status, which is only written
+  // when a new nest supersedes an old one and so says "in force" on every legacy run.
+  const _liveRunIds = React.useMemo(
+    () => new Set(liveNestRuns(nestingBatches, []).map(b=>b.id)),
+    [nestingBatches]
+  );
+
   const runMatchesBatch = (b) => {
     if (!b) return false;
     if (runFilterOrder && !((b.orderIds||[]).includes(runFilterOrder) || b.orderId===runFilterOrder)) return false;
@@ -9010,6 +9018,12 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                   style={{ ...css.btn.ghost, fontSize:11, padding:"4px 10px" }}>Clear filters</button>
               )}
             </div>
+            {/* Which runs are actually in force, COMPUTED the same way every reader
+                computes it — latest per material + order set. Reading batch.status
+                would say "in force" on all eight 16 mm runs, because that field is
+                only written when a NEW nest supersedes an old one, and the 45 runs
+                that pre-date the feature were never marked. A badge that disagrees
+                with what the code does is worse than no badge. */}
             {(nestingBatches||[]).filter(b=>(showDiscardedBatches||b.status!=="discarded")&&runMatchesBatch(b)).length===0
               ? <div style={{ color:T.textLow, fontSize:12, padding:12 }}>No planning batches yet. Use "Import Nesting Results" to create one.</div>
               : (nestingBatches||[]).filter(b=>(showDiscardedBatches||b.status!=="discarded")&&runMatchesBatch(b)).map((batch,bi)=>{
@@ -9075,8 +9089,11 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                           replaced by a later run
                         </span>
                       )}
-                      {batch.status!=="superseded"&&!isDiscarded&&(
-                        <Badge color="blue">in force</Badge>
+                      {!isDiscarded&&batch.status!=="superseded"&&(
+                        _liveRunIds.has(batch.id)
+                          ? <Badge color="blue">in force</Badge>
+                          : <><Badge color="gray">Superseded</Badge>
+                              <span style={{ fontSize:10, color:T.textLow }}>replaced by a later run</span></>
                       )}
                       {/* Procurement status badge */}
                       {!isDiscarded && !po && !pr && <Badge color="amber">No PR raised</Badge>}
@@ -9127,9 +9144,17 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                                 <span style={{ fontFamily:T.fontMono, fontSize:12, color:T.text, minWidth:260 }}>{lot.matCode}</span>
                                 <span style={{ fontSize:11, color:T.textMid }}>{lot.sheets.length} sheets</span>
                                 <span style={{ fontSize:11, color:T.textMid }}>{(() => {
+                                  // Counted from sheets[].parts, like the batch header.
+                                  // lot.parts is a stored list of mark NAMES, so
+                                  // pt.markNo/pt.qtyPerDrg are undefined there and this
+                                  // line read "1 marks · 0 pcs" on every lot.
                                   const sm=batch.splitMap||{}; const par=mk=>(sm[mk]&&sm[mk].parent)||mk;
                                   const byPar={};
-                                  (lot.parts||[]).forEach(pt=>{ const P=par(pt.markNo); byPar[P]=Math.max(byPar[P]||0,(pt.qtyPerDrg||0)*(pt.drgQty||1)||0); });
+                                  (lot.sheets||[]).forEach(sh=>(sh.parts||[]).forEach(pt=>{
+                                    const mk=typeof pt==="string"?pt:(pt&&pt.markNo); if(!mk) return;
+                                    const q=typeof pt==="object"?(+pt.qty||1):1; const P=par(mk);
+                                    if(sm[mk]) byPar[P]=Math.max(byPar[P]||0,q); else byPar[P]=(byPar[P]||0)+q;
+                                  }));
                                   return `${Object.keys(byPar).length} marks · ${Object.values(byPar).reduce((a,b)=>a+b,0)} pcs`;
                                 })()}</span>
                                 <span style={{ fontSize:11, color:T.textLow }}>avg util: {avgUtil}%</span>
