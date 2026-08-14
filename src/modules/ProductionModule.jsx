@@ -6439,6 +6439,107 @@ const uncutBarsForDrawing = ({ batches, drawingId, marksShort, splitIdx }) => {
     .sort((a,b) => b.marks.length - a.marks.length);
 };
 
+// ── RIDER REPAIR ─────────────────────────────────────────────────────────────
+// Cut records written before the netting fix are wrong in BOTH directions. The old
+// buildRmUnitCutRecords was all-or-nothing per mark: on a bar where a released
+// instance had no piece of a mark it recorded the FULL nested quantity (including the
+// pieces that instance had welded into its assembly); on a bar where it did, it
+// skipped the mark entirely and the unreleased instances got nothing from that bar.
+// Hence 2N showing 94 where two instances need 68 (three instances would be 102), and
+// 1E showing 1 where it needs 8.
+//
+// The correct figure is derivable and does not depend on anyone remembering anything:
+// for each bar, expected riders = nested qty on that bar − pieces of RELEASED
+// instances of that mark on that bar. Exactly what the fixed builder now computes.
+const findRiderRepairs = ({ cutRecords, instances, batches, splitIdx, orders }) => {
+  // Only UNCLAIMED records are riders. A claimed record belongs to a released piece
+  // and its identity is exact — never touched.
+  const riders = (cutRecords||[]).filter(r => r && !r.claimedByInstanceId);
+  const units = [...new Set(riders.map(r => r.fromRmUnitId).filter(Boolean))];
+  if (units.length === 0) return { rows: [], byMark: [], total: 0 };
+
+  // nested qty per (rmUnitId, parent mark), from the effective nest
+  const nested = {};
+  (batches||[]).forEach(b => (b.lots||[]).forEach(l => (l.sheets||[]).forEach(sh => {
+    if (!sh.rmUnitId) return;
+    (sh.parts||[]).forEach(pt => {
+      const mn = splitIdx ? parentMark(splitIdx, pt.markNo) : (pt.markNo||"");
+      if (!mn) return;
+      const k = `${sh.rmUnitId}|${mn}`;
+      nested[k] = (nested[k]||0) + (typeof pt === "object" ? (+pt.qty||1) : 1);
+    });
+  })));
+
+  const rows = [];
+  units.forEach(rmUnitId => {
+    // pieces of RELEASED instances sitting on this bar, per mark
+    const releasedHere = {};
+    (instances||[]).filter(i => i && i.rmUnitId === rmUnitId).forEach(i => {
+      releasedHere[i.markNo] = (releasedHere[i.markNo]||0) + 1;
+    });
+    const recs = riders.filter(r => r.fromRmUnitId === rmUnitId);
+    const marks = new Set([
+      ...recs.map(r => r.markNo),
+      ...Object.keys(nested).filter(k => k.startsWith(rmUnitId + "|")).map(k => k.split("|")[1]),
+    ]);
+    marks.forEach(mn => {
+      const nestedQty = nested[`${rmUnitId}|${mn}`] || 0;
+      // A bar we cannot find in the nest tells us nothing — leave it alone rather than
+      // deleting records on the strength of a missing sheet.
+      if (nestedQty === 0) return;
+      const expected = Math.max(0, nestedQty - (releasedHere[mn]||0));
+      const mine = recs.filter(r => r.markNo === mn);
+      const have = mine.reduce((a,r)=>a+(+r.qty||1), 0);
+      if (have === expected) return;
+      const drawingId = (mine[0] && mine[0].drawingId) ||
+        (((orders||[]).flatMap(o=>o.parts||[]).find(pt=>pt.markNo===mn)||{}).drawingId) || "";
+      rows.push({ rmUnitId, markNo: mn, drawingId, nestedQty,
+                  releasedHere: releasedHere[mn]||0, expected, have,
+                  delta: expected - have, recordIds: mine.map(r=>r.id) });
+    });
+  });
+
+  // roll up per mark so the review reads the way the reconciliation panel does
+  const agg = {};
+  rows.forEach(r => {
+    const k = `${r.drawingId}|${r.markNo}`;
+    const e = agg[k] = agg[k] || { drawingId:r.drawingId, markNo:r.markNo, expected:0, have:0, bars:0 };
+    e.expected += r.expected; e.have += r.have; e.bars++;
+  });
+  const byMark = Object.values(agg).map(x=>({ ...x, delta: x.expected - x.have }))
+    .sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
+  return { rows, byMark, total: rows.length };
+};
+
+// Apply. Adjusts the qty on existing unclaimed records, drops those that should not
+// exist, and adds what is missing. Claimed records are never touched. Idempotent.
+const applyRiderRepairs = (cutRecords, rows, user, ts) => {
+  const drop = new Set();
+  const setQty = {};
+  const add = [];
+  (rows||[]).forEach(r => {
+    if (r.expected === 0) { (r.recordIds||[]).forEach(id => drop.add(id)); return; }
+    if (r.recordIds && r.recordIds.length) {
+      // keep the first record, carry the whole expected qty on it, drop the rest
+      setQty[r.recordIds[0]] = r.expected;
+      r.recordIds.slice(1).forEach(id => drop.add(id));
+      return;
+    }
+    add.push(makeCutRecord({
+      drawingId: r.drawingId, orderId: r.orderId || "", markNo: r.markNo, qty: r.expected,
+      fromRmUnitId: r.rmUnitId, fromInstanceId: null, claimedByInstanceId: null,
+      source: "rm_cutting", ts, by: (user && user.username) || "system",
+    }));
+  });
+  const kept = (cutRecords||[]).filter(r => r && !drop.has(r.id)).map(r => {
+    if (setQty[r.id] === undefined) return r;
+    return { ...r, qty: setQty[r.id], repairedAt: ts,
+             repairedBy: (user && user.username) || "system",
+             repairNote: `Rider qty corrected ${r.qty} → ${setQty[r.id]} (netted against released pieces on the bar)` };
+  });
+  return [...kept, ...add];
+};
+
 // ── RECONCILIATION ───────────────────────────────────────────────────────────
 // Identical drawing instances need identical quantities, so the pieces available for
 // a mark should be a clean multiple of its per-instance quantity. A remainder means
@@ -16624,7 +16725,7 @@ const AllotmentScreen = ({ user, dprs, setDprs, orders, drawingInstances, instan
 // the DPR view and the old progress grid, and absorbs the "cut parts waiting in the
 // bay" list — an unreleased instance still appears, so 79 received marks are visible
 // the moment they land instead of only after a release.
-const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecords,
+const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecords, setCutRecords,
                                   instances, nestingBatches, productionNests, stock,
                                   releases, contractors, onBack }) => {
   const [q, setQ]           = useState("");
@@ -16632,6 +16733,7 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
   const [stageF, setStageF] = useState("");
   const [viewMode, setView] = useState("instances");   // instances | tocut
   const [openRow, setOpenRow] = useState("");
+  const [repairOpen, setRepairOpen] = useState(false);
 
   const splitIdx = buildSplitIndex(nestingBatches);
   const effBatches = buildEffectiveNestSource(nestingBatches, productionNests);
@@ -16705,6 +16807,72 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
                 return a + ((r && r.recon && r.recon.flagged.length) || 0); }, 0),
               shown.some(r=>r.recon&&r.recon.flagged.length>0)?T.amber:T.green)}
       </div>
+
+      {/* One-time repair of cut records written before the rider netting fix. The old
+          builder recorded the FULL nested quantity on bars where no released instance
+          rode (counting pieces the vendor welded into an assembly), and NOTHING on bars
+          where one did. The correct figure is derivable per bar, so this recomputes it.
+          Nothing moves until Apply; claimed records are never touched. */}
+      {setCutRecords && (()=>{
+        const rep = findRiderRepairs({ cutRecords, instances, batches:effBatches, splitIdx, orders });
+        if (rep.total===0) return null;
+        const net = rep.byMark.reduce((a,m)=>a+m.delta,0);
+        return (
+          <div style={{ ...css.card, border:`1px solid ${T.amber}`, background:T.amberBg, marginBottom:16 }}>
+            <div style={{ fontSize:12, fontWeight:800, color:T.amber, marginBottom:6 }}>
+              ⚖ {rep.byMark.length} MARK(S) HAVE THE WRONG CUT-PART QUANTITY RECORDED
+            </div>
+            <div style={{ fontSize:12, color:"#92400E", marginBottom:10, maxWidth:900 }}>
+              These records were written before the rider quantities were fixed. The old logic took the
+              whole nested quantity on a bar where no released instance rode — including the pieces the
+              vendor welded into its assembly — and skipped the mark entirely on bars where one did. That
+              is why the same drawing shows marks both over and short. The right figure is derivable from
+              the nest: <b>what the bar carried, less the pieces that belong to a released instance</b>.
+              {net!==0&&<> Net change {net>0?"+":""}{net} piece(s).</>}
+            </div>
+            {repairOpen&&(
+              <div style={{ background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:6, padding:10,
+                marginBottom:10, maxHeight:320, overflowY:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                  <thead><tr>{["Mark","Bars","Recorded","Should be","Change"].map(h=>
+                    <th key={h} style={{ textAlign:"left", padding:"3px 8px", color:T.textMid,
+                      borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {rep.byMark.map(m=>(
+                      <tr key={m.drawingId+m.markNo} style={{ borderBottom:`1px solid ${T.border}33` }}>
+                        <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontWeight:700 }}>{m.markNo}</td>
+                        <td style={{ padding:"3px 8px", color:T.textMid }}>{m.bars}</td>
+                        <td style={{ padding:"3px 8px", fontFamily:T.fontMono }}>{m.have}</td>
+                        <td style={{ padding:"3px 8px", fontFamily:T.fontMono, fontWeight:700 }}>{m.expected}</td>
+                        <td style={{ padding:"3px 8px", color:m.delta<0?T.red:T.green, fontFamily:T.fontMono }}>
+                          {m.delta>0?"+":""}{m.delta}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div style={{ fontSize:10, color:T.textLow, marginTop:6 }}>
+                  Claimed records — pieces belonging to a released instance — are never touched. A bar that
+                  cannot be found in the nest is left alone rather than emptied on the strength of a missing
+                  sheet. This assumes the vendor returned everything the bars carried; if a mark was
+                  physically short or scrapped at his works, correct it on the floor afterwards.
+                </div>
+              </div>
+            )}
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={()=>setRepairOpen(!repairOpen)} style={{ ...css.btn.secondary, fontSize:11 }}>
+                {repairOpen?"Hide":"Review"} ({rep.byMark.length})
+              </button>
+              <button onClick={()=>{
+                setCutRecords(prev=>{
+                  const fresh = findRiderRepairs({ cutRecords:prev, instances, batches:effBatches, splitIdx, orders });
+                  return applyRiderRepairs(prev, fresh.rows, user, new Date().toISOString());
+                });
+              }} style={{ ...css.btn.primary, fontSize:11 }}>Apply correction</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {alarms.length>0&&(
         <InfoBanner color="red">
@@ -17188,7 +17356,7 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
 
   if (view==="prod_status") return (
     <ProductionStatusScreen user={user} orders={orders||[]} drawingInstances={drawingInstances||[]}
-      dprs={dprs||[]} cutRecords={cutRecords||[]} instances={instances||[]}
+      dprs={dprs||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} instances={instances||[]}
       nestingBatches={nestingBatches||[]} productionNests={productionNests||[]}
       stock={stock||[]} releases={releases||[]} contractors={contractors||[]}
       onBack={()=>setView("dashboard")} />
