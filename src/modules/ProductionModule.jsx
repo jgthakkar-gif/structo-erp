@@ -6253,9 +6253,27 @@ const assignUnitsToLots = (groups, picks) => {
   return { map, allocations };
 };
 
+// Drop runs a later run replaced. A material re-nested eight times left eight equally
+// valid plans, and bars from the replaced ones read as work still to do.
+const dropSupersededRuns = (batches) => {
+  const live = (batches||[]).filter(b => b && b.status !== "discarded" && b.status !== "superseded");
+  const byMat = {};
+  live.forEach(b => {
+    const k = normMatCode(b.matCode||"") + "|" +
+      [...new Set(b.orderIds||(b.orderId?[b.orderId]:[]))].sort().join("|");
+    const t = (x) => new Date(x.completedAt||x.createdAt||0).getTime();
+    if (!byMat[k] || t(b) >= t(byMat[k])) byMat[k] = b;
+  });
+  const keep = new Set(Object.values(byMat).map(b=>b.id));
+  // A batch with no matCode (legacy or multi-material) is never dropped — we cannot
+  // tell what it would be competing with, and silently losing a plan is worse.
+  return live.filter(b => !b.matCode || keep.has(b.id));
+};
+
 const buildEffectiveNestSource = (nestingBatches, productionNests) => {
+  const batches = dropSupersededRuns(nestingBatches);
   const frozen = (productionNests||[]).filter(n=>n && n.status==="frozen");
-  if(frozen.length===0) return nestingBatches||[];   // untouched legacy path
+  if(frozen.length===0) return batches;   // MRP nest in force, one run per material
 
   const claimed = new Set();      // rmUnitIds now owned by a production nest
   const superseded = new Set();   // MRP rmUnitIds replaced by a re-nest
@@ -6277,7 +6295,7 @@ const buildEffectiveNestSource = (nestingBatches, productionNests) => {
     lots: n.lots||[],
   }));
 
-  const mrpBatches = (nestingBatches||[]).map(b=>{
+  const mrpBatches = batches.map(b=>{
     const lots = (b.lots||[]).map(l=>{
       const sheets = (l.sheets||[]).filter(s=>!claimed.has(s.rmUnitId) && !superseded.has(s.rmUnitId));
       if(sheets.length===0) return null;

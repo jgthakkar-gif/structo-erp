@@ -295,6 +295,50 @@ function nestingJustLoggedIn() {
 // ─── NESTING CENTER — API SERVICE ─────────────────────────────────────────────
 // In dev: Vite proxy forwards /nesting-api → https://api-nesting.nestingcenter.com/nesting
 // (avoids CORS — browser talks to localhost, Vite relays server-side)
+// ── NESTING RUN SUPERSESSION ─────────────────────────────────────────────────
+// A material may be re-nested many times. Until now every completed run stayed
+// equally valid, so FXL26-27/0002 ended up with EIGHT completed runs for 16 mm — some
+// carrying bar ids the later runs replaced. Every downstream reader then had to guess
+// which plan was real, and bars from replaced runs showed up as work still to do.
+// Rule (the procurement rule, now enforced for completed runs too): the latest run for
+// a material + order set WINS; the ones it replaces are marked superseded, never
+// deleted, and the supersession is recorded rather than silent.
+const sameNestScope = (a, b) => {
+  if (!a || !b) return false;
+  if (normMatCode(a.matCode||"") !== normMatCode(b.matCode||"")) return false;
+  const oa = [...new Set(a.orderIds||(a.orderId?[a.orderId]:[]))].sort().join("|");
+  const ob = [...new Set(b.orderIds||(b.orderId?[b.orderId]:[]))].sort().join("|");
+  return oa === ob;
+};
+// Runs the incoming one replaces: same material + same orders, still live, not itself.
+const nestRunsSuperseded = (batches, incoming) =>
+  (batches||[]).filter(b => b && b.id !== incoming.id
+    && b.status !== "discarded" && b.status !== "superseded"
+    && sameNestScope(b, incoming));
+
+const supersedeNestRuns = (batches, incoming, by, ts) => {
+  const ids = new Set(nestRunsSuperseded(batches, incoming).map(b=>b.id));
+  return (batches||[]).map(b => ids.has(b.id)
+    ? { ...b, status:"superseded", supersededBy:incoming.id, supersededAt:ts, supersededByUser:by }
+    : b);
+};
+
+// The ONE run in force per material for a set of orders — what every reader should use.
+const liveNestRuns = (batches, orderIds) => {
+  const scope = orderIds && orderIds.length ? new Set(orderIds) : null;
+  const live = (batches||[]).filter(b => b && b.status !== "discarded" && b.status !== "superseded"
+    && (!scope || (b.orderIds||(b.orderId?[b.orderId]:[])).some(o=>scope.has(o))));
+  const byMat = {};
+  live.forEach(b => {
+    const k = normMatCode(b.matCode||"") + "|" +
+      [...new Set(b.orderIds||(b.orderId?[b.orderId]:[]))].sort().join("|");
+    const cur = byMat[k];
+    const t = (x) => new Date(x.completedAt||x.createdAt||0).getTime();
+    if (!cur || t(b) >= t(cur)) byMat[k] = b;
+  });
+  return Object.values(byMat);
+};
+
 const NESTING_BASE = "/nesting-api";
 
 async function _nestFetch(token, path, method = "GET", body = null) {
@@ -7231,7 +7275,8 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
         }));
       }
       const batch = {id:batchId,runNo:_runNo,matCode:row.matCode,section:row.section,size:row.size,grade:row.grade,orderId:(orders||[])[0]?.id||"",orderIds:row.orders,borrowedLots:_borrowedLots,lots:nestLots,parts:allParts,npPct:avgUtilSheets,scrapPct:+(result?.Result?.Scrap??0).toFixed(1),splitMap,unplacedParts:unplaced,contoursMap:dxfContours,status:"completed",completedAt:new Date().toISOString(),createdAt:new Date().toISOString(),createdBy:user?.username||"unknown"};
-      setNestingBatches(prev=>[...(prev||[]).filter(b=>b.id!==batch.id),batch]);
+      setNestingBatches(prev=>{ const kept=(prev||[]).filter(b=>b.id!==batch.id);
+        return [...supersedeNestRuns(kept, batch, user?.username||"unknown", new Date().toISOString()), batch]; });
       const newSheets = sheets.filter(sh=>!sh.isFromStock);
       setNestPrResult({batchId,totalSheets:newSheets.length,totalSheetsIncStock:sheets.length,stockSheetsUsed:sheets.length-newSheets.length,avgUtil:avgUtilSheets,sheets,parts:allParts,unplaced,inputPieces,placedPieces,splitMap,dxfUsed:Object.keys(dxfMap).length,dxfFailed});
       setApiProgress("Done!");
@@ -7676,7 +7721,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
   );
 };
 
-const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, setOrders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards }) => {
+const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPos, stock, setStock, orders, setOrders, materials, nestingRuns, setNestingRuns, nestingBatches, setNestingBatches, machines, vendors, setVendors, setMod, productionStandards, releases=[], productionNests=[] }) => {
   // Material Requirements section filter. MUST live with the other hooks, before
   // any of MRPModule's early returns (nest_export / nestExportMatCode) — a hook
   // after a conditional return changes the hook count and throws React #300.
@@ -8078,7 +8123,7 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
       const ageHours=(Date.now()-new Date(r.createdAt||0).getTime())/3600000;
       return ageHours>=24?{...r,status:'stale',staleReason:'source batch reimported'}:r;
     }));
-    setNestingBatches(prev=>[...(prev||[]), batch]);
+    setNestingBatches(prev=>[...supersedeNestRuns(prev, batch, user?.name||user?.username||"unknown", new Date().toISOString()), batch]);
     setNestModal(null);
     setNestImportRows([]); setNestImportReady(false); setNestImportError("");
     if (nestImportFileRef.current) nestImportFileRef.current.value = "";
@@ -8980,12 +9025,29 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                 // pieces are counted PER PARENT MARK — a mark spliced into 2 strips
                 // is still ONE physical piece, so we take the parent's qty once (max
                 // across its segment rows) rather than summing the strip rows.
+                // Counted from sheets[].parts — what the nest actually placed.
+                // lot.parts is a stored summary of mark NAMES (and in older batches it
+                // holds malformed entries like "7G,7G1"), so pt.markNo / pt.qtyPerDrg
+                // are undefined there and every run read "1 marks · 0 pcs".
                 const _pcByParent = {};
-                batchLots.forEach(l=>(l.parts||[]).forEach(pt=>{
-                  const par=_parentOf(pt.markNo);
-                  const q=(pt.qtyPerDrg||0)*(pt.drgQty||1)||0;
-                  _pcByParent[par]=Math.max(_pcByParent[par]||0, q);
-                }));
+                batchLots.forEach(l=>(l.sheets||[]).forEach(sh=>(sh.parts||[]).forEach(pt=>{
+                  const mk = typeof pt === "string" ? pt : (pt && pt.markNo);
+                  if (!mk) return;
+                  const q = typeof pt === "object" ? (+pt.qty||1) : 1;
+                  const par = _parentOf(mk);
+                  // Spliced strips of one mark are ONE physical piece, so a parent takes
+                  // the max across its segment rows rather than the sum.
+                  if (_sm[mk]) _pcByParent[par] = Math.max(_pcByParent[par]||0, q);
+                  else _pcByParent[par] = (_pcByParent[par]||0) + q;
+                })));
+                if (Object.keys(_pcByParent).length === 0) {
+                  batchLots.forEach(l=>(l.parts||[]).forEach(pt=>{
+                    const mk = typeof pt === "string" ? pt : (pt && pt.markNo);
+                    if (!mk) return;
+                    String(mk).split(",").map(x=>x.trim()).filter(Boolean)
+                      .forEach(one=>{ _pcByParent[_parentOf(one)] = _pcByParent[_parentOf(one)]||0; });
+                  }));
+                }
                 const totalMarks  = Object.keys(_pcByParent).length;
                 const totalPieces = Object.values(_pcByParent).reduce((a,b)=>a+b,0);
                 const totalParts  = batchLots.reduce((s,l)=>s+(l.parts||[]).length,0); // kept for any legacy ref
@@ -9006,7 +9068,16 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                       {batch.runNo && <span style={{ fontFamily:T.fontMono, color:T.textLow, fontSize:10 }}>({batch.id})</span>}
                       <span style={{ fontSize:12, color:T.textMid }}>{fmt.date(batch.createdAt)}</span>
                       <span style={{ fontSize:12, color:T.textMid }}>by {batch.createdBy}</span>
-                      <Badge color={isDiscarded?"gray":batch.status==="Planned"?"amber":"green"}>{isDiscarded?"Discarded":batch.status}</Badge>
+                      <Badge color={isDiscarded?"gray":batch.status==="superseded"?"gray":batch.status==="Planned"?"amber":"green"}>
+                        {isDiscarded?"Discarded":batch.status==="superseded"?"Superseded":batch.status}</Badge>
+                      {batch.status==="superseded"&&batch.supersededBy&&(
+                        <span style={{ fontSize:10, color:T.textLow }} title={`Replaced by ${batch.supersededBy}`}>
+                          replaced by a later run
+                        </span>
+                      )}
+                      {batch.status!=="superseded"&&!isDiscarded&&(
+                        <Badge color="blue">in force</Badge>
+                      )}
                       {/* Procurement status badge */}
                       {!isDiscarded && !po && !pr && <Badge color="amber">No PR raised</Badge>}
                       {!isDiscarded && pr && !po && <Badge color="blue">{pr.docNo||pr.id} raised</Badge>}
@@ -9143,6 +9214,45 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
             <div style={{ fontSize:11, color:T.textLow, marginBottom:12, borderBottom:`1px solid ${T.border}`, paddingBottom:8 }}>
               Production nesting runs are created from the Production module after material is received, QC cleared, and reserved.
             </div>
+            {/* THE NEST IN FORCE. A release does not require a frozen production nest —
+                without one it cuts to the MRP runs. Until now nothing recorded which
+                plan a released order was actually working to, so this panel read
+                "No nesting runs yet" on an order already in production. */}
+            {(()=>{
+              const relOrderIds = [...new Set((releases||[]).filter(r=>r.status!=="cancelled")
+                .flatMap(r=>(r.drawings||[]).map(d=>d.orderId)).filter(Boolean))];
+              if (relOrderIds.length===0) return null;
+              const frozen = (productionNests||[]).filter(n=>n&&n.status==="frozen");
+              const live = liveNestRuns(nestingBatches, relOrderIds);
+              if (frozen.length===0 && live.length===0) return null;
+              return (
+                <div style={{ background:T.bgInput, borderRadius:6, padding:"10px 12px", marginBottom:12 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>
+                    NEST IN FORCE FOR RELEASED ORDERS
+                    <span style={{ fontWeight:400, color:T.textLow }}>
+                      {" "}— what production is cutting to. {frozen.length>0
+                        ? `${frozen.length} frozen production nest(s), plus MRP runs for anything they do not cover.`
+                        : "No production nest was frozen, so the release cuts to the MRP runs below — one per material."}
+                    </span>
+                  </div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                    {frozen.map(n=>(
+                      <span key={n.id} style={{ fontSize:11, fontFamily:T.fontMono, background:T.bgCard,
+                        border:`1px solid ${T.green}`, borderRadius:4, padding:"2px 7px", color:T.green }}>
+                        {n.id} · production
+                      </span>
+                    ))}
+                    {live.map(b=>(
+                      <span key={b.id} style={{ fontSize:11, fontFamily:T.fontMono, background:T.bgCard,
+                        border:`1px solid ${T.borderHi}`, borderRadius:4, padding:"2px 7px", color:T.textMid }}
+                        title={b.id}>
+                        {b.matCode} · {b.runNo||b.id}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{ overflowX:"auto" }}>
               <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
                 <thead><tr>
@@ -9744,7 +9854,7 @@ const MRPNestExport = ({ onBack, purchaseReqs, setPurchaseReqs, stock, orders, s
       const ageHours=(Date.now()-new Date(r.createdAt||0).getTime())/3600000;
       return ageHours>=24?{...r,status:'stale',staleReason:'source batch reimported'}:r;
     }));
-    setNestingBatches(prev=>[...(prev||[]), batch]);
+    setNestingBatches(prev=>[...supersedeNestRuns(prev, batch, user?.name||user?.username||"unknown", new Date().toISOString()), batch]);
     setNestConfirmed(true);
   };
 
@@ -23988,7 +24098,7 @@ export default function App() {
     if (user.role==="planning_admin")      return mod==="dashboard" ? <PlanningAdminDashboard /> : null;
     switch(mod) {
       case "dashboard": return <Dashboard user={user} pos={pos||[]} stock={stock||[]} purchaseReqs={purchaseReqs||[]} orders={orders||[]} dprs={dprs||[]} instances={instances||[]} nestingBatches={nestingBatches||[]} releases={releases||[]} vendors={vendors||[]} />;
-      case "mrp":       return <MRPModule user={user} company={company} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} setOrders={setOrders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} />;
+      case "mrp":       return <MRPModule user={user} company={company} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} pos={pos} setPos={setPos} stock={stock} setStock={setStock} orders={orders} setOrders={setOrders} materials={materials} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} setNestingBatches={setNestingBatches} machines={machines} vendors={vendors} setVendors={setVendors} setMod={setMod} productionStandards={productionStandards} releases={releases||[]} productionNests={productionNests||[]} />;
       case "purchase":  return <PurchaseModule user={user} company={company} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} orders={orders} />;
