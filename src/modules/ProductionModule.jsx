@@ -12416,7 +12416,7 @@ const OutboundQcPanel = ({ user, instances, setInstances, orders }) => {
   );
 };
 
-const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue, stock, cutRecords=[], setCutRecords, nestingBatches=[], productionNests=[] }) => {
+const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRules, overrideLog, setOverrideLog, dprs, setDprs, contractors, tpiTemplates, setTpiTemplates, ncrs, setNcrs, notifications, setNotifications, correctionsLog, setCorrectionsLog, scrapQueue, setScrapQueue, stock, cutRecords=[], setCutRecords, nestingBatches=[], productionNests=[], bays=[] }) => {
   const isAdmin = ["super_admin","qc_admin"].includes(user.role);
   const [tab, setTab] = useState("cutting_qc");
   const [corrModal, setCorrModal] = useState(null);
@@ -13144,6 +13144,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
     const [dimReadings, setDimReadings] = useState({});
     const [rejectMode, setRejectMode] = useState(false);
     const [rejectReason, setRejectReason] = useState("");
+    const [cutBay, setCutBay] = useState("");     // bay QC assigns after unloading
 
     const rmGroups = Object.values(rmUnitGroups);
 
@@ -13180,6 +13181,11 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
             fromInstanceId: p.instanceId || null, // provenance; claim logic is a later slice
             claimedByInstanceId: p.instanceId || null, // already-released here → claimed by its own instance
             source: "cutting_qc",
+            // The bay QC assigns after unloading. Cut parts are WORK IN PROGRESS, not
+            // stock — they never re-enter a lot; they wait in a cut-parts bay for the
+            // fit-up and weld contractor to collect. `bay` has existed on the cut record
+            // since S1 and nothing has ever written it until now.
+            bay: cutBay || "",
             cutAt: ts, cutBy: user.username,
           }));
           // S4d — the operator may already have recorded this cut when the RM
@@ -13196,6 +13202,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
           return {...inst,
             currentStage: nextStage,
             currentStatus: "awaiting_collection",
+            ...(cutBay ? { bay: cutBay } : {}),
             stageHistory: [...(inst.stageHistory||[]),{
               stage:inst.currentStage, status:"approved",
               approvedBy:user.username, approvedAt:ts,
@@ -13211,6 +13218,7 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
             return {...d, currentStage:"awaiting_collection", currentStatus:"awaiting_collection",
               cuttingQcClearedAt:ts, cuttingQcClearedBy:user.username,
               awaitingCollectionSince:ts,
+              ...(cutBay ? { collectionBay: cutBay } : {}),
               auditLog:[...(d.auditLog||[]),{action:"cutting-qc-cleared",by:user.username,date:ts.slice(0,10)}]
             };
           }));
@@ -13317,6 +13325,36 @@ const QcAdminScreen = ({ user, instances, setInstances, orders, qcRules, setQcRu
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Where the parts go after this check. QC is the only point where somebody
+                is physically holding them, having just unloaded and inspected them. Cut
+                parts are work in progress — they never re-enter a lot; they wait in a
+                cut-parts bay for the fit-up and weld contractor to collect. */}
+            {selGroup.stage==="cutting_qc"&&(
+              <div style={{ marginBottom:12, padding:"10px 12px", background:T.bgInput, borderRadius:6 }}>
+                <label style={{ ...css.label, marginBottom:4 }}>Bay for the cut parts</label>
+                {(()=>{
+                  const cutBays=(bays||[]).filter(b=>b&&(b.bayUse==="cut_parts"||b.bayUse==="both"));
+                  const pool=cutBays.length?cutBays:(bays||[]);
+                  return (
+                    <>
+                      <select value={cutBay} onChange={e=>setCutBay(e.target.value)}
+                        style={{ ...css.input, maxWidth:320 }}>
+                        <option value="">— not assigned —</option>
+                        {pool.map(b=><option key={b.id} value={b.id}>
+                          {b.id}{b.description?` · ${b.description}`:""}{b.bayUse==="cut_parts"?" · cut parts":""}
+                        </option>)}
+                      </select>
+                      <div style={{ fontSize:10, color:T.textLow, marginTop:4 }}>
+                        {cutBays.length
+                          ? "The contractor is told where to collect from."
+                          : "No bay is marked for cut parts yet — set one in Masters → Bays → Bay use."}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
@@ -17558,7 +17596,8 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
         const byContractor = {};
         instances.filter(i=>i.currentStatus==="pending_collection").forEach(i=>{
           const k = i.assignedContractorId||"Unassigned";
-          if (!byContractor[k]) byContractor[k]={name:i.assignedContractorName||"Unassigned",count:0,parts:{}};
+          if (!byContractor[k]) byContractor[k]={name:i.assignedContractorName||"Unassigned",count:0,parts:{},bays:new Set()};
+          if (i.bay) byContractor[k].bays.add(i.bay);
           byContractor[k].count++;
           if (!byContractor[k].parts[i.markNo]) byContractor[k].parts[i.markNo]=0;
           byContractor[k].parts[i.markNo]++;
@@ -17573,7 +17612,11 @@ const ProductionModule = ({ user, instances, setInstances, orders, setOrders, st
                     <span style={{ fontWeight:700,color:T.text,fontSize:13 }}>{c.name}</span>
                     <span style={{ color:T.textMid,fontSize:11,marginLeft:10 }}>{Object.entries(c.parts).map(([mk,n])=>`${mk}×${n}`).join(", ")}</span>
                   </div>
-                  <Badge color="green">{c.count} pcs pending collection</Badge>
+                  <div style={{ display:"flex",gap:6,alignItems:"center" }}>
+                    {/* Where to collect from — the bay QC assigned at Cut QC. */}
+                    {[...(c.bays||[])].map(b=><Badge key={b} color="teal">{b}</Badge>)}
+                    <Badge color="green">{c.count} pcs pending collection</Badge>
+                  </div>
                 </div>
               ))}
             </div>

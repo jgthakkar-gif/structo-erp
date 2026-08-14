@@ -2812,6 +2812,14 @@ const BaysMaster = ({ user, bays, setBays }) => {
       {modal==="edit"&&<Modal title={`Bay ${String(form.number).padStart(2,"0")}`} onClose={()=>setModal(null)} width={400}>
         <MField label="Description"><input value={form.description||""} onChange={e=>setForm({...form,description:e.target.value})} style={css.input} placeholder="e.g. MS Plates Area" /></MField>
         <MField label="Status"><select value={form.status||"available"} onChange={e=>setForm({...form,status:e.target.value})} style={css.input}><option value="available">Available</option><option value="occupied">Occupied</option><option value="maintenance">Maintenance</option></select></MField>
+        {/* A CUT PARTS bay holds work in progress, not stock: parts come back cut, are
+            marked, and wait there for the fit-up and weld contractor to collect them.
+            QC picks from these when passing Cut QC. */}
+        <MField label="Bay use"><select value={form.bayUse||"rm"} onChange={e=>setForm({...form,bayUse:e.target.value})} style={css.input}>
+          <option value="rm">Raw material</option>
+          <option value="cut_parts">Cut parts (work in progress)</option>
+          <option value="both">Both</option>
+        </select></MField>
         <MField label="Notes"><textarea value={form.notes||""} onChange={e=>setForm({...form,notes:e.target.value})} style={{ ...css.input, minHeight:60, resize:"vertical" }} /></MField>
         <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}><button onClick={()=>setModal(null)} style={css.btn.secondary}>Cancel</button><button onClick={()=>{setBays(prev=>prev.map(b=>b.id===form.id?form:b));setModal(null);}} style={css.btn.primary}>Save</button></div>
       </Modal>}
@@ -15362,7 +15370,13 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
 
       {/* ── ISSUE REQUESTS section (store_admin/super_admin only) ── */}
       {(user.role==="store_admin"||user.role==="super_admin") && (issueRequests||[]).filter(r=>r.status==="pending").length > 0 && (() => {
-        const pendingReqs = (issueRequests||[]).filter(r=>r.status==="pending");
+        // OUTBOUND requests are not machine-operator requests. They were raised when RM
+        // was dispatched to a vendor; that material has physically gone, been cut and in
+        // most cases come back. Leaving them here buries the real requests — 119 dead
+        // outbound rows would sit above the one an operator raises tomorrow.
+        const allPending = (issueRequests||[]).filter(r=>r.status==="pending");
+        const pendingReqs = allPending.filter(r=>!r.outbound);
+        const outboundReqs = allPending.filter(r=>r.outbound);
         const confirmReq = (req) => {
           const yr = new Date().getFullYear();
           let maxIsn = 0;
@@ -15410,6 +15424,27 @@ const StockModule = ({ user, stock, setStock, orders, contractors, materials, se
         return (
           <div style={{ ...css.card, border:`1px solid ${T.amber}55`, marginBottom:20 }}>
             <div style={{ fontSize:12, fontWeight:800, color:T.amber, marginBottom:12 }}>📋 ISSUE REQUESTS FROM MACHINE OPERATORS — {pendingReqs.length} PENDING</div>
+            {outboundReqs.length>0&&(
+              <div style={{ background:T.bgCard, border:`1px solid ${T.border}`, borderRadius:6,
+                padding:"10px 12px", marginBottom:12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                <span style={{ fontSize:12, color:T.textMid }}>
+                  <b style={{ color:T.text }}>{outboundReqs.length}</b> older request(s) were raised when RM went
+                  out to a vendor, not by a machine operator
+                  {(()=>{ const ids=[...new Set(outboundReqs.map(r=>r.outboundIssueId).filter(Boolean))];
+                          return ids.length?` (${ids.join(", ")})`:""; })()}.
+                  That material has already left the works, so there is nothing here to release.
+                </span>
+                <div style={{ flex:1 }} />
+                <button onClick={()=>{
+                  const ts=today();
+                  setIssueRequests(prev=>(prev||[]).map(r=>(r.status==="pending"&&r.outbound)
+                    ? {...r, status:"closed", closedAt:ts, closedBy:user.name,
+                       closeReason:"Outbound dispatch — material already issued to the vendor"}
+                    : r));
+                  showToast(`${outboundReqs.length} outbound request(s) closed`);
+                }} style={{ ...css.btn.secondary, fontSize:11 }}>Close all {outboundReqs.length}</button>
+              </div>
+            )}
             {pendingReqs.map(req=>{
               const lot = stock.find(s=>s.id===req.lotId)||{};
               return (
@@ -23944,7 +23979,7 @@ export default function App() {
     if (user.role==="production_engineer") return <ProductionEngineerDashboard />;
     if (user.role==="purchase_admin")      return <PurchaseAdminDashboard />;
     if (user.role==="finance_admin")       return <FinanceAdminDashboard />;
-    if (user.role==="qc_admin"||user.role==="qc_user") return mod==="qc_ops" ? <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]} /> : <QcAdminDashboard />;
+    if (user.role==="qc_admin"||user.role==="qc_user") return mod==="qc_ops" ? <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]} bays={bays||[]} /> : <QcAdminDashboard />;
     if (user.role==="store_admin") {
       if (mod==="stock") return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       if (mod==="purchase") return <PurchaseModule user={user} company={company} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
@@ -23957,7 +23992,7 @@ export default function App() {
       case "purchase":  return <PurchaseModule user={user} company={company} pos={pos} setPos={setPos} purchaseReqs={purchaseReqs} setPurchaseReqs={setPurchaseReqs} stock={stock} setStock={setStock} orders={orders} vendors={vendors} setVendors={setVendors} materials={materials} setMaterials={setMaterials} paint={paint} consumables={consumables} setMod={setMod} nestingBatches={nestingBatches} />;
       case "consumables": return <ConsumablesModule user={user} consumables={consumables} setConsumables={setConsumables} setPurchaseReqs={setPurchaseReqs} consumableIRs={consumableIRs||[]} setConsumableIRs={setConsumableIRs} consumablePRs={consumablePRs||[]} setConsumablePRs={setConsumablePRs} consumablePOs={consumablePOs||[]} setConsumablePOs={setConsumablePOs} orders={orders||[]} notifications={notifications||[]} setNotifications={setNotifications} />;
       case "qc":        return <RMQCModule user={user} stock={stock} setStock={setStock} orders={orders} />;
-      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]} />;
+      case "qc_ops":    return <QcAdminScreen user={user} instances={instances} setInstances={setInstances} orders={orders} qcRules={qcRules} setQcRules={setQcRules} overrideLog={overrideLog} setOverrideLog={setOverrideLog} dprs={dprs||[]} setDprs={setDprs} contractors={contractors||[]} tpiTemplates={tpiTemplates||[]} setTpiTemplates={setTpiTemplates} ncrs={ncrs||[]} setNcrs={setNcrs} notifications={notifications||[]} setNotifications={setNotifications} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} stock={stock||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]} bays={bays||[]} />;
       case "stock":     return <StockModule user={user} stock={stock} setStock={setStock} orders={orders} contractors={contractors} materials={materials} setMaterials={setMaterials} issueRequests={issueRequests} setIssueRequests={setIssueRequests} correctionsLog={correctionsLog} setCorrectionsLog={setCorrectionsLog} notifications={notifications} setNotifications={setNotifications} setPurchaseReqs={setPurchaseReqs} consumables={consumables} />;
       case "orders":    return <OrdersModule user={user} orders={orders} setOrders={setOrders} clients={clients} setClients={setClients} materials={materials} stock={stock} vendors={vendors} tpiAgencies={tpiAgencies} pos={pos} nestingBatches={nestingBatches} releases={releases} instances={instances} cutRecords={cutRecords||[]} purchaseReqs={purchaseReqs} company={company} setCompany={setCompany} dprs={dprs||[]} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} />;
       case "production":return <ProductionModule user={user} instances={instances} setInstances={setInstances} orders={orders} setOrders={setOrders} stock={stock} setStock={setStock} nestingRuns={nestingRuns} setNestingRuns={setNestingRuns} nestingBatches={nestingBatches} machines={machines} contractors={contractors} materials={materials} vendors={vendors} tpiAgencies={tpiAgencies} releases={releases} setReleases={setReleases} productionStandards={productionStandards} issueRequests={issueRequests} setIssueRequests={setIssueRequests} welders={welders} pos={pos} purchaseReqs={purchaseReqs} dprs={dprs||[]} setDprs={setDprs} correctionsLog={correctionsLog||[]} setCorrectionsLog={setCorrectionsLog} notifications={notifications||[]} setNotifications={setNotifications} ncrs={ncrs||[]} setNcrs={setNcrs} scrapQueue={scrapQueue||[]} setScrapQueue={setScrapQueue} drawingInstances={drawingInstances||[]} setDrawingInstances={setDrawingInstances} processTypes={processTypes||DEFAULT_PROCESS_TYPES} appUsers={appUsers||[]} cutRecords={cutRecords||[]} setCutRecords={setCutRecords} productionNests={productionNests||[]} setProductionNests={setProductionNests} outboundVendors={outboundVendors||[]} setOutboundVendors={setOutboundVendors} nestingService={{ buildNestingInput, runNestingJob, getNestingToken, fetchDxfBase64, isPlateSection }} />;
