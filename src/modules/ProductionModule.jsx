@@ -2355,14 +2355,24 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
   // Get best (most advanced) stage per markNo across ALL instances
   // Fixes the case where a part was cut in a previous release on a shared sheet
   const STAGE_ORDER_BEST = ['complete','tpi_paint','paint_qc','painting','tpi_blast','blast_qc','blasting','tpi_weld','weld_qc','welding','tpi_fitup','fitup','fit_up','cutting_qc','cutting','pending'];
-  const getBestStagePerMarkNo = (markNos) => {
+  // Scoped to the DPR's own drawing, order AND drawing instance. It used to match on
+  // markNo ALONE, so mark "2.1" from any other order polluted the figure — and an
+  // unrecognised stage returned indexOf -1, which sorts as the MOST advanced thing on
+  // the board. Both are why Parts Ready read 100% on a drawing with 31 marks uncut.
+  const getBestStagePerMarkNo = (markNos, dpr) => {
     const best = {};
     const markNoSet = new Set(markNos);
-    (instances||[]).filter(i => markNoSet.has(i.markNo)).forEach(i => {
+    (instances||[]).filter(i => {
+      if (!markNoSet.has(i.markNo)) return false;
+      if (dpr && i.drawingId !== dpr.drawingId) return false;
+      if (dpr && i.orderId !== dpr.orderId) return false;
+      if (dpr && dpr.drawingInstanceId && i.drawingInstanceId
+          && i.drawingInstanceId !== dpr.drawingInstanceId) return false;
+      return true;
+    }).forEach(i => {
+      const rank = (st) => { const k = STAGE_ORDER_BEST.indexOf(st); return k < 0 ? STAGE_ORDER_BEST.length : k; };
       const curr = best[i.markNo];
-      if (!curr || STAGE_ORDER_BEST.indexOf(i.currentStage) < STAGE_ORDER_BEST.indexOf(curr)) {
-        best[i.markNo] = i.currentStage;
-      }
+      if (!curr || rank(i.currentStage) < rank(curr)) best[i.markNo] = i.currentStage;
     });
     return best;
   };
@@ -2379,9 +2389,22 @@ const ContractorWorkQueue = ({ user, instances, setInstances, releases, stock, o
     const bestStage  = {};
     const bestStatus = {};
     const partMarkNos = new Set(drgParts.map(p => p.markNo));
-    (instances||[]).filter(i => partMarkNos.has(i.markNo)).forEach(i => {
+    // Scoped to THIS drawing, order and drawing instance. It used to match on markNo
+    // alone, so a mark of the same name on any other order or instance counted here —
+    // and an unrecognised stage gave indexOf -1, which sorts as the MOST advanced
+    // thing on the ladder. Together those made Parts Ready read 100% on a drawing
+    // instance that still had marks uncut.
+    const rank = (st) => { const k = stageOrder.indexOf(st); return k < 0 ? stageOrder.length : k; };
+    (instances||[]).filter(i => {
+      if (!partMarkNos.has(i.markNo)) return false;
+      if (i.drawingId !== drawing.id) return false;
+      if (i.orderId !== order.id) return false;
+      if (dpr.drawingInstanceId && i.drawingInstanceId
+          && i.drawingInstanceId !== dpr.drawingInstanceId) return false;
+      return true;
+    }).forEach(i => {
       const curr = bestStage[i.markNo];
-      if (!curr || stageOrder.indexOf(i.currentStage) < stageOrder.indexOf(curr)) {
+      if (!curr || rank(i.currentStage) < rank(curr)) {
         bestStage[i.markNo]  = i.currentStage;
         bestStatus[i.markNo] = i.currentStatus;
       }
@@ -6416,6 +6439,43 @@ const uncutBarsForDrawing = ({ batches, drawingId, marksShort, splitIdx }) => {
     .sort((a,b) => b.marks.length - a.marks.length);
 };
 
+// ── RECONCILIATION ───────────────────────────────────────────────────────────
+// Identical drawing instances need identical quantities, so the pieces available for
+// a mark should be a clean multiple of its per-instance quantity. A remainder means
+// something is wrong — a mis-declared receipt, a short return, a piece scrapped and
+// never recorded — and nothing else in the ERP notices. Derived, so it stays honest.
+const reconcileDrawingParts = ({ order, drawing, cutRecords, drawingInstances, dprs }) => {
+  const parts = partsNeededForDrawing(order, drawing.id);
+  const cutBy = cutQtyByMark(cutRecords, drawing.id);
+  const dis = (drawingInstances||[]).filter(d=>d.orderId===order.id && d.drawingId===drawing.id);
+  const list = dis.length ? dis : [];
+  // Instances the vendor welded are already assembled — their parts are neither
+  // available to claim nor still owed.
+  const vendorWeldedIds = new Set(list.filter(di=>{
+    const dpr = (dprs||[]).find(x=>x && x.drawingInstanceId===di.id);
+    return outboundOwnedStages(di.processSteps || (dpr && dpr.processSteps) || null).has("welding");
+  }).map(di=>di.id));
+  const openInstances = Math.max(0, (list.length || +drawing.qty || 1) - vendorWeldedIds.size);
+  const rows = [];
+  parts.forEach(pt=>{
+    const per = +pt.qtyPerDrg || +pt.qty || 1;
+    const need = per * openInstances;
+    const have = cutBy[pt.markNo] || 0;
+    const remainder = per > 0 ? have % per : 0;
+    rows.push({
+      markNo: pt.markNo, matCode: pt.matCode || "", per, openInstances,
+      need, have, short: Math.max(0, need - have), over: Math.max(0, have - need),
+      remainder,
+      // A remainder is the strongest signal: whole instances need whole sets.
+      flag: remainder !== 0 ? "uneven" : (have > need ? "over" : null),
+    });
+  });
+  const flagged = rows.filter(r=>r.flag);
+  return { rows, flagged, openInstances,
+           uneven: flagged.filter(r=>r.flag==="uneven").length,
+           over: flagged.filter(r=>r.flag==="over").length };
+};
+
 // Per drawing instance: how complete are its parts, and what is holding it up.
 const buildInstanceStatus = ({ drawingInstance, order, drawing, dpr, cutRecords,
                                instances, batches, splitIdx, stock, releases,
@@ -6620,11 +6680,24 @@ const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, 
     }));
   });
 
-  const releasedMarks = new Set(onUnit.map(i=>i.markNo));
+  // Population (b) is the SHEET's nested quantity MINUS the pieces already accounted
+  // for in (a) — the released instances riding the same bar.
+  //
+  // This used to be all-or-nothing: if a released instance had ANY piece of a mark on
+  // the bar, the whole mark was skipped and the unreleased instances lost their share;
+  // if it had none, the FULL nested quantity was recorded, including pieces belonging
+  // to the released instance. Both directions were wrong at once, which is why the
+  // returned rider quantities were not clean multiples of the per-instance requirement
+  // (1D and 1G declared 11 where two instances need 8; 1A and 1B declared 3 and 2 where
+  // they need 4). Netting per mark makes the count exactly what the unreleased
+  // instances are owed, and never more than the bar actually carries.
+  const releasedQtyByMark = {};
+  onUnit.forEach(i=>{ releasedQtyByMark[i.markNo] = (releasedQtyByMark[i.markNo]||0) + 1; });
   (sheetParts||[]).forEach(p=>{
     const mn  = typeof p==="string" ? p : p?.markNo;
-    const qty = typeof p==="object" ? (p?.qty||1) : 1;
-    if(!mn || releasedMarks.has(mn)) return;
+    const nested = typeof p==="object" ? (p?.qty||1) : 1;
+    const qty = Math.max(0, nested - (releasedQtyByMark[mn]||0));
+    if(!mn || qty<=0) return;
     const order = (orders||[]).find(o=>o.id===orderScope && (o.parts||[]).some(x=>x.markNo===mn))
                || (orders||[]).find(o=>(o.parts||[]).some(x=>x.markNo===mn));
     const part  = order && (order.parts||[]).find(x=>x.markNo===mn);
@@ -16529,6 +16602,7 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
       // their parts and nothing recorded it per mark. Counting them against the pool
       // would credit an assembly with records that belong to the instances we cut for
       // ourselves, and short those instances by exactly as much.
+      const recon = reconcileDrawingParts({ order, drawing, cutRecords, drawingInstances:list, dprs });
       let pool = 0;
       list.forEach(di=>{
         const dpr = (dprs||[]).find(d=>d && d.drawingInstanceId===di.id)
@@ -16538,6 +16612,7 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
         rows.push(buildInstanceStatus({ drawingInstance:{...di, totalInstances:di.totalInstances||drawing.qty||1},
           order, drawing, dpr, cutRecords, instances, batches:effBatches, splitIdx, stock, releases,
           vendorWelded, poolIdx: vendorWelded ? null : pool }));
+        rows[rows.length-1].recon = recon;
         if (!vendorWelded) pool++;
       });
     });
@@ -16579,6 +16654,11 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
         {tile("Bars to cut", ranked.length)}
         {tile("Marks not nested", shown.reduce((a,r)=>a+r.unnestedCount,0),
               shown.some(r=>r.unnestedCount>0)?T.red:T.green)}
+        {tile("Quantity mismatches",
+              [...new Set(shown.map(r=>r.drawingId))].reduce((a,id)=>{
+                const r = shown.find(x=>x.drawingId===id);
+                return a + ((r && r.recon && r.recon.flagged.length) || 0); }, 0),
+              shown.some(r=>r.recon&&r.recon.flagged.length>0)?T.amber:T.green)}
       </div>
 
       {alarms.length>0&&(
@@ -16733,6 +16813,41 @@ const ProductionStatusScreen = ({ user, orders, drawingInstances, dprs, cutRecor
                                   ))}
                             </>
                           )}
+                        {r.recon&&r.recon.flagged.length>0&&(
+                          <div style={{ marginTop:10, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
+                            <div style={{ fontSize:11, fontWeight:700, color:T.amber, marginBottom:4 }}>
+                              ⚖ {r.recon.flagged.length} MARK(S) DO NOT RECONCILE
+                              <span style={{ fontWeight:400, color:T.textMid }}>
+                                {" "}— {r.recon.openInstances} instance(s) still to make, so every mark should
+                                come in whole sets
+                              </span>
+                            </div>
+                            <table style={{ borderCollapse:"collapse", fontSize:11 }}>
+                              <thead><tr>{["Mark","Per inst","Needed","Available","Problem"].map(h=>
+                                <th key={h} style={{ textAlign:"left", padding:"2px 10px 2px 0",
+                                  color:T.textMid, fontWeight:600 }}>{h}</th>)}</tr></thead>
+                              <tbody>
+                                {r.recon.flagged.slice(0,20).map(x=>(
+                                  <tr key={x.markNo}>
+                                    <td style={{ padding:"2px 10px 2px 0", fontFamily:T.fontMono, fontWeight:700 }}>{x.markNo}</td>
+                                    <td style={{ padding:"2px 10px 2px 0", fontFamily:T.fontMono }}>{x.per}</td>
+                                    <td style={{ padding:"2px 10px 2px 0", fontFamily:T.fontMono }}>{x.need}</td>
+                                    <td style={{ padding:"2px 10px 2px 0", fontFamily:T.fontMono }}>{x.have}</td>
+                                    <td style={{ padding:"2px 10px 2px 0", color:T.amber }}>
+                                      {x.flag==="uneven"
+                                        ? `not a whole set — ${x.remainder} left over${x.over?` (${x.over} more than needed)`:""}${x.short?` (${x.short} short)`:""}`
+                                        : `${x.over} more than any instance can use`}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            <div style={{ fontSize:10, color:T.textLow, marginTop:4 }}>
+                              Identical instances need identical quantities. A leftover means a receipt was
+                              mis-declared, a piece was scrapped without being recorded, or the return was short.
+                            </div>
+                          </div>
+                        )}
                         {r.unnestedCount>0&&(
                           <div style={{ fontSize:11, color:T.red, marginTop:8 }}>
                             <b>{r.unnestedCount} mark(s) are on no nest at all</b> — no material has been
