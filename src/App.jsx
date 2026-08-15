@@ -8231,15 +8231,53 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
   filtOrders.forEach(o=>(o.drawings||[]).forEach(d=>{ if(d.drawingNo) filtDrgNos.add(String(d.drawingNo).trim().toUpperCase()); }));
   const filtOrderIds = new Set(filtOrders.map(o=>o.id));
   const fabListRaw = Object.values(fabAgg).map(row => {
-    const stockAvail = stock.filter(s=>!['rejected','returned','written_off'].includes(s.status)&&((s.matCode&&s.matCode===row.matCode)||((s.sectionType||s.section)===row.section&&s.size===row.size&&s.grade===row.grade))).reduce((a,s)=>a+(s.wtAvailable||0),0);
+    // Stock is NOT one number. A lot reserved to ANOTHER order is not available here,
+    // and counting it understates what must be bought — on FXL26-27/0002 lots A017 and
+    // A021 belong wholly to /0004 yet showed as 491 and 613 kg available, cutting the
+    // shortfall by ~1,100 kg. Split it and exclude what belongs to someone else.
+    const rowOrderIds = new Set(row.orders||[]);
+    const matches = stock.filter(s=>!['rejected','returned','written_off'].includes(s.status)
+      && ((s.matCode&&s.matCode===row.matCode)
+          ||((s.sectionType||s.section)===row.section&&s.size===row.size&&s.grade===row.grade)));
+    let stockFree = 0, stockMine = 0, stockOther = 0;
+    const otherOrders = new Set();
+    matches.forEach(s=>{
+      const w = +s.wtAvailable||0;
+      if (w <= 0) return;
+      const res = (s.reservations||[]).filter(r=>r&&r.orderId);
+      if (res.length === 0) { stockFree += w; return; }
+      const mine = res.filter(r=>rowOrderIds.has(r.orderId));
+      const theirs = res.filter(r=>!rowOrderIds.has(r.orderId));
+      if (theirs.length === 0) { stockMine += w; return; }
+      if (mine.length === 0) { stockOther += w; theirs.forEach(r=>otherOrders.add(r.orderId)); return; }
+      // Reserved to both: apportion by reserved kg so neither side is overstated.
+      const mk = mine.reduce((a,r)=>a+(+r.kg||0),0), tk = theirs.reduce((a,r)=>a+(+r.kg||0),0);
+      const tot = mk + tk;
+      if (tot <= 0) { stockMine += w; return; }
+      stockMine += w * (mk/tot); stockOther += w * (tk/tot);
+      theirs.forEach(r=>otherOrders.add(r.orderId));
+    });
+    const stockAvail = Math.round(stockFree + stockMine);
     const netToProcure = Math.max(0, row.wtRequired - stockAvail);
     // Robust PR match: normalised matCode first, section/size/grade triple as fallback;
     // stale/cancelled excluded; most recent wins (the old lookup took the first PR of
     // any status, so a stale PR could mask a live one).
     const rowKey = normMatCode(row.matCode);
+    // A PR belongs to an ORDER. Matching on material alone showed another order's PR
+    // as "pending"/"converted" against this row — on FXL26-27/0002 after its own PRs
+    // were cleared, rows still claimed a PR existed. A nesting PR carries no orderId,
+    // so resolve it through its batch; a PR that cannot be tied to an order is not
+    // claimed by any row.
+    const prOrderIds = (r) => {
+      const own = [].concat(r.orderIds||[], r.orderId?[r.orderId]:[]);
+      if (own.length) return own;
+      const b = (nestingBatches||[]).find(x=>x.id===r.nestingBatchId);
+      return b ? [].concat(b.orderIds||[], b.orderId?[b.orderId]:[]) : [];
+    };
     const prs = (purchaseReqs||[]).filter(r =>
       !["stale","cancelled"].includes(r.status) &&
-      (normMatCode(r.matCode)===rowKey || (r.section===row.section && r.size===row.size && r.grade===row.grade)));
+      (normMatCode(r.matCode)===rowKey || (r.section===row.section && r.size===row.size && r.grade===row.grade)) &&
+      prOrderIds(r).some(o=>rowOrderIds.has(o)));
     const pr = prs[prs.length-1];
     // Nesting state: non-discarded batches containing a lot for this matCode,
     // scoped to the filtered orders via captured drawingNos when available
@@ -8274,6 +8312,8 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
     // empty — check what the record actually stores, not what it is called elsewhere.
     const unplaced = latestNest ? (latestNest.unplacedParts||latestNest.unplaced||[]) : [];
     return { ...row, stockAvail, netToProcure, prStatus: pr?.status||"none",
+             stockFree: Math.round(stockFree), stockMine: Math.round(stockMine),
+             stockOther: Math.round(stockOther), stockOtherOrders: [...otherOrders],
              onOrderKg: Math.round(onOrderKg),
              stillShortKg: Math.max(0, Math.round(netToProcure - onOrderKg)),
              unplaced,
@@ -8889,7 +8929,26 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                             <TD><div style={{ display:"flex",gap:3,flexWrap:"wrap" }}>{row.orders.map(o=><Badge key={o} color="blue">{o}</Badge>)}</div></TD>
                             <TD right mono bold color={T.gold}>{fmt.num(Math.round(row.wtRequired))}</TD>
                             <TD right mono>{lenArea}</TD>
-                            <TD right mono color={T.green}>{fmt.num(Math.round(row.stockAvail))}</TD>
+                            <TD right mono color={T.green}>
+                              {fmt.num(Math.round(row.stockAvail))}
+                              {/* What the number is made of. Reserved-to-another-order is
+                                  shown but NOT counted — it is not this order's steel. */}
+                              {(row.stockFree>0||row.stockMine>0)&&(
+                                <div style={{ fontSize:9, color:T.textLow, fontWeight:400 }}>
+                                  {row.stockFree>0?`${fmt.num(row.stockFree)} free`:""}
+                                  {row.stockFree>0&&row.stockMine>0?" · ":""}
+                                  {row.stockMine>0?`${fmt.num(row.stockMine)} reserved here`:""}
+                                </div>
+                              )}
+                              {row.stockOther>0&&(
+                                <div style={{ fontSize:9, color:T.amber, fontWeight:400 }}
+                                  title={`Reserved for ${(row.stockOtherOrders||[]).join(", ")} — not counted as available to this order`}>
+                                  +{fmt.num(row.stockOther)} held by {(row.stockOtherOrders||[]).length>1
+                                    ? `${row.stockOtherOrders.length} other orders`
+                                    : (row.stockOtherOrders||[])[0]||"another order"}
+                                </div>
+                              )}
+                            </TD>
                             <TD right mono bold color={netColor}>{fmt.num(Math.round(row.netToProcure))}</TD>
                             <TD>
                               {(()=>{
