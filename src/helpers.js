@@ -69,6 +69,24 @@ export const calcSheetWt = (rmUnitId) => {
   return Math.round(w * l * t * 7850 * 100) / 100;
 };
 
+// ── 2D vs 1D material ──────────────────────────────────────────────────────────
+// Decides whether a material nests as a SHEET (length × width) or as a BAR (length
+// only). It was defined THREE times — PLATE_SECTIONS in App.jsx, PLAN_PLATE_SET in
+// ProductionModule.jsx, and an inline string test at App ~8207 — and none of them
+// listed SHEET. So a 1.2 mm sheet was treated as a rolled section: the export dialog
+// asked for length only and would have tried to nest a 2200×1250 part on a 6000 mm
+// bar. One definition now, and SHEET is in it.
+// NOTE on the ×100 convention: a rolled section 3000 mm long is written 3000X100 —
+// the 100 is a placeholder width so one nesting engine can serve both shapes. That
+// stays; only the CLASSIFICATION was wrong.
+export const PLATE_SECTIONS = new Set([
+  "PLATE","PLATES","PL","FLAT PLATE",
+  "CHECKER PLATE","CHEQUERED PLATE","CHEQUERED","CHECKERED PLATE",
+  "SHEET","SHEETS","MS SHEET",
+]);
+export const isPlateSection = (section) =>
+  PLATE_SECTIONS.has(String(section||"").toUpperCase().trim());
+
 // ── Approved Makes ─────────────────────────────────────────────────────────────
 // One vocabulary, shared by App.jsx (PR / PO / GRN) and ProductionModule.jsx (the
 // release-time check), so the two can never drift apart.

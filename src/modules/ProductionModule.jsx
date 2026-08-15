@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { T, css } from "../theme.js";
 import { fmt, today, normMatCode, buildDIId, getFinancialYear, calcSheetWt,
-  approvedMakesFor, makeApprovalState, lotMake,
+  approvedMakesFor, makeApprovalState, lotMake, isPlateSection,
   getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
   parseCSVText, can, USERS, computePaintableArea, getPaintCoats } from "../helpers.js";
@@ -15928,8 +15928,8 @@ const ProductionNestScreen = ({ user, selRows=[], selInstIds={}, nestingBatches=
   );
 };
 
-const PLAN_PLATE_SET = new Set(["PLATE","PLATES","PL","FLAT PLATE","CHECKER PLATE"]);
-const planIsPlate = (section) => PLAN_PLATE_SET.has((section||"").toUpperCase().trim());
+// Uses the shared rule from helpers.js so this can never drift from App.jsx again.
+const planIsPlate = (section) => isPlateSection(section);
 
 const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBatches, purchaseReqs, productionStandards, onBack,
                                productionNests=[], setProductionNests, cutRecords=[], nestingService=null, releases=[],

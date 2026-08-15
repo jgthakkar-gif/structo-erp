@@ -7,6 +7,7 @@ import { fmt, today, getFinancialYear, genOrderId, normMatCode, normSize, buildM
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
   parseCSVLine, parseCSVText, can, ROLE_DEFAULT_PERMS, USERS,
   approvedMakesFor, orderSpecifiesMakes, makeApprovalState, sameMake, makeSuggestions, lotMake,
+  isPlateSection, PLATE_SECTIONS,
   computePaintableArea, getPaintCoats } from "./helpers.js";
 import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
@@ -563,11 +564,8 @@ function dxfToContours(dxfText) {
 // ─── NESTING CENTER — BUILD INPUT ─────────────────────────────────────────────
 // sectionType: string from part.section ("PLATE","ISA","ISMB",etc.)
 // plateTypes: set of section strings considered plates
-const PLATE_SECTIONS = new Set(["PLATE","PLATES","PL","FLAT PLATE","CHECKER PLATE"]);
-
-function isPlateSection(section) {
-  return PLATE_SECTIONS.has((section||"").toUpperCase().trim());
-}
+// PLATE_SECTIONS / isPlateSection now live in helpers.js — one definition for
+// both files, and SHEET is included. See the note there.
 
 // Build the API input JSON for one matCode group.
 // parts: [{ markNo, length, width, qtyPerDrg, partLink, section, ... }]
@@ -8204,8 +8202,8 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
       fabAgg[key].wtRequired += (p.calcTotalWt||p.clientTotalWt||0) * (drg.qty||1);
       // Accumulate dimensions for length/area display — direct from parts, no library needed
       const partQty = (p.qtyPerDrg||0) * (drg.qty||1);
-      const isPlateSection = (p.section||"").toUpperCase()==="PLATE"||(p.section||"").toUpperCase().includes("PLATE")||(p.section||"").toUpperCase()==="CHEQUERED PLATE";
-      if (isPlateSection) {
+      // was a hand-rolled string test that missed SHEET; now the shared rule
+      if (isPlateSection(p.section)) {
         // Area in mm² → will display as m²
         fabAgg[key].totalAreaMm2 = (fabAgg[key].totalAreaMm2||0) + (p.length||0)*(p.width||0)*partQty;
       } else {
