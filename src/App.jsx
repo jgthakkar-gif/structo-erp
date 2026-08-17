@@ -6908,9 +6908,22 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
   // ── Split-before-nest: over-length sections vs longest trial bar ──
   const spliceCfg = { minSegmentMm:1500, jointAllowanceMm:3, ...(productionStandards?.cuttingCapacity||{}) };
   const [splitPlan, setSplitPlan] = useState({});
-  const maxTrialLen = Math.max(0, ...trialSizes.filter(t=>t.length>0&&t.qty>0).map(t=>t.length));
+  // A sheet has TWO usable dimensions, so a part can be laid either way round: what
+  // matters is whether its LONGER side exceeds the sheet's LONGER side. For a bar
+  // there is only length. (2510×1260 sheet, part 3150×606 → over by length; part
+  // 2200×1250 → fits, and only looked over-wide because 1250 was typed as the width.)
+  const maxTrialLen = isPlate
+    ? Math.max(0, ...trialSizes.filter(t=>(t.length>0||t.width>0)&&t.qty>0)
+        .map(t=>Math.max(+t.length||0, +t.width||0)))
+    : Math.max(0, ...trialSizes.filter(t=>t.length>0&&t.qty>0).map(t=>t.length));
   const markAgg = (()=>{ const m={}; allParts.forEach(p=>{ const q=(p.qtyPerDrg||0)*(p.drgQty||1); if(!m[p.markNo]) m[p.markNo]={...p,totalQty:0}; m[p.markNo].totalQty+=q; }); return Object.values(m); })();
-  const overParts = !isPlate ? markAgg.filter(p=>(p.length||0) > maxTrialLen && maxTrialLen>0) : [];
+  // Length-splicing used to be switched off for plate and sheet entirely (`!isPlate`),
+  // so an over-long sheet part had NO path even with joints allowed — it simply failed
+  // to place, after the run. Plates and sheets can be spliced by length too; the guard
+  // is jointsAllowed, not the material shape.
+  const partLongSide = (p) => Math.max(+p.length||0, +p.width||0);
+  const overParts = markAgg.filter(p =>
+    maxTrialLen>0 && (isPlate ? partLongSide(p) : (+p.length||0)) > maxTrialLen);
   const proposeSplit = (len, maxLen) => {
     const floor=spliceCfg.minSegmentMm||1500, allow=spliceCfg.jointAllowanceMm||3;
     // Root-gap convention: a butt-welded splice leaves a gap at each joint, so
@@ -7078,10 +7091,14 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
           && plateSeamIssues(p, widestSheet).length===0;
         if (over) {
           const segs = splitFor(over);
+          // On a sheet the long side may be stored as width; split whichever field
+          // actually holds it, or the segment would come back the wrong shape.
+          const cutWidth = isPlate && (+p.width||0) > (+p.length||0);
           segs.forEach((len,i)=>{
             const segName = `${p.markNo}/S${i+1}`;
-            splitMap[segName] = { parent:p.markNo, segLen:len, segIndex:i+1, segCount:segs.length, axis:"length", jointAllowanceMm:spliceCfg.jointAllowanceMm||3 };
-            partsFinal.push({ ...p, markNo:segName, length:len });
+            splitMap[segName] = { parent:p.markNo, segLen:len, segIndex:i+1, segCount:segs.length,
+              axis: cutWidth ? "width" : "length", jointAllowanceMm:spliceCfg.jointAllowanceMm||3 };
+            partsFinal.push({ ...p, markNo:segName, ...(cutWidth ? { width:len } : { length:len }) });
           });
         } else if (needsWidthSplice) {
           const strips = plateSeamFor(p, widestSheet);
@@ -7367,14 +7384,24 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
         )}
         {overParts.length>0 && (
           <div style={{ marginBottom:14 }}>
-            <div style={{fontSize:12,fontWeight:700,color:T.amber,marginBottom:6}}>{"⚠"} OVER-LENGTH PARTS — exceed longest trial bar ({maxTrialLen}mm)</div>
+            <div style={{fontSize:12,fontWeight:700,color:T.amber,marginBottom:6}}>
+              {"⚠"} OVER-LENGTH PARTS — longer than the biggest trial {isPlate?"sheet":"bar"} ({maxTrialLen}mm)
+            </div>
+            <div style={{fontSize:11,color:"#92400E",marginBottom:8}}>
+              Set the splice here, before running. Nesting will not place these otherwise, and a PR
+              raised from an incomplete run buys nothing for them.
+            </div>
             {overParts.map(p=>{
               const segs=splitFor(p); const errs=p.jointsAllowed?splitIssues(p):[];
               return (
                 <div key={p.markNo} style={{border:`1px solid ${p.jointsAllowed?T.amber:T.redLo}`,borderRadius:6,padding:"8px 12px",marginBottom:8,background:p.jointsAllowed?T.amberBg:T.redBg}}>
                   <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                     <b style={{fontFamily:T.fontMono,fontSize:12}}>{p.markNo}</b>
-                    <span style={{fontSize:11}}>{p.length}mm × {p.totalQty} pcs</span>
+                    <span style={{fontSize:11}}>
+                      {isPlate
+                        ? `${Math.max(+p.length||0,+p.width||0)}mm long side (${p.length}×${p.width}) × ${p.totalQty} pcs`
+                        : `${p.length}mm × ${p.totalQty} pcs`}
+                    </span>
                     <Badge color={p.jointsAllowed?"green":"red"}>{p.jointsAllowed?"Joints allowed":"Joints NOT allowed"}</Badge>
                   </div>
                   {p.jointsAllowed ? (
