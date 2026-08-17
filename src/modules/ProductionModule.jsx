@@ -5068,11 +5068,26 @@ const parseRmUnitIdNew = (rmUnitId) => {
 // calcSheetWt imported from helpers.js
 
 // "PLATE/MS/E350/16mm/1500X11200/2-3" → 3 (the total unit count from the range)
-const parseRmUnitTotal = rmUnitId => {
+// An RM unit id ends "…/<lotSeq>-<barSeq>" — e.g. /1-7 is the SEVENTH bar, not a
+// total of seven. This read the bar's SEQUENCE NUMBER and every caller divided the
+// lot weight by it, so bar 1 carried the whole lot, bar 2 half, bar 7 a seventh.
+// Summed across a lot that is the total times the harmonic series: an 11-bar NPB lot
+// of 11,972 kg was issued as 36,155 kg (11,972 × H(11) = 3.02×). Plates were unaffected
+// only because calcSheetWt succeeds for them and the fallback never ran.
+// Kept under the old name so nothing silently keeps the old meaning.
+const parseRmUnitBarSeq = rmUnitId => {
   const parts = (rmUnitId||"").split("/");
   const last = parts[parts.length-1]||"";
   const m = last.match(/\d+-(\d+)/);
   return m ? parseInt(m[1],10) : 1;
+};
+
+// How many bars/sheets the LOT holds — the correct divisor for a lot-total weight.
+const lotUnitCount = (lot) => {
+  const n = +(lot?.sheetCount||0);
+  if (n > 0) return n;
+  const sw = +(lot?.sheetWt||0), rec = +(lot?.wtReceived||0);
+  return (sw > 0 && rec > 0) ? Math.max(1, Math.round(rec/sw)) : 0;
 };
 
 // "1500X11200" → {w:1500, l:11200}
@@ -5084,8 +5099,11 @@ const parseRmUnitDim = sheetDim => {
 // Weight of one RM unit — new format: use lot.sheetWt; old format: lot.wtReceived / range total
 const getRmUnitWt = (lot, rmUnitId) => {
   if (lot?.sheetWt > 0) return lot.sheetWt;
-  const total = parseRmUnitTotal(rmUnitId); // legacy fallback
-  return total > 0 ? (lot?.wtReceived||0) / total : 0;
+  const byDim = calcSheetWt(rmUnitId);
+  if (byDim > 0) return byDim;
+  // Divide by the bars IN THE LOT — never by the bar's sequence number.
+  const n = lotUnitCount(lot);
+  return n > 0 ? (lot?.wtReceived||0) / n : 0;
 };
 
 // Sum part weights and areas for a list of mark numbers
@@ -7281,10 +7299,16 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
         (stock||[]).find(s=>normMatCode(s.matCode)===normMatCode(ru.matCode)&&
           ['available','reserved','partially_reserved'].includes(s.status))||{};
       // Sheet weight: calculate from dimensions (most accurate for plates)
-      const sheetWt=calcSheetWt(ru.rmUnitId)||
-        (stockLot.wtReceived&&parseRmUnitTotal(ru.rmUnitId)>0
-          ?Math.round(stockLot.wtReceived/parseRmUnitTotal(ru.rmUnitId)*100)/100
-          :0);
+      // Per-bar weight. calcSheetWt works from the id's dimensions and thickness, which
+      // only exist for plate/sheet; for a rolled section it returns 0 and we divide the
+      // lot's received weight by the number of bars IN THE LOT.
+      const sheetWt=calcSheetWt(ru.rmUnitId)||(()=>{
+        const perLot=+stockLot.sheetWt||0;
+        if (perLot>0) return perLot;                       // GRN already stored per-bar
+        const n=lotUnitCount(stockLot);
+        return (stockLot.wtReceived&&n>0)
+          ? Math.round(stockLot.wtReceived/n*100)/100 : 0;
+      })();
       return {
         rmUnitId:ru.rmUnitId,batchId:ru.batchId,lotId:ru.lotId,matCode:ru.matCode,
         stockLotId,
@@ -9599,10 +9623,14 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
     const stockLot = (stock||[]).find(s => s.id === ru.stockLotId) ||
       (stock||[]).find(s => normMatCode(s.matCode) === normMatCode(ru.matCode) &&
         ['available','reserved','partially_reserved'].includes(s.status)) || {};
-    const sheetWt = ru.sheetWt || calcSheetWt(ru.rmUnitId) ||
-      (stockLot.wtReceived && parseRmUnitTotal(ru.rmUnitId) > 0
-        ? Math.round(stockLot.wtReceived / parseRmUnitTotal(ru.rmUnitId) * 100) / 100
-        : stockLot.wtAvailable || 0);
+    const sheetWt = ru.sheetWt || calcSheetWt(ru.rmUnitId) || (()=>{
+      const perLot = +stockLot.sheetWt||0;
+      if (perLot > 0) return perLot;
+      const n = lotUnitCount(stockLot);
+      return (stockLot.wtReceived && n > 0)
+        ? Math.round(stockLot.wtReceived / n * 100) / 100
+        : stockLot.wtAvailable || 0;
+    })();
     setIssueRequests(prev => [...prev, {
       id, requestDate:today(), requestedBy:user.username, requestedByName:user.name,
       rmUnitId:ru.rmUnitId, releaseId:ru.releaseId,
