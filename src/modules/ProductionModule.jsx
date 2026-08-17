@@ -5096,6 +5096,35 @@ const parseRmUnitDim = sheetDim => {
   return m ? {w:parseInt(m[1],10), l:parseInt(m[2],10)} : {w:0, l:0};
 };
 
+// ── PER-BAR WEIGHT, SELF-HEALING ────────────────────────────────────────────
+// Releases created before Aug 2026 stored sheetWt computed by dividing the LOT weight
+// by the bar's SEQUENCE NUMBER (an id ending /1-7 was read as "seven bars"), so bar 1
+// carried the whole lot, bar 2 half, bar 7 a seventh. Summed, that is the lot times
+// the harmonic series — an 11-bar NPB lot of 11,972 kg was issued as 36,155 kg.
+// The creation path is fixed, but a release already made still holds the bad number,
+// and every screen, challan and receipt reads it. Rather than make anyone re-release,
+// recompute here: the correct weight is derivable from the id or the lot, so a stored
+// value is only trusted when it agrees with what we can derive.
+const rmUnitPerBarWt = (ru, stock) => {
+  const byDim = calcSheetWt(ru?.rmUnitId);          // exact for plate and sheet
+  if (byDim > 0) return byDim;
+  const lot = (stock||[]).find(s=>s && (s.id===ru?.stockLotId || s.lotNo===ru?.stockLotNo))
+    || (stock||[]).find(s=>s && normMatCode(s.matCode)===normMatCode(ru?.matCode)) || null;
+  if (lot) {
+    const perLot = +lot.sheetWt||0;
+    if (perLot > 0) return perLot;
+    const n = lotUnitCount(lot);
+    if (lot.wtReceived && n > 0) return Math.round(lot.wtReceived/n*100)/100;
+  }
+  return +ru?.sheetWt||0;                            // nothing to derive from — leave it
+};
+// Apply to a release's units before ANY reader sees them.
+const healRmUnitWeights = (units, stock) =>
+  (units||[]).map(u=>{
+    const w = rmUnitPerBarWt(u, stock);
+    return (w > 0 && Math.abs(w - (+u.sheetWt||0)) > 0.01) ? { ...u, sheetWt:w } : u;
+  });
+
 // Weight of one RM unit — new format: use lot.sheetWt; old format: lot.wtReceived / range total
 const getRmUnitWt = (lot, rmUnitId) => {
   if (lot?.sheetWt > 0) return lot.sheetWt;
@@ -5153,7 +5182,7 @@ const outboundReceivingQc = (step, processSteps) => {
 
 // Pending dispatches: vendor-cut RM units on a release that have not gone out yet,
 // grouped the way they physically travel — one vendor, one outbound step, one lorry.
-const buildOutboundDispatches = (releases) => {
+const buildOutboundDispatches = (releases, stock) => {
   const out = {};
   (releases||[]).forEach(r=>{
     (r.rmUnitAssignments||[]).forEach(ru=>{
@@ -5166,8 +5195,9 @@ const buildOutboundDispatches = (releases) => {
         exitAfterStep:ru.outboundExitAfter||"", reEntryStep:ru.outboundReEntry||"",
         units:[], totalWt:0,
       });
-      g.units.push(ru);
-      g.totalWt += (+ru.sheetWt||0);
+      const hu = healRmUnitWeights([ru], stock)[0];
+      g.units.push(hu);
+      g.totalWt += (+hu.sheetWt||0);
     });
   });
   return Object.values(out).map(g=>({ ...g, totalWt:+g.totalWt.toFixed(1) }))
@@ -5328,7 +5358,7 @@ const buildOutboundBarState = (releases) => {
   return st;
 };
 
-const buildOutboundReceipts = (releases, orders, sheetOf) => {
+const buildOutboundReceipts = (releases, orders, sheetOf, stock) => {
   const out = {};
   (releases||[]).forEach(r=>{
     (r.rmUnitAssignments||[]).forEach(ru=>{
@@ -5342,7 +5372,7 @@ const buildOutboundReceipts = (releases, orders, sheetOf) => {
         issuedAt:ru.outboundIssuedAt, transport:ru.transport||{},
         units:[], lines:[], receipts:[],
       });
-      g.units.push(ru);
+      g.units.push(healRmUnitWeights([ru], stock)[0]);
       (ru.returnList||[]).forEach(l=>g.lines.push(
         enrichOutboundLine({ ...l, rmUnitId:ru.rmUnitId }, orders, sheetOf)));
       (ru.outboundReceipts||[]).forEach(rc=>{
@@ -8622,7 +8652,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
 // the SAME outboundHistory entry OutboundProcessing writes so the existing return
 // and Outbound-QC path works unchanged.
 // ═══════════════════════════════════════════════════════════════════════════
-const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIssueRequests,
+const OutboundIssueScreen = ({ stock=[], user, releases, setReleases, issueRequests, setIssueRequests,
                                instances, setInstances, orders, vendors=[], nestingBatches=[],
                                productionNests=[], drawingInstances=[], onBack }) => {
   const [openKey, setOpenKey] = useState("");
@@ -8642,7 +8672,7 @@ const OutboundIssueScreen = ({ user, releases, setReleases, issueRequests, setIs
     return (sh&&sh.parts)||[];
   };
 
-  const dispatches = buildOutboundDispatches(releases);
+  const dispatches = buildOutboundDispatches(releases, stock||[]);
   const f = (k, d) => (form[openKey]||{})[k] ?? d;
   const setF = (k, v) => setForm(p=>({ ...p, [openKey]:{ ...(p[openKey]||{}), [k]:v } }));
 
@@ -9008,7 +9038,7 @@ const OutboundReceiptScreen = ({ company={}, user, releases, setReleases, instan
       if(sh.rmUnitId===rmUnitId) return sh;
     return null;
   };
-  const groups = buildOutboundReceipts(releases, orders, sheetForRmUnit);
+  const groups = buildOutboundReceipts(releases, orders, sheetForRmUnit, stock||[]);
   const lk = (l)=>outboundLineKey(l);
 
   // same maths the in-house offcut path uses
@@ -17246,7 +17276,7 @@ const ProductionModule = ({ user, company={}, instances, setInstances, orders, s
   );
 
   if (view==="outbound_issue") return (
-    <OutboundIssueScreen user={user} releases={releases||[]} setReleases={setReleases}
+    <OutboundIssueScreen stock={stock||[]} user={user} releases={releases||[]} setReleases={setReleases}
       issueRequests={issueRequests||[]} setIssueRequests={setIssueRequests}
       instances={instances||[]} setInstances={setInstances} orders={orders||[]}
       vendors={vendors||[]} nestingBatches={nestingBatches||[]} productionNests={productionNests||[]}
@@ -17786,7 +17816,7 @@ const ProductionModule = ({ user, company={}, instances, setInstances, orders, s
         <button onClick={()=>{setSelOrderId("");setSelDrawingId("");setView("progress");}} style={{...css.btn.ghost,fontSize:12}}>Old progress grid</button>
         {canAssign&&<button onClick={()=>setView("outbound")} style={css.btn.secondary}>🔄 Outbound</button>}
         {canAssign&&(()=>{
-          const n=buildOutboundDispatches(releases||[]).length;
+          const n=buildOutboundDispatches(releases||[], stock||[]).length;
           return <button onClick={()=>setView("outbound_issue")} style={css.btn.secondary}>
             ⬆ Issue to Vendor{n>0?` (${n})`:""}
           </button>;
