@@ -7,7 +7,7 @@ import { fmt, today, getFinancialYear, genOrderId, normMatCode, normSize, buildM
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
   parseCSVLine, parseCSVText, can, ROLE_DEFAULT_PERMS, USERS,
   approvedMakesFor, orderSpecifiesMakes, makeApprovalState, sameMake, makeSuggestions, lotMake,
-  isPlateSection, PLATE_SECTIONS,
+  isPlateSection, isPlateMatCode, PLATE_SECTIONS,
   computePaintableArea, getPaintCoats } from "./helpers.js";
 import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
@@ -2881,7 +2881,7 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
   const canEdit = ["super_admin","qc_admin","purchase_admin","planning_admin"].includes(user.role);
   const sections = ["all",...Array.from(new Set(materials.map(m=>m.sectionType))).sort()];
   const grades   = ["all",...Array.from(new Set(materials.map(m=>m.grade))).sort()];
-  const isPlateForm = form.sectionType==="PLATE";
+  const isPlateForm = isPlateSection(form.sectionType);
   const previewCode = form.sectionType&&form.matType&&form.grade&&form.size ? buildMatCode(form.sectionType,form.matType,form.grade,form.size) : "";
   const filtered = materials.filter(m=>{
     const q = search.toLowerCase();
@@ -2996,7 +2996,7 @@ const MaterialsMaster = ({ user, materials, setMaterials, orders, setOrders, sto
   // clears on next render because it now matches exactly.
   const openAddFromPending = (item) => {
     const w = prefillWeight(item.section, item.size);
-    const isPlate = (item.section||"").toUpperCase().includes("PLATE")||(item.section||"").toUpperCase()==="SHEET";
+    const isPlate = isPlateSection(item.section);
     setForm({ matType:item.matType||"MS", grade:item.grade||"E250", sectionType:item.section, size:item.size,
       active:true, isPlate, wtPerMetre:w.wtPerMetre, wtPerM2:w.wtPerM2, _fromPendingId:item.id });
     setLenInput(isPlate ? "" : "6000,8000,10000,12000");
@@ -6851,7 +6851,7 @@ const SheetDetailCard = ({ sheet, sheetIdx, isPlate }) => {
 };
 
 const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, materials, nestingBatches, setNestingBatches, user, purchaseReqs, setPurchaseReqs, productionStandards, company={} }) => {
-  const isPlate = (row.section||"").toUpperCase()==="PLATE"||(row.section||"").toUpperCase().includes("PLATE");
+  const isPlate = isPlateSection(row.section);   // was a string test that missed SHEET
 
   // Parts for this matCode across all filtered orders
   const allParts = (orders||[]).flatMap(o=>{
@@ -7351,7 +7351,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
           {row.totalLengthMm>0&&<div style={{fontSize:12,color:T.textMid}}>
             Total length: {(row.totalLengthMm/1000).toFixed(1)} m
           </div>}
-          {(()=>{ const missing=(allParts||[]).filter(p=>!(p.length>0)||(p.section||"").toUpperCase()==="PLATE"&&!(p.width>0)); return missing.length>0?<div style={{marginTop:6,padding:"4px 8px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber}}>⚠ {missing.length} part(s) missing dimensions — will use 100×100mm fallback: {missing.map(p=>p.markNo).join(", ")}</div>:null; })()}
+          {(()=>{ const missing=(allParts||[]).filter(p=>!(p.length>0)||isPlateSection(p.section)&&!(p.width>0)); return missing.length>0?<div style={{marginTop:6,padding:"4px 8px",background:T.amberBg,borderRadius:4,fontSize:11,color:T.amber}}>⚠ {missing.length} part(s) missing dimensions — will use 100×100mm fallback: {missing.map(p=>p.markNo).join(", ")}</div>:null; })()}
         </div>
 
         {markCollisions.length>0 && (
@@ -10827,7 +10827,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
   const matLib = (mc) => (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(mc));
   const isNosOnly = (mc) => matLib(mc)?.nosOnly===true;
   // "sheet" (plates), "bar" (length-stock sections), "nos" (count-only items)
-  const matClass = (mc) => isNosOnly(mc) ? "nos" : ((mc||"").split("/")[0].toUpperCase()==="PLATE" ? "sheet" : "bar");
+  const matClass = (mc) => isNosOnly(mc) ? "nos" : (isPlateMatCode(mc) ? "sheet" : "bar");
   // Store-PR line weight per unit: kg lines weigh 1/unit; m lines use kg-per-metre;
   // nos lines resolve per-piece kg from the stored length/plate dim via the SAME
   // resolver as nesting PRs (resolveMatWt) — fixes the "25x, 0 kg, unweighed" bug.
@@ -12589,7 +12589,7 @@ const PurchaseModule = ({ user, company={}, pos, setPos, purchaseReqs, setPurcha
       <Field label="Section Type">
         <Sel value={l.sectionType||""} onChange={e=>{
           const st=e.target.value;
-          const isPlate=st==="PLATE";
+          const isPlate=isPlateSection(st);
           setForm(f=>{ const n=[...f.lines]; n[i]={...n[i],sectionType:st,isPlate,matLibId:"",wtPerM2:null,wtPerMetre:null}; return {...f,lines:n}; });
         }}>
           <option value="">— Select —</option>
@@ -15069,7 +15069,7 @@ const MatCodePicker = ({ materials, setMaterials, onChange, label="", showToast 
   const [size,    setSize]    = React.useState("");
   const [adding,  setAdding]  = React.useState(""); // "sec"|"mat"|"grd"|"sz"
 
-  const isPlate = secType==="PLATE";
+  const isPlate = isPlateSection(secType);
 
   const secTypes = [...new Set([...lib.map(m=>m.sectionType?.toUpperCase()).filter(Boolean), secType].filter(Boolean))].sort();
   const matTypes = [...new Set([...lib.map(m=>(m.matType||"MS").toUpperCase()), matType].filter(Boolean))].sort();
@@ -16171,7 +16171,7 @@ const StockModule = ({ user, company={}, stock, setStock, orders, contractors, m
       {/* ── ACCEPT OFFCUT MODAL ── */}
       {modal==="accept_offcut" && activeLot && (() => {
         // Use mForm for controlled state — no hooks in conditionals
-        const isPlate = (activeLot.sectionType||activeLot.section||"").toUpperCase()==="PLATE";
+        const isPlate = isPlateSection(activeLot.sectionType||activeLot.section);
         const curDim = mForm.ocDim!==undefined ? mForm.ocDim : (activeLot.offcutDimensions||activeLot.sheetDim||"");
         const curWt  = mForm.ocWt!==undefined  ? mForm.ocWt  : String(activeLot.wtReceived||"");
         const curBay = mForm.ocBay!==undefined  ? mForm.ocBay : (activeLot.bayId||"");
@@ -16467,7 +16467,7 @@ const StockModule = ({ user, company={}, stock, setStock, orders, contractors, m
 
       {/* ── OFFCUT RECORDING MODAL (multi-piece) ── */}
       {modal==="offcut" && activeLot && (()=>{
-        const isPlate = (activeLot.sectionType||activeLot.section||"").toUpperCase()==="PLATE";
+        const isPlate = isPlateSection(activeLot.sectionType||activeLot.section);
         const pieces = mForm.offcutPieces||[{id:1,length:"",width:"",wt:""}];
         const lib = (materials||[]).find(m=>normMatCode(m.matCode)===normMatCode(activeLot.matCode));
         const calcPieceWt = (p) => {
@@ -20575,7 +20575,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes,
         parsed.filter(r=>r.fabType==="Fabricate"&&r.section&&!r._libMatched).forEach(r=>{
           const key = r.matCode||`${r.section}/${r.size}`;
           if(!unmatchedLibMap[key]) {
-            const isPlate=(r.section||"").toUpperCase()==="PLATE"||(r.section||"").toUpperCase().includes("PLATE");
+            const isPlate=isPlateSection(r.section);
             const thickness = parseFloat((r.size||"").replace(/[^0-9.]/g,""))||0;
             const autoWtPerM2 = isPlate && thickness>0 ? parseFloat((7850*thickness/1000).toFixed(2)) : null;
             const SECTION_WT = {"ISA/75x75x8":9.0,"ISA/75x75x6":6.8,"ISA/100x100x10":15.1,"ISA/100x100x8":12.2,"ISA/65x65x8":7.7,"ISA/50x50x6":4.5,"ISA/150x150x16":35.8,"ISMB/200":25.4,"ISMB/250":37.3,"ISMB/300":44.2,"ISMB/350":52.4,"ISMB/400":61.6,"ISMC/100":9.56,"ISMC/125":13.1,"ISMC/150":16.8,"ISMC/200":22.1,"ISMC/250":30.4};
@@ -20659,7 +20659,7 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes,
         // area for plate. Part length (unit length x pieces), not stock length —
         // stock is rarely ordered at order level. Only shown when the rows in
         // view share one unit, since m + m2 cannot be added.
-        const isPlateSec = (sec) => { const s=(sec||"").toUpperCase(); return s.includes("PLATE")||s==="SHEET"; };
+        const isPlateSec = (sec) => isPlateSection(sec);
         const dimOf = (list) => list.reduce((a,p)=>{
           const drg = drawings.find(d=>d.id===p.drawingId);
           const pcs = (p.qtyPerDrg||0)*(drg?.qty||1);
@@ -24397,7 +24397,7 @@ export default function App() {
                   </div>
                   {lookupLotNo && !lot && <div style={{ color:T.amber, fontSize:12, padding:"8px 0" }}>⚠ No lot found for "{lookupLotNo}"</div>}
                   {lot && (()=>{
-                    const isPlate = (lot.sectionType||lot.section||"").toUpperCase()==="PLATE";
+                    const isPlate = isPlateSection(lot.sectionType||lot.section);
                     return (
                       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
                         <div style={{ background:T.bg, borderRadius:8, padding:12, border:`1px solid ${T.border}` }}>

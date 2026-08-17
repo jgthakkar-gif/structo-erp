@@ -87,6 +87,13 @@ export const PLATE_SECTIONS = new Set([
 export const isPlateSection = (section) =>
   PLATE_SECTIONS.has(String(section||"").toUpperCase().trim());
 
+// Same question asked of a matCode ("PLATE/MS/E250/16MM", "PLT/...", "SHEET/MS/...").
+// PLT is the abbreviation used in RM unit ids.
+export const isPlateMatCode = (matCode) => {
+  const head = String(matCode||"").toUpperCase().trim().split("/")[0];
+  return head === "PLT" || isPlateSection(head);
+};
+
 // ── Approved Makes ─────────────────────────────────────────────────────────────
 // One vocabulary, shared by App.jsx (PR / PO / GRN) and ProductionModule.jsx (the
 // release-time check), so the two can never drift apart.

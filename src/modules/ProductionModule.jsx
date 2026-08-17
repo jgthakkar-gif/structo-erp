@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { T, css } from "../theme.js";
 import { fmt, today, normMatCode, buildDIId, getFinancialYear, calcSheetWt,
-  approvedMakesFor, makeApprovalState, lotMake, isPlateSection,
+  approvedMakesFor, makeApprovalState, lotMake, isPlateSection, isPlateMatCode,
   getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
   parseCSVText, can, USERS, computePaintableArea, getPaintCoats } from "../helpers.js";
@@ -6999,7 +6999,7 @@ const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, mat
       else if(availLots.some(l=>l.status==="qc_hold")) status="QC Pending";
       const libEntry=(materials||[]).find(m=>m.matCode===row.matCode);
       let requiredM=0,reqDisplay="—";
-      const isPlate=row.section?.toUpperCase()==="PLATE"||(libEntry?.isPlate)||false;
+      const isPlate=isPlateSection(row.section)||(libEntry?.isPlate)||false;
       if(libEntry&&!isPlate&&(libEntry.wtPerMetre||0)>0){
         requiredM=row.requiredKg/libEntry.wtPerMetre;
         const stdLens=libEntry.standardLengths||[];
@@ -8991,8 +8991,7 @@ const OutboundReceiptScreen = ({ company={}, user, releases, setReleases, instan
   // A single number is a complete offcut for a SECTION — length is all that matters,
   // the width in the nesting output is a placeholder. For a PLATE it is not: width
   // would silently default to length and invent a square.
-  const isPlateMat = (matCode) => (matCode||"").toUpperCase().includes("PLT")
-                               || (matCode||"").toUpperCase().includes("PLATE");
+  const isPlateMat = (matCode) => isPlateMatCode(matCode);
   const dimNeedsWidth = (dim, matCode) =>
     isPlateMat(matCode) && !!String(dim||"").trim() && !/[X×]/.test(String(dim));
 
@@ -10073,7 +10072,7 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
       const parts = dim.trim().toUpperCase().split(/[X×]/);
       const l = parseFloat(parts[0])||0;
       const w = parseFloat(parts[1])||l; // if only one dimension (section), use it as length
-      const isPlate = (ru.matCode||"").toUpperCase().includes("PLT")||(ru.matCode||"").toUpperCase().includes("PLATE");
+      const isPlate = isPlateMatCode(ru.matCode);
       if (isPlate) {
         // Extract thickness from matCode e.g. PLATE/MS/E350/12MM → 12
         const thkMatch = (ru.matCode||"").match(/(\d+(?:\.\d+)?)\s*MM/i);
@@ -10330,7 +10329,7 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
 
     if (type==="add_offcut") {
       const dimRef = React.useRef(corrForm.dim||"");
-      const isPlate = (ru?.matCode||"").toUpperCase().includes("PLATE")||(ru?.matCode||"").toUpperCase().startsWith("PLT");
+      const isPlate = isPlateMatCode(ru?.matCode);
       return (
         <Modal title="Add Missed Offcut" onClose={()=>setCorrModal(null)} width={440}>
           <InfoBanner color="amber">This offcut was not recorded at cutting time. It will be created as a stock lot pending store verification.</InfoBanner>
@@ -18454,7 +18453,7 @@ const CuttingConfirmation = ({ company={}, user, nestingRuns, setNestingRuns, st
           const availDrawings = selOrder ? (selOrder.drawings||[]).filter(d=>d.receivedDate) : [];
           const availLots = stock.filter(s=>(s.status==="available"||s.status==="qc_hold")&&(s.wtAvailable||0)>0);
           const selDrgs = testForm.drawingIds||[];
-          const isPlateRun = (() => { const lot=stock.find(s=>s.id===testForm.lotId); return lot ? (lot.sectionType||"").toUpperCase()==="PLATE" : false; })();
+          const isPlateRun = (() => { const lot=stock.find(s=>s.id===testForm.lotId); return lot ? isPlateSection(lot.sectionType) : false; })();
           const barLabel = isPlateRun ? "sheets" : "bars";
           const canCreate = testForm.orderId && testForm.lotId && +testForm.numBars > 0;
           return (
