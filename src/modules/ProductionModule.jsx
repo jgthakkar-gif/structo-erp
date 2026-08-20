@@ -5211,18 +5211,21 @@ const buildOutboundDispatches = (releases, stock) => {
 //   (c) offcuts                              → dims blank, stores fill at receipt
 // (a) and (b) come from buildRmUnitCutRecords so there is ONE definition of what
 // is on a bar; this only enriches those records for printing.
-const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, sheetOf, drawingInstances, ts, user }) => {
+const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, sheetOf, drawingInstances, splitIdx, ts, user }) => {
   const lines = [];
   const anchor = ((units||[])[0]||{}).rmUnitId || "";
   const asm = {};            // instanceId -> assembly line (dispatch-level, not per bar)
   const rid = {};            // rmUnitId|drawingId|markNo -> aggregated rider line
 
-  (units||[]).forEach(ru=>{
-    const sheetParts = sheetPartsOf ? (sheetPartsOf(ru.rmUnitId)||[]) : (ru.parts||[]).map(m=>({markNo:m,qty:1}));
-    const recs = buildRmUnitCutRecords({
-      rmUnitId: ru.rmUnitId, sheetParts, instances, orders,
-      user: user||{username:""}, ts: ts||new Date().toISOString(),
-    });
+  // ONE pass over the whole dispatch. This used to loop bar by bar, which is what
+  // let per-bar netting over-declare and let splice segments fall through — a
+  // spliced piece has its segments on DIFFERENT bars, so no single bar can tell
+  // whether the piece is complete.
+  const recs = buildDispatchCutRecords({
+    units, sheetPartsOf, instances, orders, splitIdx,
+    user: user||{username:""}, ts: ts||new Date().toISOString(),
+  });
+  {
     recs.forEach(rec=>{
       const ord  = (orders||[]).find(o=>o.id===rec.orderId);
       const part = ((ord||{}).parts||[]).find(pt=>pt.markNo===rec.markNo && pt.drawingId===rec.drawingId);
@@ -5250,24 +5253,29 @@ const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, sheet
           instanceNo:(di&&(di.instanceNo!=null?`${di.instanceNo}${di.totalInstances?`/${di.totalInstances}`:""}`:di.uniqueId))||"",
           dimensions:"", qty:1, pieces:0, unitWt:0, totalWt:0, bars:new Set(),
         });
-        a.pieces += (rec.qty||1); a.totalWt = +(a.totalWt + wt).toFixed(1); a.bars.add(ru.rmUnitId);
+        a.pieces += (rec.qty||1); a.totalWt = +(a.totalWt + wt).toFixed(1); a.bars.add(rec.fromRmUnitId||anchor);
       } else {
-        const k = `${ru.rmUnitId}|${rec.drawingId}|${rec.markNo}`;
+        const bar = rec.fromRmUnitId || anchor;
+        const k = `${bar}|${rec.drawingId}|${rec.markNo}`;
         const r = rid[k] || (rid[k] = {
-          rmUnitId: ru.rmUnitId, key:`${ru.rmUnitId}|${rec.markNo}`, role:"part",
+          rmUnitId: bar, key:`${bar}|${rec.markNo}`, role:"part",
           drawingId: rec.drawingId, drawingNo:(drg&&drg.drawingNo)||rec.drawingId,
           markNo: rec.markNo,
           matCode:(part&&part.matCode)||"",
           description:(part&&part.description)||"",
           dimensions:cutSize,
           qty:0, unitWt:+uw.toFixed(2), totalWt:0, instanceId:"",
+          spliced: !!(part && part.jointsAllowed),
         });
         r.qty += (rec.qty||1); r.totalWt = +(r.totalWt + wt).toFixed(1);
       }
     });
-    // The nesting run already computed the offcut from sheet length minus LengthUsed
-    // (App.jsx ~6799). Carry it as the EXPECTED size so stores confirms rather than
-    // types blind — the actual is still whatever they measure.
+  }
+  // The nesting run already computed the offcut from sheet length minus LengthUsed
+  // (App.jsx ~6799). Carry it as the EXPECTED size so stores confirms rather than
+  // types blind — the actual is still whatever they measure. One row per bar, so
+  // this keeps its own loop now that the records are derived dispatch-wide.
+  (units||[]).forEach(ru=>{
     const sh = sheetOf ? sheetOf(ru.rmUnitId) : null;
     const expOff = (sh && sh.offcutDim) || "";
     lines.push({ rmUnitId:ru.rmUnitId, key:`${ru.rmUnitId}|OFFCUT`, role:"offcut",
@@ -5556,6 +5564,7 @@ const groupRidersByPart = (rows) => {
       partKey:k, role:"part", drawingId:r.drawingId, drawingNo:r.drawingNo, markNo:r.markNo,
       matCode:r.matCode||"", description:r.description||"",
       dimensions:r.dimensions||"", unitWt:r.unitWt||0,
+      spliced: !!r.spliced,
       qty:0, received:0, balance:0, totalWt:0, bars:[],
     });
     g.qty      += (+r.qty||0);
@@ -6847,56 +6856,119 @@ const mergeCutRecords = (existing, proposed) => {
   return accepted;
 };
 
-// Build the cut records an RM unit produces when its cutting is completed.
-// Two populations come off the same sheet:
+// Resolve a nested part name to its order mark. Spliced bars carry 2A/S1 names;
+// the order knows only 2A. Returns the segment position so a piece can be counted
+// complete only when EVERY one of its segments is present.
+const resolveNestedMark = (mn, splitIdx) => {
+  const s = splitIdx && splitIdx[mn];
+  if (s && s.parent) return { mark:s.parent, segIndex:+s.segIndex||1, segCount:+s.segCount||1 };
+  return { mark:mn, segIndex:1, segCount:1 };
+};
+
+// Build the cut records a SET of RM units produces. This is the one definition of
+// what comes off a bar; buildRmUnitCutRecords below is the single-bar case of it.
+//
+// Two populations come off the same sheets:
 //   (a) pieces of RELEASED drawings — exact identity from their instance
-//   (b) marks nested on the sheet whose drawing is NOT released — the pre-cut
+//   (b) marks nested on the sheets whose drawing is NOT released — the pre-cut
 //       case the whole cut-record model exists for. Unclaimed; a later release
 //       claims them (S3) and that instance skips cutting.
-const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, user, ts }) => {
+//
+// THREE things were wrong when this netted per bar (Jai, 18-20 Aug, order
+// FXL26-27/0002 — 1,135 pieces declared where 1,005 was owed):
+//
+//  1. NETTING WAS PER BAR: qty = max(0, nestedOnBar − releasedPiecesOnThatBar).
+//     The release wizard pins every piece of a mark to the FIRST bar carrying it,
+//     so all 34 of instance 1's 2N pieces sat on one bar carrying 8. That bar
+//     clipped at zero and lost 26 subtractions, and every other 2N bar then
+//     declared its full nested quantity as if instance 1 had no share. +148
+//     phantom pieces across 33 marks. Netting per MARK across the whole dispatch
+//     makes the pinning irrelevant — it no longer matters which bar a piece was
+//     stamped against, only how many of that mark are already spoken for.
+//
+//  2. SPLICE SEGMENTS VANISHED: 2A/S1 never resolved to a part, so `if(!part)
+//     return` dropped it. 12 pieces of 2A and 6 of 9N physically came back from
+//     the vendor and were never recorded. Segments now resolve to the parent, and
+//     a piece counts as complete only when every segment of it is present — a
+//     bar with S1 but no S2 yields no piece, which is the truth.
+//
+//  3. ONE RECORD SWALLOWED A WHOLE BAR'S WORTH: a record carried qty 1..51 but
+//     the claim hands ONE RECORD to ONE piece, so instance 2 took a 4-piece
+//     record to satisfy its 2-piece need and instance 3 got nothing. Records are
+//     now written ONE PER PIECE, qty always 1, so the claim is correct as written.
+const buildDispatchCutRecords = ({ units, sheetPartsOf, instances, orders, splitIdx, user, ts }) => {
   const recs = [];
-  const onUnit = (instances||[]).filter(i=>i.rmUnitId===rmUnitId);
-  const orderScope = onUnit[0]?.orderId || null;
+  const barIds = (units||[]).map(u=>(typeof u==="string"?u:u&&u.rmUnitId)).filter(Boolean);
+  const barSet = new Set(barIds);
+  const onUnits = (instances||[]).filter(i=>i&&barSet.has(i.rmUnitId));
+  const orderScope = (onUnits[0]||{}).orderId || null;
 
-  onUnit.forEach(i=>{
+  // ── (a) released pieces — one record each, already one per piece ──
+  onUnits.forEach(i=>{
     recs.push(makeCutRecord({
       drawingId:i.drawingId, orderId:i.orderId, markNo:i.markNo, qty:1,
-      fromRmUnitId: rmUnitId, fromInstanceId:i.instanceId,
+      fromRmUnitId: i.rmUnitId, fromInstanceId:i.instanceId,
       claimedByInstanceId:i.instanceId,          // already released → claimed by itself
       source:"rm_cutting", ts, by:user?.username,
     }));
   });
 
-  // Population (b) is the SHEET's nested quantity MINUS the pieces already accounted
-  // for in (a) — the released instances riding the same bar.
-  //
-  // This used to be all-or-nothing: if a released instance had ANY piece of a mark on
-  // the bar, the whole mark was skipped and the unreleased instances lost their share;
-  // if it had none, the FULL nested quantity was recorded, including pieces belonging
-  // to the released instance. Both directions were wrong at once, which is why the
-  // returned rider quantities were not clean multiples of the per-instance requirement
-  // (1D and 1G declared 11 where two instances need 8; 1A and 1B declared 3 and 2 where
-  // they need 4). Netting per mark makes the count exactly what the unreleased
-  // instances are owed, and never more than the bar actually carries.
-  const releasedQtyByMark = {};
-  onUnit.forEach(i=>{ releasedQtyByMark[i.markNo] = (releasedQtyByMark[i.markNo]||0) + 1; });
-  (sheetParts||[]).forEach(p=>{
-    const mn  = typeof p==="string" ? p : p?.markNo;
-    const nested = typeof p==="object" ? (p?.qty||1) : 1;
-    const qty = Math.max(0, nested - (releasedQtyByMark[mn]||0));
-    if(!mn || qty<=0) return;
-    const order = (orders||[]).find(o=>o.id===orderScope && (o.parts||[]).some(x=>x.markNo===mn))
-               || (orders||[]).find(o=>(o.parts||[]).some(x=>x.markNo===mn));
-    const part  = order && (order.parts||[]).find(x=>x.markNo===mn);
+  // ── pass 1: what the dispatch carries, per mark, segments kept apart ──
+  const nested = {};   // mark -> { segCount, seg:{idx:qty}, bars:[{rmUnitId,qty,segIndex}] }
+  barIds.forEach(rmUnitId=>{
+    const sheetParts = sheetPartsOf ? (sheetPartsOf(rmUnitId)||[]) : [];
+    (sheetParts||[]).forEach(p=>{
+      const raw = typeof p==="string" ? p : p?.markNo;
+      if(!raw) return;
+      const qty = typeof p==="object" ? (+p?.qty||1) : 1;
+      const { mark, segIndex, segCount } = resolveNestedMark(raw, splitIdx);
+      const n = nested[mark] || (nested[mark] = { segCount:1, seg:{}, bars:[] });
+      n.segCount = Math.max(n.segCount, segCount);
+      n.seg[segIndex] = (n.seg[segIndex]||0) + qty;
+      n.bars.push({ rmUnitId, qty, segIndex });
+    });
+  });
+
+  // ── pass 2: net per mark, then emit one record per owed piece ──
+  const releasedByMark = {};
+  onUnits.forEach(i=>{ releasedByMark[i.markNo] = (releasedByMark[i.markNo]||0) + 1; });
+
+  Object.keys(nested).forEach(mark=>{
+    const n = nested[mark];
+    // a piece exists only where EVERY segment of it does
+    let complete = n.seg[1]||0;
+    for(let s=2; s<=n.segCount; s++) complete = Math.min(complete, n.seg[s]||0);
+    const owed = Math.max(0, complete - (releasedByMark[mark]||0));
+    if(owed<=0) return;
+    const order = (orders||[]).find(o=>o.id===orderScope && (o.parts||[]).some(x=>x.markNo===mark))
+               || (orders||[]).find(o=>(o.parts||[]).some(x=>x.markNo===mark));
+    const part  = order && (order.parts||[]).find(x=>x.markNo===mark);
     if(!order || !part) return;                  // can't identify it — never guess
-    recs.push(makeCutRecord({
-      drawingId:part.drawingId, orderId:order.id, markNo:mn, qty,
-      fromRmUnitId: rmUnitId, fromInstanceId:null, claimedByInstanceId:null,
-      source:"rm_cutting", ts, by:user?.username,
-    }));
+    // Attribute pieces to bars in bar order, using the FIRST segment's placements:
+    // that is where the piece starts, and it keeps the receipt's per-bar rows real.
+    const seats = n.bars.filter(b=>b.segIndex===1);
+    let bi=0, used=0;
+    for(let k=0;k<owed;k++){
+      while(bi<seats.length && used>=seats[bi].qty){ bi++; used=0; }
+      const fromRmUnitId = bi<seats.length ? seats[bi].rmUnitId : (seats[seats.length-1]||{}).rmUnitId || barIds[0] || "";
+      used++;
+      recs.push(makeCutRecord({
+        drawingId:part.drawingId, orderId:order.id, markNo:mark, qty:1,
+        fromRmUnitId, fromInstanceId:null, claimedByInstanceId:null,
+        source:"rm_cutting", ts, by:user?.username,
+      }));
+    }
   });
   return recs;
 };
+
+// Single-bar case — the cutting-confirmation path. Same definition, one unit.
+const buildRmUnitCutRecords = ({ rmUnitId, sheetParts, instances, orders, splitIdx, user, ts }) =>
+  buildDispatchCutRecords({
+    units:[{ rmUnitId }],
+    sheetPartsOf: (id)=> id===rmUnitId ? (sheetParts||[]) : [],
+    instances, orders, splitIdx, user, ts,
+  });
 
 const ProductionReleaseWizard = ({ user, orders, setOrders, stock, setStock, materials, machines, contractors, releases, setReleases, productionStandards, instances, setInstances, nestingBatches, purchaseReqs, onBack, dprs, setDprs, drawingInstances, setDrawingInstances, processTypes, cutRecords=[], setCutRecords, productionNests=[], vendors=[],
                                   outboundVendors=[], setOutboundVendors }) => {
@@ -8662,6 +8734,9 @@ const OutboundIssueScreen = ({ stock=[], user, releases, setReleases, issueReque
   const [toast, setToast]     = useState("");
 
   const effB = buildEffectiveNestSource(nestingBatches, productionNests);
+  // Spliced bars carry 2A/S1 names; the return list must resolve them to the order
+  // mark or the pieces vanish. Built from EVERY batch so a segment always resolves.
+  const splitIdx = buildSplitIndex(nestingBatches);
   const sheetForRmUnit = (rmUnitId) => {
     for(const b of (effB||[])) for(const l of (b.lots||[])) for(const sh of (l.sheets||[]))
       if(sh.rmUnitId===rmUnitId) return sh;
@@ -8701,7 +8776,7 @@ const OutboundIssueScreen = ({ stock=[], user, releases, setReleases, issueReque
     };
     const steps = stepsForRelease(rel);
     const recv  = outboundReceivingQc({ exitAfterStep:g.exitAfterStep, reEntryStep:g.reEntryStep }, steps);
-    const list  = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, sheetOf:sheetForRmUnit, drawingInstances, ts:nowIso, user });
+    const list  = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, sheetOf:sheetForRmUnit, drawingInstances, splitIdx, ts:nowIso, user });
     const issueId = `OBI-${new Date().getFullYear()}-${String((issueRequests||[]).filter(r=>r&&r.outbound).length+1).padStart(3,"0")}`;
 
     // 1) one issue request per RM unit — the store's existing queue, vendor-destined
@@ -8760,7 +8835,7 @@ const OutboundIssueScreen = ({ stock=[], user, releases, setReleases, issueReque
   };
 
   const doPrint = (g) => {
-    const list = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, sheetOf:sheetForRmUnit, drawingInstances, user });
+    const list = buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, sheetOf:sheetForRmUnit, drawingInstances, splitIdx, user });
     const lotNoOfUnit = {}; (g.units||[]).forEach(u=>{ if(u.stockLotNo) lotNoOfUnit[u.rmUnitId]=u.stockLotNo; });
     const esc = (x)=>String(x==null?"":x).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 
@@ -8861,7 +8936,7 @@ const OutboundIssueScreen = ({ stock=[], user, releases, setReleases, issueReque
         const steps= rel?stepsForRelease(rel):null;
         const recv = outboundReceivingQc({ exitAfterStep:g.exitAfterStep, reEntryStep:g.reEntryStep }, steps);
         const du   = outboundDispatchUnit({ exitAfterStep:g.exitAfterStep });
-        const list = open?buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, sheetOf:sheetForRmUnit, drawingInstances, user }):[];
+        const list = open?buildOutboundReturnList({ units:g.units, instances, orders, sheetPartsOf, sheetOf:sheetForRmUnit, drawingInstances, splitIdx, user }):[];
         const nAsm = list.filter(l=>l.role==="assembly").length;
         const nPart= list.filter(l=>l.role==="part").length;
         return (
@@ -9399,11 +9474,31 @@ const OutboundReceiptScreen = ({ company={}, user, releases, setReleases, instan
                     {role:"offcut", title:"OFFCUTS", rows:tally.offcuts, keyOf:lk,
                      note:"pre-filled from the nesting run — correct to what was measured; weight is computed and the offcut becomes stock"},
                   ];
+                  // Jai, 19 Aug: "XX parts – YY pieces (including ZZ spliced pieces)".
+                  // A line count reconciles against nothing. He nests every part,
+                  // piece and splice, so every piece of a drawing instance has to come
+                  // back and be accounted for — the header has to be checkable against
+                  // that, which is how the 1,135-vs-1,005 over-declaration hid in plain
+                  // sight for three days.
+                  const countOf = (rows) => {
+                    const marks = new Set(), pieces = rows.reduce((a,r)=>a+(+r.qty||0),0);
+                    let spliced = 0;
+                    rows.forEach(r=>{ if(r.markNo) marks.add(r.markNo); if(r.spliced) spliced += (+r.qty||0); });
+                    return { marks:marks.size, pieces, spliced };
+                  };
+                  const headCount = (sec) => {
+                    if(sec.role==="offcut") return `${sec.rows.length} bar(s)`;
+                    const c = countOf(sec.rows);
+                    if(sec.role==="assembly")
+                      return `${sec.rows.length} instance(s) · ${sec.rows.reduce((a,r)=>a+(+r.pieces||0),0)} pieces`;
+                    return `${c.marks} parts · ${c.pieces} pieces`
+                         + (c.spliced ? ` (including ${c.spliced} spliced piece${c.spliced!==1?"s":""})` : "");
+                  };
                   return secs.map(sec=>(
                     <div key={sec.role} style={{marginBottom:12}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                         <div style={{fontSize:11,fontWeight:700,color:T.textMid}}>
-                          {sec.title} — {sec.rows.length} line(s)
+                          {sec.title} — {headCount(sec)}
                           <span style={{fontWeight:400,color:T.textLow}}> · {sec.note}</span>
                         </div>
                         {sec.rows.some(r=>(r.balance||0)>0)&&(
@@ -9582,6 +9677,8 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
   // S4d — the nested parts of an RM unit, read through the same resolver the
   // release wizard uses so production nests and MRP behave identically here.
   const opEffBatches = buildEffectiveNestSource(nestingBatches, productionNests);
+  // Spliced bars carry 2A/S1 names — resolve them or a spliced piece is never recorded.
+  const splitIdx = buildSplitIndex(nestingBatches);
   const sheetForRmUnit = (rmUnitId) => {
     for(const b of (opEffBatches||[]))
       for(const l of (b.lots||[]))
@@ -9691,7 +9788,7 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
       const proposed = buildRmUnitCutRecords({
         rmUnitId: ru.rmUnitId,
         sheetParts: sheet?.parts || ru.parts || [],
-        instances, orders, user, ts,
+        instances, orders, splitIdx, user, ts,
       });
       setCutRecords(prev => {
         const add = mergeCutRecords(prev||[], proposed);
