@@ -197,6 +197,66 @@ async function supaLoadAll(keys) {
   } catch(e) { console.warn("supaLoadAll error:", e); throw e; }
 }
 
+// ─── THE STORE KEY LIST ───────────────────────────────────────────────────────
+// Hoisted to module scope so BOTH the boot loader and the backup exporter work
+// from ONE list. They used to disagree: boot read this list from Supabase, while
+// Download Backup iterated localStorage. When a localStorage write silently fails
+// (see LOCAL_CACHE_MISSES below) those two sources drift and the backup is stale
+// without saying so.
+const STORE_KEYS = [
+  "structo_orders","structo_orderParts","structo_orderPartsIndex","structo_clients","structo_vendors","structo_pos",
+  "structo_stock","structo_purchaseReqs","structo_company",
+  "structo_nestingBatches","structo_nestingRuns","structo_instances","structo_instancesIndex",
+  "structo_dprs","structo_releases","structo_qcRules","structo_overrideLog",
+  "structo_issueRequests","structo_tpiTemplates","structo_productionEngineers",
+  "structo_challans","structo_welders","structo_contractors","structo_machines",
+  "structo_ncrs","structo_notifications","structo_correctionsLog","structo_scrapQueue",
+  "structo_drawingInstances","structo_processTypes","structo_outboundVendors","structo_outboundJobs",
+  "structo_users","structo_bays","structo_paint","structo_materials",
+  "structo_consumables","structo_approvedMakes","structo_tpiAgencies",
+  "structo_productionStandards","structo_pendingMaterials","structo_cutRecords","structo_productionNests",
+];
+
+// Stores that ARE written to Supabase (see the syncToSupa effects) but are NOT in
+// STORE_KEYS, so the boot loader never hydrates them — they come up from
+// localStorage only. Backing them up matters regardless; the hydration gap is a
+// separate question and is deliberately NOT changed here.
+const BACKUP_ONLY_KEYS = [
+  "structo_consumableIRs","structo_consumablePRs","structo_consumablePOs",
+];
+
+// Session state is intentionally NOT backed up: restoring someone else's login
+// rows is meaningless, and it is the only thing that differed between two
+// otherwise byte-identical exports.
+const BACKUP_EXCLUDE_KEYS = new Set(["structo_session","structo_login_attempts"]);
+
+// Keys whose localStorage write threw (almost always QuotaExceededError once the
+// cache passes ~5 MB). The value IS still written to Supabase — only the local
+// mirror is stale — but a backup taken from localStorage would silently omit it.
+const LOCAL_CACHE_MISSES = new Set();
+
+// Read EVERY store row from Supabase, including the per-owner shards
+// (structo_orderParts__<id>, structo_instances__<orderId>) which are not in
+// STORE_KEYS because their names depend on the data. Throws on any load failure —
+// a partial dump must never be presented as a backup.
+async function supaDumpAll() {
+  const data = await supaLoadAll([...STORE_KEYS, ...BACKUP_ONLY_KEYS]);
+  const shardKeys = [];
+  const partIds = data["structo_orderPartsIndex"];
+  if (Array.isArray(partIds)) partIds.forEach(id => shardKeys.push("structo_orderParts__" + id));
+  const instIds = data["structo_instancesIndex"];
+  if (Array.isArray(instIds)) instIds.forEach(id => shardKeys.push("structo_instances__" + id));
+  if (shardKeys.length) {
+    const shards = await supaLoadAll(shardKeys);
+    Object.keys(shards).forEach(k => { data[k] = shards[k]; });
+    // A shard named in an index but absent from the store means the dump is
+    // incomplete — say so rather than hand over a backup with a hole in it.
+    const missing = shardKeys.filter(k => !(k in data));
+    if (missing.length) throw new Error(`Store rows named in an index are missing: ${missing.join(", ")}`);
+  }
+  return data;
+}
+
 
 // ─── NESTING CENTER — MSAL AUTH (redirect-only, no popup) ────────────────────
 const _msalConfig = {
@@ -3875,6 +3935,13 @@ const UsersMaster = ({ user, appUsers, setAppUsers, productionEngineers, setProd
 const CompanyMaster = ({ user, company, setCompany }) => {
   const [form, setForm] = useState({...company});
   const [dirty, setDirty] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [staleKeys, setStaleKeys] = useState([...LOCAL_CACHE_MISSES]);
+  useEffect(() => {
+    const h = () => setStaleKeys([...LOCAL_CACHE_MISSES]);
+    window.addEventListener("structo:localCacheChanged", h);
+    return () => window.removeEventListener("structo:localCacheChanged", h);
+  }, []);
   const upd = (k,v) => { setForm(f=>({...f,[k]:v})); setDirty(true); };
   return (
     <div>
@@ -3999,17 +4066,67 @@ const CompanyMaster = ({ user, company, setCompany }) => {
       {/* Reset to seed data — super_admin only */}
       <div style={{ marginTop:32, paddingTop:20, borderTop:`1px solid ${T.border}` }}>
         <div style={{ fontSize:12, fontWeight:700, color:T.textMid, marginBottom:8 }}>BACKUP</div>
+        {staleKeys.length>0 && (
+          <div style={{ padding:"10px 14px", background:T.amberBg, border:`1px solid ${T.amber}55`, borderRadius:6, marginBottom:10 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:T.amber }}>
+              This browser&apos;s local cache is full — {staleKeys.length} record{staleKeys.length!==1?"s":""} could not be cached
+            </div>
+            <div style={{ fontSize:12, color:T.textMid, marginTop:3 }}>
+              Your data is safe: it is saved on the server, and that is what the app loads. Only this
+              browser&apos;s copy is behind. Backups now read the server, so they are unaffected.
+            </div>
+            <div style={{ fontSize:11, color:T.textMid, marginTop:4, fontFamily:T.fontMono }}>{staleKeys.join(", ")}</div>
+          </div>
+        )}
         <div style={{ display:"flex", alignItems:"center", gap:16, padding:"14px 16px", background:T.cardBg||"#fff", border:`1px solid ${T.border}`, borderRadius:8, marginBottom:14 }}>
           <div style={{ flex:1 }}>
             <div style={{ fontSize:13, fontWeight:700, color:T.text }}>Backup &amp; restore all data</div>
-            <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>Download a JSON snapshot of everything (orders, stock, POs, production…). Keep one before risky operations. Restore replaces all current data.</div>
+            <div style={{ fontSize:12, color:T.textMid, marginTop:2 }}>Downloads a JSON snapshot read from the server (orders, stock, POs, production…), including every per-order shard. Keep one before risky operations. Restore replaces all current data.</div>
           </div>
-          <button onClick={()=>{
-            const dump = {}; for (let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith("structo_")){ try{ dump[k]=JSON.parse(localStorage.getItem(k)); }catch(e){ dump[k]=localStorage.getItem(k); } } }
-            const blob = new Blob([JSON.stringify({ exportedAt:new Date().toISOString(), data:dump }, null, 1)], { type:"application/json" });
+          <button disabled={backupBusy} onClick={async ()=>{
+            // This used to iterate localStorage. localStorage is a CACHE: once it
+            // passes the browser quota (~5 MB) writes throw and were swallowed, so
+            // the cache silently froze while Supabase carried on. Two backups taken
+            // two days apart came out byte-identical. Read the record instead, and
+            // only fall back to the cache if the server is unreachable — labelled.
+            setBackupBusy(true);
+            let dump = null, source = "cloud", note = "";
+            try {
+              dump = await supaDumpAll();
+            } catch (err) {
+              const useCache = window.confirm(
+                "Could not read the server:\n\n" + (err && err.message || err) +
+                "\n\nDownload from this browser's local cache instead?\n\n" +
+                "The cache can be OUT OF DATE — anything the browser failed to store " +
+                "(usually because it is full) will be MISSING from the file."
+              );
+              if (!useCache) { setBackupBusy(false); return; }
+              dump = {}; source = "local-cache";
+              note = "Server unreachable at export time. Taken from this browser's cache — MAY BE INCOMPLETE.";
+              for (let i=0;i<localStorage.length;i++){
+                const k=localStorage.key(i);
+                if(k&&k.startsWith("structo_")&&!BACKUP_EXCLUDE_KEYS.has(k)){
+                  try{ dump[k]=JSON.parse(localStorage.getItem(k)); }catch(e){ dump[k]=localStorage.getItem(k); }
+                }
+              }
+            }
+            const payload = {
+              exportedAt: new Date().toISOString(),
+              source,                                   // "cloud" = the record; "local-cache" = a mirror
+              complete: source === "cloud",
+              keyCount: Object.keys(dump).length,
+              staleLocalKeys: [...LOCAL_CACHE_MISSES],   // keys this browser could not cache
+              note,
+              data: dump,
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 1)], { type:"application/json" });
             const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-            a.download = `structo-backup-${new Date().toISOString().slice(0,19).replace(/[:T]/g,"-")}.json`; a.click(); URL.revokeObjectURL(a.href);
-          }} style={{ ...css.btn.secondary, whiteSpace:"nowrap", flexShrink:0 }}>⬇ Download Backup</button>
+            a.download = `structo-backup-${source==="cloud"?"":"CACHE-"}${new Date().toISOString().slice(0,19).replace(/[:T]/g,"-")}.json`;
+            a.click(); URL.revokeObjectURL(a.href);
+            setBackupBusy(false);
+          }} style={{ ...css.btn.secondary, whiteSpace:"nowrap", flexShrink:0, opacity:backupBusy?0.6:1 }}>
+            {backupBusy ? "Reading server…" : "⬇ Download Backup"}
+          </button>
           <label style={{ ...css.btn.secondary, whiteSpace:"nowrap", flexShrink:0, cursor:"pointer" }}>⬆ Restore
             <input type="file" accept=".json" style={{ display:"none" }} onChange={e=>{
               const f = e.target.files?.[0]; if(!f) return;
@@ -4017,6 +4134,25 @@ const CompanyMaster = ({ user, company, setCompany }) => {
               const rd = new FileReader();
               rd.onload = async () => { try {
                 const parsed = JSON.parse(rd.result); const dump = parsed.data||parsed;
+                // A file taken from a browser cache can be missing whatever that
+                // browser failed to store. Restoring it pushes the gaps to the
+                // server and destroys the rows it never had. Make that explicit.
+                if (parsed && parsed.complete === false) {
+                  const typed = window.prompt(
+                    "⚠ THIS BACKUP IS MARKED INCOMPLETE.\n\n" +
+                    (parsed.note || "It was taken from a browser cache, not the server.") +
+                    "\n\nRestoring it will OVERWRITE server data with this file's contents, " +
+                    "including anything the file is missing.\n\nType RESTORE to proceed."
+                  );
+                  if (typed !== "RESTORE") { alert("Restore cancelled."); e.target.value=""; return; }
+                } else if (!parsed || !("complete" in parsed)) {
+                  // Files exported before this fix have no marker and came from the cache.
+                  const typed = window.prompt(
+                    "⚠ This backup predates the export fix, so it was taken from a browser cache " +
+                    "and may be missing data the server has.\n\nType RESTORE to proceed anyway."
+                  );
+                  if (typed !== "RESTORE") { alert("Restore cancelled."); e.target.value=""; return; }
+                }
                 const entries = Object.entries(dump).filter(([k])=>k.startsWith("structo_"));
                 entries.forEach(([k,v])=>{ localStorage.setItem(k, typeof v==="string"?v:JSON.stringify(v)); });
                 // Push to Supabase BEFORE reloading — hydration reads the server,
@@ -22214,7 +22350,22 @@ export default function App() {
   // Debounced sync — ref-based so no hook rules violated
   const _syncTimers = React.useRef({});
   const syncToSupa = React.useCallback((key, value) => {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch(e) {}
+    // The local mirror is a CACHE, not the record — Supabase below is the record.
+    // But this write used to fail silently, and Download Backup reads localStorage,
+    // so a full cache produced a stale backup that looked perfectly healthy.
+    // Record the miss and say so; the Supabase write still goes ahead.
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      if (LOCAL_CACHE_MISSES.delete(key)) {
+        try { window.dispatchEvent(new CustomEvent("structo:localCacheChanged")); } catch(_) {}
+      }
+    } catch(e) {
+      LOCAL_CACHE_MISSES.add(key);
+      try {
+        window.dispatchEvent(new CustomEvent("structo:localCacheFull", { detail:{ key, message:String(e&&e.name||e) } }));
+        window.dispatchEvent(new CustomEvent("structo:localCacheChanged"));
+      } catch(_) {}
+    }
     // CRITICAL: never write to Supabase before data has been successfully loaded from it.
     // This prevents seed/default state from overwriting real Supabase data on startup.
     if (!dbLoaded || dbError) return;
@@ -22384,19 +22535,7 @@ export default function App() {
   // ── Load all data from Supabase on first mount (production only) ─────────────
   useEffect(() => {
     if (!IS_PROD) { setDbLoaded(true); return; } // localhost: skip, use localStorage
-    const KEYS = [
-      "structo_orders","structo_orderParts","structo_orderPartsIndex","structo_clients","structo_vendors","structo_pos",
-      "structo_stock","structo_purchaseReqs","structo_company",
-      "structo_nestingBatches","structo_nestingRuns","structo_instances","structo_instancesIndex",
-      "structo_dprs","structo_releases","structo_qcRules","structo_overrideLog",
-      "structo_issueRequests","structo_tpiTemplates","structo_productionEngineers",
-      "structo_challans","structo_welders","structo_contractors","structo_machines",
-      "structo_ncrs","structo_notifications","structo_correctionsLog","structo_scrapQueue",
-      "structo_drawingInstances","structo_processTypes","structo_outboundVendors","structo_outboundJobs",
-      "structo_users","structo_bays","structo_paint","structo_materials",
-      "structo_consumables","structo_approvedMakes","structo_tpiAgencies",
-      "structo_productionStandards","structo_pendingMaterials","structo_cutRecords","structo_productionNests",
-    ];
+    const KEYS = STORE_KEYS;   // hoisted to module scope — see STORE_KEYS
     supaLoadAll(KEYS).then(data => {
       // Production: Supabase is the ONLY source of truth.
       // If key exists in Supabase → use it. If missing → set to empty (fresh start).
