@@ -94,6 +94,44 @@ export const isPlateMatCode = (matCode) => {
   return head === "PLT" || isPlateSection(head);
 };
 
+// ── Offcut dimensions ─────────────────────────────────────────────────────────
+// A PLATE or SHEET offcut is a rectangle: both numbers are real and both are needed
+// to know whether a part will fit on it, so it reads "4350 X 1230".
+//
+// A SECTION offcut (pipe, angle, channel, flat, rod, bar) is a LENGTH. The width in
+// "2690X100" is a placeholder the nesting software emits — offcutWt has always
+// ignored it and taken length x wtPerMetre. Showing it invites someone to type a
+// real width into a field nothing reads, so a section offcut reads just "2690".
+// Jai, 13 Aug: for ISA/ISMC/ISMB/rod offcuts he enters "400", not "400X100".
+export const parseOffcutDim = (dim) => {
+  const parts = String(dim||"").trim().toUpperCase().split(/[X×]/);
+  const length = parseFloat(parts[0]);
+  const width  = parts.length > 1 ? parseFloat(parts[1]) : NaN;
+  return {
+    length: Number.isFinite(length) ? length : null,
+    width:  Number.isFinite(width)  ? width  : null,
+  };
+};
+
+// What stores and the shop floor should SEE for a piece.
+export const offcutDimLabel = (dim, matCode) => {
+  const { length, width } = parseOffcutDim(dim);
+  if (length === null) return String(dim||"").trim();
+  if (!isPlateMatCode(matCode)) return String(length);          // a length, nothing else
+  return width === null ? String(length) : `${length} X ${width}`;
+};
+
+// The length a lot contributes when coverage is measured in metres. Full bars carry
+// sheetLength; offcuts historically carried the size only inside the sheetDim TEXT,
+// so a length-based coverage metric would have scored them zero and told you to buy
+// material already standing in the yard.
+export const lotUsableLength = (lot) => {
+  if (!lot) return null;
+  if (Number.isFinite(lot.sheetLength) && lot.sheetLength > 0) return lot.sheetLength;
+  const { length } = parseOffcutDim(lot.sheetDim);
+  return length && length > 0 ? length : null;
+};
+
 // ── Approved Makes ─────────────────────────────────────────────────────────────
 // One vocabulary, shared by App.jsx (PR / PO / GRN) and ProductionModule.jsx (the
 // release-time check), so the two can never drift apart.

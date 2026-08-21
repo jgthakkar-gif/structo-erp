@@ -4,7 +4,8 @@ import { fmt, today, normMatCode, buildDIId, getFinancialYear, calcSheetWt,
   approvedMakesFor, makeApprovalState, lotMake, isPlateSection, isPlateMatCode,
   getOrderPrefix, detectDrawingPrefix, getDrawingShortCode,
   buildDIUniqueId, buildPartUniqueId, computePartBaseUniqueId, computeTotalPieces,
-  parseCSVText, can, USERS, computePaintableArea, getPaintCoats } from "../helpers.js";
+  parseCSVText, can, USERS, computePaintableArea, getPaintCoats,
+  parseOffcutDim, offcutDimLabel, lotUsableLength } from "../helpers.js";
 import { Badge, Modal, Field, Input, Sel, InfoBanner, SectionHd, Textarea, MField,
   StatCard, TH, TD, G2, G3, TabBar2, Row2 } from "../components/ui.jsx";
 
@@ -5321,7 +5322,9 @@ const buildOutboundReturnList = ({ units, instances, orders, sheetPartsOf, sheet
   // this keeps its own loop now that the records are derived dispatch-wide.
   (units||[]).forEach(ru=>{
     const sh = sheetOf ? sheetOf(ru.rmUnitId) : null;
-    const expOff = (sh && sh.offcutDim) || "";
+    // The nest writes "2690X100" for a section, where the 100 is a placeholder nothing
+    // reads. Show stores a length as a length, and a plate as the rectangle it is.
+    const expOff = offcutDimLabel((sh && sh.offcutDim) || "", ru.matCode);
     lines.push({ rmUnitId:ru.rmUnitId, key:`${ru.rmUnitId}|OFFCUT`, role:"offcut",
                  drawingNo:"—", markNo:"OFFCUT", matCode:ru.matCode||"",
                  description: expOff ? `Nesting expects ${expOff}` : "To be measured by stores on receipt",
@@ -9314,6 +9317,10 @@ const OutboundReceiptScreen = ({ company={}, user, releases, setReleases, instan
             grade:parent.grade||"", size:parent.size||"",
             rmUnitId:buildOffcutRmUnitId(parent.lotNo||"OB",parent.sectionType||"PLATE",parent.grade||"",parent.size||"",x.dim,next),
             sheetDim:x.dim, offcutDimensions:x.dim, sheetWt:w,
+            // Store the numbers, not just the text. Coverage measured in metres has to
+            // ask a lot "how many mm do you have?" and an offcut used to answer null.
+            sheetLength:parseOffcutDim(x.dim).length,
+            sheetWidth:isPlateMatCode(ru.matCode)?parseOffcutDim(x.dim).width:null,
             wtReceived:w, wtAvailable:w, wtAllocated:0, wtIssued:0, wtConsumed:0,
             status:"pending_store", isOffcut:true, bayId:parent.bayId||"",
             ...inheritLotTrace(parent),
@@ -9605,8 +9612,10 @@ const OutboundReceiptScreen = ({ company={}, user, releases, setReleases, instan
                                       <td style={{padding:"3px 8px"}}>
                                         <input
                                           value={dims[k]!==undefined?dims[k]:(r.expectedDim||"")}
-                                          placeholder={r.expectedDim||"L×W"}
-                                          title={r.expectedDim?`Nesting expected ${r.expectedDim} — adjust to what was actually measured`:"Enter the measured offcut"}
+                                          placeholder={r.expectedDim||(isPlateMatCode(r.matCode)?"L×W":"length")}
+                                          title={r.expectedDim
+                                            ?`Nesting expected ${r.expectedDim} — adjust to what was actually measured`
+                                            :(isPlateMatCode(r.matCode)?"Enter the measured offcut as length × width":"Enter the measured length")}
                                           onChange={e=>setDims(pv=>({...pv,[k]:e.target.value}))}
                                           style={{...css.input,fontSize:11,padding:"2px 5px",width:110,
                                                   borderColor:badKeys.includes(k)?T.red:undefined,
@@ -10245,6 +10254,8 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
       if (!s.isOffcut || s.createdFrom !== ru.rmUnitId) return s;
       const wt = parseFloat(newWt)||s.wtReceived;
       return { ...s, sheetDim:newDim, offcutDimensions:newDim, wtReceived:wt, wtAvailable:wt,
+        sheetLength:parseOffcutDim(newDim).length,
+        sheetWidth:isPlateMatCode(s.matCode)?parseOffcutDim(newDim).width:null,
         auditLog:addAuditLog(s.auditLog,"offcut-edited",user.name,`Dim: ${s.offcutDimensions}→${newDim}, Wt: ${s.wtReceived}→${wt}`) };
     }));
     // Update rmUnitAssignment offcut fields
@@ -10291,6 +10302,8 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
       grade:lot.grade||"", size:lot.size||"",
       rmUnitId:buildOffcutRmUnitId(lot.lotNo||"???",lot.sectionType||"PLATE",lot.grade||"",lot.size||"",dim,stock),
       sheetDim:dim, offcutDimensions:dim, sheetWt:offWt,
+      sheetLength:parseOffcutDim(dim).length,
+      sheetWidth:isPlateMatCode(lot.matCode)?parseOffcutDim(dim).width:null,
       wtReceived:offWt, wtAvailable:offWt, wtAllocated:0, wtIssued:0, wtConsumed:0,
       status:"pending_store", isOffcut:true, bayId:lot.bayId||"",
       // Inherit MTC and batch traceability from parent lot
@@ -10456,7 +10469,7 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
       <Modal title={`Corrections — ${ru?.rmUnitId}`} onClose={()=>setCorrModal(null)} width={480}>
         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
           {can(user,"production.edit_offcut")&&existingOffcut&&(
-            <button onClick={()=>{ setCorrForm({dim:existingOffcut.offcutDimensions||relRu.offcutDim||"",wt:existingOffcut.wtReceived||relRu.offcutWt||""}); setCorrModal({ru,type:"edit_offcut"}); }}
+            <button onClick={()=>{ setCorrForm({dim:offcutDimLabel(existingOffcut.offcutDimensions||relRu.offcutDim||"", existingOffcut.matCode||relRu.matCode),wt:existingOffcut.wtReceived||relRu.offcutWt||""}); setCorrModal({ru,type:"edit_offcut"}); }}
               style={{ ...css.btn.secondary, textAlign:"left", justifyContent:"flex-start" }}>
               ✏️ Edit offcut dimensions / weight
             </button>
@@ -18554,7 +18567,9 @@ const CuttingConfirmation = ({ company={}, user, nestingRuns, setNestingRuns, st
         isOffcut:true, parentLotId:barForm.lotId, parentBatchNo:barForm.batchNo,
         parentRmUnitId, offcutSequence,
         offcutLength:barForm.isPlate?null:+(barForm.offcutLength||0),
-        offcutDimensions:barForm.isPlate?`${barForm.offcutLength}X${barForm.offcutWidth}`:"",
+        offcutDimensions:barForm.isPlate?`${barForm.offcutLength}X${barForm.offcutWidth}`:String(barForm.offcutLength||""),
+        sheetLength:parseFloat(barForm.offcutLength)||null,
+        sheetWidth:barForm.isPlate?(parseFloat(barForm.offcutWidth)||null):null,
         nestingRunId:selRunId, allocations:[], issues:[],
         reservations:[...(parentLot.reservations||[])],
         auditLog:[{action:"offcut-created",orderId:"",wt:oc,by:user.name,

@@ -8,7 +8,8 @@ import { fmt, today, getFinancialYear, genOrderId, normMatCode, normSize, buildM
   parseCSVLine, parseCSVText, can, ROLE_DEFAULT_PERMS, USERS,
   approvedMakesFor, orderSpecifiesMakes, makeApprovalState, sameMake, makeSuggestions, lotMake,
   isPlateSection, isPlateMatCode, PLATE_SECTIONS,
-  computePaintableArea, getPaintCoats } from "./helpers.js";
+  computePaintableArea, getPaintCoats,
+  parseOffcutDim, offcutDimLabel, lotUsableLength } from "./helpers.js";
 import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
 import { migrateDrawingInstances, buildDefaultProcessSteps, getDIPipelineNext, getPipelineLabel,
@@ -24629,7 +24630,7 @@ export default function App() {
                                 <div key={k.id} onClick={()=>setLookupLotNo(k.lotNo)}
                                      style={{ display:"flex", alignItems:"center", gap:10, padding:"4px 0", cursor:"pointer", fontSize:11 }}>
                                   <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, minWidth:76 }}>{k.lotNo}</span>
-                                  <span style={{ fontFamily:T.fontMono, color:T.text, minWidth:96 }}>{k.offcutDimensions||k.sheetDim||"—"}</span>
+                                  <span style={{ fontFamily:T.fontMono, color:T.text, minWidth:96 }}>{offcutDimLabel(k.offcutDimensions||k.sheetDim, k.matCode)||"—"}</span>
                                   <span style={{ color:T.textMid, flex:1 }}>{fmt.num(k.wtAvailable||0)} kg</span>
                                   <Badge color={k.status==="available"?"green":k.status==="pending_store"?"amber":"gray"}>{k.status||"—"}</Badge>
                                 </div>
