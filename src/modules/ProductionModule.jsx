@@ -5030,6 +5030,50 @@ const genLotNo = (existingStock, company) => {
   return `${LOT_ALPHA_CHARS[nextAlpha]}${String(nextNum).padStart(3,"0")}`;
 };
 
+// An OFFCUT IS NOT A NEW LOT. Lots are defined at GRN, per RM receipt — not per
+// sheet or bar. An offcut is the same steel from the same heat under the same MTC,
+// so it keeps its parent's GRN lot number and takes a suffix: A049-1, A049-2.
+//
+// The outbound receipt for OBI-2026-001 minted 128 BRAND-NEW lot numbers
+// (A073..A200) from just 24 GRN lots, one per bar, and the new rows lost mtcNo,
+// grnId, poId and rmQcStatus on the way — stock carrying a lot number that appears
+// on no GRN, no PO and no RM QC record. Issue one of those into another order and
+// the MDCC dossier cannot tie it back to a certificate.
+//
+// Suffixed numbers deliberately do NOT match genLotNo's /^([A-HJ-NP-Z])(\d{3})$/,
+// so a child can never advance the parent series. The number the operator writes on
+// the piece is still the lot; the suffix distinguishes the pieces cut from it.
+const genOffcutLotNo = (existingStock, parentLotNo) => {
+  const base = String(parentLotNo||"").trim().toUpperCase();
+  if (!base) return "";
+  const re = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-(\\d+)$`);
+  let max = 0;
+  (existingStock||[]).forEach(s => {
+    const m = String(s && s.lotNo || "").toUpperCase().match(re);
+    if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
+  });
+  return `${base}-${max + 1}`;
+};
+
+// The certificate trail an offcut must carry from its parent, or the MDCC dossier
+// breaks. Kept in one place so all four offcut-creating paths agree.
+const inheritLotTrace = (parent) => ({
+  heatNo:      (parent && parent.heatNo)      || "",
+  batchNo:     (parent && parent.batchNo)     || "",
+  mtcNo:       (parent && parent.mtcNo)       || "",
+  mtcDoc:      (parent && parent.mtcDoc)      || "",
+  mtcUploaded: !!(parent && parent.mtcUploaded),
+  grnId:       (parent && parent.grnId)       || "",
+  poId:        (parent && parent.poId)        || "",
+  poLineId:    (parent && parent.poLineId)    || "",
+  vendorId:    (parent && parent.vendorId)    || "",
+  vendorCode:  (parent && parent.vendorCode)  || "",
+  vendorName:  (parent && parent.vendorName)  || "",
+  rmQcStatus:  (parent && parent.rmQcStatus)  || "",
+  matLibId:    (parent && parent.matLibId)    || "",
+  clientInspStatus: (parent && parent.clientInspStatus) || "",
+});
+
 // Generate rmUnitId from lot record + sequence number
 // e.g. A342/PLT/E350/16mm/1500X6300/1
 const buildRmUnitId = (lotNo, sectionType, grade, size, sheetDim, seq) => {
@@ -9264,16 +9308,15 @@ const OutboundReceiptScreen = ({ company={}, user, releases, setReleases, instan
           const w=offcutWt(x.dim, ru.matCode);
           next.push({
             id:`STK-OFFCUT-OB-${Date.now()}-${next.length}`,
-            lotNo:genLotNo(next, company), parentLotId:parent.id||ru.stockLotId||"", parentRmUnitId:x.r.rmUnitId,
+            // Keeps the parent's GRN lot with a suffix — same heat, same MTC.
+            lotNo:genOffcutLotNo(next, parent.lotNo), parentLotId:parent.id||ru.stockLotId||"", parentRmUnitId:x.r.rmUnitId,
             matCode:ru.matCode||"", sectionType:parent.sectionType||"PLATE",
             grade:parent.grade||"", size:parent.size||"",
             rmUnitId:buildOffcutRmUnitId(parent.lotNo||"OB",parent.sectionType||"PLATE",parent.grade||"",parent.size||"",x.dim,next),
             sheetDim:x.dim, offcutDimensions:x.dim, sheetWt:w,
             wtReceived:w, wtAvailable:w, wtAllocated:0, wtIssued:0, wtConsumed:0,
             status:"pending_store", isOffcut:true, bayId:parent.bayId||"",
-            heatNo:parent.heatNo||"", batchNo:parent.batchNo||"",
-            mtcUploaded:parent.mtcUploaded||false, mtcDoc:parent.mtcDoc||"",
-            vendorId:parent.vendorId||"", vendorName:parent.vendorName||"",
+            ...inheritLotTrace(parent),
             receivedDate:today(), createdBy:user.name, createdFrom:x.r.rmUnitId,
             releaseId:g.releaseId, fromOutbound:true, outboundIssueId:g.issueId,
             auditLog:[{action:"offcut-from-outbound",by:user.name,date:today(),
@@ -9812,7 +9855,7 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
         parentLotId:ru.stockLotId||ru.lotId, parentRmUnitId:ru.rmUnitId,
         matCode:ru.matCode, sectionType:lot.sectionType||"PLATE",
         grade:lot.grade||"", size:lot.size||"",
-        lotNo: genLotNo(stock, company),
+        lotNo: genOffcutLotNo(stock, lot.lotNo), ...inheritLotTrace(lot),
         rmUnitId: buildOffcutRmUnitId(lot.lotNo||"???", lot.sectionType||"PLATE", lot.grade||"", lot.size||"", offcutDim, stock),
         sheetDim: offcutDim||"",
         sheetLength: (offcutDim||"").split(/[Xx×]/)[0]||0,
@@ -10239,9 +10282,10 @@ const MachineOperatorQueue = ({ company={}, user, releases, setReleases, issueRe
         if (lib?.wtPerMetre && l>0) offWt = +(l/1000 * lib.wtPerMetre).toFixed(1);
       }
     }
-    const newLotNo = genLotNo(stock, company);
+    const newLotNo = genOffcutLotNo(stock, lot.lotNo);
     const newOc = {
       id:`STK-OFFCUT-RETRO-${Date.now()}`,
+      ...inheritLotTrace(lot),
       lotNo:newLotNo, parentLotId:lot.id||"", parentRmUnitId:ru.rmUnitId,
       matCode:ru.matCode, sectionType:lot.sectionType||"PLATE",
       grade:lot.grade||"", size:lot.size||"",
@@ -18494,13 +18538,12 @@ const CuttingConfirmation = ({ company={}, user, nestingRuns, setNestingRuns, st
         ? `${selRun.materialCode}/${barForm.offcutLength}X${barForm.offcutWidth}`
         : `${selRun.materialCode}/${barForm.offcutLength}`;
       setStock(prev=>[...prev,{
-        id:newOcId, lotNo:genLotNo(stock||[], company),
+        id:newOcId, lotNo:genOffcutLotNo(stock||[], parentLot.lotNo),
+        ...inheritLotTrace(parentLot),
         batchNo:barForm.batchNo, itemCode:ocItemCode,
-        matCode:selRun.materialCode, matLibId:parentLot.matLibId||"",
+        matCode:selRun.materialCode,
         section:parentLot.section||"", size:parentLot.size||"",
         grade:parentLot.grade||"", matType:parentLot.matType||"",
-        vendorId:parentLot.vendorId||"", vendorCode:parentLot.vendorCode||"",
-        vendorName:parentLot.vendorName||"",
         wtReceived:oc, wtAvailable:oc, wtAllocated:0, wtIssued:0, wtConsumed:0,
         status:"pending_offcut_verification", bayId:parentLot.bayId||"",
         poId:parentLot.poId||"", grnId:parentLot.grnId||"",

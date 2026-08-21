@@ -24610,6 +24610,33 @@ export default function App() {
                             <span style={{ color:T.textMid }}> — {parent.matCode}</span>
                           </div>):null;
                         })()}
+                        {/* Offcuts cut FROM this lot. An offcut keeps its parent's GRN lot
+                            number with a suffix (A049-1, A049-2) because it is the same heat
+                            under the same MTC, so searching the number written on the piece
+                            finds the parent AND every piece cut from it. */}
+                        {(()=>{
+                          const kids=(stock||[]).filter(s=>s.isOffcut&&(s.parentLotId===lot.id||
+                            (lot.lotNo&&String(s.lotNo||"").toUpperCase().startsWith(String(lot.lotNo).toUpperCase()+"-"))))
+                            .filter(s=>s.id!==lot.id);
+                          if(!kids.length) return null;
+                          const live=kids.filter(s=>s.status!=="consumed"&&s.status!=="written_off"&&s.status!=="rejected");
+                          return (
+                            <div style={{ background:T.bg, borderRadius:8, padding:12, border:`1px solid ${T.border}` }}>
+                              <div style={{ fontSize:11, fontWeight:700, color:T.textMid, marginBottom:6 }}>
+                                OFFCUTS FROM THIS LOT — {kids.length} piece(s){live.length!==kids.length?` · ${live.length} still on hand`:""}
+                              </div>
+                              {kids.map(k=>(
+                                <div key={k.id} onClick={()=>setLookupLotNo(k.lotNo)}
+                                     style={{ display:"flex", alignItems:"center", gap:10, padding:"4px 0", cursor:"pointer", fontSize:11 }}>
+                                  <span style={{ fontFamily:T.fontMono, fontWeight:700, color:T.accent, minWidth:76 }}>{k.lotNo}</span>
+                                  <span style={{ fontFamily:T.fontMono, color:T.text, minWidth:96 }}>{k.offcutDimensions||k.sheetDim||"—"}</span>
+                                  <span style={{ color:T.textMid, flex:1 }}>{fmt.num(k.wtAvailable||0)} kg</span>
+                                  <Badge color={k.status==="available"?"green":k.status==="pending_store"?"amber":"gray"}>{k.status||"—"}</Badge>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
