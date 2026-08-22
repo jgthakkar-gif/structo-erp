@@ -132,6 +132,50 @@ export const lotUsableLength = (lot) => {
   return length && length > 0 ? length : null;
 };
 
+// ── Weight sanity ─────────────────────────────────────────────────────────────
+// Jai, 21 Aug: 5%. Mill tolerance on sections runs a few percent, so a tighter
+// figure would fire on every honest receipt and train him to ignore the flag.
+export const WT_TOLERANCE_PCT = 5;
+
+// Does a part's CALCULATED (bounding-box) weight disagree with the CLIENT's
+// (finished-shape) weight by more than it should?
+//
+// The two are allowed to differ — Jai, 21 Aug: for an irregular part the client
+// gives the exact shape while MRP uses the outside box, and the box is bigger.
+// But that only arises on PLATE and SHEET, where a profile is cut out of a
+// rectangle. A cut length of pipe, angle, channel or flat is a straight cut: box
+// and shape are the same bar, so a gap there is an ERROR, not a profile.
+// Measured on FXL26-27/0002: 74 plate marks had a gap of exactly zero and 44
+// section marks totalled +4 kg, while the only two marks over 5% were the two
+// pipes with genuinely wrong data. Scoping it this way flags those two and
+// nothing else.
+export const partWtDivergence = (part, tolPct = WT_TOLERANCE_PCT) => {
+  const client = +(part && part.clientUnitWt) || 0;
+  const box    = +(part && part.calcUnitWt)   || 0;
+  if (client <= 0 || box <= 0) return { pct:0, flag:false, reason:"" };
+  const pct = ((box - client) / client) * 100;
+  const isPlate = isPlateSection(part.section) || isPlateMatCode(part.matCode);
+  if (isPlate) {
+    // Box >= shape is normal profile cutting. The impossible direction is the
+    // client weighing MORE than the rectangle it was cut from — that means the
+    // box itself is under-computed.
+    return pct < -tolPct
+      ? { pct, flag:true, reason:"client weight exceeds the bounding box — the box looks under-computed" }
+      : { pct, flag:false, reason:"" };
+  }
+  return Math.abs(pct) > tolPct
+    ? { pct, flag:true, reason:"a straight cut length should weigh the same either way" }
+    : { pct, flag:false, reason:"" };
+};
+
+// Was a lot's weight WEIGHED, or just carried over from the library pre-fill?
+// The GRN pre-fills Actual Wt from the library and takes whatever is in the box.
+// If nobody edits it, a computed figure hardens into stock looking exactly like a
+// measured one — and variance reads 0, because actual equals calculated by
+// construction. That is how ROPIPE lot A070 came to hold 6 x 3.39 = 20.34 kg of a
+// pipe that actually weighs 27.9.
+export const lotWtSource = (lot) => (lot && lot.wtSource) || "unknown";
+
 // ── Approved Makes ─────────────────────────────────────────────────────────────
 // One vocabulary, shared by App.jsx (PR / PO / GRN) and ProductionModule.jsx (the
 // release-time check), so the two can never drift apart.

@@ -9,7 +9,8 @@ import { fmt, today, getFinancialYear, genOrderId, normMatCode, normSize, buildM
   approvedMakesFor, orderSpecifiesMakes, makeApprovalState, sameMake, makeSuggestions, lotMake,
   isPlateSection, isPlateMatCode, PLATE_SECTIONS,
   computePaintableArea, getPaintCoats,
-  parseOffcutDim, offcutDimLabel, lotUsableLength } from "./helpers.js";
+  parseOffcutDim, offcutDimLabel, lotUsableLength,
+  WT_TOLERANCE_PCT, partWtDivergence, lotWtSource } from "./helpers.js";
 import { Badge, Modal, Field, Input, Sel, Textarea, G2, G3, SectionHd,
   TH, TD, InfoBanner, MField, StatCard } from "./components/ui.jsx";
 import { migrateDrawingInstances, buildDefaultProcessSteps, getDIPipelineNext, getPipelineLabel,
@@ -2161,6 +2162,12 @@ const buildStockLots = (grnForm, po, grnId, ts, purchaseReqs=[]) => {
       makeMismatch: !!((l.make||"").trim() && (poLine.make||"").trim() && !sameMake(l.make, poLine.make)),
       makeRemark: (l.makeRemark||"").trim(),
       wtReceived:l.actualWt||l.wtReceived, wtAvailable:l.actualWt||l.wtReceived, wtAllocated:0, wtIssued:0, wtConsumed:0,
+      // Provenance of that number. The GRN pre-fills Actual Wt from the library, so an
+      // untouched line hardens a COMPUTED figure into stock looking exactly like a
+      // weighed one — and variance reads 0 because actual equals calculated. Record
+      // which it was, so a later weight question is answerable.
+      wtSource: l.wtEdited ? "weighed" : "computed",
+      wtCalculated: +l.calculatedWt || 0,
       unitPrice:l.rate||0, lineValue:l.lineValue||Math.round((l.actualWt||l.wtReceived||0)*(l.rate||0)*100)/100,
       status:"qc_hold", bayId:l.bayId||grnForm.bayId||"",
       rmQcStatus:"pending", clientInspStatus:"pending", receivedDate:grnForm.date||today(),
@@ -8421,6 +8428,32 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
     });
     const stockAvail = Math.round(stockFree + stockMine);
     const netToProcure = Math.max(0, row.wtRequired - stockAvail);
+
+    // ── LENGTH COVERAGE (sections only) ──────────────────────────────────────
+    // Weight is the rate unit and the payment basis, so it stays. But "have I got
+    // enough?" is a different question, and for a bar it is answered in METRES.
+    // A weight answer travels through three stored numbers — the part's calc weight,
+    // the library's kg/m, and the lot weight derived from it — and any one of them
+    // can be wrong. On FXL26-27/0002 all three were wrong on ROPIPE 32NB: the part
+    // carried 50NB's 7.50 kg/m, the library carried SCH 40's 3.39 instead of SCH 80's
+    // 4.65, and the lot inherited the library figure. MRP read "5 kg short" for a
+    // 3.3 m requirement standing next to a 6 m bar.
+    // Length has no such chain. A 6 m bar is 6 metres whatever anyone weighed it at.
+    const isLenMat = !isPlateMatCode(row.matCode) && !isPlateSection(row.section);
+    let lenAvailMm = 0, lenUnknownLots = 0;
+    if (isLenMat) {
+      matches.forEach(s => {
+        if ((+s.wtAvailable||0) <= 0) return;                 // a consumed lot holds no length
+        const res = (s.reservations||[]).filter(r=>r&&r.orderId);
+        const mine = res.length === 0 || res.some(r=>rowOrderIds.has(r.orderId));
+        if (!mine) return;                                    // reserved wholly to another order
+        const each = lotUsableLength(s);
+        if (!each) { lenUnknownLots++; return; }               // unknown length — never guess one
+        lenAvailMm += each * Math.max(1, +s.sheetCount || 1);
+      });
+    }
+    const lenReqdMm  = isLenMat ? (row.totalLengthMm || 0) : 0;
+    const lenShortMm = isLenMat ? Math.max(0, lenReqdMm - lenAvailMm) : 0;
     // Robust PR match: normalised matCode first, section/size/grade triple as fallback;
     // stale/cancelled excluded; most recent wins (the old lookup took the first PR of
     // any status, so a stale PR could mask a live one).
@@ -8479,6 +8512,7 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
              onOrderKg: Math.round(onOrderKg),
              stillShortKg: Math.max(0, Math.round(netToProcure - onOrderKg)),
              unplaced,
+             isLenMat, lenReqdMm, lenAvailMm, lenShortMm, lenUnknownLots,
              nested: !!latestNest, nestBatchId: latestNest?.id||"", nestSheets };
   });
   // fabListAll = every requirement row for the chosen order(s); fabList (below)
@@ -9079,7 +9113,15 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                                   ? `${(row.wtRequired/(lib.wtPerM2||7850*parseFloat(row.size||"0")/1000)).toFixed(2)} m²`
                                   : `${(row.wtRequired/(lib.wtPerMetre||1)).toFixed(1)} m`)
                               : "—";
-                        const covPct = row.wtRequired > 0 ? Math.min(100, (row.stockAvail/row.wtRequired)*100) : 100;
+                        // COVERAGE METRIC. Sections are decided on LENGTH, plate and
+                        // sheet on weight. A bar either has the metres or it does not,
+                        // and that answer does not depend on three stored weights being
+                        // right. Weight stays visible either way — it buys and it pays.
+                        const covByLen = row.isLenMat && row.lenReqdMm > 0 && !row.lenUnknownLots;
+                        const covPct = covByLen
+                          ? Math.min(100, (row.lenAvailMm/row.lenReqdMm)*100)
+                          : (row.wtRequired > 0 ? Math.min(100, (row.stockAvail/row.wtRequired)*100) : 100);
+                        const covBasis = covByLen ? "length" : (row.isLenMat ? "weight — a lot has no recorded length" : "weight");
                         const netColor = row.netToProcure===0 ? T.green : (row.prStatus==="approved"||row.prStatus==="po_raised") ? T.amber : T.red;
                         const prBadge = row.prStatus==="approved"?"green":(row.prStatus==="po_raised"||row.prStatus==="converted")?"blue":row.prStatus==="none"?"gray":"amber";
                         return (
@@ -9115,12 +9157,18 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                             <TD>
                               {(()=>{
                                 const req = row.wtRequired||0;
-                                const inStock = req>0 ? Math.min(100,(row.stockAvail/req)*100) : 100;
-                                const onOrd   = req>0 ? Math.min(100-inStock,((row.onOrderKg||0)/req)*100) : 0;
+                                // Sections read their coverage in metres; plate in kilos.
+                                const inStock = covByLen ? covPct
+                                              : (req>0 ? Math.min(100,(row.stockAvail/req)*100) : 100);
+                                const onOrd   = covByLen ? 0
+                                              : (req>0 ? Math.min(100-inStock,((row.onOrderKg||0)/req)*100) : 0);
                                 const short   = Math.max(0, 100-inStock-onOrd);
+                                const mm = (v)=>`${(v/1000).toFixed(1)} m`;
                                 return (
                                   <>
-                                    <div title={`In stock ${Math.round(row.stockAvail)} kg · on order ${row.onOrderKg||0} kg · short ${row.stillShortKg||0} kg`}
+                                    <div title={covByLen
+                                        ? `Coverage measured in LENGTH — need ${mm(row.lenReqdMm)}, have ${mm(row.lenAvailMm)}. Weight still drives the PO and the payment.`
+                                        : `In stock ${Math.round(row.stockAvail)} kg · on order ${row.onOrderKg||0} kg · short ${row.stillShortKg||0} kg`}
                                       style={{ width:80, height:6, background:T.border, borderRadius:3, overflow:"hidden", display:"flex" }}>
                                       <div style={{ height:"100%", width:`${inStock}%`, background:T.green }} />
                                       <div style={{ height:"100%", width:`${onOrd}%`, background:T.accent }} />
@@ -9128,9 +9176,20 @@ const MRPModule = ({ user, company={}, purchaseReqs, setPurchaseReqs, pos, setPo
                                     </div>
                                     <div style={{ fontSize:10, color:T.textLow, marginTop:2 }}>
                                       {inStock.toFixed(0)}%
-                                      {onOrd>0.5&&<span style={{color:T.accent}}> +{onOrd.toFixed(0)}% on order</span>}
-                                      {short>0.5&&<span style={{color:T.red}}> · {row.stillShortKg} kg short</span>}
+                                      {covByLen
+                                        ? <span> · {mm(row.lenAvailMm)} of {mm(row.lenReqdMm)}</span>
+                                        : <>
+                                            {onOrd>0.5&&<span style={{color:T.accent}}> +{onOrd.toFixed(0)}% on order</span>}
+                                            {short>0.5&&<span style={{color:T.red}}> · {row.stillShortKg} kg short</span>}
+                                          </>}
+                                      {covByLen&&short>0.5&&<span style={{color:T.red}}> · {mm(row.lenShortMm)} short</span>}
                                     </div>
+                                    {row.isLenMat&&row.lenUnknownLots>0&&(
+                                      <div style={{ fontSize:9, color:T.amber, marginTop:1 }}
+                                        title="A lot has no recorded length, so coverage fell back to weight rather than guess.">
+                                        {row.lenUnknownLots} lot(s) without a length
+                                      </div>
+                                    )}
                                   </>
                                 );
                               })()}
@@ -14119,11 +14178,40 @@ const PODetail = ({ po, onBack, user, company={}, vendors=[], orders=[], pos, se
                               onChange={e=>{
                                 const aw=+e.target.value;
                                 const vr=Math.round(aw-(l.calculatedWt||0));
-                                updLine(i,{actualWt:aw,wtReceived:aw,variance:vr,lineValue:Math.round(aw*(l.rate||0)*100)/100});
+                                // wtEdited: the receiver touched this box, so the figure is
+                                // WEIGHED, not the library pre-fill. Carried onto the lot.
+                                updLine(i,{actualWt:aw,wtReceived:aw,variance:vr,wtEdited:true,lineValue:Math.round(aw*(l.rate||0)*100)/100});
                               }}
                               style={{ width:72, background:T.bgInput, border:`1px solid ${T.border}`, borderRadius:4, padding:"2px 4px", color:T.text, fontFamily:T.fontMono, fontSize:11, textAlign:"right" }} />
                           </td>
-                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:vc, fontSize:11 }}>{l.calculatedWt>0?`${(l.variance||0)>=0?"+":""}${l.variance||0} kg`:"—"}</td>
+                          <td style={{ padding:"4px 8px", textAlign:"right", fontFamily:T.fontMono, color:vc, fontSize:11 }}>
+                            {l.calculatedWt>0?`${(l.variance||0)>=0?"+":""}${l.variance||0} kg`:"—"}
+                            {/* Two different warnings, and the second is the one that bit us.
+                                A variance beyond tolerance means the delivery disagrees with the
+                                library — check the weighbridge or the library row. An UNTOUCHED
+                                line means nobody weighed it at all, so the library figure is
+                                about to become stock while variance sits innocently at 0. */}
+                            {(()=>{
+                              const calc = +l.calculatedWt||0, act = +l.actualWt||0;
+                              if (!isChecked) return null;
+                              if (!l.wtEdited && act>0) return (
+                                <div style={{ fontSize:9, color:T.amber, fontWeight:400 }}
+                                  title="Not weighed — this is the library's calculated figure. Type the weighbridge figure to record it as measured.">
+                                  computed, not weighed
+                                </div>
+                              );
+                              if (calc>0 && act>0) {
+                                const pct = Math.abs(act-calc)/calc*100;
+                                if (pct > WT_TOLERANCE_PCT) return (
+                                  <div style={{ fontSize:9, color:T.red, fontWeight:700 }}
+                                    title={`Received weight is ${pct.toFixed(1)}% off the calculated figure (tolerance ${WT_TOLERANCE_PCT}%). Either the delivery is short/over, or the material library's weight for this item is wrong.`}>
+                                    ⚠ {pct.toFixed(1)}% off
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </td>
                           <td style={{ padding:"3px 6px", textAlign:"center" }}>
                             {(grnForm.mtcs||[]).length>0
                               ? <Sel value={l.mtcId||""} onChange={e=>{ const mtc=(grnForm.mtcs||[]).find(m=>m.id===e.target.value); updLine(i,{mtcId:e.target.value,heatNo:mtc?.heatNo||l.heatNo}); }} style={{ fontSize:10, padding:"2px 4px" }}>
@@ -20992,7 +21080,23 @@ const TabParts = ({ order, onChange, canEdit, materials, stock, processTypes,
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"right", color:(p.width>0)?T.text:T.textLow }}>{p.width>0?fmt.num(p.width):"—"}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"center" }}>{p.qtyPerDrg}</td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.amber, textAlign:"right" }}>{(p.clientUnitWt||p.clientTotalWt)?.toFixed(2)}</td>
-                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.green, textAlign:"right" }}>{p.calcTotalWt?.toFixed(2)}</td>
+                <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, color:T.green, textAlign:"right" }}>
+                  {p.calcTotalWt?.toFixed(2)}
+                  {/* Box vs shape. On plate a gap is legitimate — a profile cut out of a
+                      rectangle weighs less than the rectangle. On a SECTION it is a
+                      straight cut, so a gap means one of the two figures is wrong.
+                      Mark 9L carried 50NB's kg/m against 32NB's client weight: +64%. */}
+                  {(()=>{
+                    const dv = partWtDivergence(p);
+                    if (!dv.flag) return null;
+                    return (
+                      <div style={{ fontSize:9, color:T.red, fontWeight:700 }}
+                        title={`Calculated ${(p.calcUnitWt||0).toFixed(3)} kg/pc vs client ${(p.clientUnitWt||0).toFixed(3)} — ${dv.pct>0?"+":""}${dv.pct.toFixed(1)}%. ${dv.reason}. Tolerance ${WT_TOLERANCE_PCT}%.`}>
+                        ⚠ {dv.pct>0?"+":""}{dv.pct.toFixed(0)}% vs client
+                      </div>
+                    );
+                  })()}
+                </td>
                 <td style={{ padding:"8px 10px", borderBottom:`1px solid ${T.border}`, fontFamily:T.fontMono, textAlign:"center", color:drg?.qty>1?T.accent:T.textLow, fontWeight:drg?.qty>1?700:400 }}>
                   {drg?.qty||1}{drg?.qty>1&&<span style={{fontSize:10,marginLeft:2}}>×</span>}
                 </td>
