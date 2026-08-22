@@ -16164,9 +16164,21 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
   // Approved-makes filter: order.quality.approvedMakes[].makes (comma-sep string)
   // matched against lot.vendorName / vendorCode. No approvedMakes defined → all pass.
   const buildPool = (order) => {
-    const makeTokens = (order.quality?.approvedMakes||[])
-      .flatMap(m => (m.makes||"").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean));
-    const pool = {};   // normMatCode → {approvedWt, totalWt, lots:[]}
+    // APPROVED MAKES ARE PER SECTION TYPE, NOT PER ORDER.
+    // This used to flatten every approvedMakes row into ONE token list and test
+    // every lot against it, ignoring matType. On FXL26-27/0002 the order names
+    // makes for PLATE, ISMB and ISA only — yet NPB, ISMC, FLAT, ROD, SHS, BAR,
+    // ROPIPE and SHEET were all judged against a rule never written for them, and
+    // failed because a trader-supplied lot carries the TRADER's name, not a mill.
+    // 11.97 T of NPB sitting QC-passed in the yard contributed zero to the pool and
+    // the drawing read Blocked at 74/107.
+    // Jai's rule, 22 Aug: "when there is no approved make, all makes are allowed."
+    // approvedMakesFor(order, section) already implements the per-section lookup and
+    // is used elsewhere (~8041); normSectionKey strips the trailing space in the
+    // stored "PLATE " so old rows match without editing them.
+    const sectionOfLot = (lot) =>
+      lot.sectionType || lot.section || String(lot.matCode||"").split("/")[0] || "";
+    const pool = {};   // normMatCode → {approvedWt, totalWt, lots:[], untagged:[]}
     (stock||[]).forEach(lot => {
       // A lot reserved for THIS order is available to this order's plan; only
       // weight reserved for OTHER orders is off-limits. (Auto-reservation at GRN
@@ -16176,7 +16188,7 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       if (lot.rmQcStatus !== "approved") return;
       const key = normMatCode(lot.matCode);
       if (!key) return;
-      if (!pool[key]) pool[key] = { approvedWt:0, totalWt:0, lots:[] };
+      if (!pool[key]) pool[key] = { approvedWt:0, totalWt:0, lots:[], untagged:[] };
       const resTotal = (lot.reservations||[]).reduce((a,r)=>a+(r.kg||0),0);
       const resMine  = (lot.reservations||[]).filter(r=>r.orderId===order.id).reduce((a,r)=>a+(r.kg||0),0);
       // Weight already ALLOCATED to this order's cutting plans left wtAvailable,
@@ -16192,18 +16204,28 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
       const avail = Math.min(lot.wtAvailable||0, free + resMine) + allocMine;
       if (avail <= 0) return;
       pool[key].totalWt += avail;
+      // Only the makes the order named FOR THIS SECTION. An empty list means the
+      // order asked for nothing here, so every make qualifies.
+      const okMakes = approvedMakesFor(order, sectionOfLot(lot));
       const vn = (lot.vendorName||"").toLowerCase(), vc = (lot.vendorCode||"").toLowerCase();
       // Trader-supplied material: the MILL is what approved-makes means. Match
       // explicit millMake if captured, else the heat number (mill prefixes like
       // "JSW25-..." live there), else fall back to vendor name/code.
-      const mm = (lot.millMake||"").toLowerCase(), hn = (lot.heatNo||"").toLowerCase();
-      const makeOk = makeTokens.length===0 || makeTokens.some(t => {
+      const mm = (lotMake(lot)||"").toLowerCase(), hn = (lot.heatNo||"").toLowerCase();
+      const makeOk = okMakes.length===0 || okMakes.some(raw => {
+        const t = String(raw||"").trim().toLowerCase();
+        if (!t) return false;
         // Heat numbers carry the mill's short prefix ("JSW25-...") — match the
         // make's first word, not the full registered name.
         const w = t.split(/[^a-z0-9]+/).filter(Boolean)[0] || "";
         return (mm&&(mm.includes(t)||t.includes(mm))) || (w.length>=2 && (hn.includes(w) || mm.includes(w))) ||
           (vn&&(vn.includes(t)||t.includes(vn))) || (vc&&(vc.includes(t)||t.includes(vc)));
       });
+      // A lot with NO make recorded, on a section the order DOES govern, is not the
+      // same as a rejected make — we simply do not know what it is. Kept out of
+      // approvedWt for now but listed, so the screen can say which lots need a mill
+      // rather than the material silently vanishing. (Jai to decide plan-or-block.)
+      if (okMakes.length>0 && !mm && !hn) pool[key].untagged.push(lot.id);
       if (makeOk) { pool[key].approvedWt += avail; pool[key].lots.push(lot.id); }
     });
     return pool;
@@ -16251,7 +16273,8 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
         const p = pool[key] || { approvedWt:0, totalWt:0 };
         const reqWt = r.wtPerInst * nForCheck;
         return { key, display:r.display, section:r.section, marks:r.marks, reqWt,
-                 approvedWt:p.approvedWt, totalWt:p.totalWt, covered: p.approvedWt >= reqWt && reqWt>0 };
+                 approvedWt:p.approvedWt, totalWt:p.totalWt, untagged:(p.untagged||[]),
+                 covered: p.approvedWt >= reqWt && reqWt>0 };
       });
       const totalMarks   = allMarks.length || parts.length;
       const coveredMarks = matRows.filter(m=>m.covered).reduce((s,m)=>s+m.marks.length,0);
@@ -16666,7 +16689,11 @@ const PlanProductionScreen = ({ user, orders, drawingInstances, stock, nestingBa
                                   <TD mono>{m.display}</TD>
                                   <TD right mono>{tonnes(m.reqWt)}</TD>
                                   <TD right mono color={m.covered?T.green:T.red}>{tonnes(m.approvedWt)}</TD>
-                                  <TD right mono>{tonnes(m.totalWt)}{m.totalWt>m.approvedWt && !m.covered && <span style={{color:T.amber}}> ← approval gap</span>}</TD>
+                                  <TD right mono>{tonnes(m.totalWt)}{m.totalWt>m.approvedWt && !m.covered && (
+                                    (m.untagged||[]).length>0
+                                      ? <span style={{color:T.amber}} title={`This order specifies approved makes for ${m.section||"this section"}, and ${m.untagged.length} lot(s) have no mill recorded. Record the mill on the lot, or drop the make requirement for this section on the order.`}> ← {m.untagged.length} lot(s) with no mill recorded</span>
+                                      : <span style={{color:T.amber}} title={`Stock exists but its make is not on this order's approved list for ${m.section||"this section"}.`}> ← make not approved</span>
+                                  )}</TD>
                                   <TD>{m.covered ? <Badge color="green">OK</Badge> : <Badge color="red">Short</Badge>}</TD>
                                 </tr>
                               ))}
