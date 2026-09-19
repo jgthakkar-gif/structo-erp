@@ -4162,11 +4162,33 @@ const CompanyMaster = ({ user, company, setCompany }) => {
                   if (typed !== "RESTORE") { alert("Restore cancelled."); e.target.value=""; return; }
                 }
                 const entries = Object.entries(dump).filter(([k])=>k.startsWith("structo_"));
-                entries.forEach(([k,v])=>{ localStorage.setItem(k, typeof v==="string"?v:JSON.stringify(v)); });
+                // The local cache is a MIRROR, not the record. Warming it used to be an
+                // unguarded localStorage.setItem, so once the cache passed the browser's
+                // ~5 MB quota the throw aborted the whole restore and the Supabase write
+                // below never ran — "Restore failed: setting the value of 'structo_releases'
+                // exceeded the quota", with nothing actually restored. Same empty-catch
+                // class as syncToSupa. A cache that will not hold the data must never stop
+                // the restore; it just means this browser re-reads from the server.
+                const cacheMisses = [];
+                entries.forEach(([k,v])=>{
+                  try {
+                    localStorage.setItem(k, typeof v==="string"?v:JSON.stringify(v));
+                    LOCAL_CACHE_MISSES.delete(k);
+                  } catch(_) { cacheMisses.push(k); LOCAL_CACHE_MISSES.add(k); }
+                });
                 // Push to Supabase BEFORE reloading — hydration reads the server,
                 // so a restore that only touches localStorage would be overwritten.
                 await Promise.all(entries.map(([k,v])=>supaSet(k, typeof v==="string"?(()=>{try{return JSON.parse(v);}catch(e){return v;}})():v)));
-                alert("Backup restored (browser + server). The app will now reload."); window.location.reload();
+                try { window.dispatchEvent(new CustomEvent("structo:localCacheChanged")); } catch(_) {}
+                alert(
+                  `Backup restored to the server — ${entries.length} record set(s).` +
+                  (cacheMisses.length
+                    ? `\n\n${cacheMisses.length} could not be cached in this browser because its storage is full:\n` +
+                      `${cacheMisses.join(", ")}\n\nThat is harmless — the app loads from the server, not the cache.`
+                    : "") +
+                  "\n\nThe app will now reload."
+                );
+                window.location.reload();
               } catch(err){ alert("Restore failed: "+err.message); } };
               rd.readAsText(f);
             }} />
@@ -5177,7 +5199,7 @@ const DevToolsMaster = ({ user, setInstances, setReleases, setNestingRuns, setOr
                 // Also clear localStorage keys immediately so a hard reload doesn't restore stale data
                 ['structo_releases','structo_instances','structo_dprs','structo_nestingRuns',
                  'structo_nestingBatches','structo_drawingInstances','structo_outboundJobs',
-                 'structo_issueRequests'].forEach(k => localStorage.setItem(k, '[]'));
+                 'structo_issueRequests'].forEach(k => { try { localStorage.setItem(k, '[]'); } catch(_) {} });
                 setProdResetStep(2);
               }} style={{ ...css.btn.danger }}>
                 ✓ Confirm Reset
@@ -7133,50 +7155,6 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
   };
   const blockedNoJoints = overParts.filter(p=>!p.jointsAllowed);
   const splitInvalid = overParts.filter(p=>p.jointsAllowed && splitIssues(p).length>0);
-
-  // ── OPTIONAL SPLICE (Jai, 1 Sep) ───────────────────────────────────────────
-  // Splicing used to be offered ONLY when a part was longer than the bar, where it
-  // is unavoidable. But a part that FITS can still waste most of the bar: a 7.5 m
-  // channel off a 12 m bar yields one piece and drops 4.5 m, every time. At 25 off
-  // that is 112 m of offcut. Cut it as 6.0 + 1.5 and both segments pack whole, so
-  // the same 25 pieces come off 16 bars instead of 25.
-  // So the gate is now jointsAllowed, not over-length. The planner opts in per mark
-  // and types the segments; nothing is spliced unless he asks for it.
-  const [optInSplice, setOptInSplice] = useState({});   // markNo -> true
-  const overMarks = new Set(overParts.map(p=>p.markNo));
-  // Candidates: joints permitted, fits the bar (so this is a CHOICE), and long
-  // enough that two segments could both clear the minimum.
-  const jointCandidates = markAgg.filter(p =>
-    p.jointsAllowed && !overMarks.has(p.markNo) && maxTrialLen>0 &&
-    (+p.length||0) >= 2*(spliceCfg.minSegmentMm||1500) + (spliceCfg.jointAllowanceMm||3));
-  // What the bar yields today, and what it would yield spliced. Whole bars only —
-  // a bar cannot be half consumed, which is the entire reason the waste exists.
-  const spliceSaving = (p, segs) => {
-    const L=+p.length||0, qty=+p.totalQty||0, bar=maxTrialLen;
-    if(!L||!qty||!bar) return null;
-    const perBarNow = Math.floor(bar/L);
-    if(perBarNow<1) return null;
-    const barsNow = Math.ceil(qty/perBarNow);
-    // Spliced: every segment size is its own demand of `qty` pieces. Each segment
-    // still has to come off whole bars, so pack each and add the bars up.
-    let barsSpliced = 0, ok = true;
-    segs.forEach(s=>{ const per=Math.floor(bar/(+s||0)); if(per<1){ ok=false; return; } barsSpliced += Math.ceil(qty/per); });
-    if(!ok) return null;
-    return { barsNow, barsSpliced, saved: barsNow-barsSpliced, joints:(segs.length-1)*qty };
-  };
-  const optionalSplitIssues = (p) => {
-    const floor=spliceCfg.minSegmentMm||1500, allow=spliceCfg.jointAllowanceMm||3;
-    const segs=splitFor(p); const req=(p.length||0)-allow*(segs.length-1);
-    const sum=segs.reduce((a,b)=>a+(parseFloat(b)||0),0);
-    const errs=[];
-    if(segs.length<2) errs.push("a splice needs at least 2 segments");
-    if(Math.abs(sum-req)>0.5) errs.push(`segments total ${sum}mm \u2260 required ${req}mm (${p.length} \u2212 ${allow}\u00d7${segs.length-1} root gap)`);
-    segs.forEach((s,i)=>{ if(s<floor) errs.push(`S${i+1} below ${floor}mm minimum`); if(s>maxTrialLen) errs.push(`S${i+1} exceeds ${maxTrialLen}mm bar`); });
-    return errs;
-  };
-  // An opted-in mark with a bad split must block the run for the same reason an
-  // over-length one does — it would nest segments that do not rebuild the part.
-  const optionalInvalid = jointCandidates.filter(p=>optInSplice[p.markNo] && optionalSplitIssues(p).length>0);
   // Mark-collision guard: markAgg and buildInputData key parts by BARE markNo.
   // Client lists that restart marks per drawing (Takraf) make the same mark carry
   // different geometry — aggregation then takes the first length and sums all
@@ -7193,7 +7171,7 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
     return Object.entries(seen).filter(([mk,g])=>Object.keys(g).length>1)
       .map(([mk,g])=>({ markNo:mk, variants:Object.entries(g).map(([geo,v])=>({geo,drgs:v.drgs})) }));
   })();
-  const runBlocked = blockedNoJoints.length>0 || splitInvalid.length>0 || optionalInvalid.length>0 || markCollisions.length>0;
+  const runBlocked = blockedNoJoints.length>0 || splitInvalid.length>0 || markCollisions.length>0;
 
   const addTrialSize = () => {
     const id = Date.now();
@@ -7246,7 +7224,6 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
       const { parts, rawMaterials } = await buildInputData();
       if(!parts.length||!rawMaterials.length){ alert("Need at least 1 part and 1 raw material."); setExporting(false); return; }
       if (blockedNoJoints.length>0) { alert("Over-length parts without joint permission — resolve before running."); setExporting(false); return; }
-      if (optionalInvalid.length>0) { alert(`Optional splice is invalid on: ${optionalInvalid.map(p=>p.markNo).join(", ")}. Fix the segments or untick the mark.`); setExporting(false); return; }
       if (markCollisions.length>0) { alert(`Mark number collisions — same mark, different dimensions across drawings: ${markCollisions.map(c=>c.markNo).join(", ")}. Running would nest wrong lengths. Make marks unique first.`); setExporting(false); return; }
       // Fetch CAD profiles for parts with links (true-shape nesting). Failures are
       // surfaced, never silent — a part whose link fails nests as a rectangle and says so.
@@ -7274,18 +7251,12 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
       }), ...trialSizes.map(t=>Math.min(+t.length||0,+t.width||0)));
       parts.forEach(p=>{
         const over = overParts.find(o=>o.markNo===p.markNo && o.jointsAllowed);
-        // A mark the planner opted into splicing is treated exactly like an
-        // over-length one from here on: same splitMap shape, same S1/S2 names, same
-        // downstream readers. The only difference is that it was a choice.
-        const opted = !over && p.jointsAllowed && optInSplice[p.markNo]
-          && optionalSplitIssues(markAgg.find(m=>m.markNo===p.markNo)||p).length===0
-          ? (markAgg.find(m=>m.markNo===p.markNo)||p) : null;
         // width-splice only when the plate fits NO sheet whole AND joints are allowed
-        const needsWidthSplice = p.jointsAllowed && !over && !opted
+        const needsWidthSplice = p.jointsAllowed && !over
           && (+p.width||0) > widestSheet && widestSheet>0
           && plateSeamIssues(p, widestSheet).length===0;
-        if (over || opted) {
-          const segs = splitFor(over || opted);
+        if (over) {
+          const segs = splitFor(over);
           // On a sheet the long side may be stored as width; split whichever field
           // actually holds it, or the segment would come back the wrong shape.
           const cutWidth = isPlate && (+p.width||0) > (+p.length||0);
@@ -7617,78 +7588,6 @@ const NestExportModal = ({ row, onClose, stock, setStock, orders, setOrders, mat
                     </div>
                   ) : (
                     <div style={{fontSize:11,color:T.red,marginTop:4,fontWeight:600}}>Cannot nest — part is longer than any trial bar and splicing is not permitted for this mark. Add a longer trial size above, or refer to engineering.</div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {jointCandidates.length>0 && (
-          <div style={{ marginBottom:14 }}>
-            <div style={{fontSize:12,fontWeight:700,color:T.text,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.05em"}}>
-              Optional splice — {jointCandidates.length} mark{jointCandidates.length!==1?"s":""} allow joints
-            </div>
-            <div style={{fontSize:11,color:T.textMid,marginBottom:8}}>
-              These fit the {isPlate?"sheet":"bar"} whole, so nothing forces a joint. Tick one to cut it in
-              segments anyway where that packs better and saves material. Every piece of the mark gets the
-              same split.
-            </div>
-            {jointCandidates.map(p=>{
-              const on = !!optInSplice[p.markNo];
-              const segs = splitFor(p);
-              const errs = on ? optionalSplitIssues(p) : [];
-              const sv = on && errs.length===0 ? spliceSaving(p, segs) : null;
-              const bar = maxTrialLen, perBarNow = Math.floor(bar/(+p.length||1));
-              return (
-                <div key={p.markNo} style={{border:`1px solid ${on?T.accent:T.border}`,borderRadius:6,
-                     padding:"8px 12px",marginBottom:8,background:on?`${T.accent}0A`:"transparent"}}>
-                  <label style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",cursor:"pointer"}}>
-                    <input type="checkbox" checked={on}
-                      onChange={e=>setOptInSplice(o=>({...o,[p.markNo]:e.target.checked}))} />
-                    <b style={{fontFamily:T.fontMono,fontSize:12}}>{p.markNo}</b>
-                    <span style={{fontSize:11}}>{p.length}mm &times; {p.totalQty} pcs</span>
-                    <span style={{fontSize:11,color:T.textLow}}>
-                      {perBarNow} per {bar}mm {isPlate?"sheet":"bar"} whole
-                      {perBarNow>0 && ` \u00b7 ${bar - perBarNow*(+p.length||0)}mm dropped each time`}
-                    </span>
-                  </label>
-                  {on && (
-                    <div style={{marginTop:6}}>
-                      <div style={{fontSize:11,color:T.textMid,marginBottom:4}}>
-                        Cut as {segs.length} segment{segs.length!==1?"s":""} ({segs.length-1} joint
-                        {segs.length>2?"s":""}, {spliceCfg.jointAllowanceMm||3}mm root gap each &mdash;
-                        segments + gaps = {p.length}mm):
-                      </div>
-                      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                        {segs.map((s,i)=>(
-                          <span key={i} style={{display:"flex",alignItems:"center",gap:3}}>
-                            <span style={{fontSize:10,color:T.textLow,fontFamily:T.fontMono}}>S{i+1}</span>
-                            <input type="number" value={s}
-                              onChange={e=>{ const v=[...segs]; v[i]=parseFloat(e.target.value)||0; setSplitPlan(sp=>({...sp,[p.markNo]:v})); }}
-                              style={{...css.input,width:88,padding:"3px 6px",fontSize:11}} />
-                          </span>
-                        ))}
-                        <button onClick={()=>setSplitPlan(sp=>({...sp,[p.markNo]:[...segs, spliceCfg.minSegmentMm||1500]}))} style={{...css.btn.ghost,fontSize:10}}>+ segment</button>
-                        {segs.length>2 && <button onClick={()=>setSplitPlan(sp=>({...sp,[p.markNo]:segs.slice(0,-1)}))} style={{...css.btn.ghost,fontSize:10}}>{"\u2212"} segment</button>}
-                        <button onClick={()=>setSplitPlan(sp=>{ const n={...sp}; delete n[p.markNo]; return n; })} style={{...css.btn.ghost,fontSize:10}}>reset</button>
-                      </div>
-                      {errs.length>0
-                        ? <div style={{fontSize:10,color:T.red,marginTop:4,fontWeight:700}}>{errs.join(" \u00b7 ")}</div>
-                        : sv && (
-                          <div style={{fontSize:11,marginTop:5,fontWeight:700,
-                               color: sv.saved>0 ? T.green : sv.saved<0 ? T.red : T.textMid}}>
-                            {sv.saved>0
-                              ? `${sv.barsNow} \u2192 ${sv.barsSpliced} ${isPlate?"sheets":"bars"} \u00b7 saves ${sv.saved} \u00b7 adds ${sv.joints} joint${sv.joints!==1?"s":""}`
-                              : sv.saved===0
-                                ? `No change \u2014 still ${sv.barsNow} ${isPlate?"sheets":"bars"}, and it adds ${sv.joints} joint${sv.joints!==1?"s":""}. Not worth it.`
-                                : `Worse \u2014 ${sv.barsNow} \u2192 ${sv.barsSpliced} ${isPlate?"sheets":"bars"}. Try a different split.`}
-                          </div>
-                        )}
-                      <div style={{fontSize:10,color:T.textLow,marginTop:3}}>
-                        Estimated on whole {isPlate?"sheets":"bars"} of this one mark. The nesting run is
-                        what settles the real count, since other marks share the same {isPlate?"sheet":"bar"}.
-                      </div>
-                    </div>
                   )}
                 </div>
               );
@@ -22129,7 +22028,11 @@ const OrdersList = ({ orders, onOpen, user, clients, setClients, onAddOrder, com
   // Increment next order number in company settings
   if(setCompany) setCompany(prev=>{
     const updated = {...prev, orderNextNo:(prev.orderNextNo||1)+1};
-    localStorage.setItem('structo_company', JSON.stringify(updated));
+    // Guarded: a throw inside a setState updater unmounts the tree and gives a
+    // WHITE SCREEN rather than an error, so a full cache would break order
+    // creation with no message. The company row is synced to the server anyway.
+    try { localStorage.setItem('structo_company', JSON.stringify(updated)); }
+    catch(_) { LOCAL_CACHE_MISSES.add('structo_company'); }
     return updated;
   });
   setModal(false);
