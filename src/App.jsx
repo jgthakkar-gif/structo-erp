@@ -19575,6 +19575,7 @@ const InlinePipelineEditor = ({ title, currentSteps, processTypes, onSave, onClo
   const [newExitAfter, setNewExitAfter] = React.useState("");
   const [newReEntry, setNewReEntry] = React.useState("");
   const [newTasks, setNewTasks] = React.useState([]);
+  const [newInhouseType, setNewInhouseType] = React.useState("");
 
   const outboundTypes = (processTypes||DEFAULT_PROCESS_TYPES).filter(p=>p.type==="outbound");
   const inhouseSteps = steps.filter(s => s.type !== "outbound");
@@ -19584,6 +19585,91 @@ const InlinePipelineEditor = ({ title, currentSteps, processTypes, onSave, onClo
   const move = (i, dir) => setSteps(prev=>{ const s=[...prev]; [s[i],s[i+dir]]=[s[i+dir],s[i]]; return s; });
   const remove = (i) => setSteps(prev=>prev.filter((_,idx)=>idx!==i));
   const toggleTask = (id) => setNewTasks(prev=>prev.includes(id)?prev.filter(t=>t!==id):[...prev,id]);
+
+  // ── REVERT TO IN-HOUSE (Jai, 11 Oct) ───────────────────────────────────────
+  // Adding an outbound step DELETES the inhouse stages it covers (see
+  // stripIntermediateSteps below). Before this block there was no way back:
+  // the ✕ only rendered on outbound steps and the add dropdown was filtered to
+  // outbound process types, so a pipeline that had ever gone outbound could
+  // never be made fully inhouse again without rebuilding the drawing instance.
+  //
+  // Three additions, all local to this editor:
+  //   1. "Reset to in-house" — restores the canonical default route.
+  //   2. An inhouse add control — puts a missing stage back.
+  //   3. ✕ on inhouse steps, guarded so an outbound step cannot be orphaned.
+
+  // The canonical route for this editor. A part pipeline stops at fit-up.
+  const PART_STEP_KEYS = ["nesting","cutting","fitup"];
+  const baseDefault = isPart
+    ? (defaultSteps||[]).filter(s=>PART_STEP_KEYS.includes(s.step))
+    : (defaultSteps||[]);
+
+  // Stages an outbound step points at. Removing one of these would leave the
+  // outbound step with an exitAfterStep/reEntryStep that matches nothing, and
+  // OutboundProcessing matches on exactly those two fields (PM ~4787).
+  const refStages = new Set();
+  steps.filter(s=>s.type==="outbound").forEach(ob=>{
+    if (ob.exitAfterStep) refStages.add(ob.exitAfterStep);
+    if (ob.reEntryStep)   refStages.add(ob.reEntryStep);
+  });
+  const removeBlockedBecause = (s) => {
+    if (s.type === "outbound") return "";
+    if (steps.length <= 1) return "A pipeline needs at least one step";
+    if (refStages.has(s.step)) return `Used by an outbound step — remove that step first`;
+    return "";
+  };
+
+  // A process type's name is NOT its step key. DEFAULT_PROCESS_TYPES calls the
+  // third stage "Fit-Up", which slugs to "fit-up", but every stage reader —
+  // STAGE_NEXT, the DPR currentStage, the queues — uses "fitup". Slugging alone
+  // would mint a dead stage, so the canonical route is matched by label first
+  // and the slug is only a fallback for a type the default route doesn't name.
+  const stepKeyFor = (pt) => {
+    const byLabel = (defaultSteps||[]).find(s =>
+      (s.label||"").toLowerCase() === (pt?.name||"").toLowerCase());
+    if (byLabel) return byLabel.step;
+    return (pt?.name||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
+  };
+
+  // Inhouse process types not already in the pipeline.
+  const inhouseTypes = (processTypes||DEFAULT_PROCESS_TYPES)
+    .filter(p => p.type !== "outbound")
+    .filter(p => {
+      const key = stepKeyFor(p);
+      return !steps.some(s => s.step === key || s.step === p.id);
+    })
+    .filter(p => !isPart || PART_STEP_KEYS.includes(stepKeyFor(p)));
+
+  // Insert at the position the canonical route implies, so a restored stage
+  // lands in sequence instead of at the end. Outbound steps score -1 and are
+  // skipped, which parks the new stage just after the outbound step that
+  // precedes it — the same place save() would strip it from, so the two agree.
+  const addInhouse = () => {
+    const pt = (processTypes||DEFAULT_PROCESS_TYPES).find(p=>p.id===newInhouseType);
+    if (!pt) return;
+    const key = stepKeyFor(pt);
+    if (!key || steps.some(s=>s.step===key)) return;
+    const ns = { step:key, label:pt.name, type:"inhouse", processTypeId:pt.id };
+    const canon = (defaultSteps||[]).map(s=>s.step);
+    const myIdx = canon.indexOf(key);
+    let insertAt = steps.length;
+    if (myIdx >= 0) {
+      const found = steps.findIndex(s => canon.indexOf(s.step) > myIdx);
+      if (found >= 0) insertAt = found;
+    }
+    setSteps(prev=>{ const s=[...prev]; s.splice(insertAt,0,ns); return s; });
+    setNewInhouseType("");
+  };
+
+  const resetToInhouse = () => {
+    const obCount = steps.filter(s=>s.type==="outbound").length;
+    const msg = obCount > 0
+      ? `Reset to the full in-house route?\n\n${obCount} outbound step${obCount===1?"":"s"} will be removed and every in-house stage restored:\n\n${baseDefault.map(s=>s.label||s.step).join(" → ")}`
+      : `Reset to the full in-house route?\n\n${baseDefault.map(s=>s.label||s.step).join(" → ")}`;
+    if (!window.confirm(msg)) return;
+    setSteps(baseDefault.map(s=>({...s})));
+    setAdding(false); setNewInhouseType("");
+  };
 
   const resolvedType = newType === "__other__" ? customType.trim() : newType;
   const canAdd = resolvedType && newExitAfter && newReEntry && newTasks.length > 0;
@@ -19646,10 +19732,38 @@ const InlinePipelineEditor = ({ title, currentSteps, processTypes, onSave, onClo
             <div style={{display:"flex",gap:2,flexShrink:0}}>
               <button disabled={i===0} onClick={()=>move(i,-1)} style={{...css.btn.ghost,fontSize:10,padding:"1px 5px"}}>↑</button>
               <button disabled={i===steps.length-1} onClick={()=>move(i,1)} style={{...css.btn.ghost,fontSize:10,padding:"1px 5px"}}>↓</button>
-              {s.type==="outbound"&&<button onClick={()=>remove(i)} style={{...css.btn.ghost,fontSize:10,padding:"1px 5px",color:T.red}}>✕</button>}
+              {(()=>{ const why=removeBlockedBecause(s); return (
+                <button onClick={()=>{ if(!why) remove(i); }} disabled={!!why} title={why||"Remove this step"}
+                  style={{...css.btn.ghost,fontSize:10,padding:"1px 5px",
+                    color:why?T.textLow:T.red, opacity:why?0.35:1, cursor:why?"not-allowed":"pointer"}}>✕</button>
+              ); })()}
             </div>
           </div>
         ))}
+      </div>
+
+      {/* ── RESTORE IN-HOUSE STAGES (Jai, 11 Oct) ── */}
+      <div style={{display:"flex",gap:8,alignItems:"flex-end",marginBottom:10,padding:"10px",
+        background:T.bg,borderRadius:6,border:`1px solid ${T.border}`}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:10,color:T.textMid,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>
+            Add in-house stage
+          </div>
+          <Sel value={newInhouseType} onChange={e=>setNewInhouseType(e.target.value)}
+            disabled={inhouseTypes.length===0}>
+            <option value="">{inhouseTypes.length===0?"— all in-house stages present —":"— select —"}</option>
+            {inhouseTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+          </Sel>
+        </div>
+        <button onClick={addInhouse} disabled={!newInhouseType}
+          style={{...css.btn.secondary,fontSize:11,opacity:newInhouseType?1:0.4,
+            cursor:newInhouseType?"pointer":"not-allowed",whiteSpace:"nowrap"}}>
+          ＋ Add
+        </button>
+        <button onClick={resetToInhouse} title="Remove every outbound step and restore the full in-house route"
+          style={{...css.btn.ghost,fontSize:11,whiteSpace:"nowrap",color:T.accent,border:`1px solid ${T.accent}`}}>
+          ↺ Reset to in-house
+        </button>
       </div>
 
       {!adding
@@ -21641,30 +21755,33 @@ const TabInstances = ({ order, update, drawingInstances, setDrawingInstances, dp
             : (editingPipeline.di.processSteps||DEFAULT_PIPELINE_STEPS)}
           processTypes={processTypes||DEFAULT_PROCESS_TYPES}
           onSave={(newSteps)=>{
-            console.log("PIPELINE SAVE CALLED", {type:editingPipeline.type, steps:newSteps, targetId:editingPipeline.di?.id});
             if (editingPipeline.type==="part") {
               const newParts=(localOrder.parts||[]).map(p=>p.id===editingPipeline.part.id?{...p,processSteps:newSteps}:p);
               const newOrder = {...localOrder, parts:newParts};
               update(newOrder);
+              // The cache write is a convenience, not the source of truth — update()
+              // already persisted. A full quota must not abort the save (same failure
+              // mode as the restore bug, 25 Aug), so the miss is logged and swallowed.
               try {
                 const stored = localStorage.getItem('structo_orders');
                 const orders = stored ? JSON.parse(stored) : [];
                 const updated = orders.map(o=>o.id===newOrder.id?newOrder:o);
                 localStorage.setItem('structo_orders', JSON.stringify(updated));
-              } catch(e){}
+              } catch(err){
+                console.warn("[pipeline] local cache write skipped for structo_orders:", err?.message||err);
+              }
             } else {
               const targetId = editingPipeline.di.id;
-              console.log("DRAWING SAVE - targetId:", targetId, "setter:", !!window.__SET_DRAWING_INSTANCES__);
               const setter = window.__SET_DRAWING_INSTANCES__ || setDrawingInstances;
               if (setter) {
                 setter(prev=>{
-                  console.log("SETTER CALLED - prev length:", prev.length, "matching:", prev.filter(d=>d.id===targetId).length);
                   const updated = prev.map(di=>di.id===targetId?{...di,processSteps:newSteps}:di);
-                  try { localStorage.setItem('structo_drawingInstances', JSON.stringify(updated)); } catch(e){}
+                  try { localStorage.setItem('structo_drawingInstances', JSON.stringify(updated)); }
+                  catch(err){ console.warn("[pipeline] local cache write skipped for structo_drawingInstances:", err?.message||err); }
                   return updated;
                 });
               } else {
-                console.log("NO SETTER FOUND");
+                console.warn("[pipeline] no drawingInstances setter available — pipeline edit not saved for", targetId);
               }
             }
             setEditingPipeline(null);
@@ -21960,7 +22077,246 @@ const OrderDetail = ({ order, onBack, onSave, user, clients, materials, stock, v
     </div>
   );
 };
+
+// ─── ORDER WORKBOOK IMPORT ────────────────────────────────────────────────────
+// One .xlsx, one sheet per Orders tab, creating the order and filling every tab
+// in a single step. Until now only the Drawing Register and Drawing Part List
+// had an import; everything else was typed, which is where the entry time went.
+//
+// ONE SPEC, ONE PARSER. The register and parts imports each carry their own copy
+// of the column-map-and-parse logic. Rather than make a third and fourth copy,
+// every section below is DATA - sheet name, mode, fields - and a single reader
+// handles them all. A new tab is a spec, not a screen.
+//
+// mode "single" = one record, written onto the order (path "a.b" nests it).
+// mode "rows"   = a child array on the order.
+const OWB_HINT = "(hint — this row is ignored)";
+const ORDER_IMPORT_SPEC = [
+  { sheet:"Basic Details", mode:"single", target:"", label:"Basic Details", fields:[
+    { key:"projectDesc", hdr:"Project Description", required:true,  hint:"free text" },
+    { key:"clientName",  hdr:"Client Name",         required:true,  hint:"matched to your client list; a new one is created if unknown" },
+    { key:"clientPoNo",  hdr:"Client PO No",        hint:"e.g. 6000015675" },
+    { key:"orderDate",   hdr:"Order Date",          type:"date", hint:"DD.MM.YYYY or YYYY-MM-DD" },
+    { key:"endDate",     hdr:"Delivery Date",       type:"date", hint:"DD.MM.YYYY or YYYY-MM-DD" },
+    { key:"orderQty",    hdr:"Order Qty",           type:"num",  required:true, hint:"in the unit below" },
+    { key:"orderUnit",   hdr:"Order Unit",          hint:"Ton", def:"Ton" },
+    { key:"ratePerUnit", hdr:"Rate per Unit",       type:"num",  hint:"INR" },
+    { key:"orderValue",  hdr:"Order Value",         type:"num",  hint:"leave blank to compute qty x rate" },
+    { key:"drawingPrefix",hdr:"Drawing Prefix",     hint:"your own numbering prefix" },
+    { key:"status",      hdr:"Status",              enum:["active","hold","completed","cancelled"], def:"active" },
+  ]},
+  { sheet:"GST & Billing", mode:"single", target:"billing", label:"GST & Billing", fields:[
+    { key:"gstRate",   hdr:"GST Rate %", type:"num", target:"", def:18, hint:"18" },
+    { key:"gstin",     hdr:"Client GSTIN",   hint:"15 characters" },
+    { key:"pan",       hdr:"Client PAN" },
+    { key:"addr",      hdr:"Billing Address" },
+    { key:"state",     hdr:"State" },
+    { key:"stateCode", hdr:"State Code", hint:"27 = Maharashtra. Drives CGST+SGST vs IGST." },
+    { key:"contact",   hdr:"Contact Person" },
+    { key:"phone",     hdr:"Phone" },
+    { key:"email",     hdr:"Email" },
+  ]},
+  { sheet:"Shipping", mode:"rows", target:"shippingAddresses", label:"Shipping Addresses", fields:[
+    { key:"site",  hdr:"Site Name", required:true },
+    { key:"addr",  hdr:"Address",   required:true },
+    { key:"gstin", hdr:"GSTIN", hint:"a different state here means IGST" },
+    { key:"contact", hdr:"Contact" },
+    { key:"phone", hdr:"Phone" },
+    { key:"dispatchSpec", hdr:"Dispatch Spec" },
+    { key:"notes", hdr:"Notes" },
+  ]},
+  { sheet:"Transport", mode:"single", target:"transport", label:"Transport", fields:[
+    { key:"transportScope",  hdr:"Transport Scope", enum:["client","self","third_party"], hint:"who moves it" },
+    { key:"freightBilling",  hdr:"Freight Billing", enum:["dispatch_line","separate","included"] },
+    { key:"freightEstimate", hdr:"Freight Estimate", type:"num" },
+    { key:"distanceKm",      hdr:"Distance (km)", type:"num" },
+    { key:"vehicleType",     hdr:"Vehicle Type" },
+    { key:"clientTransporter", hdr:"Client Transporter" },
+    { key:"odc",             hdr:"ODC", type:"bool", hint:"yes / no" },
+    { key:"insurance",       hdr:"Insurance", type:"bool" },
+    { key:"policeEscort",    hdr:"Police Escort", type:"bool" },
+    { key:"nightRestriction",hdr:"Night Restriction", type:"bool" },
+    { key:"loadingInstructions", hdr:"Loading Instructions" },
+    { key:"specialReqs",     hdr:"Special Requirements" },
+  ]},
+  { sheet:"Payment Milestones", mode:"rows", target:"milestones", label:"Payment Milestones", fields:[
+    { key:"desc",   hdr:"Description", required:true, hint:"e.g. against RM clearance" },
+    { key:"type",   hdr:"Type", enum:["advance","progress","retention","final"] },
+    { key:"trigger",hdr:"Trigger", hint:"rm_clearance / black_inspection / dispatch / completion" },
+    { key:"advanceType", hdr:"Advance Type", enum:["bg","cash","lc"] },
+    { key:"basis",  hdr:"Basis", enum:["percent","amount"], required:true, def:"percent" },
+    { key:"value",  hdr:"Value", type:"num", required:true, hint:"20 for 20%" },
+    { key:"gstPct", hdr:"GST %", type:"num" },
+    { key:"dueInDays", hdr:"Due in Days", type:"num" },
+  ]},
+  { sheet:"Quality", mode:"single", target:"quality", label:"Quality & TPI", fields:[
+    { key:"tpiRequired",     hdr:"TPI Required", type:"bool" },
+    { key:"tpiAgencyName",   hdr:"TPI Agency" },
+    { key:"blastingProfile", hdr:"Blasting Profile", hint:"e.g. Sa 2.5 near white" },
+    { key:"qapNo",           hdr:"QAP No", hint:"e.g. 3M0091-QAD-00-054 Rev A" },
+    { key:"paintSpecNo",     hdr:"Paint Spec No" },
+    { key:"ndtStandard",     hdr:"NDT Standard", hint:"e.g. DRE 10.01" },
+    { key:"weldProcess",     hdr:"Weld Process", target:"quality.weldSpec", keyAs:"process" },
+    { key:"weldGrade",       hdr:"Electrode Grade", target:"quality.weldSpec", keyAs:"grade", hint:"E7018 above 12mm" },
+    { key:"weldMake",        hdr:"Electrode Make", target:"quality.weldSpec", keyAs:"make" },
+    { key:"packingType",     hdr:"Packing Type", target:"quality.dispatchSpec", keyAs:"packingType" },
+    { key:"dispatchRemarks", hdr:"Dispatch Remarks", target:"quality.dispatchSpec", keyAs:"remarks" },
+  ]},
+  { sheet:"Approved Makes", mode:"rows", target:"quality.approvedMakes", label:"Approved Makes", fields:[
+    { key:"matType", hdr:"Section Type", required:true, hint:"PLATE / ISMC / ISA ... blank list = every make allowed" },
+    { key:"makes",   hdr:"Approved Makes", required:true, hint:"comma separated, e.g. SAIL, TATA STEEL, RINL" },
+    { key:"remarks", hdr:"Remarks", hint:"e.g. traders not acceptable" },
+  ]},
+  { sheet:"Assemblies", mode:"rows", target:"assemblies", label:"Assemblies", fields:[
+    { key:"assemblyNumber", hdr:"Assembly Number", required:true },
+    { key:"assemblyName",   hdr:"Assembly Name",   required:true },
+    { key:"tpiRequired",    hdr:"TPI Required", type:"bool" },
+    { key:"expectedInspectionDate", hdr:"Expected Inspection", type:"date" },
+    { key:"clientContact",  hdr:"Client Contact" },
+    { key:"notes",          hdr:"Notes" },
+  ]},
+];
+
+const owbDate = (v) => {
+  if (v === undefined || v === null || v === "") return "";
+  if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
+  const t = String(v).trim();
+  let m = t.match(/^(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})$/);           // DD.MM.YYYY
+  if (m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  m = t.match(/^(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})$/);               // YYYY-MM-DD
+  if (m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+  return t;
+};
+const owbBool = (v) => {
+  const t = String(v ?? "").trim().toLowerCase();
+  return ["yes","y","true","1","required"].includes(t);
+};
+const owbNum = (v) => {
+  const n = parseFloat(String(v ?? "").replace(/[,\s₹]/g,""));
+  return Number.isFinite(n) ? n : "";
+};
+// Write a value at a dotted path, creating the objects on the way.
+const owbSet = (obj, path, key, val) => {
+  let t = obj;
+  (path ? path.split(".") : []).forEach(seg => { if (!t[seg] || typeof t[seg] !== "object") t[seg] = {}; t = t[seg]; });
+  t[key] = val;
+};
+
+// Reads the workbook against ORDER_IMPORT_SPEC. Returns the order it WOULD
+// create plus every problem found - nothing is saved here, because an order's
+// qty and rate drive the invoice and must be looked at before they land.
+const parseOrderWorkbook = (wb) => {
+  const order = { status:"active", orderUnit:"Ton", gstRate:18, orderDate:today(),
+                  drawings:[], parts:[], milestones:[], shippingAddresses:[], amendments:[], invoices:[],
+                  quality:{ tpiRequired:false, paintCoats:[], approvedMakes:[], mdccDocs:[] } };
+  const errors = [], warnings = [], filled = [];
+  const sheetNames = wb.SheetNames.map(n => n.trim().toLowerCase());
+  ORDER_IMPORT_SPEC.forEach(sec => {
+    const idx = sheetNames.indexOf(sec.sheet.toLowerCase());
+    if (idx < 0) { warnings.push(`Sheet "${sec.sheet}" not found — ${sec.label} left blank.`); return; }
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[idx]], { header:1, blankrows:false, raw:false });
+    if (!rows.length) { warnings.push(`Sheet "${sec.sheet}" is empty.`); return; }
+    const hdr = (rows[0]||[]).map(h => String(h||"").trim().toLowerCase());
+    const col = {};
+    sec.fields.forEach(f => { const i = hdr.indexOf(f.hdr.toLowerCase()); if (i >= 0) col[f.key] = i; });
+    const missingReq = sec.fields.filter(f => f.required && col[f.key] === undefined);
+    if (missingReq.length) {
+      errors.push(`${sec.sheet}: missing required column(s) ${missingReq.map(f=>f.hdr).join(", ")}`);
+      return;
+    }
+    // Drop blank rows and the template's marked hint row. Nothing else is guessed:
+    // a row that is not blank and not marked is DATA, even if it looks like a hint.
+    const body = rows.slice(1).filter(r => {
+      if (!(r||[]).join("").trim()) return false;
+      return !String(r[0]||"").trim().startsWith(OWB_HINT);
+    });
+    const take = (r, f) => {
+      let v = col[f.key] === undefined ? "" : r[col[f.key]];
+      v = v === undefined || v === null ? "" : v;
+      if (f.type === "date") v = owbDate(v);
+      else if (f.type === "bool") v = owbBool(v);
+      else if (f.type === "num") v = owbNum(v);
+      else v = String(v).trim();
+      if ((v === "" || v === undefined) && f.def !== undefined) v = f.def;
+      if (f.enum && v !== "" && !f.enum.includes(String(v))) {
+        warnings.push(`${sec.sheet}: "${v}" is not one of ${f.enum.join(" / ")} for ${f.hdr} — kept as typed.`);
+      }
+      return v;
+    };
+    if (sec.mode === "single") {
+      const r = body[0] || [];
+      if (!body.length) { warnings.push(`Sheet "${sec.sheet}" has a header but no data row.`); return; }
+      if (body.length > 1) warnings.push(`Sheet "${sec.sheet}" holds one record but has ${body.length} data rows — rows 3 onward ignored.`);
+      let n = 0;
+      sec.fields.forEach(f => {
+        const v = take(r, f);
+        if (v === "" || v === false) return;
+        owbSet(order, f.target !== undefined ? f.target : sec.target, f.keyAs || f.key, v);
+        n++;
+      });
+      filled.push(`${sec.label}: ${n} field(s)`);
+    } else {
+      const out = [];
+      body.forEach((r, i) => {
+        const rec = {};
+        let any = false;
+        sec.fields.forEach(f => { const v = take(r, f); if (v !== "" && v !== false) { rec[f.keyAs||f.key] = v; any = true; } });
+        const miss = sec.fields.filter(f => f.required && !rec[f.keyAs||f.key]);
+        if (!any) return;
+        if (miss.length) { errors.push(`${sec.sheet} row ${i+3}: ${miss.map(f=>f.hdr).join(", ")} required`); return; }
+        rec.id = `${sec.sheet.replace(/\W/g,"").toUpperCase().slice(0,4)}-${Date.now()}-${i}`;
+        out.push(rec);
+      });
+      owbSet(order, sec.target.includes(".") ? sec.target.split(".").slice(0,-1).join(".") : "",
+             sec.target.split(".").pop(), out);
+      filled.push(`${sec.label}: ${out.length} row(s)`);
+    }
+  });
+  // value / qty / rate must agree - this is the number that becomes the invoice
+  const q = +order.orderQty || 0, r = +order.ratePerUnit || 0, v = +order.orderValue || 0;
+  if (q && r && v) {
+    const diff = Math.abs(q*r - v);
+    if (diff > Math.max(1, v*0.005))
+      warnings.push(`Order value ${fmt.num(Math.round(v))} does not match qty x rate (${fmt.num(Math.round(q*r))}) — differs by ${fmt.num(Math.round(diff))}.`);
+  } else if (q && r && !v) {
+    order.orderValue = +(q*r).toFixed(2);
+  }
+  if (!order.projectDesc) errors.push("Basic Details: Project Description is required.");
+  if (!order.orderQty)    errors.push("Basic Details: Order Qty is required.");
+  return { order, errors, warnings, filled };
+};
+
+// The blank workbook, generated from the same spec the reader uses, so the two
+// can never drift. Row 1 headers, row 2 hints.
+const downloadOrderWorkbook = () => {
+  const wb = XLSX.utils.book_new();
+  const readme = [
+    ["STRUCTO — New Order workbook"],
+    [""],
+    ["One sheet per tab of the Orders screen. Fill what you have; blank sheets are skipped."],
+    ["Row 1 is the column header and must not be renamed. Row 2 is a hint and is ignored on import."],
+    [""],
+    ["Sheet","Holds","Rows"],
+    ...ORDER_IMPORT_SPEC.map(s => [s.sheet, s.label, s.mode === "single" ? "one row" : "one row per entry"]),
+    [""],
+    ["Drawings and parts are imported separately, inside the order, once it exists."],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(readme), "READ ME");
+  ORDER_IMPORT_SPEC.forEach(sec => {
+    // Row 2 is a hint row. It carries an explicit marker in the first cell so the
+    // reader can drop it with certainty - guessing from the text failed, because a
+    // hint like "18" or "required" is indistinguishable from real data.
+    const hints = sec.fields.map(f => f.hint || (f.enum ? f.enum.join(" / ") : (f.required ? "required" : "")));
+    hints[0] = OWB_HINT + " " + (hints[0] || "");
+    const ws = XLSX.utils.aoa_to_sheet([ sec.fields.map(f => f.hdr), hints ]);
+    ws["!cols"] = sec.fields.map(f => ({ wch: Math.max(14, Math.min(40, f.hdr.length + 6)) }));
+    XLSX.utils.book_append_sheet(wb, ws, sec.sheet);
+  });
+  XLSX.writeFile(wb, "Structo_New_Order_Template.xlsx");
+};
+
 const OrdersList = ({ orders, onOpen, user, clients, setClients, onAddOrder, company, setCompany }) => {
+  const [wbResult, setWbResult] = useState(null);   // parsed workbook awaiting approval
   const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState("all"); const [modal, setModal] = useState(false); const [form, setForm] = useState({}); const [showCancelled, setShowCancelled] = useState(false);
   const filtered = orders.filter(o=>(showCancelled||o.status!=="cancelled")&&((o.id||'').toLowerCase().includes(search.toLowerCase())||(o.projectDesc||'').toLowerCase().includes(search.toLowerCase())||(o.clientPoNo||'').toLowerCase().includes(search.toLowerCase())||(o.clientId||'').toLowerCase().includes(search.toLowerCase()))&&(statusFilter==="all"||o.status===statusFilter));
   const canCreate = ["super_admin","planning_admin"].includes(user.role);
@@ -21986,6 +22342,22 @@ const OrdersList = ({ orders, onOpen, user, clients, setClients, onAddOrder, com
             Show cancelled
           </label>
         </div>
+        {canCreate&&<button onClick={downloadOrderWorkbook} style={css.btn.secondary} title="Blank workbook — one sheet per Orders tab">⬇ Order Template</button>}
+        {canCreate&&<label style={{...css.btn.secondary, cursor:"pointer", display:"inline-flex", alignItems:"center"}} title="Create an order from a filled workbook">
+          ⬆ New Order from Workbook
+          <input type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={e=>{
+            const f=e.target.files?.[0]; e.target.value="";
+            if(!f) return;
+            const rd=new FileReader();
+            rd.onload=ev=>{
+              try{
+                const wb=XLSX.read(new Uint8Array(ev.target.result),{type:"array",cellDates:true});
+                setWbResult(parseOrderWorkbook(wb));
+              }catch(err){ setWbResult({order:null,errors:["Could not read the workbook: "+(err?.message||err)],warnings:[],filled:[]}); }
+            };
+            rd.readAsArrayBuffer(f);
+          }} />
+        </label>}
         {canCreate&&<button onClick={()=>{setForm({status:"active",orderUnit:"Ton",gstRate:18,orderDate:today(),drawings:[],parts:[],milestones:[],shippingAddresses:[],amendments:[],invoices:[],quality:{tpiRequired:false,paintCoats:[],approvedMakes:[],mdccDocs:[]}});setModal(true);}} style={css.btn.primary}>+ New Order</button>}
       </div>
       {filtered.map(o=>{
@@ -22022,6 +22394,73 @@ const OrdersList = ({ orders, onOpen, user, clients, setClients, onAddOrder, com
         );
       })}
       {filtered.length===0&&<div style={{ textAlign:"center", color:T.textLow, padding:48 }}>No orders found</div>}
+      {wbResult&&<Modal title="New Order from Workbook" onClose={()=>setWbResult(null)} width={720}>
+        {wbResult.errors.length>0 ? (
+          <div>
+            <div style={{fontSize:12,fontWeight:700,color:T.red,marginBottom:8}}>
+              {wbResult.errors.length} problem{wbResult.errors.length!==1?"s":""} — nothing has been created.
+            </div>
+            <ul style={{margin:"0 0 12px 18px",padding:0,fontSize:12,color:T.text}}>
+              {wbResult.errors.map((e,i)=><li key={i} style={{marginBottom:3}}>{e}</li>)}
+            </ul>
+            <div style={{fontSize:11,color:T.textMid}}>Fix the workbook and import it again.</div>
+          </div>
+        ) : (
+          <div>
+            <div style={{fontSize:12,fontWeight:700,marginBottom:6}}>{wbResult.order.projectDesc}</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 16px",fontSize:12,marginBottom:12}}>
+              <div><span style={{color:T.textLow}}>Client</span> {wbResult.order.clientName||"—"}</div>
+              <div><span style={{color:T.textLow}}>Client PO</span> {wbResult.order.clientPoNo||"—"}</div>
+              <div><span style={{color:T.textLow}}>Qty</span> {fmt.num(wbResult.order.orderQty)} {wbResult.order.orderUnit}</div>
+              <div><span style={{color:T.textLow}}>Value</span> {fmt.num(Math.round(wbResult.order.orderValue||0))}</div>
+              <div><span style={{color:T.textLow}}>Order date</span> {wbResult.order.orderDate||"—"}</div>
+              <div><span style={{color:T.textLow}}>Delivery</span> {wbResult.order.endDate||"—"}</div>
+            </div>
+            <div style={{fontSize:11,color:T.textMid,marginBottom:4}}>Filled from the workbook:</div>
+            <ul style={{margin:"0 0 12px 18px",padding:0,fontSize:11,color:T.text}}>
+              {wbResult.filled.map((f,i)=><li key={i}>{f}</li>)}
+            </ul>
+            {wbResult.warnings.length>0&&<>
+              <div style={{fontSize:11,fontWeight:700,color:T.amber,marginBottom:4}}>
+                {wbResult.warnings.length} thing{wbResult.warnings.length!==1?"s":""} to look at — these do not block creation:
+              </div>
+              <ul style={{margin:"0 0 12px 18px",padding:0,fontSize:11,color:T.amber}}>
+                {wbResult.warnings.map((w,i)=><li key={i} style={{marginBottom:2}}>{w}</li>)}
+              </ul>
+            </>}
+            <div style={{fontSize:11,color:T.textLow,marginBottom:10}}>
+              Drawings and parts are imported separately once the order exists.
+            </div>
+          </div>
+        )}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:4}}>
+          <button onClick={()=>setWbResult(null)} style={css.btn.secondary}>Cancel</button>
+          {wbResult.errors.length===0&&<button style={css.btn.primary} onClick={()=>{
+            const o={...wbResult.order};
+            // Match the client by name; create one if it is new, so the order is
+            // never left pointing at nothing.
+            if(o.clientName){
+              const hit=(clients||[]).find(c=>String(c.name||"").trim().toLowerCase()===o.clientName.trim().toLowerCase());
+              if(hit) o.clientId=hit.id;
+              else if(setClients){
+                const nc={id:`CL-${Date.now()}`,name:o.clientName.trim(),gstin:o.billing?.gstin||"",pan:o.billing?.pan||"",
+                          addr:o.billing?.addr||"",contact:o.billing?.contact||"",phone:o.billing?.phone||"",email:o.billing?.email||""};
+                setClients(prev=>[...(prev||[]),nc]); o.clientId=nc.id;
+              }
+            }
+            delete o.clientName;
+            const newId=genOrderId(company);
+            if(onAddOrder) onAddOrder({...o,id:newId});
+            if(setCompany) setCompany(prev=>{
+              const updated={...prev,orderNextNo:(prev.orderNextNo||1)+1};
+              try{ localStorage.setItem('structo_company', JSON.stringify(updated)); }
+              catch(_){ LOCAL_CACHE_MISSES.add('structo_company'); }
+              return updated;
+            });
+            setWbResult(null);
+          }}>Create Order</button>}
+        </div>
+      </Modal>}
       {modal&&<Modal title="New Order" onClose={()=>setModal(false)} width={600}><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}><div style={{ gridColumn:"span 2" }}><label style={css.label}>Project Description</label><input value={form.projectDesc||""} onChange={e=>setForm({...form,projectDesc:e.target.value})} style={css.input} /></div><div><label style={css.label}>Client</label><div style={{display:"flex",alignItems:"center"}}><select value={form.clientId||""} onChange={e=>setForm({...form,clientId:e.target.value})} style={{...css.input,flex:1}}><option value="">Select...</option>{(clients||[]).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select><QuickAddClient clients={clients} setClients={setClients} onSelect={id=>setForm(f=>({...f,clientId:id}))} /></div></div><div><label style={css.label}>Client PO No</label><input value={form.clientPoNo||""} onChange={e=>setForm({...form,clientPoNo:e.target.value})} style={css.input} /></div><div><label style={css.label}>Rate per Unit (₹)</label><input type="number" value={form.ratePerUnit||""} onChange={e=>setForm({...form,ratePerUnit:+e.target.value,orderValue:(+e.target.value)*(form.orderQty||0)})} style={css.input} /></div><div><label style={css.label}>Order Qty (Ton)</label><input type="number" value={form.orderQty||""} onChange={e=>setForm({...form,orderQty:+e.target.value,orderValue:(form.ratePerUnit||0)*(+e.target.value)})} style={css.input} /></div><div><label style={css.label}>Order Date</label><input type="date" value={form.orderDate||""} onChange={e=>setForm({...form,orderDate:e.target.value})} style={css.input} /></div><div><label style={css.label}>End Date</label><input type="date" value={form.endDate||""} onChange={e=>setForm({...form,endDate:e.target.value})} style={css.input} /></div></div><div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:12 }}><button onClick={()=>setModal(false)} style={css.btn.secondary}>Cancel</button><button onClick={()=>{
   const newId = genOrderId(company);
   if(onAddOrder) onAddOrder({...form, id:newId});

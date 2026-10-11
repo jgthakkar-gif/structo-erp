@@ -5960,11 +5960,13 @@ const PipelineEditorModal = ({ pipelineEditDI, setPipelineEditDI, processTypes, 
   const [newExitAfter, setNewExitAfter] = React.useState("");
   const [newReEntry, setNewReEntry] = React.useState("");
   const [newTasks, setNewTasks] = React.useState([]);
+  const [newInhouseType, setNewInhouseType] = React.useState("");
 
   React.useEffect(()=>{
     if (pipelineEditDI) {
       setSteps([...(pipelineEditDI.processSteps||DEFAULT_PIPELINE_STEPS)]);
       setAddingStep(false); setNewStepType(""); setCustomStepType(""); setNewExitAfter(""); setNewReEntry(""); setNewTasks([]);
+      setNewInhouseType("");
     }
   },[pipelineEditDI?.id]);
 
@@ -5980,6 +5982,68 @@ const PipelineEditorModal = ({ pipelineEditDI, setPipelineEditDI, processTypes, 
   const moveStep = (i, dir) => setSteps(prev=>{ const s=[...prev]; const t=s[i]; s[i]=s[i+dir]; s[i+dir]=t; return s; });
   const removeStep = (i) => setSteps(prev=>prev.filter((_,idx)=>idx!==i));
   const toggleTask = (id) => setNewTasks(prev => prev.includes(id) ? prev.filter(t=>t!==id) : [...prev,id]);
+
+  // ── REVERT TO IN-HOUSE (Jai, 11 Oct) ───────────────────────────────────────
+  // Mirrors the same block in App.jsx's InlinePipelineEditor. Adding an
+  // outbound step DELETES the inhouse stages it covers (stripIntermediateSteps
+  // below), and until now nothing could put them back: ✕ rendered only on
+  // outbound steps and the add dropdown was filtered to outbound process types.
+  const refStages = new Set();
+  steps.filter(s=>s.type==="outbound").forEach(ob=>{
+    if (ob.exitAfterStep) refStages.add(ob.exitAfterStep);
+    if (ob.reEntryStep)   refStages.add(ob.reEntryStep);
+  });
+  const removeBlockedBecause = (s) => {
+    if (s.type === "outbound") return "";
+    if (steps.length <= 1) return "A pipeline needs at least one step";
+    if (refStages.has(s.step)) return "Used by an outbound step — remove that step first";
+    return "";
+  };
+
+  // A process type's name is NOT its step key — "Fit-Up" slugs to "fit-up"
+  // while STAGE_NEXT (~3290), the DPR currentStage and every queue use "fitup".
+  // Match the canonical route by label first; slug only as a fallback.
+  const stepKeyFor = (pt) => {
+    const byLabel = (DEFAULT_PIPELINE_STEPS||[]).find(s =>
+      (s.label||"").toLowerCase() === (pt?.name||"").toLowerCase());
+    if (byLabel) return byLabel.step;
+    return (pt?.name||"").toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
+  };
+
+  const inhouseTypes = (processTypes||DEFAULT_PROCESS_TYPES)
+    .filter(p => p.type !== "outbound")
+    .filter(p => {
+      const key = stepKeyFor(p);
+      return !steps.some(s => s.step === key || s.step === p.id);
+    });
+
+  const addInhouse = () => {
+    const pt = (processTypes||DEFAULT_PROCESS_TYPES).find(p=>p.id===newInhouseType);
+    if (!pt) return;
+    const key = stepKeyFor(pt);
+    if (!key || steps.some(s=>s.step===key)) return;
+    const ns = { step:key, label:pt.name, type:"inhouse", processTypeId:pt.id };
+    const canon = (DEFAULT_PIPELINE_STEPS||[]).map(s=>s.step);
+    const myIdx = canon.indexOf(key);
+    let insertAt = steps.length;
+    if (myIdx >= 0) {
+      const found = steps.findIndex(s => canon.indexOf(s.step) > myIdx);
+      if (found >= 0) insertAt = found;
+    }
+    setSteps(prev=>{ const s=[...prev]; s.splice(insertAt,0,ns); return s; });
+    setNewInhouseType("");
+  };
+
+  const resetToInhouse = () => {
+    const base = DEFAULT_PIPELINE_STEPS||[];
+    const obCount = steps.filter(s=>s.type==="outbound").length;
+    const msg = obCount > 0
+      ? `Reset to the full in-house route?\n\n${obCount} outbound step${obCount===1?"":"s"} will be removed and every in-house stage restored:\n\n${base.map(s=>s.label||s.step).join(" → ")}`
+      : `Reset to the full in-house route?\n\n${base.map(s=>s.label||s.step).join(" → ")}`;
+    if (!window.confirm(msg)) return;
+    setSteps(base.map(s=>({...s})));
+    setAddingStep(false); setNewInhouseType("");
+  };
 
   const resolvedStepType = newStepType === "__other__" ? customStepType.trim() : newStepType;
 
@@ -6052,12 +6116,38 @@ const PipelineEditorModal = ({ pipelineEditDI, setPipelineEditDI, processTypes, 
             <div style={{display:"flex",gap:2,flexShrink:0}}>
               <button disabled={i===0} onClick={()=>moveStep(i,-1)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px"}}>↑</button>
               <button disabled={i===steps.length-1} onClick={()=>moveStep(i,1)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px"}}>↓</button>
-              {step.type==="outbound" && (
-                <button onClick={()=>removeStep(i)} style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",color:T.red}}>✕</button>
-              )}
+              {(()=>{ const why=removeBlockedBecause(step); return (
+                <button onClick={()=>{ if(!why) removeStep(i); }} disabled={!!why} title={why||"Remove this step"}
+                  style={{...css.btn.ghost,fontSize:10,padding:"1px 6px",
+                    color:why?T.textLow:T.red, opacity:why?0.35:1, cursor:why?"not-allowed":"pointer"}}>✕</button>
+              ); })()}
             </div>
           </div>
         ))}
+      </div>
+
+      {/* ── RESTORE IN-HOUSE STAGES (Jai, 11 Oct) ── */}
+      <div style={{display:"flex",gap:8,alignItems:"flex-end",marginBottom:12,padding:"10px",
+        background:T.bg,borderRadius:6,border:`1px solid ${T.border}`}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:10,color:T.textMid,fontWeight:600,marginBottom:4,textTransform:"uppercase",letterSpacing:"0.05em"}}>
+            Add in-house stage
+          </div>
+          <Sel value={newInhouseType} onChange={e=>setNewInhouseType(e.target.value)}
+            disabled={inhouseTypes.length===0}>
+            <option value="">{inhouseTypes.length===0?"— all in-house stages present —":"— select —"}</option>
+            {inhouseTypes.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+          </Sel>
+        </div>
+        <button onClick={addInhouse} disabled={!newInhouseType}
+          style={{...css.btn.secondary,fontSize:11,opacity:newInhouseType?1:0.4,
+            cursor:newInhouseType?"pointer":"not-allowed",whiteSpace:"nowrap"}}>
+          ＋ Add
+        </button>
+        <button onClick={resetToInhouse} title="Remove every outbound step and restore the full in-house route"
+          style={{...css.btn.ghost,fontSize:11,whiteSpace:"nowrap",color:T.accent,border:`1px solid ${T.accent}`}}>
+          ↺ Reset to in-house
+        </button>
       </div>
 
       {/* Add outbound step form */}
