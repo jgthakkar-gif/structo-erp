@@ -6996,8 +6996,13 @@ const mergeCutRecords = (existing, proposed) => {
 // Resolve a nested part name to its order mark. Spliced bars carry 2A/S1 names;
 // the order knows only 2A. Returns the segment position so a piece can be counted
 // complete only when EVERY one of its segments is present.
+// buildSplitIndex returns {map, byParent} — the segment entries live under .map,
+// which is how parentMark and markShare read it. Indexing splitIdx[mn] directly
+// found nothing, so every segment resolved to itself, the order had no part by
+// that name, and buildDispatchCutRecords' `if(!order||!part) return` dropped the
+// piece. Spliced parts therefore produced no rider records at all. (Jai, 12 Oct)
 const resolveNestedMark = (mn, splitIdx) => {
-  const s = splitIdx && splitIdx[mn];
+  const s = splitIdx && splitIdx.map && splitIdx.map[mn];
   if (s && s.parent) return { mark:s.parent, segIndex:+s.segIndex||1, segCount:+s.segCount||1 };
   return { mark:mn, segIndex:1, segCount:1 };
 };
